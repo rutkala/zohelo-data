@@ -1,0 +1,13 @@
+# config/storage.yaml
+storage:
+  # To migrate to S3 in the future, just change this protocol to "s3" 
+  # and the base_path to "s3://your-bucket-name/zohelo-data"
+  protocol: "gdrive" 
+  base_path: "gdrive://zohelo-data"
+  
+  zones:
+    landing: "01_landing"
+    archive: "01_landing/archive"
+    bronze: "02_bronze"
+    silver: "03_silver"
+    gold: "04_gold"
