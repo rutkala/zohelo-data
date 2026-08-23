@@ -113,8 +113,6 @@ class StorageManager:
                     KEY_FILE '{key_path}'
                 );
             """)
-            # Clean up the ephemeral file immediately after DuckDB reads it
-            os.unlink(key_path)
             
         return con
 
