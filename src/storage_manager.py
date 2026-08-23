@@ -81,7 +81,61 @@ class StorageManager:
             return f"{base_uri}/{filename}"
         return base_uri
 
-# --- Deployment Execution ---
+    def _get_duckdb_credentials_path(self):
+        """Creates an ephemeral temp file for DuckDB to authenticate."""
+        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+        if not creds_json:
+            raise ValueError("Secret GCP_SERVICE_ACCOUNT_JSON not found in environment!")
+            
+        temp = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+        temp.write(creds_json)
+        temp.close()
+        return temp.name 
+
+    def setup_duckdb(self):
+        """
+        Initializes an in-memory DuckDB connection with the necessary extensions 
+        to read the configured storage protocol (e.g., gdrive://).
+        """
+        import duckdb
+        con = duckdb.connect()
+        
+        if self.backend == "gdrive":
+            print("🔧 Configuring DuckDB Virtual File System for Google Drive...")
+            con.execute("INSTALL gdrive FROM community;")
+            con.execute("LOAD gdrive;")
+            
+            key_path = self._get_duckdb_credentials_path()
+            con.execute(f"""
+                CREATE SECRET IF NOT EXISTS gdrive_secret (
+                    TYPE gdrive,
+                    PROVIDER service_account,
+                    KEY_FILE '{key_path}'
+                );
+            """)
+            # Clean up the ephemeral file immediately after DuckDB reads it
+            os.unlink(key_path)
+            
+        return con
+
+# --- Storage Engine Test ---
 if __name__ == "__main__":
     storage = StorageManager(backend="gdrive")
+    
+    # 1. Sync physical infrastructure (Idempotent)
     storage.init_infrastructure()
+    
+    # 2. Get the abstracted URI
+    landing_uri = storage.get_path("01_landing", "test_data.csv")
+    print(f"\n📂 Target Path: {landing_uri}")
+    
+    # 3. Test DuckDB VFS Connection
+    con = storage.setup_duckdb()
+    
+    # Write a test file directly to Google Drive using pure SQL!
+    print("🚀 Writing test file to Google Drive via DuckDB...")
+    con.execute(f"""
+        COPY (SELECT 'Zohelo Data Engine is Online!' AS status) 
+        TO '{landing_uri}' (FORMAT CSV, HEADER);
+    """)
+    print("✅ Storage setup is complete and fully operational.")
