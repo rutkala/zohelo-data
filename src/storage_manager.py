@@ -110,30 +110,15 @@ class StorageManager:
                 CREATE SECRET IF NOT EXISTS gdrive_secret (
                     TYPE gdrive,
                     PROVIDER service_account,
-                    KEY_FILE '{key_path}'
+                    KEY_FILE '{key_path}',
+                    SCOPES 'https://www.googleapis.com/auth/drive'
                 );
             """)
             
         return con
 
-# --- Storage Engine Test ---
+# --- Deployment Execution ---
 if __name__ == "__main__":
+    # Strictly initializes the declarative folder infrastructure
     storage = StorageManager(backend="gdrive")
-    
-    # 1. Sync physical infrastructure (Idempotent)
     storage.init_infrastructure()
-    
-    # 2. Get the abstracted URI
-    landing_uri = storage.get_path("01_landing", "test_data.csv")
-    print(f"\n📂 Target Path: {landing_uri}")
-    
-    # 3. Test DuckDB VFS Connection
-    con = storage.setup_duckdb()
-    
-    # Write a test file directly to Google Drive using pure SQL!
-    print("🚀 Writing test file to Google Drive via DuckDB...")
-    con.execute(f"""
-        COPY (SELECT 'Zohelo Data Engine is Online!' AS status) 
-        TO '{landing_uri}' (FORMAT CSV, HEADER);
-    """)
-    print("✅ Storage setup is complete and fully operational.")
