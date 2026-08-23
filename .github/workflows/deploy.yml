@@ -28,7 +28,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install duckdb google-api-python-client google-auth pyyaml requests
+          pip install -r requirements.txt
 
       - name: Sync Storage Zones
         env:
