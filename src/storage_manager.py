@@ -20,7 +20,7 @@ class StorageManager:
             self.drive_service = self._authenticate_gdrive()
 
     def _authenticate_gdrive(self):
-        """Authenticates using the GitHub Codespace Secret"""
+        """Authenticates using the GitHub Codespace/Actions Secret"""
         creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
         if not creds_json:
             raise ValueError("Secret GCP_SERVICE_ACCOUNT_JSON not found in environment!")
@@ -41,7 +41,6 @@ class StorageManager:
         files = results.get('files', [])
 
         if files:
-            print(f"✅ Folder '{folder_name}' already exists (ID: {files[0]['id']})")
             return files[0]['id']
         else:
             print(f"🏗️ Creating folder '{folder_name}'...")
@@ -60,24 +59,27 @@ class StorageManager:
         print(f"Initializing {self.backend} storage infrastructure...")
         
         if self.backend == "gdrive":
-            # 1. Create the Master Folder
             master_id = self._get_or_create_folder(self.master_folder_name)
-            
-            # 2. Create the Medallion Zones inside the Master Folder
             zone_ids = {}
             for zone in self.zones:
                 zone_ids[zone] = self._get_or_create_folder(zone, parent_id=master_id)
             
-            print("\n🚀 Infrastructure deployment complete! Storage is ready.")
+            print("✅ Infrastructure sync complete! Storage is ready.")
             return zone_ids
 
-    def get_duckdb_credentials_path(self):
-        """Creates an ephemeral temp file for DuckDB to authenticate."""
-        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
-        temp = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
-        temp.write(creds_json)
-        temp.close()
-        return temp.name # Returns e.g. /tmp/tmpxyz123.json
+    def get_path(self, zone_name: str, filename: str = "") -> str:
+        """
+        The Abstraction Gateway: Returns the universal URI for any file.
+        Example: get_path("01_landing", "data.json") -> "gdrive://zohelo-data/01_landing/data.json"
+        """
+        if zone_name not in self.zones:
+            raise ValueError(f"Zone '{zone_name}' is not a valid Medallion zone.")
+        
+        base_uri = f"{self.backend}://{self.master_folder_name}/{zone_name}"
+        
+        if filename:
+            return f"{base_uri}/{filename}"
+        return base_uri
 
 # --- Deployment Execution ---
 if __name__ == "__main__":
