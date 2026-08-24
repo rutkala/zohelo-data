@@ -57,9 +57,15 @@ def main():
         print(f"❌ Error: {e}")
         sys.exit(1)
     
+    # Handle nested structure (Desktop OAuth clients have "installed" key)
+    if 'installed' in oauth_config:
+        oauth_config = oauth_config['installed']
+        print("✅ Detected Desktop OAuth Client format\n")
+    
     # Validate OAuth config
     if 'client_id' not in oauth_config or 'client_secret' not in oauth_config:
         print("❌ Invalid OAuth Client JSON: missing client_id or client_secret")
+        print(f"Available keys: {list(oauth_config.keys())}")
         sys.exit(1)
     
     try:
@@ -92,7 +98,7 @@ def main():
         print("\n⏳ Exchanging code for refresh token...")
         
         # Exchange code for tokens
-        credentials = flow.fetch_token(authorization_response=f"http://localhost:8080/?code={auth_code}")
+        credentials = flow.fetch_token(authorization_response=f"http://localhost/?code={auth_code}")
         
         refresh_token = credentials.get('refresh_token')
         
