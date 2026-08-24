@@ -24,14 +24,39 @@ class StorageManager:
             self.drive_service = self._authenticate_gdrive()
 
     def _authenticate_gdrive(self):
-        """Authenticates using OAuth Client credentials from environment"""
-        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
-        if not creds_json:
-            raise ValueError("Secret GCP_SERVICE_ACCOUNT_JSON not found in environment!")
-        
-        creds_dict = json.loads(creds_json)
+        """Authenticates using OAuth env vars (preferred) or JSON from GCP_SERVICE_ACCOUNT_JSON."""
         scopes = ['https://www.googleapis.com/auth/drive']
         is_github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+
+        # Preferred path: explicit OAuth env vars (works locally and in CI)
+        oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+        oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+
+        if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+            credentials = UserCredentials(
+                token=None,
+                refresh_token=oauth_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=oauth_client_id,
+                client_secret=oauth_client_secret,
+                scopes=scopes,
+            )
+            try:
+                credentials.refresh(HttpLib2Request(httplib2.Http()))
+            except Exception as exc:
+                raise RuntimeError("Failed to refresh Google OAuth access token from GOOGLE_OAUTH_* env vars.") from exc
+            return build('drive', 'v3', credentials=credentials)
+
+        # Fallback path: JSON in GCP_SERVICE_ACCOUNT_JSON (service account or OAuth client JSON)
+        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+        if not creds_json:
+            raise ValueError(
+                "Google credentials not found. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, "
+                "GOOGLE_OAUTH_REFRESH_TOKEN or GCP_SERVICE_ACCOUNT_JSON."
+            )
+
+        creds_dict = json.loads(creds_json)
         
         # Check if it's an OAuth Client ID (installed app) or service account
         if creds_dict.get('type') == 'service_account':
