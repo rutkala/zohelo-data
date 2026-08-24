@@ -39,8 +39,8 @@ class StorageManager:
         else:
             # OAuth Client ID (installed app) flow - for your Google AI Pro account
             # This is a desktop/CLI flow that works with GitHub Actions
-            flow = InstalledAppFlow.from_client_secrets_string(
-                json.dumps(creds_dict),
+            flow = InstalledAppFlow.from_client_config(
+                creds_dict,
                 scopes=['https://www.googleapis.com/auth/drive']
             )
             # For headless (GitHub Actions), use run_local_server with port 0
