@@ -134,6 +134,15 @@ class StorageManager:
             print("✅ Infrastructure sync complete! Storage is ready.")
             return zone_ids
 
+    def get_or_create_nested_folder(self, path_segments: list, root_id: str) -> str:
+        """Creates nested folders from path_segments under root_id, returning the deepest folder ID."""
+        if not path_segments:
+            raise ValueError("path_segments must not be empty — files must land in a named source folder.")
+        current_id = root_id
+        for segment in path_segments:
+            current_id = self._get_or_create_folder(segment, parent_id=current_id)
+        return current_id
+
     def get_path(self, zone_name: str, filename: str = "") -> str:
         """
         The Abstraction Gateway: Returns the universal URI for any file.
