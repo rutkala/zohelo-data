@@ -54,7 +54,8 @@ class BaseIngestor:
                 source_id=source_id,
                 zone=tech["target_zone"],
                 ext=tech["file_extension"],
-                mode_tag=mode
+                mode_tag=mode,
+                tech=tech
             )
         elif mode == "full":
             strategy = load_config.get("pagination_strategy")
@@ -67,7 +68,8 @@ class BaseIngestor:
                     source_id=source_id,
                     zone=tech["target_zone"],
                     ext=tech["file_extension"],
-                    mode_tag=mode
+                    mode_tag=mode,
+                    tech=tech
                 )
             else:
                 raise NotImplementedError(f"Pagination strategy '{strategy}' is not supported.")
@@ -93,13 +95,14 @@ class BaseIngestor:
                 source_id=source_id,
                 zone=tech["target_zone"],
                 ext=tech["file_extension"],
-                mode_tag=date_tag
+                mode_tag=date_tag,
+                tech=tech
             )
 
             current_start = current_end + timedelta(days=1)
             time.sleep(0.1)  # Polite pacing to respect public API rate limits
 
-    def _fetch_and_store(self, url: str, params: dict, source_id: str, zone: str, ext: str, mode_tag: str):
+    def _fetch_and_store(self, url: str, params: dict, source_id: str, zone: str, ext: str, mode_tag: str, tech: dict = None):
         print(f"🌐 Requesting: {url} | Params: {params}")
         response = requests.get(url, params=params)
 
@@ -114,7 +117,11 @@ class BaseIngestor:
 
         if self.storage.backend == "gdrive":
             zone_id = self.zone_ids[zone]
-            file_metadata = {'name': filename, 'parents': [zone_id]}
+            if tech is None:
+                raise ValueError(f"'tech' config is required for GDrive backend (source: {source_id}).")
+            path_segments = [source_id]
+            target_folder_id = self.storage.get_or_create_nested_folder(path_segments, zone_id)
+            file_metadata = {'name': filename, 'parents': [target_folder_id]}
             media = MediaIoBaseUpload(
                 BytesIO(response.content),
                 mimetype="application/json" if ext == "json" else "application/octet-stream",
@@ -126,7 +133,7 @@ class BaseIngestor:
                 media_body=media,
                 fields='id'
             ).execute()
-            print(f"✅ Saved to Drive: {zone}/{filename}")
+            print(f"✅ Saved to Drive: {zone}/{source_id}/{filename}")
 
 
 if __name__ == "__main__":

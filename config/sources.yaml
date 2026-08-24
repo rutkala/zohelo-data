@@ -13,6 +13,8 @@ sources:
     technical:
       ingestion_type: "api_rest"
       auth_method: "none"
+      source_system: "NBP_API"
+      landing_subpath: ["exchange_rates_convertible"]
       target_zone: "01_landing"
       file_extension: "json"
     load_methods:
@@ -43,6 +45,8 @@ sources:
     technical:
       ingestion_type: "api_rest"
       auth_method: "none"
+      source_system: "NBP_API"
+      landing_subpath: ["exchange_rates_non_convertible"]
       target_zone: "01_landing"
       file_extension: "json"
     load_methods:
@@ -73,6 +77,8 @@ sources:
     technical:
       ingestion_type: "api_rest"
       auth_method: "none"
+      source_system: "NBP_API"
+      landing_subpath: ["exchange_rates_bid_ask"]
       target_zone: "01_landing"
       file_extension: "json"
     load_methods:
@@ -103,6 +109,8 @@ sources:
     technical:
       ingestion_type: "api_rest"
       auth_method: "none"
+      source_system: "NBP_API"
+      landing_subpath: ["gold_prices"]
       target_zone: "01_landing"
       file_extension: "json"
     load_methods:
