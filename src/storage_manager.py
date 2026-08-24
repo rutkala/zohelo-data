@@ -40,17 +40,19 @@ class StorageManager:
                 creds_dict, scopes=scopes
             )
         else:
-            oauth_client = creds_dict.get("installed") or creds_dict.get("web") or creds_dict
+            oauth_client = creds_dict.get("installed") or creds_dict.get("web")
+            if not oauth_client:
+                raise ValueError("OAuth client JSON must include an 'installed' or 'web' section.")
             client_id = oauth_client.get("client_id")
             client_secret = oauth_client.get("client_secret")
             token_uri = oauth_client.get("token_uri", "https://oauth2.googleapis.com/token")
+            if not client_id or not client_secret:
+                raise ValueError("OAuth client JSON is missing client_id/client_secret.")
 
             if is_github_actions:
                 refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
                 if not refresh_token:
                     raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
-                if not client_id or not client_secret:
-                    raise ValueError("OAuth client JSON is missing client_id/client_secret.")
 
                 credentials = UserCredentials(
                     token=None,
@@ -60,7 +62,10 @@ class StorageManager:
                     client_secret=client_secret,
                     scopes=scopes,
                 )
-                credentials.refresh(HttpLib2Request(httplib2.Http()))
+                try:
+                    credentials.refresh(HttpLib2Request(httplib2.Http()))
+                except Exception as exc:
+                    raise RuntimeError("Failed to refresh Google OAuth access token in GitHub Actions.") from exc
             else:
                 # Local development flow (interactive browser auth)
                 flow = InstalledAppFlow.from_client_config(creds_dict, scopes=scopes)
