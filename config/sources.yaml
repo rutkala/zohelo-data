@@ -1,0 +1,137 @@
+# config/sources.yaml
+sources:
+  # ==========================================
+  # SOURCE 1: NBP (National Bank of Poland)
+  # ==========================================
+  nbp_exchange_rates_table_a:
+    metadata:
+      domain: "finance"
+      category: "exchange_rates_convertible"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      source_name: "NBP"
+      description: "Table A: Average exchange rates of convertible foreign currencies."
+    technical:
+      ingestion_type: "api_rest"
+      auth_method: "none"
+      target_zone: "01_landing"
+      file_extension: "json"
+    load_methods:
+      incremental:
+        endpoint: "https://api.nbp.pl/api/exchangerates/tables/A/last/1"
+        params:
+          format: "json"
+        frequency: "daily"
+      full:
+        # NBP allows a max of 93 days per request. The engine will loop through this template.
+        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/A/{start_date}/{end_date}"
+        params:
+          format: "json"
+        pagination_strategy: "date_chunking"
+        max_chunk_days: 93
+        historical_start_date: "2002-01-02"
+
+  nbp_exchange_rates_table_b:
+    metadata:
+      domain: "finance"
+      category: "exchange_rates_non_convertible"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      source_name: "NBP"
+      description: "Table B: Average exchange rates of non-convertible currencies (Published Wednesdays)."
+    technical:
+      ingestion_type: "api_rest"
+      auth_method: "none"
+      target_zone: "01_landing"
+      file_extension: "json"
+    load_methods:
+      incremental:
+        endpoint: "https://api.nbp.pl/api/exchangerates/tables/B/last/1"
+        params:
+          format: "json"
+        frequency: "weekly"
+      full:
+        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/B/{start_date}/{end_date}"
+        params:
+          format: "json"
+        pagination_strategy: "date_chunking"
+        max_chunk_days: 93
+        historical_start_date: "2002-01-02"
+
+  nbp_exchange_rates_table_c:
+    metadata:
+      domain: "finance"
+      category: "exchange_rates_bid_ask"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      source_name: "NBP"
+      description: "Table C: Buy and sell prices of foreign currencies."
+    technical:
+      ingestion_type: "api_rest"
+      auth_method: "none"
+      target_zone: "01_landing"
+      file_extension: "json"
+    load_methods:
+      incremental:
+        endpoint: "https://api.nbp.pl/api/exchangerates/tables/C/last/1"
+        params:
+          format: "json"
+        frequency: "daily"
+      full:
+        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/C/{start_date}/{end_date}"
+        params:
+          format: "json"
+        pagination_strategy: "date_chunking"
+        max_chunk_days: 93
+        historical_start_date: "2002-01-02"
+
+  nbp_gold_prices:
+    metadata:
+      domain: "finance"
+      category: "commodities"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      source_name: "NBP"
+      description: "Current and historic prices of gold calculated at NBP."
+    technical:
+      ingestion_type: "api_rest"
+      auth_method: "none"
+      target_zone: "01_landing"
+      file_extension: "json"
+    load_methods:
+      incremental:
+        endpoint: "https://api.nbp.pl/api/cenyzlota/last/1"
+        params:
+          format: "json"
+        frequency: "daily"
+      full:
+        endpoint_template: "https://api.nbp.pl/api/cenyzlota/{start_date}/{end_date}"
+        params:
+          format: "json"
+        pagination_strategy: "date_chunking"
+        max_chunk_days: 93
+        historical_start_date: "2013-01-02"
+
+  # ==========================================
+  # SOURCE TEMPLATE: Bulk File (e.g., GUS / KRS)
+  # ==========================================
+  krs_registry_bulk_dump:
+    metadata:
+      domain: "corporate_registry"
+      category: "business_entities"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      source_name: "KRS"
+      description: "Full XML/CSV database dump of registered businesses."
+    technical:
+      ingestion_type: "bulk_file"
+      auth_method: "none"
+      target_zone: "01_landing"
+      file_extension: "zip"
+    load_methods:
+      incremental:
+        endpoint: "https://dane.gov.pl/api/krs/daily_diff.zip"
+        frequency: "daily"
+      full:
+        endpoint: "https://dane.gov.pl/api/krs/full_registry_dump.zip"
+        pagination_strategy: "none"
