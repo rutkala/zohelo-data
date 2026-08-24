@@ -114,7 +114,8 @@ class BaseIngestor:
 
         if self.storage.backend == "gdrive":
             zone_id = self.zone_ids[zone]
-            file_metadata = {'name': filename, 'parents': [zone_id]}
+            source_folder_id = self.storage._get_or_create_folder(source_id, parent_id=zone_id)
+            file_metadata = {'name': filename, 'parents': [source_folder_id]}
             media = MediaIoBaseUpload(
                 BytesIO(response.content),
                 mimetype="application/json" if ext == "json" else "application/octet-stream",
@@ -126,7 +127,7 @@ class BaseIngestor:
                 media_body=media,
                 fields='id'
             ).execute()
-            print(f"✅ Saved to Drive: {zone}/{filename}")
+            print(f"✅ Saved to Drive: {zone}/{source_id}/{filename}")
 
 
 if __name__ == "__main__":
