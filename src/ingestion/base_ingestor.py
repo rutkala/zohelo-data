@@ -1,32 +1,51 @@
+import os
+import sys
 import yaml
+import time
+import argparse
 import requests
 from datetime import datetime, timedelta
 from io import BytesIO
-import sys
-import os
+from googleapiclient.http import MediaIoBaseUpload
 
-# Ensure Python can find the storage_manager module
+# Ensure Python locates storage_manager from src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from storage_manager import StorageManager
 
+
 class BaseIngestor:
     def __init__(self, config_path="config/sources.yaml"):
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             self.catalog = yaml.safe_load(f).get("sources", {})
             
         self.storage = StorageManager(backend="gdrive")
-        # Securely fetch exact folder IDs for the current run
         self.zone_ids = self.storage.init_infrastructure()
 
-    def run_extraction(self, source_id: str, mode: str = "incremental"):
-        if source_id not in self.catalog:
-            raise ValueError(f"Source {source_id} missing from catalog.")
-            
+    def run(self, target_source: str = "all", mode: str = "incremental"):
+        """
+        Executes ingestion for 'all' sources or a specific 'source_id'.
+        """
+        if target_source.lower() == "all":
+            print(f"🚀 Running [{mode.upper()}] ingestion across ALL {len(self.catalog)} sources...")
+            for source_id in self.catalog.keys():
+                self.extract_and_load(source_id, mode=mode)
+        else:
+            if target_source not in self.catalog:
+                raise ValueError(f"Source '{target_source}' not found in catalog.")
+            self.extract_and_load(target_source, mode=mode)
+
+    def extract_and_load(self, source_id: str, mode: str = "incremental"):
         config = self.catalog[source_id]
         tech = config["technical"]
-        load_config = config["load_methods"].get(mode)
-        
-        print(f"📥 Starting [{mode}] load for {source_id}")
+        load_config = config.get("load_methods", {}).get(mode)
+
+        if not load_config:
+            print(f"⚠️ Mode '{mode}' not configured for '{source_id}'. Skipping.")
+            return
+
+        print(f"\n==================================================")
+        print(f"📥 Processing [{source_id}] | Mode: {mode.upper()}")
+        print(f"==================================================")
 
         if mode == "incremental":
             self._fetch_and_store(
@@ -35,18 +54,30 @@ class BaseIngestor:
                 source_id=source_id,
                 zone=tech["target_zone"],
                 ext=tech["file_extension"],
-                mode=mode
+                mode_tag=mode
             )
-            
-        elif mode == "full" and load_config.get("pagination_strategy") == "date_chunking":
-            self._run_date_chunking(source_id, tech, load_config)
+        elif mode == "full":
+            strategy = load_config.get("pagination_strategy")
+            if strategy == "date_chunking":
+                self._run_date_chunking(source_id, tech, load_config)
+            elif strategy == "none" or not strategy:
+                self._fetch_and_store(
+                    url=load_config["endpoint"],
+                    params=load_config.get("params", {}),
+                    source_id=source_id,
+                    zone=tech["target_zone"],
+                    ext=tech["file_extension"],
+                    mode_tag=mode
+                )
+            else:
+                raise NotImplementedError(f"Pagination strategy '{strategy}' is not supported.")
 
-    def _run_date_chunking(self, source_id, tech, load_config):
-        """Autonomously paginates through historical timelines in NBP-compliant chunks."""
+    def _run_date_chunking(self, source_id: str, tech: dict, load_config: dict):
+        """Paginates historical data in compliant date blocks (e.g., 93 days for NBP)."""
         start_date = datetime.strptime(load_config["historical_start_date"], "%Y-%m-%d")
         end_date = datetime.now()
-        max_days = load_config["max_chunk_days"]
-        
+        max_days = load_config.get("max_chunk_days", 90)
+
         current_start = start_date
         while current_start < end_date:
             current_end = min(current_start + timedelta(days=max_days - 1), end_date)
@@ -54,44 +85,66 @@ class BaseIngestor:
                 start_date=current_start.strftime("%Y-%m-%d"),
                 end_date=current_end.strftime("%Y-%m-%d")
             )
-            
-            suffix = f"full_{current_start.strftime('%Y%m%d')}_{current_end.strftime('%Y%m%d')}"
-            
+
+            date_tag = f"full_{current_start.strftime('%Y%m%d')}_{current_end.strftime('%Y%m%d')}"
             self._fetch_and_store(
                 url=url,
                 params=load_config.get("params", {}),
                 source_id=source_id,
                 zone=tech["target_zone"],
                 ext=tech["file_extension"],
-                mode=suffix
+                mode_tag=date_tag
             )
-            current_start = current_end + timedelta(days=1)
 
-    def _fetch_and_store(self, url, params, source_id, zone, ext, mode):
-        print(f"Fetching: {url}")
+            current_start = current_end + timedelta(days=1)
+            time.sleep(0.1)  # Polite pacing to respect public API rate limits
+
+    def _fetch_and_store(self, url: str, params: dict, source_id: str, zone: str, ext: str, mode_tag: str):
+        print(f"🌐 Requesting: {url} | Params: {params}")
         response = requests.get(url, params=params)
-        
+
         if response.status_code == 404:
-            print("No data available for this range.")
+            print(f"ℹ️ No data available (404 Not Found) for this range/endpoint.")
             return
-            
+
         response.raise_for_status()
-        
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{source_id}_{mode}_{timestamp}.{ext}"
-        
-        from googleapiclient.http import MediaIoBaseUpload
-        file_metadata = {'name': filename, 'parents': [self.zone_ids[zone]]}
-        media = MediaIoBaseUpload(BytesIO(response.content), mimetype="application/octet-stream", resumable=True)
-        
-        self.storage.drive_service.files().create(
-            body=file_metadata, 
-            media_body=media, 
-            fields='id'
-        ).execute()
-        print(f"✅ Saved {filename} to {zone}")
+        filename = f"{source_id}_{mode_tag}_{timestamp}.{ext}"
+
+        if self.storage.backend == "gdrive":
+            zone_id = self.zone_ids[zone]
+            file_metadata = {'name': filename, 'parents': [zone_id]}
+            media = MediaIoBaseUpload(
+                BytesIO(response.content),
+                mimetype="application/json" if ext == "json" else "application/octet-stream",
+                resumable=True
+            )
+
+            self.storage.drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            print(f"✅ Saved to Drive: {zone}/{filename}")
+
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Universal Data Ingestion Engine")
+    parser.add_argument(
+        "--source",
+        type=str,
+        default="all",
+        help="Specific source_id from sources.yaml or 'all' (default: all)"
+    )
+    parser.add_argument(
+        "--mode",
+        type=str,
+        choices=["incremental", "full"],
+        default="incremental",
+        help="Extraction mode: 'incremental' or 'full' (default: incremental)"
+    )
+    args = parser.parse_args()
+
     ingestor = BaseIngestor()
-    # Target execution for testing
-    ingestor.run_extraction("nbp_exchange_rates_table_a", mode="incremental")
+    ingestor.run(target_source=args.source, mode=args.mode)
