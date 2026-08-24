@@ -119,9 +119,7 @@ class BaseIngestor:
             zone_id = self.zone_ids[zone]
             if tech is None:
                 raise ValueError(f"'tech' config is required for GDrive backend (source: {source_id}).")
-            source_system = tech["source_system"]
-            landing_subpath = tech.get("landing_subpath", [])
-            path_segments = [source_system] + landing_subpath
+            path_segments = [source_id]
             target_folder_id = self.storage.get_or_create_nested_folder(path_segments, zone_id)
             file_metadata = {'name': filename, 'parents': [target_folder_id]}
             media = MediaIoBaseUpload(
@@ -135,8 +133,7 @@ class BaseIngestor:
                 media_body=media,
                 fields='id'
             ).execute()
-            path_display = "/".join(path_segments)
-            print(f"✅ Saved to Drive: {zone}/{path_display}/{filename}")
+            print(f"✅ Saved to Drive: {zone}/{source_id}/{filename}")
 
 
 if __name__ == "__main__":
