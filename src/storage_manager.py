@@ -1,9 +1,10 @@
 import os
 import json
 import tempfile
+import httplib2
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.oauth2.credentials import Credentials as UserCredentials
-from google.auth.transport.requests import Request
+from google_auth_httplib2 import Request as HttpLib2Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
@@ -29,22 +30,46 @@ class StorageManager:
             raise ValueError("Secret GCP_SERVICE_ACCOUNT_JSON not found in environment!")
         
         creds_dict = json.loads(creds_json)
+        scopes = ['https://www.googleapis.com/auth/drive']
+        is_github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
         
         # Check if it's an OAuth Client ID (installed app) or service account
         if creds_dict.get('type') == 'service_account':
             # Service Account flow (kept for backward compatibility if needed)
             credentials = ServiceAccountCredentials.from_service_account_info(
-                creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+                creds_dict, scopes=scopes
             )
         else:
-            # OAuth Client ID (installed app) flow - for your Google AI Pro account
-            # This is a desktop/CLI flow that works with GitHub Actions
-            flow = InstalledAppFlow.from_client_config(
-                creds_dict,
-                scopes=['https://www.googleapis.com/auth/drive']
-            )
-            # For headless (GitHub Actions), use run_local_server with port 0
-            credentials = flow.run_local_server(port=0, open_browser=False)
+            oauth_client = creds_dict.get("installed") or creds_dict.get("web")
+            if not oauth_client:
+                raise ValueError("OAuth client JSON must include an 'installed' or 'web' section.")
+            client_id = oauth_client.get("client_id")
+            client_secret = oauth_client.get("client_secret")
+            token_uri = oauth_client.get("token_uri", "https://oauth2.googleapis.com/token")
+            if not client_id or not client_secret:
+                raise ValueError("OAuth client JSON is missing client_id/client_secret.")
+
+            if is_github_actions:
+                refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+                if not refresh_token:
+                    raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
+
+                credentials = UserCredentials(
+                    token=None,
+                    refresh_token=refresh_token,
+                    token_uri=token_uri,
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    scopes=scopes,
+                )
+                try:
+                    credentials.refresh(HttpLib2Request(httplib2.Http()))
+                except Exception as exc:
+                    raise RuntimeError("Failed to refresh Google OAuth access token in GitHub Actions.") from exc
+            else:
+                # Local development flow (interactive browser auth)
+                flow = InstalledAppFlow.from_client_config(creds_dict, scopes=scopes)
+                credentials = flow.run_local_server(port=0)
         
         return build('drive', 'v3', credentials=credentials)
 
