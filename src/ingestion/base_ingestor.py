@@ -6,7 +6,9 @@ import argparse
 import requests
 from datetime import datetime, timedelta
 from io import BytesIO
+from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
 
 # Ensure Python locates storage_manager from src
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,7 +102,7 @@ class BaseIngestor:
             )
 
             current_start = current_end + timedelta(days=1)
-            time.sleep(0.1)  # Polite pacing to respect public API rate limits
+            time.sleep(1.5)  # Polite pacing to respect public API rate limits
 
     def _fetch_and_store(self, url: str, params: dict, source_id: str, zone: str, ext: str, mode_tag: str, tech: dict = None):
         print(f"🌐 Requesting: {url} | Params: {params}")
@@ -128,12 +130,38 @@ class BaseIngestor:
                 resumable=True
             )
 
-            self.storage.drive_service.files().create(
-                body=file_metadata,
-                media_body=media,
-                fields='id'
-            ).execute()
+            self._upload_to_drive(file_metadata, media)
             print(f"✅ Saved to Drive: {zone}/{source_id}/{filename}")
+
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(5),
+        retry=retry_if_exception(
+            lambda e: isinstance(e, HttpError) and (
+                e.resp.status == 429
+                or (
+                    e.resp.status == 403
+                    and any(
+                        err.get("reason") in ("rateLimitExceeded", "userRateLimitExceeded")
+                        for err in (e.error_details or [])
+                    )
+                )
+            )
+        ),
+        reraise=True,
+        before_sleep=lambda retry_state: print(
+            f"⚠️ Google Drive rate limit hit. Retrying in "
+            f"{retry_state.next_action.sleep:.1f}s "
+            f"(attempt {retry_state.attempt_number})..."
+        ),
+    )
+    def _upload_to_drive(self, file_metadata: dict, media: MediaIoBaseUpload):
+        """Upload a file to Google Drive with exponential backoff on rate-limit errors."""
+        self.storage.drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
 
 
 if __name__ == "__main__":
