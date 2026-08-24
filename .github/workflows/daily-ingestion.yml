@@ -1,14 +1,28 @@
-name: Daily Data Ingestion Pipeline
+name: Data Ingestion Pipeline
 
 on:
   schedule:
-    # Runs at 02:00 UTC every day
+    # Daily production incremental run at 02:00 UTC
     - cron: '0 2 * * *'
-  workflow_dispatch: # Allows manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Target Source ID (Use "all" or specific ID like "nbp_exchange_rates_table_a")'
+        required: true
+        default: 'all'
+        type: string
+      mode:
+        description: 'Ingestion Mode'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
 
 jobs:
-  ingest-data:
-    name: Execute Python Extraction
+  ingest:
+    name: Run Data Ingestion
     runs-on: ubuntu-latest
 
     steps:
@@ -26,8 +40,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run NBP Extraction
+      - name: Execute Ingestor
         env:
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
         run: |
-          python src/ingestion/base_ingestor.py
+          python src/ingestion/base_ingestor.py --source "${{ github.event.inputs.source || 'all' }}" --mode "${{ github.event.inputs.mode || 'incremental' }}"
