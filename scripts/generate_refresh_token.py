@@ -1,133 +1,99 @@
 #!/usr/bin/env python3
 """
-Google OAuth Refresh Token Generator
-Run this script to generate a refresh token for GitHub Actions
-
-Usage:
-1. Make sure your OAuth Client JSON is saved
-2. Run: python generate_refresh_token.py
-3. Follow the prompts
+Google OAuth Refresh Token Generator for GitHub Actions
+Works in Google Colab or locally with CLI
 """
 
 import json
 import sys
-import os
-from pathlib import Path
 
 try:
-    from google.auth.transport.requests import Request
     from google_auth_oauthlib.flow import InstalledAppFlow
 except ImportError:
-    print("❌ Required packages not installed!")
-    print("Run: pip install google-auth-oauthlib google-auth-httplib2")
-    sys.exit(1)
+    print("❌ Installing required packages...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "google-auth-oauthlib", "google-auth-httplib2", "-q"])
+    from google_auth_oauthlib.flow import InstalledAppFlow
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 def main():
     print("\n" + "="*80)
     print("GOOGLE OAUTH REFRESH TOKEN GENERATOR")
-    print("="*80)
-    print("\nThis tool will help you generate a refresh token for GitHub Actions.\n")
+    print("="*80 + "\n")
     
-    # Ask for OAuth Client JSON
-    print("📝 Please provide your OAuth Client JSON:")
-    print("   Option 1: Enter the file path to your JSON file")
-    print("   Option 2: Paste the JSON content directly\n")
+    # Get OAuth Client JSON
+    user_input = input("Paste your OAuth Client JSON: ").strip()
     
-    user_input = input("Enter file path or JSON (starts with '{' if pasting): ").strip()
-    
-    # Parse input
     try:
-        if user_input.startswith('{'):
-            # User pasted JSON
-            oauth_config = json.loads(user_input)
-        else:
-            # User provided file path
-            with open(user_input, 'r') as f:
-                oauth_config = json.load(f)
-        print("✅ OAuth Client JSON loaded successfully\n")
+        oauth_data = json.loads(user_input)
     except json.JSONDecodeError as e:
-        print(f"❌ Error parsing JSON: {e}")
-        sys.exit(1)
-    except FileNotFoundError:
-        print(f"❌ File not found: {user_input}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        sys.exit(1)
+        print(f"❌ Invalid JSON: {e}")
+        return
     
-    # Handle nested structure (Desktop OAuth clients have "installed" key)
-    if 'installed' in oauth_config:
-        oauth_config = oauth_config['installed']
-        print("✅ Detected Desktop OAuth Client format\n")
+    # Extract config from nested structure if needed
+    if 'installed' in oauth_data:
+        config = oauth_data['installed']
+        print("✅ Desktop OAuth Client detected")
+    else:
+        config = oauth_data
     
-    # Validate OAuth config
-    if 'client_id' not in oauth_config or 'client_secret' not in oauth_config:
-        print("❌ Invalid OAuth Client JSON: missing client_id or client_secret")
-        print(f"Available keys: {list(oauth_config.keys())}")
-        sys.exit(1)
+    # Validate
+    if 'client_id' not in config or 'client_secret' not in config:
+        print(f"❌ Missing credentials. Found keys: {list(config.keys())}")
+        return
+    
+    print("✅ OAuth config loaded successfully\n")
     
     try:
         # Create flow
-        flow = InstalledAppFlow.from_client_config(oauth_config, scopes=SCOPES)
+        flow = InstalledAppFlow.from_client_config(config, scopes=SCOPES)
         
-        # Generate authorization URL
+        # Generate auth URL
         auth_url, _ = flow.authorization_url(prompt='consent')
         
         print("="*80)
-        print("STEP 1: AUTHORIZE GOOGLE DRIVE ACCESS")
+        print("STEP 1: CLICK THIS LINK TO AUTHORIZE")
         print("="*80)
-        print("\n🔗 Click this link (or paste in browser):\n")
-        print(auth_url)
-        print("\n" + "-"*80)
-        print("After clicking the link:")
-        print("1. Sign in with your Google account (R.Utkala@gmail.com)")
-        print("2. Click 'Allow' when asked for permission")
-        print("3. You'll be redirected to localhost")
-        print("4. Copy the 'code' parameter from the URL")
-        print("-"*80 + "\n")
+        print(f"\n{auth_url}\n")
+        print("="*80)
+        print("After authorizing, copy the authorization code from the URL")
+        print("="*80 + "\n")
         
-        # Wait for authorization code
-        auth_code = input("Paste the authorization code here: ").strip()
-        
+        # Get auth code
+        auth_code = input("Paste authorization code: ").strip()
         if not auth_code:
-            print("❌ No authorization code provided")
-            sys.exit(1)
+            print("❌ No code provided")
+            return
         
-        print("\n⏳ Exchanging code for refresh token...")
+        print("\n⏳ Exchanging code for refresh token...\n")
         
-        # Exchange code for tokens
+        # Exchange code
         credentials = flow.fetch_token(authorization_response=f"http://localhost/?code={auth_code}")
         
         refresh_token = credentials.get('refresh_token')
-        
         if not refresh_token:
-            print("❌ No refresh token received. This might happen if:")
-            print("   - You already authorized this app before")
-            print("   - You need to revoke permission and try again")
-            print("\nTo revoke: https://myaccount.google.com/permissions")
-            sys.exit(1)
+            print("❌ No refresh token received")
+            print("   Try revoking permissions at: https://myaccount.google.com/permissions")
+            return
         
-        print("\n" + "="*80)
-        print("✅ SUCCESS! REFRESH TOKEN GENERATED")
         print("="*80)
-        print("\n🔑 Your Refresh Token:\n")
-        print(refresh_token)
-        print("\n" + "="*80)
-        print("NEXT STEPS:")
+        print("✅ SUCCESS!")
         print("="*80)
-        print("\n1. Copy the refresh token above")
-        print("2. Go to: https://github.com/rutkala/zohelo-data/settings/secrets/actions")
-        print("3. Click 'New repository secret'")
-        print("4. Name: GOOGLE_OAUTH_REFRESH_TOKEN")
-        print("5. Value: Paste your refresh token")
-        print("6. Click 'Add secret'")
-        print("\n7. Your workflows will now authenticate successfully! 🎉\n")
+        print(f"\n🔑 REFRESH TOKEN:\n\n{refresh_token}\n")
+        print("="*80)
+        print("NEXT: Add this to GitHub Secrets")
+        print("="*80)
+        print("\n1. Go to: https://github.com/rutkala/zohelo-data/settings/secrets/actions")
+        print("2. Click 'New repository secret'")
+        print("3. Name: GOOGLE_OAUTH_REFRESH_TOKEN")
+        print("4. Value: [paste token above]")
+        print("5. Click 'Add secret'\n")
         
     except Exception as e:
-        print(f"❌ Error during authorization: {e}")
-        sys.exit(1)
+        print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()
