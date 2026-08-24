@@ -1,7 +1,10 @@
 import os
 import json
 import tempfile
-from google.oauth2 import service_account
+from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials as UserCredentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 class StorageManager:
@@ -20,15 +23,29 @@ class StorageManager:
             self.drive_service = self._authenticate_gdrive()
 
     def _authenticate_gdrive(self):
-        """Authenticates using the GitHub Codespace/Actions Secret"""
+        """Authenticates using OAuth Client credentials from environment"""
         creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
         if not creds_json:
             raise ValueError("Secret GCP_SERVICE_ACCOUNT_JSON not found in environment!")
         
         creds_dict = json.loads(creds_json)
-        credentials = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=['https://www.googleapis.com/auth/drive']
-        )
+        
+        # Check if it's an OAuth Client ID (installed app) or service account
+        if creds_dict.get('type') == 'service_account':
+            # Service Account flow (kept for backward compatibility if needed)
+            credentials = ServiceAccountCredentials.from_service_account_info(
+                creds_dict, scopes=['https://www.googleapis.com/auth/drive']
+            )
+        else:
+            # OAuth Client ID (installed app) flow - for your Google AI Pro account
+            # This is a desktop/CLI flow that works with GitHub Actions
+            flow = InstalledAppFlow.from_client_secrets_string(
+                json.dumps(creds_dict),
+                scopes=['https://www.googleapis.com/auth/drive']
+            )
+            # For headless (GitHub Actions), use run_local_server with port 0
+            credentials = flow.run_local_server(port=0, open_browser=False)
+        
         return build('drive', 'v3', credentials=credentials)
 
     def _get_or_create_folder(self, folder_name, parent_id=None):
