@@ -1,7 +1,6 @@
-# config/sources.yaml
 sources:
   # ==========================================
-  # SOURCE 1: NBP (National Bank of Poland)
+  # SOURCE 1: NBP Table A (Convertible FX)
   # ==========================================
   nbp_exchange_rates_table_a:
     metadata:
@@ -23,7 +22,6 @@ sources:
           format: "json"
         frequency: "daily"
       full:
-        # NBP allows a max of 93 days per request. The engine will loop through this template.
         endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/A/{start_date}/{end_date}"
         params:
           format: "json"
@@ -31,6 +29,9 @@ sources:
         max_chunk_days: 93
         historical_start_date: "2002-01-02"
 
+  # ==========================================
+  # SOURCE 2: NBP Table B (Non-Convertible FX)
+  # ==========================================
   nbp_exchange_rates_table_b:
     metadata:
       domain: "finance"
@@ -58,6 +59,9 @@ sources:
         max_chunk_days: 93
         historical_start_date: "2002-01-02"
 
+  # ==========================================
+  # SOURCE 3: NBP Table C (Bid / Ask FX)
+  # ==========================================
   nbp_exchange_rates_table_c:
     metadata:
       domain: "finance"
@@ -85,6 +89,9 @@ sources:
         max_chunk_days: 93
         historical_start_date: "2002-01-02"
 
+  # ==========================================
+  # SOURCE 4: NBP Gold Prices
+  # ==========================================
   nbp_gold_prices:
     metadata:
       domain: "finance"
@@ -92,7 +99,7 @@ sources:
       geography: "poland"
       provider_type: "public_governed_official"
       source_name: "NBP"
-      description: "Current and historic prices of gold calculated at NBP."
+      description: "Current and historic prices of gold calculated by NBP."
     technical:
       ingestion_type: "api_rest"
       auth_method: "none"
@@ -111,27 +118,3 @@ sources:
         pagination_strategy: "date_chunking"
         max_chunk_days: 93
         historical_start_date: "2013-01-02"
-
-  # ==========================================
-  # SOURCE TEMPLATE: Bulk File (e.g., GUS / KRS)
-  # ==========================================
-  krs_registry_bulk_dump:
-    metadata:
-      domain: "corporate_registry"
-      category: "business_entities"
-      geography: "poland"
-      provider_type: "public_governed_official"
-      source_name: "KRS"
-      description: "Full XML/CSV database dump of registered businesses."
-    technical:
-      ingestion_type: "bulk_file"
-      auth_method: "none"
-      target_zone: "01_landing"
-      file_extension: "zip"
-    load_methods:
-      incremental:
-        endpoint: "https://dane.gov.pl/api/krs/daily_diff.zip"
-        frequency: "daily"
-      full:
-        endpoint: "https://dane.gov.pl/api/krs/full_registry_dump.zip"
-        pagination_strategy: "none"
