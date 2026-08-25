@@ -29,8 +29,55 @@ class BaseIngestor:
         """
         if target_source.lower() == "all":
             print(f"🚀 Running [{mode.upper()}] ingestion across ALL {len(self.catalog)} sources...")
+            run_summary = []
             for source_id in self.catalog.keys():
-                self.extract_and_load(source_id, mode=mode)
+                tech = self.catalog[source_id].get("technical", {})
+                zone = tech.get("target_zone", "unknown")
+                source_system = tech.get("source_system", source_id)
+                subpath_parts = tech.get("landing_subpath", [])
+                target_landing_folder = "/".join([zone, source_system] + subpath_parts)
+                try:
+                    self.extract_and_load(source_id, mode=mode)
+                    run_summary.append({
+                        "source": source_id,
+                        "status": "✅ Success",
+                        "folder": target_landing_folder,
+                        "error": "-",
+                        "failed": False,
+                    })
+                except Exception as e:
+                    print(f"❌ Error processing '{source_id}': {e}")
+                    run_summary.append({
+                        "source": source_id,
+                        "status": "❌ Failed",
+                        "folder": target_landing_folder,
+                        "error": str(e),
+                        "failed": True,
+                    })
+
+            # Generate Markdown summary table
+            def _escape_md(value: str) -> str:
+                return value.replace("|", "\\|")
+
+            md_lines = [
+                "## Ingestion Run Summary",
+                "",
+                "| Source | Status | Landing Folder | Error |",
+                "| --- | --- | --- | --- |",
+            ]
+            for row in run_summary:
+                md_lines.append(
+                    f"| {_escape_md(row['source'])} | {row['status']} "
+                    f"| {_escape_md(row['folder'])} | {_escape_md(row['error'])} |"
+                )
+            md_table = "\n".join(md_lines) + "\n"
+
+            if "GITHUB_STEP_SUMMARY" in os.environ:
+                with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+                    f.write(md_table)
+
+            if any(row["failed"] for row in run_summary):
+                sys.exit(1)
         else:
             if target_source not in self.catalog:
                 raise ValueError(f"Source '{target_source}' not found in catalog.")
