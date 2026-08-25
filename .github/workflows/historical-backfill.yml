@@ -43,3 +43,10 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: |
           python src/ingestion/base_ingestor.py --source "${{ github.event.inputs.source_id }}" --mode "${{ github.event.inputs.mode }}"
+
+      - name: Run Bronze Layer Transformation
+        env:
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          python src/transformation/bronze_builder.py
