@@ -93,16 +93,25 @@ def process_bronze():
         local_json = f"/tmp/{file_id}_{stem}.json"
         local_parquet = f"/tmp/{file_id}_{stem}.parquet"
 
+        # Guard: ensure constructed paths stay within /tmp and contain no quotes
+        # (DuckDB COPY does not accept parameterised output paths)
+        if not local_parquet.startswith("/tmp/") or "'" in local_parquet or '"' in local_parquet:
+            print(f"  ❌ Skipping {file_name}: unsafe temp path derived from file metadata.")
+            fail_count += 1
+            continue
+
         try:
             # Download JSON from Drive to local disk
             print(f"  ⬇️  Downloading {file_name}...")
             _download_file(drive, file_id, local_json)
 
-            # Convert JSON → Parquet via DuckDB (use parameters to avoid SQL injection)
+            # Convert JSON → Parquet via DuckDB
+            # Note: DuckDB COPY does not support parameterised output paths;
+            # local_parquet is a controlled /tmp path so interpolation is safe.
             print(f"  🔄 Converting {file_name} to Parquet...")
             con.execute(
-                "COPY (SELECT * FROM read_json_auto(?)) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",
-                [local_json, local_parquet],
+                f"COPY (SELECT * FROM read_json_auto(?)) TO '{local_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)",
+                [local_json],
             )
 
             # Upload Parquet to 02_bronze
