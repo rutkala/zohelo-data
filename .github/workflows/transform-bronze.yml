@@ -11,6 +11,8 @@ jobs:
   transform:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     name: Run Bronze Layer Transformation
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     steps:
