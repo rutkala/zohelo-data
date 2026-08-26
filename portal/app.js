@@ -232,6 +232,8 @@ async function loadSelectedFileAsActiveLayer() {
   const escaped = escapeSqlLiteral(sanitizedName);
   if (file.name.toLowerCase().endsWith(".json")) {
     await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_json_auto('${escaped}')`);
+  } else if (file.name.toLowerCase().endsWith(".csv")) {
+    await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_csv_auto('${escaped}')`);
   } else {
     await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_parquet('${escaped}')`);
   }
