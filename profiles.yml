@@ -1,0 +1,7 @@
+zohelo_data:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: /tmp/zohelo_docs.duckdb
+      threads: 4

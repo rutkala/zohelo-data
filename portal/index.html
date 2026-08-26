@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zohelo Data Portal</title>
+  <link rel="stylesheet" href="./style.css" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Zohelo Data Portal</h1>
+      <p>Unified SQL Console, Catalog, and Lineage for all Medallion layers.</p>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="Portal Views">
+      <button class="tab active" data-tab="sql" role="tab" aria-selected="true">SQL Console</button>
+      <button class="tab" data-tab="catalog" role="tab" aria-selected="false">Catalog &amp; Lineage</button>
+    </div>
+
+    <section id="tab-sql" class="tab-panel active" role="tabpanel">
+      <div class="card auth-card">
+        <h2>Google Drive Access</h2>
+        <div class="auth-grid">
+          <label>
+            OAuth Client ID
+            <input id="clientIdInput" type="text" placeholder="Google OAuth Client ID" />
+          </label>
+          <button id="googleSignInBtn" type="button">Sign in with Google</button>
+          <label>
+            Manual Access Token Fallback
+            <input id="manualTokenInput" type="password" placeholder="Paste OAuth access token" />
+          </label>
+          <button id="useManualTokenBtn" type="button">Use Token</button>
+        </div>
+        <p id="authStatus" class="status">Not authenticated.</p>
+      </div>
+
+      <div class="card">
+        <h2>Lakehouse Explorer</h2>
+        <div class="controls">
+          <label for="layerSelect">Layer</label>
+          <select id="layerSelect">
+            <option value="01_landing">01_landing</option>
+            <option value="02_bronze" selected>02_bronze</option>
+            <option value="03_silver">03_silver</option>
+            <option value="04_gold">04_gold</option>
+            <option value="05_archive">05_archive</option>
+          </select>
+          <button id="refreshFilesBtn" type="button">Refresh Files</button>
+          <button id="loadFileBtn" type="button">Load Selected File</button>
+        </div>
+        <ul id="fileList" class="file-list"></ul>
+        <p id="fileState" class="status">Authenticate to list files for the selected layer.</p>
+      </div>
+
+      <div class="card">
+        <h2>SQL Editor</h2>
+        <div class="controls">
+          <button id="defaultQueryBtn" type="button">Use Default Query</button>
+          <button id="runQueryBtn" type="button">Run Query</button>
+        </div>
+        <textarea id="sqlEditor" rows="8">SELECT * FROM active_layer LIMIT 50;</textarea>
+        <p id="queryMeta" class="status">DuckDB-WASM is initializing…</p>
+        <div id="resultsWrapper" class="results-wrapper"></div>
+      </div>
+    </section>
+
+    <section id="tab-catalog" class="tab-panel" role="tabpanel">
+      <div class="card catalog-card">
+        <h2>Data Catalog &amp; Lineage</h2>
+        <iframe id="catalogFrame" src="./docs/index.html" title="dbt Catalog and Lineage"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

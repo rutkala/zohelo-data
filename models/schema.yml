@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "02_bronze layer datasets prepared from landing ingestion outputs."
+    tables:
+      - name: nbp_exchange_rates_table_a
+        description: "NBP exchange rates table A data in bronze format."
+
+  - name: silver
+    description: "03_silver layer for cleaned and standardized staging datasets."
+    tables:
+      - name: stg_nbp_exchange_rates
+        description: "Staging-level cleaned exchange rates model output."
+
+  - name: gold
+    description: "04_gold layer for curated marts and business-ready datasets."
+    tables:
+      - name: mart_exchange_rates_daily
+        description: "Daily exchange rate mart (placeholder until mart models are built)."
+
+models:
+  - name: stg_nbp_exchange_rates
+    description: "Baseline staging model for NBP exchange rates used for docs and lineage."

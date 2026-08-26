@@ -1,0 +1,143 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #0b1020;
+  color: #e6edf3;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+header h1 {
+  margin-bottom: 0.25rem;
+}
+
+header p {
+  margin-top: 0;
+  color: #9da7b3;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.tab {
+  border: 1px solid #2f3b4e;
+  background: #141b2d;
+  color: inherit;
+  padding: 0.5rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tab.active {
+  background: #1f2a44;
+  border-color: #4a73d9;
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.card {
+  border: 1px solid #2f3b4e;
+  border-radius: 12px;
+  background: #111827;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.controls,
+.auth-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 220px;
+}
+
+input,
+select,
+textarea,
+button {
+  border-radius: 8px;
+  border: 1px solid #3c4b64;
+  background: #0f172a;
+  color: inherit;
+  padding: 0.45rem 0.6rem;
+}
+
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+button {
+  cursor: pointer;
+}
+
+.file-list {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.file-list li {
+  padding: 0.3rem 0;
+}
+
+.status {
+  color: #9da7b3;
+  margin: 0.6rem 0 0;
+}
+
+.results-wrapper {
+  margin-top: 0.75rem;
+  overflow: auto;
+  max-height: 380px;
+  border: 1px solid #2f3b4e;
+  border-radius: 8px;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.results-table th,
+.results-table td {
+  border-bottom: 1px solid #2f3b4e;
+  padding: 0.4rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.catalog-card iframe {
+  width: 100%;
+  height: 78vh;
+  border: 1px solid #2f3b4e;
+  border-radius: 8px;
+  background: #fff;
+}
