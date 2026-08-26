@@ -181,6 +181,37 @@ function renderFiles(files) {
   setStatus(ui.fileState, `Loaded ${files.length} file(s) from ${ui.layerSelect.value}.`);
 }
 
+async function listFilesInFolder(folderId) {
+  const files = [];
+  const subfolderIds = [];
+
+  let pageToken = null;
+  do {
+    const query = `'${folderId}' in parents and trashed=false`;
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime),nextPageToken&pageSize=200`;
+    if (pageToken) {
+      url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    }
+    const response = await driveRequest(url);
+    const payload = await response.json();
+
+    for (const item of payload.files || []) {
+      if (item.mimeType === "application/vnd.google-apps.folder") {
+        subfolderIds.push(item.id);
+      } else {
+        const lc = item.name.toLowerCase();
+        if (lc.endsWith(".parquet") || lc.endsWith(".json")) {
+          files.push(item);
+        }
+      }
+    }
+    pageToken = payload.nextPageToken || null;
+  } while (pageToken);
+
+  const nested = await Promise.all(subfolderIds.map((id) => listFilesInFolder(id)));
+  return nested.reduce((acc, arr) => acc.concat(arr), files);
+}
+
 async function refreshFiles() {
   if (!oauthToken) {
     setStatus(ui.fileState, "Authenticate first to browse Google Drive files.");
@@ -188,6 +219,7 @@ async function refreshFiles() {
   }
 
   const layer = ui.layerSelect.value;
+  setStatus(ui.fileState, `Searching for files in ${layer}…`);
   const folderId = await resolveLayerFolderId(layer);
   if (!folderId) {
     currentFiles = [];
@@ -195,11 +227,8 @@ async function refreshFiles() {
     return;
   }
 
-  const query = `'${folderId}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`;
-  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime)&orderBy=modifiedTime desc&pageSize=200`;
-  const response = await driveRequest(url);
-  const payload = await response.json();
-  currentFiles = payload.files || [];
+  currentFiles = await listFilesInFolder(folderId);
+  currentFiles.sort((a, b) => a.name.localeCompare(b.name));
   renderFiles(currentFiles);
 }
 
