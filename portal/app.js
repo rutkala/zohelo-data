@@ -163,13 +163,20 @@ function renderFiles(files) {
   const fragment = document.createDocumentFragment();
   files.forEach((file, index) => {
     const li = document.createElement("li");
-    const id = `file-${index}`;
-    li.innerHTML = `
-      <label>
-        <input type="radio" name="selectedFile" id="${id}" value="${file.id}" ${index === 0 ? "checked" : ""}>
-        <span>${file.name}</span>
-      </label>
-    `;
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "selectedFile";
+    input.id = `file-${index}`;
+    input.value = file.id;
+    input.checked = index === 0;
+
+    const span = document.createElement("span");
+    span.textContent = file.name;
+
+    label.appendChild(input);
+    label.appendChild(span);
+    li.appendChild(label);
     fragment.appendChild(li);
   });
   ui.fileList.appendChild(fragment);
@@ -199,6 +206,11 @@ async function refreshFiles() {
 }
 
 async function loadSelectedFileAsActiveLayer() {
+  if (!db || !conn) {
+    setStatus(ui.fileState, "DuckDB is still initializing. Please retry in a moment.");
+    return;
+  }
+
   const selected = document.querySelector("input[name='selectedFile']:checked");
   if (!selected) {
     setStatus(ui.fileState, "Select a file first.");
@@ -274,6 +286,11 @@ function renderResults(columns, rows) {
 }
 
 async function runQuery() {
+  if (!conn) {
+    setStatus(ui.queryMeta, "DuckDB is still initializing. Please retry in a moment.");
+    return;
+  }
+
   const sql = ui.sqlEditor.value.trim();
   if (!sql) {
     setStatus(ui.queryMeta, "Enter a SQL query to run.");

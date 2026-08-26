@@ -43,8 +43,7 @@ jobs:
         run: |
           mkdir -p portal/docs
           cp target/index.html portal/docs/index.html
-          cp target/manifest.json portal/docs/manifest.json
-          cp target/catalog.json portal/docs/catalog.json
+          cp target/*.json portal/docs/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
