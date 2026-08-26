@@ -132,9 +132,13 @@ async function driveRequest(url) {
 }
 
 async function findFolderIdByName(name, parentId = "root") {
+  if (name.includes("'")) {
+    throw new Error("Folder names containing single quotes are not supported by this query path.");
+  }
+
   const query = [
     `mimeType='application/vnd.google-apps.folder'`,
-    `name='${name.replaceAll("'", "\\'")}'`,
+    `name='${name}'`,
     `'${parentId}' in parents`,
     "trashed=false"
   ].join(" and ");
@@ -225,7 +229,7 @@ async function loadSelectedFileAsActiveLayer() {
 
   const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
   const buffer = new Uint8Array(await response.arrayBuffer());
-  const sanitizedName = `${file.id}_${file.name}`.replaceAll("/", "_");
+  const sanitizedName = `${file.id}_${file.name}`.replace(/[^a-zA-Z0-9._-]/g, "_");
 
   await db.registerFileBuffer(sanitizedName, buffer);
 
@@ -299,6 +303,7 @@ async function runQuery() {
     return;
   }
 
+  ui.resultsWrapper.innerHTML = "";
   const started = performance.now();
   const result = await conn.query(sql);
   const columns = result.schema.fields.map((field) => field.name);
