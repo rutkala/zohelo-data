@@ -1,6 +1,7 @@
 import os
 import sys
 import duckdb
+from datetime import datetime, timezone
 from io import BytesIO
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 
@@ -15,8 +16,14 @@ def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
     return storage._get_or_create_folder(zone_name, parent_id=master_id)
 
 
-def _list_files_recursively(drive_service, folder_id: str) -> list:
-    """Returns all non-folder files under a given Drive folder (recursive)."""
+def _list_files_recursively(drive_service, folder_id: str, subfolder_name: str = "") -> list:
+    """Returns all non-folder files under a given Drive folder (recursive).
+
+    Each entry is a tuple of (file_item_dict, subfolder_name) where
+    ``subfolder_name`` is the name of the immediate child subfolder of the
+    root landing folder that contains the file (empty string when the file
+    sits directly in the root).
+    """
     results = []
     page_token = None
     while True:
@@ -29,9 +36,11 @@ def _list_files_recursively(drive_service, folder_id: str) -> list:
         ).execute()
         for item in response.get("files", []):
             if item["mimeType"] == "application/vnd.google-apps.folder":
-                results.extend(_list_files_recursively(drive_service, item["id"]))
+                # The first level of recursion establishes the subfolder name.
+                child_subfolder = item["name"] if not subfolder_name else subfolder_name
+                results.extend(_list_files_recursively(drive_service, item["id"], child_subfolder))
             else:
-                results.append(item)
+                results.append((item, subfolder_name))
         page_token = response.get("nextPageToken")
         if not page_token:
             break
@@ -84,7 +93,9 @@ def process_bronze():
     success_count = 0
     fail_count = 0
 
-    for file_item in files:
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    for file_item, subfolder_name in files:
         file_id = file_item["id"]
         file_name = file_item["name"]
         stem = os.path.splitext(file_name)[0]
@@ -114,14 +125,20 @@ def process_bronze():
                 [local_json],
             )
 
-            # Upload Parquet to 02_bronze
+            # Resolve destination folder in 02_bronze (preserving subfolder structure)
             parquet_name = f"{stem}.parquet"
-            print(f"  ⬆️  Uploading {parquet_name} to 02_bronze...")
-            _upload_file(drive, local_parquet, parquet_name, bronze_id)
+            if subfolder_name:
+                dest_bronze_id = storage.get_or_create_nested_folder([subfolder_name], root_id=bronze_id)
+            else:
+                dest_bronze_id = bronze_id
+            print(f"  ⬆️  Uploading {parquet_name} to 02_bronze/{subfolder_name or ''}...")
+            _upload_file(drive, local_parquet, parquet_name, dest_bronze_id)
 
-            # Move original JSON from 01_landing to 05_archive
-            print(f"  📦 Archiving {file_name} to 05_archive...")
-            _move_file(drive, file_id, landing_id, archive_id)
+            # Resolve destination folder in 05_archive (date + subfolder partitioning)
+            archive_segments = [today, subfolder_name] if subfolder_name else [today]
+            dest_archive_id = storage.get_or_create_nested_folder(archive_segments, root_id=archive_id)
+            print(f"  📦 Archiving {file_name} to 05_archive/{'/'.join(archive_segments)}/...")
+            _move_file(drive, file_id, landing_id, dest_archive_id)
 
             success_count += 1
             print(f"  ✅ {file_name} processed successfully.")
