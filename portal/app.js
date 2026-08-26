@@ -336,6 +336,7 @@ function initQueryActions() {
   ui.runQueryBtn.addEventListener("click", () => {
     runQuery().catch((error) => {
       setStatus(ui.queryMeta, `Query failed: ${error.message}`);
+      ui.resultsWrapper.textContent = `Query failed: ${error.message}`;
     });
   });
 
