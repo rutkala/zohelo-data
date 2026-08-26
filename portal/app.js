@@ -1,5 +1,6 @@
 const LAYERS = ["01_landing", "02_bronze", "03_silver", "04_gold", "05_archive"];
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const GOOGLE_CLIENT_ID = "196210210522-9cqf8ie1nddnbpldf5e48eernuiffr9c.apps.googleusercontent.com";
 const DRIVE_ROOT = "zohelo-data";
 
 let db;
@@ -15,7 +16,6 @@ const ui = {
     sql: document.getElementById("tab-sql"),
     catalog: document.getElementById("tab-catalog")
   },
-  clientIdInput: document.getElementById("clientIdInput"),
   manualTokenInput: document.getElementById("manualTokenInput"),
   googleSignInBtn: document.getElementById("googleSignInBtn"),
   useManualTokenBtn: document.getElementById("useManualTokenBtn"),
@@ -72,19 +72,13 @@ async function initDuckDB() {
 
 function initAuth() {
   ui.googleSignInBtn.addEventListener("click", () => {
-    const clientId = ui.clientIdInput.value.trim();
-    if (!clientId) {
-      setStatus(ui.authStatus, "Enter OAuth Client ID before signing in.");
-      return;
-    }
-
     if (!window.google?.accounts?.oauth2) {
       setStatus(ui.authStatus, "Google Identity Services failed to load.");
       return;
     }
 
     tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
+      client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
       callback: (response) => {
         if (response?.access_token) {
