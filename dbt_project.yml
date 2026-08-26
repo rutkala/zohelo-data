@@ -1,0 +1,16 @@
+name: zohelo_data
+version: "1.0.0"
+config-version: 2
+
+profile: zohelo_data
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  zohelo_data:
+    staging:
+      +materialized: view
