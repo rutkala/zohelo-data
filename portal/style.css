@@ -141,3 +141,11 @@ button {
   border-radius: 8px;
   background: #fff;
 }
+
+.section-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #7a8fa6;
+  margin: 0.75rem 0 0.25rem;
+}
