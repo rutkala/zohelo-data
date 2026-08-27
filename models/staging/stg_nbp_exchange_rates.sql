@@ -1,7 +1,27 @@
-with source_data as (
+with bronze_data as (
     select *
-    from {{ source('bronze', 'nbp_exchange_rates_table_a') }}
+    from read_parquet(
+        '/tmp/zohelo_data/02_bronze/nbp_exchange_rates_table_a/*.parquet',
+        union_by_name = true
+    )
+),
+flattened_rates as (
+    select
+        cast(effectiveDate as date) as effectiveDate,
+        rate_item.currency as currency,
+        rate_item.code as code,
+        rate_item.mid as mid
+    from bronze_data
+    cross join unnest(rates) as rate(rate_item)
 )
 
-select *
-from source_data
+select
+    effectiveDate,
+    currency,
+    code,
+    mid
+from flattened_rates
+qualify row_number() over (
+    partition by code, effectiveDate
+    order by effectiveDate desc
+) = 1

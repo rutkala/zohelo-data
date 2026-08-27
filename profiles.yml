@@ -3,5 +3,5 @@ zohelo_data:
   outputs:
     dev:
       type: duckdb
-      path: /tmp/zohelo_docs.duckdb
+      path: "{{ env_var('ZOHELO_DUCKDB_PATH', '/tmp/zohelo_docs.duckdb') }}"
       threads: 4
