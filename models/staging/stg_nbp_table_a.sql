@@ -1,7 +1,7 @@
 with bronze_data as (
     select *
     from read_parquet(
-        '{{ var("bronze_parquet_path", "/tmp/zohelo_data/02_bronze/nbp_exchange_rates_table_a/*.parquet") }}',
+        '/tmp/zohelo_data/02_bronze/nbp_exchange_rates_table_a/*.parquet',
         union_by_name = true,
         filename = true
     )

@@ -6,10 +6,49 @@ sources:
     tables:
       - name: nbp_exchange_rates_table_a
         description: "NBP exchange rates table A data in bronze format."
+      - name: nbp_exchange_rates_table_b
+        description: "NBP exchange rates table B data in bronze format."
+      - name: nbp_exchange_rates_table_c
+        description: "NBP exchange rates table C data in bronze format."
 
 models:
-  - name: stg_nbp_exchange_rates
-    description: "03_silver baseline staging model for NBP exchange rates used for docs and lineage."
+  - name: stg_nbp_table_a
+    description: "03_silver staging model for NBP exchange rates table A with flattened and deduplicated average rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+      - name: mid
+        description: "Average exchange rate for the currency."
+
+  - name: stg_nbp_table_b
+    description: "03_silver staging model for NBP exchange rates table B with flattened and deduplicated average rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+      - name: mid
+        description: "Average exchange rate for the currency."
+
+  - name: stg_nbp_table_c
+    description: "03_silver staging model for NBP exchange rates table C with flattened and deduplicated bid/ask rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+      - name: bid
+        description: "Buy rate for the currency."
+      - name: ask
+        description: "Sell rate for the currency."
 
   - name: mart_exchange_rates_daily
-    description: "04_gold baseline mart model built from silver staging exchange rates."
+    description: "04_gold baseline mart model built from silver staging exchange rates table A."

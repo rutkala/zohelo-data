@@ -1,11 +1,10 @@
 import os
-import json
 import site
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import duckdb
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
@@ -15,15 +14,12 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from storage_manager import StorageManager
 
 
-SOURCE_FOLDER = "nbp_exchange_rates_table_a"
 LOCAL_ROOT = Path("/tmp/zohelo_data")
-LOCAL_BRONZE_DIR = LOCAL_ROOT / "02_bronze" / SOURCE_FOLDER
-LOCAL_SILVER_DIR = LOCAL_ROOT / "03_silver" / SOURCE_FOLDER
+LOCAL_BRONZE_DIR = LOCAL_ROOT / "02_bronze"
+LOCAL_SILVER_DIR = LOCAL_ROOT / "03_silver"
 LOCAL_DUCKDB_PATH = LOCAL_ROOT / "silver_builder.duckdb"
-OUTPUT_FILE = "nbp_exchange_rates_table_a.parquet"
-MODEL_NAME = "stg_nbp_exchange_rates"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BRONZE_PARQUET_GLOB = str(LOCAL_BRONZE_DIR / "*.parquet")
+STAGING_DIR = REPO_ROOT / "models" / "staging"
 
 
 def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
@@ -53,6 +49,27 @@ def _list_files_recursively(drive_service, folder_id: str, relative_path: str = 
         page_token = response.get("nextPageToken")
         if not page_token:
             return results
+
+
+def _list_child_folders(drive_service, folder_id: str) -> List[dict]:
+    folders = []
+    page_token = None
+
+    while True:
+        response = drive_service.files().list(
+            q=(
+                f"'{folder_id}' in parents and "
+                "mimeType='application/vnd.google-apps.folder' and trashed=false"
+            ),
+            spaces="drive",
+            fields="nextPageToken, files(id, name)",
+            pageToken=page_token,
+        ).execute()
+
+        folders.extend(response.get("files", []))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            return sorted(folders, key=lambda item: item["name"])
 
 
 def _download_file(drive_service, file_id: str, local_path: Path):
@@ -99,25 +116,41 @@ def _reset_local_workspace():
     LOCAL_DUCKDB_PATH.unlink(missing_ok=True)
 
 
-def _download_bronze_files(storage: StorageManager) -> int:
+def _download_bronze_files(storage: StorageManager) -> Dict[str, int]:
     bronze_zone_id = _get_zone_id(storage, "02_bronze")
-    bronze_source_id = storage.get_or_create_nested_folder([SOURCE_FOLDER], root_id=bronze_zone_id)
-    files = _list_files_recursively(storage.drive_service, bronze_source_id)
+    downloaded_by_dataset: Dict[str, int] = {}
 
-    downloaded = 0
-    for file_item, relative_path in files:
-        if not file_item["name"].endswith(".parquet"):
-            continue
+    for folder in _list_child_folders(storage.drive_service, bronze_zone_id):
+        dataset_name = folder["name"]
+        files = _list_files_recursively(storage.drive_service, folder["id"])
 
-        local_path = LOCAL_BRONZE_DIR / relative_path
-        print(f"⬇️  Downloading 02_bronze/{SOURCE_FOLDER}/{relative_path}...")
-        _download_file(storage.drive_service, file_item["id"], local_path)
-        downloaded += 1
+        for file_item, relative_path in files:
+            if not file_item["name"].endswith(".parquet"):
+                continue
 
-    return downloaded
+            local_path = LOCAL_BRONZE_DIR / dataset_name / relative_path
+            print(f"⬇️  Downloading 02_bronze/{dataset_name}/{relative_path}...")
+            _download_file(storage.drive_service, file_item["id"], local_path)
+            downloaded_by_dataset[dataset_name] = downloaded_by_dataset.get(dataset_name, 0) + 1
+
+    return downloaded_by_dataset
 
 
-def _run_dbt() -> Path:
+def _discover_staging_models(dataset_names: List[str]) -> List[str]:
+    available_models = {path.stem for path in STAGING_DIR.glob("stg_nbp_table_*.sql")}
+    selected_models = []
+
+    for dataset_name in sorted(dataset_names):
+        model_name = dataset_name.replace("nbp_exchange_rates_", "stg_nbp_", 1)
+        if model_name in available_models:
+            selected_models.append(model_name)
+        else:
+            print(f"ℹ️  No staging model found for 02_bronze/{dataset_name}; skipping.")
+
+    return selected_models
+
+
+def _run_dbt(model_names: List[str]):
     env = os.environ.copy()
     env["ZOHELO_DUCKDB_PATH"] = str(LOCAL_DUCKDB_PATH)
     dbt_executable = shutil.which("dbt")
@@ -128,7 +161,7 @@ def _run_dbt() -> Path:
         else:
             dbt_executable = "dbt"
 
-    print(f"🔄 Running dbt model {MODEL_NAME}...")
+    print(f"🔄 Running dbt models: {', '.join(model_names)}...")
     subprocess.run(
         [
             dbt_executable,
@@ -136,34 +169,38 @@ def _run_dbt() -> Path:
             "--profiles-dir",
             ".",
             "--select",
-            MODEL_NAME,
-            "--vars",
-            json.dumps({"bronze_parquet_path": BRONZE_PARQUET_GLOB}),
+            *model_names,
         ],
         cwd=REPO_ROOT,
         check=True,
         env=env,
     )
 
-    output_path = LOCAL_SILVER_DIR / OUTPUT_FILE
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"📦 Exporting {MODEL_NAME} to {output_path}...")
     con = duckdb.connect(str(LOCAL_DUCKDB_PATH))
     try:
-        con.execute(
-            f"COPY {MODEL_NAME} TO '{output_path}' (FORMAT PARQUET, COMPRESSION ZSTD)"
-        )
+        for model_name in model_names:
+            dataset_name = model_name.replace("stg_nbp_", "nbp_exchange_rates_", 1)
+            output_path = LOCAL_SILVER_DIR / dataset_name / f"{dataset_name}.parquet"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            print(f"📦 Exporting {model_name} to {output_path}...")
+            con.execute(
+                f"COPY {model_name} TO '{output_path}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+            )
     finally:
         con.close()
 
-    return output_path
 
-
-def _upload_silver_file(storage: StorageManager, output_path: Path):
+def _upload_silver_outputs(storage: StorageManager):
     silver_zone_id = _get_zone_id(storage, "03_silver")
-    silver_source_id = storage.get_or_create_nested_folder([SOURCE_FOLDER], root_id=silver_zone_id)
-    print(f"⬆️  Uploading 03_silver/{SOURCE_FOLDER}/{output_path.name}...")
-    _upload_file(storage.drive_service, output_path, output_path.name, silver_source_id)
+    for output_path in sorted(LOCAL_SILVER_DIR.rglob("*.parquet")):
+        relative_path = output_path.relative_to(LOCAL_SILVER_DIR)
+        folder_segments = list(relative_path.parts[:-1])
+        if not folder_segments:
+            continue
+
+        silver_source_id = storage.get_or_create_nested_folder(folder_segments, root_id=silver_zone_id)
+        print(f"⬆️  Uploading 03_silver/{relative_path}...")
+        _upload_file(storage.drive_service, output_path, output_path.name, silver_source_id)
 
 
 def process_silver():
@@ -171,15 +208,21 @@ def process_silver():
     _reset_local_workspace()
 
     storage = StorageManager(backend="gdrive")
-    bronze_file_count = _download_bronze_files(storage)
+    bronze_files_by_dataset = _download_bronze_files(storage)
+    bronze_file_count = sum(bronze_files_by_dataset.values())
     if bronze_file_count == 0:
-        print(f"ℹ️  No Bronze Parquet files found in 02_bronze/{SOURCE_FOLDER}. Nothing to process.")
+        print("ℹ️  No Bronze Parquet files found in 02_bronze. Nothing to process.")
         return
 
     print(f"📂 Downloaded {bronze_file_count} Bronze Parquet file(s).")
-    output_path = _run_dbt()
-    _upload_silver_file(storage, output_path)
-    print(f"✅ Silver Layer complete. Uploaded {output_path.name}.")
+    model_names = _discover_staging_models(list(bronze_files_by_dataset))
+    if not model_names:
+        print("ℹ️  No matching staging models found for downloaded Bronze datasets. Nothing to process.")
+        return
+
+    _run_dbt(model_names)
+    _upload_silver_outputs(storage)
+    print("✅ Silver Layer complete.")
 
 
 if __name__ == "__main__":
