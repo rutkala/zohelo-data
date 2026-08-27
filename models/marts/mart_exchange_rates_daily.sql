@@ -1,2 +1,2 @@
 select *
-from {{ ref('stg_nbp_exchange_rates') }}
+from {{ ref('stg_nbp_table_a') }}
