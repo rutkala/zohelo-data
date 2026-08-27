@@ -6,8 +6,8 @@ const DRIVE_ROOT = "zohelo-data";
 let db;
 let conn;
 let oauthToken = "";
-let activeFileName = "";
-let currentFiles = [];
+let activeDatasetName = "";
+let currentDatasets = [];
 let tokenClient;
 
 const ui = {
@@ -52,9 +52,6 @@ function initTabs() {
   });
 }
 
-function escapeSqlLiteral(value) {
-  return String(value).replaceAll("'", "''");
-}
 
 async function initDuckDB() {
   const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm");
@@ -67,7 +64,7 @@ async function initDuckDB() {
   await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
   conn = await db.connect();
   URL.revokeObjectURL(workerUrl);
-  setStatus(ui.queryMeta, "DuckDB-WASM ready. Load a layer file to query active_layer.");
+  setStatus(ui.queryMeta, "DuckDB-WASM ready. Load a dataset to query it by name.");
 }
 
 function initAuth() {
@@ -151,26 +148,26 @@ async function resolveLayerFolderId(layerName) {
   return findFolderIdByName(layerName, rootId);
 }
 
-function renderFiles(files) {
+function renderDatasets(datasets) {
   ui.fileList.innerHTML = "";
-  if (!files.length) {
-    setStatus(ui.fileState, `No files found in ${ui.layerSelect.value}.`);
+  if (!datasets.length) {
+    setStatus(ui.fileState, `No dataset folders found in ${ui.layerSelect.value}.`);
     return;
   }
 
   const fragment = document.createDocumentFragment();
-  files.forEach((file, index) => {
+  datasets.forEach((dataset, index) => {
     const li = document.createElement("li");
     const label = document.createElement("label");
     const input = document.createElement("input");
     input.type = "radio";
     input.name = "selectedFile";
     input.id = `file-${index}`;
-    input.value = file.id;
+    input.value = dataset.id;
     input.checked = index === 0;
 
     const span = document.createElement("span");
-    span.textContent = file.name;
+    span.textContent = dataset.name;
 
     label.appendChild(input);
     label.appendChild(span);
@@ -178,27 +175,41 @@ function renderFiles(files) {
     fragment.appendChild(li);
   });
   ui.fileList.appendChild(fragment);
-  setStatus(ui.fileState, `Loaded ${files.length} file(s) from ${ui.layerSelect.value}.`);
+  setStatus(ui.fileState, `Found ${datasets.length} dataset(s) in ${ui.layerSelect.value}.`);
 }
 
-async function listFilesInFolder(folderId) {
-  const files = [];
-  const subfolderIds = [];
-
+async function listSubfolders(folderId) {
+  const folders = [];
   let pageToken = null;
   do {
-    const query = `'${folderId}' in parents and trashed=false`;
-    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType,size,modifiedTime),nextPageToken&pageSize=200`;
+    const query = `'${folderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name),nextPageToken&pageSize=200`;
     if (pageToken) {
       url += `&pageToken=${encodeURIComponent(pageToken)}`;
     }
     const response = await driveRequest(url);
     const payload = await response.json();
-
     for (const item of payload.files || []) {
-      if (item.mimeType === "application/vnd.google-apps.folder") {
-        subfolderIds.push(item.id);
-      } else {
+      folders.push(item);
+    }
+    pageToken = payload.nextPageToken || null;
+  } while (pageToken);
+  return folders;
+}
+
+async function listDataFilesInFolder(folderId) {
+  const files = [];
+  let pageToken = null;
+  do {
+    const query = `'${folderId}' in parents and trashed=false`;
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name,mimeType),nextPageToken&pageSize=200`;
+    if (pageToken) {
+      url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    }
+    const response = await driveRequest(url);
+    const payload = await response.json();
+    for (const item of payload.files || []) {
+      if (item.mimeType !== "application/vnd.google-apps.folder") {
         const lc = item.name.toLowerCase();
         if (lc.endsWith(".parquet") || lc.endsWith(".json")) {
           files.push(item);
@@ -207,32 +218,30 @@ async function listFilesInFolder(folderId) {
     }
     pageToken = payload.nextPageToken || null;
   } while (pageToken);
-
-  const nested = await Promise.all(subfolderIds.map((id) => listFilesInFolder(id)));
-  return nested.reduce((acc, arr) => acc.concat(arr), files);
+  return files;
 }
 
 async function refreshFiles() {
   if (!oauthToken) {
-    setStatus(ui.fileState, "Authenticate first to browse Google Drive files.");
+    setStatus(ui.fileState, "Authenticate first to browse Google Drive datasets.");
     return;
   }
 
   const layer = ui.layerSelect.value;
-  setStatus(ui.fileState, `Searching for files in ${layer}…`);
+  setStatus(ui.fileState, `Searching for datasets in ${layer}…`);
   const folderId = await resolveLayerFolderId(layer);
   if (!folderId) {
-    currentFiles = [];
-    renderFiles(currentFiles);
+    currentDatasets = [];
+    renderDatasets(currentDatasets);
     return;
   }
 
-  currentFiles = await listFilesInFolder(folderId);
-  currentFiles.sort((a, b) => a.name.localeCompare(b.name));
-  renderFiles(currentFiles);
+  currentDatasets = await listSubfolders(folderId);
+  currentDatasets.sort((a, b) => a.name.localeCompare(b.name));
+  renderDatasets(currentDatasets);
 }
 
-async function loadSelectedFileAsActiveLayer() {
+async function loadSelectedDataset() {
   if (!db || !conn) {
     setStatus(ui.fileState, "DuckDB is still initializing. Please retry in a moment.");
     return;
@@ -240,33 +249,42 @@ async function loadSelectedFileAsActiveLayer() {
 
   const selected = document.querySelector("input[name='selectedFile']:checked");
   if (!selected) {
-    setStatus(ui.fileState, "Select a file first.");
+    setStatus(ui.fileState, "Select a dataset first.");
     return;
   }
 
-  const file = currentFiles.find((f) => f.id === selected.value);
-  if (!file) {
-    setStatus(ui.fileState, "Selected file no longer exists in the current listing.");
+  const dataset = currentDatasets.find((d) => d.id === selected.value);
+  if (!dataset) {
+    setStatus(ui.fileState, "Selected dataset no longer exists in the current listing.");
     return;
   }
 
-  const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
-  const buffer = new Uint8Array(await response.arrayBuffer());
-  const sanitizedName = `${file.id}_${file.name}`.replace(/[^a-zA-Z0-9._-]/g, "_");
+  setStatus(ui.fileState, `Loading files for dataset '${dataset.name}'…`);
 
-  await db.registerFileBuffer(sanitizedName, buffer);
-
-  const escaped = escapeSqlLiteral(sanitizedName);
-  if (file.name.toLowerCase().endsWith(".json")) {
-    await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_json_auto('${escaped}')`);
-  } else if (file.name.toLowerCase().endsWith(".csv")) {
-    await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_csv_auto('${escaped}')`);
-  } else {
-    await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM read_parquet('${escaped}')`);
+  const files = await listDataFilesInFolder(dataset.id);
+  if (!files.length) {
+    setStatus(ui.fileState, `No parquet/json files found in dataset '${dataset.name}'.`);
+    return;
   }
 
-  activeFileName = file.name;
-  setStatus(ui.fileState, `Loaded '${file.name}' into view active_layer.`);
+  const buffers = await Promise.all(
+    files.map(async (file) => {
+      const response = await driveRequest(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`);
+      const buffer = new Uint8Array(await response.arrayBuffer());
+      return { name: file.name, buffer };
+    })
+  );
+
+  const datasetName = dataset.name;
+  for (const { name, buffer } of buffers) {
+    await db.registerFileBuffer(`/${datasetName}/${name}`, buffer);
+  }
+
+  await conn.query(`CREATE OR REPLACE VIEW ${JSON.stringify(datasetName)} AS SELECT * FROM '/${datasetName}/**'`);
+
+  activeDatasetName = datasetName;
+  ui.sqlEditor.value = `SELECT * FROM ${JSON.stringify(datasetName)} LIMIT 50;`;
+  setStatus(ui.fileState, `Loaded ${buffers.length} file(s) into view '${datasetName}'.`);
 }
 
 function normalizeRow(row, columns) {
@@ -335,13 +353,15 @@ async function runQuery() {
   const durationMs = Math.round(performance.now() - started);
   setStatus(
     ui.queryMeta,
-    `Query complete in ${durationMs} ms. Rows: ${rows.length}.${activeFileName ? ` Source: ${activeFileName}` : ""}`
+    `Query complete in ${durationMs} ms. Rows: ${rows.length}.${activeDatasetName ? ` Source: ${activeDatasetName}` : ""}`
   );
 }
 
 function initQueryActions() {
   ui.defaultQueryBtn.addEventListener("click", () => {
-    ui.sqlEditor.value = "SELECT * FROM active_layer LIMIT 50;";
+    ui.sqlEditor.value = activeDatasetName
+      ? `SELECT * FROM ${JSON.stringify(activeDatasetName)} LIMIT 50;`
+      : "SELECT * FROM active_layer LIMIT 50;";
   });
 
   ui.refreshFilesBtn.addEventListener("click", () => {
@@ -351,8 +371,8 @@ function initQueryActions() {
   });
 
   ui.loadFileBtn.addEventListener("click", () => {
-    loadSelectedFileAsActiveLayer().catch((error) => {
-      setStatus(ui.fileState, `Failed to load file: ${error.message}`);
+    loadSelectedDataset().catch((error) => {
+      setStatus(ui.fileState, `Failed to load dataset: ${error.message}`);
     });
   });
 
