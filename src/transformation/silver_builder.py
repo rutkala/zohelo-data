@@ -20,6 +20,9 @@ LOCAL_SILVER_DIR = LOCAL_ROOT / "03_silver"
 LOCAL_DUCKDB_PATH = LOCAL_ROOT / "silver_builder.duckdb"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGING_DIR = REPO_ROOT / "models" / "staging"
+BRONZE_DATASET_PREFIX = "nbp_exchange_rates_"
+STAGING_MODEL_PREFIX = "stg_nbp_"
+STAGING_MODEL_GLOB = f"{STAGING_MODEL_PREFIX}table_*.sql"
 
 
 def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
@@ -136,13 +139,27 @@ def _download_bronze_files(storage: StorageManager) -> Dict[str, int]:
     return downloaded_by_dataset
 
 
+def _dataset_to_model_name(dataset_name: str) -> str | None:
+    if not dataset_name.startswith(BRONZE_DATASET_PREFIX):
+        return None
+    return f"{STAGING_MODEL_PREFIX}{dataset_name.removeprefix(BRONZE_DATASET_PREFIX)}"
+
+
+def _model_to_dataset_name(model_name: str) -> str | None:
+    if not model_name.startswith(STAGING_MODEL_PREFIX):
+        return None
+    return f"{BRONZE_DATASET_PREFIX}{model_name.removeprefix(STAGING_MODEL_PREFIX)}"
+
+
 def _discover_staging_models(dataset_names: List[str]) -> List[str]:
-    available_models = {path.stem for path in STAGING_DIR.glob("stg_nbp_table_*.sql")}
+    available_models = {path.stem for path in STAGING_DIR.glob(STAGING_MODEL_GLOB)}
     selected_models = []
 
     for dataset_name in sorted(dataset_names):
-        model_name = dataset_name.replace("nbp_exchange_rates_", "stg_nbp_", 1)
-        if model_name in available_models:
+        model_name = _dataset_to_model_name(dataset_name)
+        if not model_name:
+            print(f"ℹ️  Dataset 02_bronze/{dataset_name} does not match the NBP exchange-rate pattern; skipping.")
+        elif model_name in available_models:
             selected_models.append(model_name)
         else:
             print(f"ℹ️  No staging model found for 02_bronze/{dataset_name}; skipping.")
@@ -151,8 +168,13 @@ def _discover_staging_models(dataset_names: List[str]) -> List[str]:
 
 
 def _run_dbt(model_names: List[str]):
+    if not model_names:
+        print("ℹ️  No dbt models selected. Skipping dbt run.")
+        return
+
     env = os.environ.copy()
     env["ZOHELO_DUCKDB_PATH"] = str(LOCAL_DUCKDB_PATH)
+    env["ZOHELO_DATA_ROOT"] = str(LOCAL_ROOT)
     dbt_executable = shutil.which("dbt")
     if not dbt_executable:
         user_dbt = Path(site.USER_BASE) / "bin" / "dbt"
@@ -179,7 +201,10 @@ def _run_dbt(model_names: List[str]):
     con = duckdb.connect(str(LOCAL_DUCKDB_PATH))
     try:
         for model_name in model_names:
-            dataset_name = model_name.replace("stg_nbp_", "nbp_exchange_rates_", 1)
+            dataset_name = _model_to_dataset_name(model_name)
+            if not dataset_name:
+                print(f"ℹ️  Model {model_name} does not map to an NBP silver dataset; skipping export.")
+                continue
             output_path = LOCAL_SILVER_DIR / dataset_name / f"{dataset_name}.parquet"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             print(f"📦 Exporting {model_name} to {output_path}...")

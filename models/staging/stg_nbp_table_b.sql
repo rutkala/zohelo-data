@@ -1,7 +1,7 @@
 with bronze_data as (
     select *
     from read_parquet(
-        '/tmp/zohelo_data/02_bronze/nbp_exchange_rates_table_b/*.parquet',
+        '{{ env_var("ZOHELO_DATA_ROOT", "/tmp/zohelo_data") }}/02_bronze/nbp_exchange_rates_table_b/*.parquet',
         union_by_name = true,
         filename = true
     )
