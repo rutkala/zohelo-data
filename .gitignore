@@ -1,0 +1,5 @@
+.user.yml
+logs/
+target/
+**/__pycache__/
+*.pyc
