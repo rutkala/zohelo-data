@@ -1,4 +1,6 @@
 import os
+import json
+import site
 import shutil
 import subprocess
 import sys
@@ -21,6 +23,7 @@ LOCAL_DUCKDB_PATH = LOCAL_ROOT / "silver_builder.duckdb"
 OUTPUT_FILE = "nbp_exchange_rates_table_a.parquet"
 MODEL_NAME = "stg_nbp_exchange_rates"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+BRONZE_PARQUET_GLOB = str(LOCAL_BRONZE_DIR / "*.parquet")
 
 
 def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
@@ -117,10 +120,26 @@ def _download_bronze_files(storage: StorageManager) -> int:
 def _run_dbt() -> Path:
     env = os.environ.copy()
     env["ZOHELO_DUCKDB_PATH"] = str(LOCAL_DUCKDB_PATH)
+    dbt_executable = shutil.which("dbt")
+    if not dbt_executable:
+        user_dbt = Path(site.USER_BASE) / "bin" / "dbt"
+        if user_dbt.exists():
+            dbt_executable = str(user_dbt)
+        else:
+            dbt_executable = "dbt"
 
     print(f"🔄 Running dbt model {MODEL_NAME}...")
     subprocess.run(
-        [sys.executable, "-m", "dbt.cli.main", "run", "--profiles-dir", ".", "--select", MODEL_NAME],
+        [
+            dbt_executable,
+            "run",
+            "--profiles-dir",
+            ".",
+            "--select",
+            MODEL_NAME,
+            "--vars",
+            json.dumps({"bronze_parquet_path": BRONZE_PARQUET_GLOB}),
+        ],
         cwd=REPO_ROOT,
         check=True,
         env=env,
