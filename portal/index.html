@@ -3,76 +3,174 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Zohelo Data Portal</title>
+  <title>Zohelo Data Portal — Enterprise Lakehouse Explorer</title>
   <link rel="icon" href="data:,">
+
+  <!-- FontAwesome for Enterprise Sidebar & UI Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+
+  <!-- AG Grid Community Styles -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css" />
+
+  <!-- Application Layout & Custom Styling -->
   <link rel="stylesheet" href="./style.css" />
+
+  <!-- Google Identity Services -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Monaco Editor Loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+  <!-- AG Grid Community Script -->
+  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
 </head>
-<body>
-  <main class="container">
-    <header>
-      <h1>Zohelo Data Portal</h1>
-      <p>Unified SQL Console, Catalog, and Lineage for all Medallion layers.</p>
-    </header>
+<body class="enterprise-workspace">
+  <div class="app-layout">
+    <!-- Left Sidebar (250px): Lakehouse Explorer -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-brand">
+          <i class="fa-solid fa-layer-group brand-icon"></i>
+          <span class="sidebar-heading">Lakehouse Explorer</span>
+        </div>
+        <button id="refreshFilesBtn" class="icon-action-btn" title="Refresh Lakehouse Catalog" type="button">
+          <i class="fa-solid fa-arrows-rotate"></i>
+        </button>
+      </div>
 
-    <div class="tabs" role="tablist" aria-label="Portal Views">
-      <button class="tab active" data-tab="sql" role="tab" aria-selected="true">SQL Console</button>
-      <button class="tab" data-tab="catalog" role="tab" aria-selected="false">Catalog &amp; Lineage</button>
+      <div class="catalog-scope">
+        <span class="catalog-chip"><i class="fa-solid fa-database"></i> zohelo-data</span>
+      </div>
+
+      <div class="sidebar-content">
+        <div id="lakehouseTree" class="tree-root" role="tree" aria-label="Unity Catalog Lakehouse Tree">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-status">
+          <i class="fa-solid fa-circle-info status-icon"></i>
+          <p id="fileState" class="status-msg">Loading Lakehouse catalog…</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area (Flex Column) -->
+    <div class="main-content">
+      <!-- Top Bar: Navigation, Authentication & Primary Actions -->
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <div class="workspace-identity">
+            <span class="workspace-logo"><i class="fa-solid fa-bolt-lightning"></i></span>
+            <span class="workspace-title">Zohelo Portal</span>
+          </div>
+
+          <nav class="portal-tabs" role="tablist" aria-label="Portal Navigation Tabs">
+            <button class="portal-tab active" data-tab="sql" role="tab" aria-selected="true" type="button">
+              <i class="fa-solid fa-terminal"></i> SQL Editor
+            </button>
+            <button class="portal-tab" data-tab="catalog" role="tab" aria-selected="false" type="button">
+              <i class="fa-solid fa-diagram-project"></i> Catalog &amp; Lineage
+            </button>
+          </nav>
+        </div>
+
+        <div class="top-bar-right">
+          <!-- User Authentication Section -->
+          <div class="auth-bar">
+            <span id="authStatus" class="auth-pill" title="Current Authentication Status">
+              <span class="auth-indicator-dot"></span> Not authenticated
+            </span>
+            <button id="googleSignInBtn" class="btn btn-secondary" type="button">
+              <i class="fa-brands fa-google"></i> Sign in with Google
+            </button>
+
+            <!-- Manual Token Popover Trigger -->
+            <div class="token-popover-container">
+              <button id="tokenPopoverBtn" class="btn btn-icon" type="button" title="Manual OAuth Access Token Fallback">
+                <i class="fa-solid fa-key"></i>
+              </button>
+              <div id="tokenPopover" class="token-popover hidden">
+                <div class="popover-title">Manual Access Token</div>
+                <div class="popover-body">
+                  <input id="manualTokenInput" type="password" placeholder="Paste OAuth access token" />
+                  <button id="useManualTokenBtn" class="btn btn-primary btn-sm" type="button">Apply</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Query Execution Actions -->
+          <div class="action-bar">
+            <button id="defaultQueryBtn" class="btn btn-ghost" type="button" title="Reset to default query for active dataset">
+              <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+            <button id="runQueryBtn" class="btn btn-primary" type="button" title="Execute Query (Cmd/Ctrl + Enter)">
+              <i class="fa-solid fa-play"></i> Run Query <kbd class="kbd-shortcut">Ctrl+↵</kbd>
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- Main Panels -->
+      <!-- Panel 1: SQL Console (Top Pane: Monaco, Bottom Pane: AG Grid) -->
+      <section id="tab-sql" class="tab-panel active" role="tabpanel">
+        <!-- Top Pane: Monaco SQL Editor -->
+        <div class="top-pane">
+          <div class="pane-header">
+            <div class="pane-title">
+              <i class="fa-solid fa-code pane-icon"></i>
+              <span>SQL Editor</span>
+              <span id="activeLayerBadge" class="active-layer-tag">active_layer</span>
+            </div>
+            <div class="pane-hints">
+              <span class="hint-text"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span>
+            </div>
+          </div>
+          <div class="editor-wrapper">
+            <div id="monacoEditor" class="monaco-container"></div>
+          </div>
+        </div>
+
+        <!-- Horizontal Resizing Divider -->
+        <div class="pane-divider">
+          <div class="divider-notch"></div>
+        </div>
+
+        <!-- Bottom Pane: AG Grid Results & Schema Preview -->
+        <div class="bottom-pane">
+          <div class="pane-header">
+            <div class="pane-title">
+              <i class="fa-solid fa-table-cells pane-icon"></i>
+              <span>Results &amp; Schema Preview</span>
+            </div>
+            <div class="pane-meta">
+              <span id="queryMeta" class="query-status-text">DuckDB-WASM is initializing…</span>
+            </div>
+          </div>
+          <div id="resultsWrapper" class="results-wrapper">
+            <div id="resultsGrid" class="ag-theme-quartz ag-theme-quartz-dark results-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 2: Catalog & Lineage (dbt Docs iframe) -->
+      <section id="tab-catalog" class="tab-panel" role="tabpanel">
+        <div class="catalog-container">
+          <iframe id="catalogFrame" src="./docs/index.html" title="dbt Catalog and Lineage"></iframe>
+        </div>
+      </section>
     </div>
+  </div>
 
-    <section id="tab-sql" class="tab-panel active" role="tabpanel">
-      <div class="card auth-card">
-        <h2>Google Drive Access</h2>
-        <div class="auth-grid">
-          <button id="googleSignInBtn" type="button">Sign in with Google</button>
-          <label>
-            Manual Access Token Fallback
-            <input id="manualTokenInput" type="password" placeholder="Paste OAuth access token" />
-          </label>
-          <button id="useManualTokenBtn" type="button">Use Token</button>
-        </div>
-        <p id="authStatus" class="status">Not authenticated.</p>
-      </div>
+  <!-- Fallback/Legacy Compatibility Elements for Selectors -->
+  <div id="fileList" style="display:none;" aria-hidden="true"></div>
+  <button id="loadFileBtn" style="display:none;" aria-hidden="true" type="button"></button>
+  <textarea id="sqlEditor" style="display:none;" aria-hidden="true"></textarea>
 
-      <div class="card">
-        <h2>Lakehouse Explorer</h2>
-        <div class="controls">
-          <label for="layerSelect">Layer</label>
-          <select id="layerSelect">
-            <option value="01_landing">01_landing</option>
-            <option value="02_bronze" selected>02_bronze</option>
-            <option value="03_silver">03_silver</option>
-            <option value="04_gold">04_gold</option>
-            <option value="05_archive">05_archive</option>
-          </select>
-          <button id="refreshFilesBtn" type="button">Refresh Datasets</button>
-          <button id="loadFileBtn" type="button">Load Dataset</button>
-        </div>
-        <p class="section-label">Datasets / Tables</p>
-        <ul id="fileList" class="file-list"></ul>
-        <p id="fileState" class="status">Authenticate to list datasets for the selected layer.</p>
-      </div>
-
-      <div class="card">
-        <h2>SQL Editor</h2>
-        <div class="controls">
-          <button id="defaultQueryBtn" type="button">Use Default Query</button>
-          <button id="runQueryBtn" type="button">Run Query</button>
-        </div>
-        <textarea id="sqlEditor" rows="8">SELECT * FROM active_layer LIMIT 50;</textarea>
-        <p id="queryMeta" class="status">DuckDB-WASM is initializing…</p>
-        <div id="resultsWrapper" class="results-wrapper"></div>
-      </div>
-    </section>
-
-    <section id="tab-catalog" class="tab-panel" role="tabpanel">
-      <div class="card catalog-card">
-        <h2>Data Catalog &amp; Lineage</h2>
-        <iframe id="catalogFrame" src="./docs/index.html" title="dbt Catalog and Lineage"></iframe>
-      </div>
-    </section>
-  </main>
-
+  <!-- Application Logic -->
   <script type="module" src="./app.js"></script>
 </body>
 </html>
