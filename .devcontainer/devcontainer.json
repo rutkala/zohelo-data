@@ -13,7 +13,6 @@
         "editor.formatOnSave": true
       },
       "extensions": [
-        "Google.GoogleAntigravity",
         "ms-python.python",
         "ms-python.vscode-pylance",
         "innoverio.vscode-dbt-power-user",
@@ -22,7 +21,7 @@
     }
   },
 
-  "postCreateCommand": "pip install -r requirements.txt",
+  "postCreateCommand": "curl -fsSL https://antigravity.google/cli/install.sh | bash && pip install -r requirements.txt",
 
   "remoteEnv": {
     "GOOGLE_OAUTH_CLIENT_ID": "${localEnv:GOOGLE_OAUTH_CLIENT_ID}",
