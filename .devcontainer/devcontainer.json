@@ -13,7 +13,7 @@
         "editor.formatOnSave": true
       },
       "extensions": [
-        "google.antigravity",
+        "Google.GoogleAntigravity",
         "ms-python.python",
         "ms-python.vscode-pylance",
         "innoverio.vscode-dbt-power-user",
@@ -27,7 +27,6 @@
   "remoteEnv": {
     "GOOGLE_OAUTH_CLIENT_ID": "${localEnv:GOOGLE_OAUTH_CLIENT_ID}",
     "GOOGLE_OAUTH_CLIENT_SECRET": "${localEnv:GOOGLE_OAUTH_CLIENT_SECRET}",
-    "GOOGLE_OAUTH_REFRESH_TOKEN": "${localEnv:GOOGLE_OAUTH_REFRESH_TOKEN}",
-    "ANTIGRAVITY_AUTH_TOKEN": "${localEnv:ANTIGRAVITY_AUTH_TOKEN}"
+    "GOOGLE_OAUTH_REFRESH_TOKEN": "${localEnv:GOOGLE_OAUTH_REFRESH_TOKEN}"
   }
 }
