@@ -3,3 +3,5 @@ logs/
 target/
 **/__pycache__/
 *.pyc
+node_modules/
+dist/
