@@ -1,0 +1,241 @@
+import { rawResultToJSON } from "./resultParser";
+import { sqlEscapeString, qualifyTable } from "@/lib/sqlSanitize";
+import type { QueryResult, ColumnInfo, TableInfo, DatabaseInfo } from "@/store/types";
+
+/**
+ * Everything needed to reach a DuckDB `httpserver` endpoint. Structural, so
+ * both the legacy `CurrentConnection`/`ConnectionProvider` shapes and the
+ * engine layer's `duck-http` config satisfy it without conversion.
+ */
+export interface ExternalEndpoint {
+  host?: string;
+  port?: number | string;
+  user?: string;
+  password?: string;
+  apiKey?: string;
+  authMode?: "none" | "password" | "api_key";
+  database?: string;
+}
+
+/**
+ * Builds a properly formatted URL from a connection's host and port.
+ * Handles scheme prefixing, port detection (ignoring colons in the scheme),
+ * and trailing slash normalisation.
+ */
+const buildConnectionUrl = (host: string, port?: string | number): string => {
+  let url = host;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
+  }
+  // Use URL API to detect existing port on the hostname only (not the path).
+  if (port) {
+    try {
+      const parsed = new URL(url);
+      if (!parsed.port) {
+        parsed.port = String(port);
+        url = parsed.toString();
+      } else {
+        url = parsed.toString();
+      }
+    } catch {
+      // Fallback: strip scheme, check for colon before any slash
+      const withoutScheme = url.replace(/^https?:\/\//, "");
+      const hostPart = withoutScheme.split("/")[0];
+      if (!hostPart.includes(":")) {
+        url = `${url}:${port}`;
+      }
+    }
+  }
+  if (!url.endsWith("/")) {
+    url = `${url}/`;
+  }
+  return url;
+};
+
+/**
+ * Executes a query against an external connection. Pass an AbortSignal to make
+ * the request cancellable from the UI.
+ */
+export const executeExternalQuery = async (
+  query: string,
+  connection: ExternalEndpoint,
+  signal?: AbortSignal
+): Promise<QueryResult> => {
+  if (!connection.host) {
+    throw new Error("Host must be defined for external connections.");
+  }
+
+  const url = buildConnectionUrl(connection.host, connection.port);
+
+  // Build headers based on auth mode
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    format: "JSONCompact",
+  };
+
+  if (connection.authMode === "api_key" && connection.apiKey) {
+    headers["X-API-Key"] = connection.apiKey;
+  } else if (connection.authMode === "password" && connection.user && connection.password) {
+    const authHeader = btoa(`${connection.user}:${connection.password}`);
+    headers["Authorization"] = `Basic ${authHeader}`;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: query,
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (response.status === 401) {
+        throw new Error("Authentication failed - check your credentials");
+      } else if (response.status === 404) {
+        throw new Error(`Cannot reach server at ${url}`);
+      }
+      throw new Error(`HTTP error! Status: ${response.status}, Message: ${errorText}`);
+    }
+
+    const rawResult = await response.text();
+    return rawResultToJSON(rawResult);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Query cancelled");
+    }
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Network error: Cannot reach ${url}. Check your connection and CORS settings.`
+      );
+    }
+    throw error;
+  }
+};
+
+/**
+ * Tests an external connection by executing a basic query.
+ */
+export const testExternalConnection = async (connection: ExternalEndpoint): Promise<void> => {
+  if (!connection.host) {
+    throw new Error("Host must be defined for external connections.");
+  }
+
+  const url = buildConnectionUrl(connection.host, connection.port);
+
+  // Build headers based on auth mode
+  const headers: Record<string, string> = {
+    "Content-Type": "application/x-www-form-urlencoded",
+  };
+
+  if (connection.authMode === "api_key" && connection.apiKey) {
+    headers["X-API-Key"] = connection.apiKey;
+  } else if (connection.authMode === "password" && connection.user && connection.password) {
+    const authHeader = btoa(`${connection.user}:${connection.password}`);
+    headers["Authorization"] = `Basic ${authHeader}`;
+  }
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: `SELECT 1`,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      if (response.status === 401) {
+        throw new Error("Authentication failed - check your credentials");
+      } else if (response.status === 404) {
+        throw new Error(`Cannot reach server at ${url}`);
+      }
+      throw new Error(`Connection test failed! Status: ${response.status}, Message: ${errorText}`);
+    }
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes("fetch")) {
+      throw new Error(
+        `Network error: Cannot reach ${url}. Check your connection and CORS settings.`
+      );
+    }
+    throw error;
+  }
+};
+
+/**
+ * Fetches databases and tables for an external connection.
+ */
+export const fetchExternalDatabases = async (
+  connection: ExternalEndpoint
+): Promise<DatabaseInfo[]> => {
+  try {
+    // Try to get database list
+    const dbListResult = await executeExternalQuery("SHOW DATABASES", connection);
+    const databases: DatabaseInfo[] = [];
+
+    // If database list is available, fetch tables for each
+    if (dbListResult.data && dbListResult.data.length > 0) {
+      for (const dbRow of dbListResult.data) {
+        const dbName = dbRow[dbListResult.columns[0] as string] as string;
+        try {
+          // Enumerate (schema, table) pairs — external DuckDB databases can
+          // carry non-"main" schemas too (#3).
+          const tablesResult = await executeExternalQuery(
+            `SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = '${sqlEscapeString(dbName)}' ORDER BY table_schema, table_name`,
+            connection
+          );
+
+          const tables: TableInfo[] = [];
+          for (const tableRow of tablesResult.data) {
+            const schemaName = (tableRow.table_schema as string) || "main";
+            const tableName = tableRow.table_name as string;
+            try {
+              // Try to get columns info
+              const columnsResult = await executeExternalQuery(
+                `DESCRIBE ${qualifyTable(dbName, schemaName, tableName)}`,
+                connection
+              );
+
+              const columns: ColumnInfo[] = columnsResult.data.map(
+                (col: Record<string, unknown>) => ({
+                  name: col.column_name as string,
+                  type: col.column_type as string,
+                  nullable: col.null === "YES",
+                })
+              );
+
+              tables.push({
+                name: tableName,
+                schema: schemaName,
+                columns,
+                rowCount: 0, // External connections don't provide row count easily
+                createdAt: new Date().toISOString(),
+              });
+            } catch {
+              // If describe fails, add table with basic info
+              tables.push({
+                name: tableName,
+                schema: schemaName,
+                columns: [],
+                rowCount: 0,
+                createdAt: new Date().toISOString(),
+              });
+            }
+          }
+
+          if (tables.length > 0 || dbListResult.data.length === 1) {
+            databases.push({ name: dbName, tables });
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch tables for database ${dbName}:`, e);
+          databases.push({ name: dbName, tables: [] });
+        }
+      }
+    }
+
+    return databases;
+  } catch (error) {
+    // If fetching databases fails, return empty array
+    console.warn("Failed to fetch external databases:", error);
+    return [];
+  }
+};

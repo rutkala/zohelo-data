@@ -1,176 +1,57 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Zohelo Data Portal — Enterprise Lakehouse Explorer</title>
-  <link rel="icon" href="data:,">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/logo-padding.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zohelo Data Portal — Enterprise Lakehouse Explorer</title>
+    <meta
+      name="description"
+      content="Zohelo Medallion Lakehouse Explorer &amp; DuckDB-WASM query workbench with Google Drive integration."
+    />
+    <!-- Google Identity Services -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 
-  <!-- FontAwesome for Enterprise Sidebar & UI Icons -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <!-- Open Graph (Facebook, Slack, Discord, LinkedIn) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Duck-UI" />
+    <meta property="og:title" content="Duck-UI — DuckDB in your browser" />
+    <meta
+      property="og:description"
+      content="Query data and build charts with DuckDB, entirely in your browser. Share a link that reproduces the whole analysis — no backend, no signup."
+    />
+    <meta property="og:url" content="https://duckui.com/" />
+    <meta property="og:image" content="https://demo.duckui.com/screenshot.png" />
 
-  <!-- AG Grid Community Styles -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-grid.css" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/styles/ag-theme-quartz.css" />
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Duck-UI — DuckDB in your browser" />
+    <meta
+      name="twitter:description"
+      content="Query data and build charts with DuckDB, entirely in your browser. Share a link that reproduces the whole analysis — no backend, no signup."
+    />
+    <meta name="twitter:image" content="https://demo.duckui.com/screenshot.png" />
 
-  <!-- Application Layout & Custom Styling -->
-  <link rel="stylesheet" href="./style.css" />
-
-  <!-- Google Identity Services -->
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
-
-  <!-- Monaco Editor Loader -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
-
-  <!-- AG Grid Community Script -->
-  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.3/dist/ag-grid-community.min.js"></script>
-</head>
-<body class="enterprise-workspace">
-  <div class="app-layout">
-    <!-- Left Sidebar (250px): Lakehouse Explorer -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="sidebar-brand">
-          <i class="fa-solid fa-layer-group brand-icon"></i>
-          <span class="sidebar-heading">Lakehouse Explorer</span>
-        </div>
-        <button id="refreshFilesBtn" class="icon-action-btn" title="Refresh Lakehouse Catalog" type="button">
-          <i class="fa-solid fa-arrows-rotate"></i>
-        </button>
-      </div>
-
-      <div class="catalog-scope">
-        <span class="catalog-chip"><i class="fa-solid fa-database"></i> zohelo-data</span>
-      </div>
-
-      <div class="sidebar-content">
-        <div id="lakehouseTree" class="tree-root" role="tree" aria-label="Unity Catalog Lakehouse Tree">
-          <!-- Populated dynamically by app.js -->
-        </div>
-      </div>
-
-      <div class="sidebar-footer">
-        <div class="sidebar-status">
-          <i class="fa-solid fa-circle-info status-icon"></i>
-          <p id="fileState" class="status-msg">Loading Lakehouse catalog…</p>
-        </div>
-      </div>
-    </aside>
-
-    <!-- Main Content Area (Flex Column) -->
-    <div class="main-content">
-      <!-- Top Bar: Navigation, Authentication & Primary Actions -->
-      <header class="top-bar">
-        <div class="top-bar-left">
-          <div class="workspace-identity">
-            <span class="workspace-logo"><i class="fa-solid fa-bolt-lightning"></i></span>
-            <span class="workspace-title">Zohelo Portal</span>
-          </div>
-
-          <nav class="portal-tabs" role="tablist" aria-label="Portal Navigation Tabs">
-            <button class="portal-tab active" data-tab="sql" role="tab" aria-selected="true" type="button">
-              <i class="fa-solid fa-terminal"></i> SQL Editor
-            </button>
-            <button class="portal-tab" data-tab="catalog" role="tab" aria-selected="false" type="button">
-              <i class="fa-solid fa-diagram-project"></i> Catalog &amp; Lineage
-            </button>
-          </nav>
-        </div>
-
-        <div class="top-bar-right">
-          <!-- User Authentication Section -->
-          <div class="auth-bar">
-            <span id="authStatus" class="auth-pill" title="Current Authentication Status">
-              <span class="auth-indicator-dot"></span> Not authenticated
-            </span>
-            <button id="googleSignInBtn" class="btn btn-secondary" type="button">
-              <i class="fa-brands fa-google"></i> Sign in with Google
-            </button>
-
-            <!-- Manual Token Popover Trigger -->
-            <div class="token-popover-container">
-              <button id="tokenPopoverBtn" class="btn btn-icon" type="button" title="Manual OAuth Access Token Fallback">
-                <i class="fa-solid fa-key"></i>
-              </button>
-              <div id="tokenPopover" class="token-popover hidden">
-                <div class="popover-title">Manual Access Token</div>
-                <div class="popover-body">
-                  <input id="manualTokenInput" type="password" placeholder="Paste OAuth access token" />
-                  <button id="useManualTokenBtn" class="btn btn-primary btn-sm" type="button">Apply</button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Query Execution Actions -->
-          <div class="action-bar">
-            <button id="defaultQueryBtn" class="btn btn-ghost" type="button" title="Reset to default query for active dataset">
-              <i class="fa-solid fa-rotate-left"></i> Reset
-            </button>
-            <button id="runQueryBtn" class="btn btn-primary" type="button" title="Execute Query (Cmd/Ctrl + Enter)">
-              <i class="fa-solid fa-play"></i> Run Query <kbd class="kbd-shortcut">Ctrl+↵</kbd>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <!-- Main Panels -->
-      <!-- Panel 1: SQL Console (Top Pane: Monaco, Bottom Pane: AG Grid) -->
-      <section id="tab-sql" class="tab-panel active" role="tabpanel">
-        <!-- Top Pane: Monaco SQL Editor -->
-        <div class="top-pane">
-          <div class="pane-header">
-            <div class="pane-title">
-              <i class="fa-solid fa-code pane-icon"></i>
-              <span>SQL Editor</span>
-              <span id="activeLayerBadge" class="active-layer-tag">active_layer</span>
-            </div>
-            <div class="pane-hints">
-              <span class="hint-text"><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to run</span>
-            </div>
-          </div>
-          <div class="editor-wrapper">
-            <div id="monacoEditor" class="monaco-container"></div>
-          </div>
-        </div>
-
-        <!-- Horizontal Resizing Divider -->
-        <div class="pane-divider">
-          <div class="divider-notch"></div>
-        </div>
-
-        <!-- Bottom Pane: AG Grid Results & Schema Preview -->
-        <div class="bottom-pane">
-          <div class="pane-header">
-            <div class="pane-title">
-              <i class="fa-solid fa-table-cells pane-icon"></i>
-              <span>Results &amp; Schema Preview</span>
-            </div>
-            <div class="pane-meta">
-              <span id="queryMeta" class="query-status-text">DuckDB-WASM is initializing…</span>
-            </div>
-          </div>
-          <div id="resultsWrapper" class="results-wrapper">
-            <div id="resultsGrid" class="ag-theme-quartz ag-theme-quartz-dark results-grid"></div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Panel 2: Catalog & Lineage (dbt Docs iframe) -->
-      <section id="tab-catalog" class="tab-panel" role="tabpanel">
-        <div class="catalog-container">
-          <iframe id="catalogFrame" src="./docs/index.html" title="dbt Catalog and Lineage"></iframe>
-        </div>
-      </section>
-    </div>
-  </div>
-
-  <!-- Fallback/Legacy Compatibility Elements for Selectors -->
-  <div id="fileList" style="display:none;" aria-hidden="true"></div>
-  <button id="loadFileBtn" style="display:none;" aria-hidden="true" type="button"></button>
-  <textarea id="sqlEditor" style="display:none;" aria-hidden="true"></textarea>
-
-  <!-- Application Logic -->
-  <script type="module" src="./app.js"></script>
-</body>
+    <!-- Structured data for search engines -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Duck-UI",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Web",
+        "description": "A local-first, browser-based DuckDB interface. Query CSV/Parquet/JSON, build charts, and share reproducible analyses with no backend.",
+        "url": "https://duckui.com/",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Runtime env (overwritten by the Docker entrypoint; empty default otherwise).
+         An external file instead of an injected inline script so the CSP can
+         stay free of 'unsafe-inline'. -->
+    <script src="/env.js"></script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>
