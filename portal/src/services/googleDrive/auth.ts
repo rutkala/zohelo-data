@@ -3,7 +3,7 @@
  */
 import type { GoogleOAuthTokenResponse, GoogleTokenClient } from "./types";
 
-export const GOOGLE_CLIENT_ID =
+export const DEFAULT_GOOGLE_CLIENT_ID =
   "196210210522-0q02hogqrtgl8frrr8ge8v22e8ot6ndi.apps.googleusercontent.com";
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 export const DRIVE_ROOT = "zohelo-data";
@@ -19,6 +19,26 @@ const STORAGE_KEY = "zohelo_gdrive_access_token";
 
 let tokenClientInstance: GoogleTokenClient | null = null;
 let currentAccessToken: string | null = null;
+
+export const resolveGoogleClientId = (
+  runtimeEnv?: Partial<Window["env"]>,
+  buildClientId?: string
+): string => {
+  const runtimeClientId = runtimeEnv?.DUCK_UI_GOOGLE_CLIENT_ID?.trim();
+  const buildClient = buildClientId?.trim();
+  return runtimeClientId || buildClient || DEFAULT_GOOGLE_CLIENT_ID;
+};
+
+export const getGoogleClientId = (): string =>
+  resolveGoogleClientId(window.env, import.meta.env.DUCK_UI_GOOGLE_CLIENT_ID);
+
+const toOAuthErrorMessage = (errorCode: string): string => {
+  if (errorCode !== "invalid_client") {
+    return `Google OAuth error: ${errorCode}`;
+  }
+  const origin = window.location.origin;
+  return `Google OAuth error: invalid_client. Configure DUCK_UI_GOOGLE_CLIENT_ID for ${origin} and add that origin in Google Cloud OAuth Authorized JavaScript origins.`;
+};
 
 export const getStoredToken = (): string | null => {
   if (currentAccessToken) return currentAccessToken;
@@ -88,11 +108,11 @@ export const requestGoogleAccessToken = async (options?: {
   return new Promise((resolve, reject) => {
     try {
       tokenClientInstance = google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
+        client_id: getGoogleClientId(),
         scope: DRIVE_SCOPE,
         callback: (response: GoogleOAuthTokenResponse) => {
           if (response.error) {
-            reject(new Error(`Google OAuth error: ${response.error}`));
+            reject(new Error(toOAuthErrorMessage(response.error)));
             return;
           }
           if (response.access_token) {

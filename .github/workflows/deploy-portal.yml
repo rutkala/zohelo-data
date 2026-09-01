@@ -52,6 +52,8 @@ jobs:
 
       - name: Build Duck-UI portal
         working-directory: portal
+        env:
+          DUCK_UI_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
         run: npm run build
 
       - name: Copy dbt docs into portal build output

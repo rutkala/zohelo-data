@@ -15,6 +15,7 @@ const envVars = {
   DUCK_UI_ALLOW_UNSIGNED_EXTENSIONS: process.env.DUCK_UI_ALLOW_UNSIGNED_EXTENSIONS === "true" || false,
   DUCK_UI_DUCKDB_WASM_USE_CDN: process.env.DUCK_UI_DUCKDB_WASM_USE_CDN === "true" || false,
   DUCK_UI_DUCKDB_WASM_BASE_URL: process.env.DUCK_UI_DUCKDB_WASM_BASE_URL || "",
+  DUCK_UI_GOOGLE_CLIENT_ID: process.env.DUCK_UI_GOOGLE_CLIENT_ID || "",
 };
 
 const envJsPath = path.join(__dirname, "env.js");
