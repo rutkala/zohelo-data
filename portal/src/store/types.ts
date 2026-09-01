@@ -30,6 +30,7 @@ declare global {
       DUCK_UI_ALLOW_UNSIGNED_EXTENSIONS: boolean;
       DUCK_UI_DUCKDB_WASM_USE_CDN?: boolean;
       DUCK_UI_DUCKDB_WASM_BASE_URL?: string;
+      DUCK_UI_GOOGLE_CLIENT_ID?: string;
     };
   }
 }
