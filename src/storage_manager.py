@@ -32,9 +32,21 @@ class StorageManager:
         creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
         creds_dict = json.loads(creds_json) if creds_json else None
 
-        if creds_dict and creds_dict.get('type') == 'service_account':
+        is_service_account_type = bool(
+            creds_dict and creds_dict.get("type") == "service_account"
+        )
+        has_service_account_fields_without_type = bool(
+            creds_dict
+            and creds_dict.get("type") is None
+            and creds_dict.get("client_email")
+            and creds_dict.get("private_key")
+        )
+        if is_service_account_type or has_service_account_fields_without_type:
+            service_account_info = dict(creds_dict)
+            service_account_info.setdefault("type", "service_account")
+            service_account_info.setdefault("token_uri", "https://oauth2.googleapis.com/token")
             credentials = ServiceAccountCredentials.from_service_account_info(
-                creds_dict, scopes=scopes
+                service_account_info, scopes=scopes
             )
             return build('drive', 'v3', credentials=credentials)
 
