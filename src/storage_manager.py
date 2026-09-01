@@ -2,6 +2,8 @@ import os
 import json
 import tempfile
 import httplib2
+from google.auth import load_credentials_from_dict
+from google.auth.exceptions import DefaultCredentialsError
 from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 from google.oauth2.credentials import Credentials as UserCredentials
 from google_auth_httplib2 import Request as HttpLib2Request
@@ -35,6 +37,14 @@ class StorageManager:
                 creds_dict, scopes=scopes
             )
             return build('drive', 'v3', credentials=credentials)
+
+        if creds_dict and creds_dict.get("type"):
+            try:
+                credentials, _ = load_credentials_from_dict(creds_dict, scopes=scopes)
+            except (DefaultCredentialsError, ValueError):
+                pass
+            else:
+                return build("drive", "v3", credentials=credentials)
 
         # Preferred OAuth path when service account JSON is not available.
         oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")

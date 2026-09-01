@@ -44,6 +44,44 @@ class StorageManagerAuthTests(unittest.TestCase):
     @patch.dict(
         os.environ,
         {
+            "GCP_SERVICE_ACCOUNT_JSON": '{"type":"authorized_user","client_id":"json-client-id","client_secret":"json-client-secret","refresh_token":"json-refresh-token"}',
+            "GOOGLE_OAUTH_CLIENT_ID": "oauth-client-id",
+            "GOOGLE_OAUTH_CLIENT_SECRET": "oauth-client-secret",
+            "GOOGLE_OAUTH_REFRESH_TOKEN": "revoked-refresh-token",
+            "GITHUB_ACTIONS": "true",
+        },
+        clear=True,
+    )
+    @patch("storage_manager.build", return_value="drive-service")
+    @patch("storage_manager.UserCredentials")
+    @patch("storage_manager.load_credentials_from_dict")
+    def test_prefers_typed_google_credentials_json_over_oauth_env_vars(
+        self,
+        load_credentials_from_dict,
+        user_credentials,
+        build,
+    ):
+        credentials = object()
+        load_credentials_from_dict.return_value = (credentials, "project-id")
+
+        manager = storage_manager.StorageManager()
+
+        self.assertEqual(manager.drive_service, "drive-service")
+        load_credentials_from_dict.assert_called_once_with(
+            {
+                "type": "authorized_user",
+                "client_id": "json-client-id",
+                "client_secret": "json-client-secret",
+                "refresh_token": "json-refresh-token",
+            },
+            scopes=["https://www.googleapis.com/auth/drive"],
+        )
+        user_credentials.assert_not_called()
+        build.assert_called_once_with("drive", "v3", credentials=credentials)
+
+    @patch.dict(
+        os.environ,
+        {
             "GOOGLE_OAUTH_CLIENT_ID": "oauth-client-id",
             "GOOGLE_OAUTH_CLIENT_SECRET": "oauth-client-secret",
             "GOOGLE_OAUTH_REFRESH_TOKEN": "valid-refresh-token",
