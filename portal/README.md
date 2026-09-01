@@ -91,7 +91,7 @@ Runtime environment variables (Docker):
 | `DUCK_UI_EXTERNAL_API_KEY` | API key sent as `X-API-Key` (takes priority over user/pass) | "" |
 | `DUCK_UI_EXTERNAL_USER` / `DUCK_UI_EXTERNAL_PASS` | Basic auth credentials | "" |
 | `DUCK_UI_EXTERNAL_DATABASE_NAME` | Database name for the external connection | "" |
-| `DUCK_UI_GOOGLE_CLIENT_ID` | Google OAuth Web Client ID used by the Google Drive connector | bundled fallback |
+| `DUCK_UI_GOOGLE_CLIENT_ID` | Google OAuth Web Client ID used by the Google Drive connector | required for Google Drive sign-in |
 | `DUCK_UI_ALLOW_UNSIGNED_EXTENSIONS` | Allow unsigned DuckDB extensions | false |
 | `DUCK_UI_DUCKDB_WASM_USE_CDN` | Load DuckDB WASM from CDN | false |
 | `DUCK_UI_DUCKDB_WASM_BASE_URL` | Custom CDN base URL (the origin is added to the CSP automatically at container start) | auto jsDelivr |

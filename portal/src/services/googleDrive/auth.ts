@@ -3,8 +3,6 @@
  */
 import type { GoogleOAuthTokenResponse, GoogleTokenClient } from "./types";
 
-export const DEFAULT_GOOGLE_CLIENT_ID =
-  "196210210522-0q02hogqrtgl8frrr8ge8v22e8ot6ndi.apps.googleusercontent.com";
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 export const DRIVE_ROOT = "zohelo-data";
 export const LAKEHOUSE_LAYERS = [
@@ -26,11 +24,21 @@ export const resolveGoogleClientId = (
 ): string => {
   const runtimeClientId = runtimeEnv?.DUCK_UI_GOOGLE_CLIENT_ID?.trim();
   const buildClient = buildClientId?.trim();
-  return runtimeClientId || buildClient || DEFAULT_GOOGLE_CLIENT_ID;
+  return runtimeClientId || buildClient || "";
 };
 
 export const getGoogleClientId = (): string =>
   resolveGoogleClientId(window.env, import.meta.env.DUCK_UI_GOOGLE_CLIENT_ID);
+
+export const getRequiredGoogleClientId = (): string => {
+  const clientId = getGoogleClientId();
+  if (clientId) {
+    return clientId;
+  }
+  throw new Error(
+    "Google OAuth client ID is missing. Set DUCK_UI_GOOGLE_CLIENT_ID (mapped from GOOGLE_OAUTH_CLIENT_ID in workflows) before attempting Google Drive sign-in."
+  );
+};
 
 const toOAuthErrorMessage = (errorCode: string): string => {
   if (errorCode !== "invalid_client") {
@@ -107,8 +115,9 @@ export const requestGoogleAccessToken = async (options?: {
 
   return new Promise((resolve, reject) => {
     try {
+      const clientId = getRequiredGoogleClientId();
       tokenClientInstance = google.accounts.oauth2.initTokenClient({
-        client_id: getGoogleClientId(),
+        client_id: clientId,
         scope: DRIVE_SCOPE,
         callback: (response: GoogleOAuthTokenResponse) => {
           if (response.error) {
