@@ -24,11 +24,19 @@ class StorageManager:
             self.drive_service = self._authenticate_gdrive()
 
     def _authenticate_gdrive(self):
-        """Authenticates using OAuth env vars (preferred) or JSON from GCP_SERVICE_ACCOUNT_JSON."""
+        """Authenticates using service account JSON or OAuth credentials from env."""
         scopes = ['https://www.googleapis.com/auth/drive']
         is_github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
+        creds_dict = json.loads(creds_json) if creds_json else None
 
-        # Preferred path: explicit OAuth env vars (works locally and in CI)
+        if creds_dict and creds_dict.get('type') == 'service_account':
+            credentials = ServiceAccountCredentials.from_service_account_info(
+                creds_dict, scopes=scopes
+            )
+            return build('drive', 'v3', credentials=credentials)
+
+        # Preferred OAuth path when service account JSON is not available.
         oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
         oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
         oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
@@ -48,53 +56,45 @@ class StorageManager:
                 raise RuntimeError("Failed to refresh Google OAuth access token from GOOGLE_OAUTH_* env vars.") from exc
             return build('drive', 'v3', credentials=credentials)
 
-        # Fallback path: JSON in GCP_SERVICE_ACCOUNT_JSON (service account or OAuth client JSON)
-        creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
-        if not creds_json:
+        # Fallback path: OAuth client JSON in GCP_SERVICE_ACCOUNT_JSON.
+        if not creds_dict:
             raise ValueError(
                 "Google credentials not found. Set GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, "
                 "GOOGLE_OAUTH_REFRESH_TOKEN or GCP_SERVICE_ACCOUNT_JSON."
             )
-
-        creds_dict = json.loads(creds_json)
         
-        # Check if it's an OAuth Client ID (installed app) or service account
-        if creds_dict.get('type') == 'service_account':
-            # Service Account flow (kept for backward compatibility if needed)
-            credentials = ServiceAccountCredentials.from_service_account_info(
-                creds_dict, scopes=scopes
+        oauth_client = creds_dict.get("installed") or creds_dict.get("web")
+        if not oauth_client:
+            raise ValueError("OAuth client JSON must include an 'installed' or 'web' section.")
+        client_id = oauth_client.get("client_id")
+        client_secret = oauth_client.get("client_secret")
+        token_uri = oauth_client.get("token_uri", "https://oauth2.googleapis.com/token")
+        resolved_client_id = client_id or oauth_client_id
+        resolved_client_secret = client_secret or oauth_client_secret
+        if not resolved_client_id or not resolved_client_secret:
+            raise ValueError("OAuth client JSON is missing client_id/client_secret.")
+
+        if is_github_actions:
+            refresh_token = oauth_refresh_token
+            if not refresh_token:
+                raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
+
+            credentials = UserCredentials(
+                token=None,
+                refresh_token=refresh_token,
+                token_uri=token_uri,
+                client_id=resolved_client_id,
+                client_secret=resolved_client_secret,
+                scopes=scopes,
             )
+            try:
+                credentials.refresh(HttpLib2Request(httplib2.Http()))
+            except Exception as exc:
+                raise RuntimeError("Failed to refresh Google OAuth access token in GitHub Actions.") from exc
         else:
-            oauth_client = creds_dict.get("installed") or creds_dict.get("web")
-            if not oauth_client:
-                raise ValueError("OAuth client JSON must include an 'installed' or 'web' section.")
-            client_id = oauth_client.get("client_id")
-            client_secret = oauth_client.get("client_secret")
-            token_uri = oauth_client.get("token_uri", "https://oauth2.googleapis.com/token")
-            if not client_id or not client_secret:
-                raise ValueError("OAuth client JSON is missing client_id/client_secret.")
-
-            if is_github_actions:
-                refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
-                if not refresh_token:
-                    raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
-
-                credentials = UserCredentials(
-                    token=None,
-                    refresh_token=refresh_token,
-                    token_uri=token_uri,
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    scopes=scopes,
-                )
-                try:
-                    credentials.refresh(HttpLib2Request(httplib2.Http()))
-                except Exception as exc:
-                    raise RuntimeError("Failed to refresh Google OAuth access token in GitHub Actions.") from exc
-            else:
-                # Local development flow (interactive browser auth)
-                flow = InstalledAppFlow.from_client_config(creds_dict, scopes=scopes)
-                credentials = flow.run_local_server(port=0)
+            # Local development flow (interactive browser auth)
+            flow = InstalledAppFlow.from_client_config(creds_dict, scopes=scopes)
+            credentials = flow.run_local_server(port=0)
         
         return build('drive', 'v3', credentials=credentials)
 
