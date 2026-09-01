@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GOOGLE_CLIENT_ID, resolveGoogleClientId } from "../auth";
+import { resolveGoogleClientId } from "../auth";
 
 describe("resolveGoogleClientId", () => {
   it("prefers runtime DUCK_UI_GOOGLE_CLIENT_ID when present", () => {
@@ -16,7 +16,7 @@ describe("resolveGoogleClientId", () => {
       .toBe("build-id");
   });
 
-  it("uses the bundled default when neither runtime nor build client ids are set", () => {
-    expect(resolveGoogleClientId(undefined, "")).toBe(DEFAULT_GOOGLE_CLIENT_ID);
+  it("returns empty when neither runtime nor build client ids are set", () => {
+    expect(resolveGoogleClientId(undefined, "")).toBe("");
   });
 });
