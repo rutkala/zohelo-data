@@ -69,11 +69,13 @@ class StorageManager:
         client_id = oauth_client.get("client_id")
         client_secret = oauth_client.get("client_secret")
         token_uri = oauth_client.get("token_uri", "https://oauth2.googleapis.com/token")
-        if not client_id or not client_secret:
+        resolved_client_id = client_id or oauth_client_id
+        resolved_client_secret = client_secret or oauth_client_secret
+        if not resolved_client_id or not resolved_client_secret:
             raise ValueError("OAuth client JSON is missing client_id/client_secret.")
 
         if is_github_actions:
-            refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+            refresh_token = oauth_refresh_token
             if not refresh_token:
                 raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
 
@@ -81,8 +83,8 @@ class StorageManager:
                 token=None,
                 refresh_token=refresh_token,
                 token_uri=token_uri,
-                client_id=client_id,
-                client_secret=client_secret,
+                client_id=resolved_client_id,
+                client_secret=resolved_client_secret,
                 scopes=scopes,
             )
             try:
