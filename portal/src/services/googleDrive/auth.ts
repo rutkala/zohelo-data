@@ -36,7 +36,7 @@ const toOAuthErrorMessage = (errorCode: string): string => {
   if (errorCode !== "invalid_client") {
     return `Google OAuth error: ${errorCode}`;
   }
-  const origin = typeof window !== "undefined" ? window.location.origin : "this origin";
+  const origin = window.location.origin;
   return `Google OAuth error: invalid_client. Configure DUCK_UI_GOOGLE_CLIENT_ID for ${origin} and add that origin in Google Cloud OAuth Authorized JavaScript origins.`;
 };
 
