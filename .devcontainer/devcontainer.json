@@ -21,9 +21,19 @@
     }
   },
 
-  "postCreateCommand": "curl -fsSL https://antigravity.google/cli/install.sh | bash && pip install -r requirements.txt",
+  "postCreateCommand": "(curl -fsSL https://antigravity.google/cli/install.sh | bash || true) && pip install -r requirements.txt && npm --prefix portal ci",
+  "postStartCommand": "bash .devcontainer/post-start.sh",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": {
+      "label": "Portal Web UI",
+      "onAutoForward": "openBrowser"
+    }
+  },
 
   "remoteEnv": {
+    "AGY_OAUTH_CLIENT_ID": "${localEnv:AGY_OAUTH_CLIENT_ID}",
+    "AGY_OAUTH_CLIENT_SECRET": "${localEnv:AGY_OAUTH_CLIENT_SECRET}",
     "GOOGLE_OAUTH_CLIENT_ID": "${localEnv:GOOGLE_OAUTH_CLIENT_ID}",
     "GOOGLE_OAUTH_CLIENT_SECRET": "${localEnv:GOOGLE_OAUTH_CLIENT_SECRET}",
     "GOOGLE_OAUTH_REFRESH_TOKEN": "${localEnv:GOOGLE_OAUTH_REFRESH_TOKEN}"
