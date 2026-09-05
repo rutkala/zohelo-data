@@ -8,6 +8,8 @@ In this proposal, “all storage on Google Drive” means all authoritative, dur
 
 **Confirmed first-release audience:** the platform owner only. The owner answered “Only me” when asked who needs to use the first usable version of Zohelo-data directly.
 
+**Confirmed first working example:** NBP exchange rates. The owner answered “Yes, start with NBP exchange rates.” NBP table selection, date coverage, and the example's success criteria remain to be agreed.
+
 Batch updates, modest active datasets, and an on-demand development service remain proposed operating assumptions. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. BI clients, availability, workload targets, and additional compute budget remain open decisions.
 
 **Open decisions for v1.**
@@ -184,6 +186,6 @@ Treat AI assistance, Codespaces/Actions compute, query hosting and any future mo
 | 5. Consumer slice | Catalog, SQL and metric access for the same release | Portal and one research/BI consumer agree on a representative result and release ID. |
 | 6. Measured growth | Partition pruning/caching and runtime hosting as required | Chosen freshness, latency and resource budgets are met on representative data. |
 
-Start with the current NBP data to validate the architecture before adding many sources. GitHub-hosted jobs have execution and storage limits, so chunk large backfills and retain progress outside the runner. [Actions limits](https://docs.github.com/en/actions/reference/limits)
+Use NBP exchange rates as the starting dataset for validating the architecture, as confirmed by the owner. GitHub-hosted jobs have execution and storage limits, so chunk large backfills and retain progress outside the runner. [Actions limits](https://docs.github.com/en/actions/reference/limits)
 
 Resolve the open decisions listed above before committing to a serving host or scaling plan. Record accepted choices and their rationale in architecture decision records, then turn the implementation steps into bounded issues.
