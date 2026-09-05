@@ -12,11 +12,13 @@ In this proposal, “all storage on Google Drive” means all authoritative, dur
 
 **Ingestion evidence checked on 5 September 2026:** the [31 August ingestion log](https://github.com/rutkala/zohelo-data/actions/runs/33350008247/job/99361368360) records successful Drive saves for `nbp_exchange_rates_table_a`, `nbp_exchange_rates_table_b`, `nbp_exchange_rates_table_c`, and `nbp_gold_prices`. The [26 August backfill log](https://github.com/rutkala/zohelo-data/actions/runs/32979325340/job/98211777191) also records historical uploads for all four. Gold prices therefore belong in the confirmed scope alongside the exchange-rate tables. These logs establish past ingestion; current Drive file presence, row counts, actual observation dates, gaps and sizes still need a read-only inventory.
 
-**Readiness gaps from those workflow checks:** the [31 August silver run](https://github.com/rutkala/zohelo-data/actions/runs/33350095876/job/99361615254) explicitly skips `nbp_gold_prices`, so its success does not establish query readiness for all ingested NBP data. The [5 September ingestion failure](https://github.com/rutkala/zohelo-data/actions/runs/33938382282/job/101230710781) reports that the Google OAuth token has expired or been revoked. Automatic updates need restored refresh access, and the first demonstration needs validation of all four datasets. Neither data freshness nor complete portal availability has been verified.
+**Readiness gaps from those workflow checks:** the [31 August silver run](https://github.com/rutkala/zohelo-data/actions/runs/33350095876/job/99361615254) explicitly skips `nbp_gold_prices`, so its success does not establish query readiness for all ingested NBP data. The [5 September ingestion failure](https://github.com/rutkala/zohelo-data/actions/runs/33938382282/job/101230710781) reports that the Google OAuth token has expired or been revoked. Automatic updates need restored refresh access, but are deferred by the confirmed first-version scope below. The first demonstration needs access to and validation of the existing data for all four datasets. Complete portal availability has not yet been verified.
 
 **Confirmed first demonstration:** explore and query the ingested NBP data in Zohelo-data’s web interface. The owner selected this as the result the first working example should provide. BI and research integrations remain in the broader platform direction; their inclusion in the first release is not yet decided.
 
-Batch updates, modest active datasets, and an on-demand development service remain proposed operating assumptions. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. BI clients, availability, workload targets, and additional compute budget remain open decisions.
+**Confirmed update scope for the first version:** make the existing ingested data usable first; automatic addition of new NBP data is deferred. The owner answered “No, first make the existing data usable.” Implement and verify the first demonstration against stored inputs. New NBP extraction, historical backfills, and repair of automatic refresh are not acceptance gates for this demonstration. This decision sets delivery scope; it does not request disabling or changing the existing scheduled workflows.
+
+Batch updates remain part of the later platform direction. An on-demand development service remains a proposed operating assumption; the confirmed first demonstration uses already-ingested data. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. BI clients, availability, workload targets, and additional compute budget remain open decisions.
 
 **Open decisions for v1.**
 
@@ -24,7 +26,7 @@ Batch updates, modest active datasets, and an on-demand development service rema
 | --- | --- |
 | Availability | Whether queries and BI refreshes must work while development environments are stopped |
 | External consumers | Whether a BI or research integration belongs in v1, which tool to support first, and whether it needs snapshot imports or live metric queries |
-| Workload targets | Inventory and measure the ingested NBP data; agree expected growth, update frequency and acceptable query latency |
+| Workload targets | Validate and measure the ingested NBP data and query performance; growth and automatic update frequency can be addressed after the existing-data demonstration |
 | Runtime budget | Acceptable additional compute cost and the hosting choice if continuous availability is required |
 
 This document proposes a direction; accepted decisions and later revisions should be recorded explicitly.
@@ -182,6 +184,8 @@ Keep production credentials out of fixture-based pull-request checks. Make one d
 Treat AI assistance, Codespaces/Actions compute, query hosting and any future model API usage as distinct budget items. The platform's ingestion, dbt builds and metric queries do not need an LLM API. OpenAI documents API-key usage at API rates, and Gemini documents its own API billing tiers; verify any account-specific credits before adding runtime AI features. [OpenAI pricing](https://learn.chatgpt.com/docs/pricing), [Gemini API billing](https://ai.google.dev/gemini-api/docs/billing)
 
 **Implement in small steps with an observable exit condition.**
+
+These milestones describe the broader platform target. For the confirmed first demonstration, prioritize validating existing inputs, filling transformation gaps for all four datasets, and making them discoverable and queryable in the portal. Evaluate new ingestion and automatic refresh later.
 
 | Step | Deliverable | Exit condition |
 | --- | --- | --- |
