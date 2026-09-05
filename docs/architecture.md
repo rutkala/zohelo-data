@@ -6,13 +6,15 @@ The proposed stack uses Google Drive as the durable data store, Parquet as the p
 
 In this proposal, “all storage on Google Drive” means all authoritative, durable platform data and data-release metadata. Computation still uses RAM and a local working directory. Those copies must be disposable and recoverable from Drive plus GitHub. This interpretation matches the existing silver builder.
 
-The initial operating assumptions are one platform owner, batch updates, modest active datasets, and a development service that can run on demand. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. Audience, active data volume, BI clients, availability, and additional compute budget remain open decisions.
+**Confirmed first-release audience:** the platform owner only. The owner answered “Only me” when asked who needs to use the first usable version of Zohelo-data directly.
+
+Batch updates, modest active datasets, and an on-demand development service remain proposed operating assumptions. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. BI clients, availability, workload targets, and additional compute budget remain open decisions.
 
 **Open decisions for v1.**
 
 | Decision | What remains to be agreed |
 | --- | --- |
-| Audience and availability | Personal, on-demand use or shared access; whether queries and BI refreshes must work while development environments are stopped |
+| Availability | Whether queries and BI refreshes must work while development environments are stopped |
 | First consumer | The first BI or research tool and whether it needs snapshot imports or live metric queries |
 | Workload targets | Current and expected active data volume, growth, update frequency and acceptable query latency |
 | Runtime budget | Acceptable additional compute cost and the hosting choice if continuous availability is required |
