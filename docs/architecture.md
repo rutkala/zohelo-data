@@ -8,7 +8,9 @@ In this proposal, “all storage on Google Drive” means all authoritative, dur
 
 **Confirmed first-release audience:** the platform owner only. The owner answered “Only me” when asked who needs to use the first usable version of Zohelo-data directly.
 
-**Confirmed first working example:** NBP exchange rates. The owner answered “Yes, start with NBP exchange rates.” NBP table selection, date coverage, and the example's success criteria remain to be agreed.
+**Confirmed first working example:** NBP exchange rates. The owner answered “Yes, start with NBP exchange rates.” NBP table selection, date coverage, and detailed acceptance checks remain to be agreed.
+
+**Confirmed first demonstration:** explore and query NBP exchange rates in Zohelo-data’s web interface. The owner selected this as the result the first working example should provide. BI and research integrations remain in the broader platform direction; their inclusion in the first release is not yet decided.
 
 Batch updates, modest active datasets, and an on-demand development service remain proposed operating assumptions. The stated 5 TB allocation is a capacity-planning assumption; active data volume and query capacity still need measurement. BI clients, availability, workload targets, and additional compute budget remain open decisions.
 
@@ -17,7 +19,7 @@ Batch updates, modest active datasets, and an on-demand development service rema
 | Decision | What remains to be agreed |
 | --- | --- |
 | Availability | Whether queries and BI refreshes must work while development environments are stopped |
-| First consumer | The first BI or research tool and whether it needs snapshot imports or live metric queries |
+| External consumers | Whether a BI or research integration belongs in v1, which tool to support first, and whether it needs snapshot imports or live metric queries |
 | Workload targets | Current and expected active data volume, growth, update frequency and acceptable query latency |
 | Runtime budget | Acceptable additional compute cost and the hosting choice if continuous availability is required |
 
@@ -183,7 +185,7 @@ Treat AI assistance, Codespaces/Actions compute, query hosting and any future mo
 | 2. Compatibility slice | Pinned dbt/DuckDB/MetricFlow stack and one fixture-based gold metric | A fresh environment builds and queries it with the expected result. |
 | 3. Durable publication | Storage adapter, ingestion ledger, immutable releases and one publisher | Retry does not duplicate logical records; an interrupted publish leaves the previous release queryable. |
 | 4. Complete medallion graph | dbt-owned bronze/silver/gold and accurate lineage | One source goes from original response to tested gold, replayably. |
-| 5. Consumer slice | Catalog, SQL and metric access for the same release | Portal and one research/BI consumer agree on a representative result and release ID. |
+| 5. Consumer slice | Catalog, SQL and metric access for the same release | For the first working example, the owner can explore and query NBP rates in the portal with the expected result and release ID. External BI/research integration scope remains to be agreed. |
 | 6. Measured growth | Partition pruning/caching and runtime hosting as required | Chosen freshness, latency and resource budgets are met on representative data. |
 
 Use NBP exchange rates as the starting dataset for validating the architecture, as confirmed by the owner. GitHub-hosted jobs have execution and storage limits, so chunk large backfills and retain progress outside the runner. [Actions limits](https://docs.github.com/en/actions/reference/limits)
