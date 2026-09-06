@@ -1,0 +1,52 @@
+name: Validate portal
+
+on:
+  pull_request:
+    paths:
+      - 'portal/**'
+      - '.github/workflows/portal-validation.yml'
+      - '.github/workflows/deploy-portal.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        base_path: ['./', '/zohelo-data/']
+    env:
+      DUCK_UI_BASEPATH: ${{ matrix.base_path }}
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Lint
+        run: npm run lint
+      - name: Production build and type check
+        run: npm run build
+      - name: Unit and engine regression tests
+        run: npm test
+      - name: Install test browser
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Browser regression with synthetic Drive responses
+        run: npm run test:e2e -- e2e/googleDrive.spec.ts --retries=0
+      - name: Retain failed browser traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portal-browser-failure-${{ strategy.job-index }}
+          path: portal/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

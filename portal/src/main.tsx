@@ -351,12 +351,16 @@ const EmbedRoot = () => (
   </StrictMode>
 );
 
+// Vite's relative asset base is not a router path: React Router interprets
+// "./" as "/./" and renders a blank page. Explicit subpath bases still apply.
+const routerBasename = import.meta.env.BASE_URL === "./" ? "/" : import.meta.env.BASE_URL;
+
 const FullApp = () => (
   <StrictMode>
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <ProfileBootstrap>
         <AppInitializer>
-          <BrowserRouter basename={import.meta.env.BASE_URL}>
+          <BrowserRouter basename={routerBasename}>
             <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
               <Suspense fallback={<LoadingScreen message="Loading application" />}>
                 <App />

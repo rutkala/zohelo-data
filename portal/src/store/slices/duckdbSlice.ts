@@ -11,7 +11,6 @@ import { localHandles, toCurrentConnection } from "./connectionSlice";
 import { getSetting } from "@/services/persistence/repositories/settingsRepository";
 import { clampMaxResultRows, DEFAULT_MAX_RESULT_ROWS } from "./querySlice";
 import { loadAppConfig } from "@/lib/appConfig";
-import { ensureDemoRatesTable } from "@/services/googleDrive";
 
 export const DEFAULT_DUCKDB_MEMORY_LIMIT_MB = 4096;
 
@@ -148,9 +147,6 @@ export const createDuckdbSlice: StateCreator<
         failedExtensions.push(ext);
       }
     }
-
-    // Ensure demo rates tables and active_layer view exist initially
-    await ensureDemoRatesTable(connection);
 
     // An ENV-configured external server takes over as the active connection.
     if (initialConnections[0].id !== WASM_CONNECTION_ID) {

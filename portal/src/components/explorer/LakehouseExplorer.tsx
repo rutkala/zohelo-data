@@ -22,11 +22,7 @@ import { useDuckStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 export default function LakehouseExplorer() {
   const googleAuth = useDuckStore((s) => s.googleAuth);
@@ -34,6 +30,7 @@ export default function LakehouseExplorer() {
   const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
   const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
+  const activeLakehouseLayer = useDuckStore((s) => s.activeLakehouseLayer);
 
   const signInWithGoogle = useDuckStore((s) => s.signInWithGoogle);
   const setManualGoogleToken = useDuckStore((s) => s.setManualGoogleToken);
@@ -46,8 +43,6 @@ export default function LakehouseExplorer() {
 
   const createTab = useDuckStore((s) => s.createTab);
   const executeQuery = useDuckStore((s) => s.executeQuery);
-  const tabs = useDuckStore((s) => s.tabs);
-  const setActiveTab = useDuckStore((s) => s.setActiveTab);
 
   const [manualToken, setManualToken] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -61,45 +56,30 @@ export default function LakehouseExplorer() {
     }
   };
 
+  const openPreview = async (target: string | null, title: string) => {
+    if (!target) return;
+    const sql = `SELECT * FROM ${target} LIMIT 50;`;
+    // Keep existing SQL drafts and their results together.
+    createTab("sql", sql, title);
+    const tabId = useDuckStore.getState().activeTabId;
+    if (tabId) await executeQuery(sql, tabId);
+  };
+
   const handleSelectDataset = async (layerName: string, tableName: string) => {
-    await selectLakehouseDataset(layerName, tableName);
-
-    // Open/switch to SQL tab and run preview query
-    const sqlQuery = `SELECT * FROM active_layer LIMIT 50;`;
-    const activeTab = tabs.find((t) => t.type === "sql");
-
-    if (activeTab) {
-      setActiveTab(activeTab.id);
-      await executeQuery(sqlQuery, activeTab.id);
-    } else {
-      createTab("sql", sqlQuery, tableName);
-      const newActiveTabId = useDuckStore.getState().activeTabId;
-      if (newActiveTabId) {
-        await executeQuery(sqlQuery, newActiveTabId);
-      }
-    }
+    if (isLakehouseLoading) return;
+    const target = await selectLakehouseDataset(layerName, tableName);
+    await openPreview(target, `${layerName}/${tableName}`);
   };
 
   const handleSelectFile = async (
     layerName: string,
     tableName: string,
-    fileName: string
+    fileName: string,
+    fileId: string
   ) => {
-    await selectLakehouseFile(layerName, tableName, fileName);
-
-    const sqlQuery = `SELECT * FROM active_layer LIMIT 50;`;
-    const activeTab = tabs.find((t) => t.type === "sql");
-
-    if (activeTab) {
-      setActiveTab(activeTab.id);
-      await executeQuery(sqlQuery, activeTab.id);
-    } else {
-      createTab("sql", sqlQuery, `${tableName}/${fileName}`);
-      const newActiveTabId = useDuckStore.getState().activeTabId;
-      if (newActiveTabId) {
-        await executeQuery(sqlQuery, newActiveTabId);
-      }
-    }
+    if (isLakehouseLoading) return;
+    const target = await selectLakehouseFile(layerName, tableName, fileId);
+    await openPreview(target, `${layerName}/${tableName}/${fileName}`);
   };
 
   return (
@@ -119,14 +99,12 @@ export default function LakehouseExplorer() {
             variant="ghost"
             size="icon"
             className="h-7 w-7"
-            onClick={() => refreshLakehouseCatalog()}
+            onClick={() => refreshLakehouseCatalog().catch(() => undefined)}
             disabled={isLakehouseLoading}
             title="Refresh Google Drive Lakehouse"
           >
             <RefreshCw
-              className={`h-3.5 w-3.5 ${
-                isLakehouseLoading ? "animate-spin text-amber-500" : ""
-              }`}
+              className={`h-3.5 w-3.5 ${isLakehouseLoading ? "animate-spin text-amber-500" : ""}`}
             />
           </Button>
 
@@ -149,8 +127,7 @@ export default function LakehouseExplorer() {
                   <span>Manual Google Access Token</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Paste a temporary Google OAuth 2.0 access token to authenticate
-                  Drive queries.
+                  Paste a temporary Google OAuth 2.0 access token to authenticate Drive queries.
                 </p>
                 <Input
                   type="password"
@@ -219,7 +196,7 @@ export default function LakehouseExplorer() {
           ) : (
             <>
               <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
-              <span className="text-muted-foreground truncate">Drive Demo Mode</span>
+              <span className="text-muted-foreground truncate">Google Drive not connected</span>
             </>
           )}
         </div>
@@ -236,10 +213,13 @@ export default function LakehouseExplorer() {
       </div>
 
       {/* Status or Progress Feedback */}
-      {isLakehouseLoading && (
-        <div className="px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px] flex items-center gap-1.5 border-b">
-          <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-          <span className="truncate">{lakehouseStatusMessage}</span>
+      {lakehouseStatusMessage && (
+        <div
+          role="status"
+          className="px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px] flex items-center gap-1.5 border-b"
+        >
+          {isLakehouseLoading && <Loader2 className="h-3 w-3 animate-spin shrink-0" />}
+          <span className="break-words min-w-0">{lakehouseStatusMessage}</span>
         </div>
       )}
 
@@ -277,7 +257,8 @@ export default function LakehouseExplorer() {
                   </div>
                 ) : (
                   layer.children.map((table) => {
-                    const isActive = table.name === activeLakehouseDataset;
+                    const isActive =
+                      table.name === activeLakehouseDataset && layer.name === activeLakehouseLayer;
                     return (
                       <div key={table.name} className="space-y-0.5">
                         {/* Table / Dataset Row */}
@@ -308,9 +289,7 @@ export default function LakehouseExplorer() {
                             onClick={() => handleSelectDataset(layer.name, table.name)}
                           >
                             <TableIcon className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                            <span className="truncate font-mono text-[11px]">
-                              {table.name}
-                            </span>
+                            <span className="truncate font-mono text-[11px]">{table.name}</span>
                           </div>
 
                           <Button
@@ -332,15 +311,15 @@ export default function LakehouseExplorer() {
                           <div className="ml-4 pl-2 border-l border-border/40 space-y-0.5">
                             {table.children.length === 0 ? (
                               <div className="py-0.5 px-2 text-[10px] text-muted-foreground italic">
-                                No parquet files
+                                No data files
                               </div>
                             ) : (
                               table.children.map((file) => (
                                 <div
-                                  key={file.name}
+                                  key={file.id}
                                   className="flex items-center gap-1.5 py-0.5 px-1.5 rounded hover:bg-muted/40 cursor-pointer text-[11px] text-muted-foreground hover:text-foreground"
                                   onClick={() =>
-                                    handleSelectFile(layer.name, table.name, file.name)
+                                    handleSelectFile(layer.name, table.name, file.name, file.id)
                                   }
                                 >
                                   <FileSpreadsheet className="h-3 w-3 text-emerald-500 shrink-0" />

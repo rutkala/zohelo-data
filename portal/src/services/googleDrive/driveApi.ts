@@ -17,7 +17,9 @@ export const driveRequest = async (url: string, token: string): Promise<Response
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
-    throw new Error(`Google Drive API error (${response.status}): ${errorBody || response.statusText}`);
+    throw new Error(
+      `Google Drive API error (${response.status}): ${errorBody || response.statusText}`
+    );
   }
 
   return response;
@@ -123,10 +125,7 @@ export const listDataFilesInFolder = async (
   return files;
 };
 
-export const fetchDriveFileBuffer = async (
-  fileId: string,
-  token: string
-): Promise<Uint8Array> => {
+export const fetchDriveFileBuffer = async (fileId: string, token: string): Promise<Uint8Array> => {
   const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
   const response = await driveRequest(url, token);
   const arrayBuffer = await response.arrayBuffer();
@@ -140,26 +139,6 @@ export const createDefaultLakehouseTree = (): LakehouseLayer[] => {
     id: null,
     expanded: layerName === "02_bronze",
     loaded: false,
-    children:
-      layerName === "02_bronze"
-        ? [
-            {
-              type: "table",
-              name: "nbp_exchange_rates_table_a",
-              id: null,
-              layer: "02_bronze",
-              expanded: true,
-              loaded: true,
-              children: [
-                {
-                  id: "demo_file",
-                  name: "data.parquet",
-                  layer: "02_bronze",
-                  tableName: "nbp_exchange_rates_table_a",
-                },
-              ],
-            },
-          ]
-        : [],
+    children: [],
   }));
 };
