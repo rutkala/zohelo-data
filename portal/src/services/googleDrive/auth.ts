@@ -14,9 +14,22 @@ export const LAKEHOUSE_LAYERS = [
 ] as const;
 
 const STORAGE_KEY = "zohelo_gdrive_access_token";
+const EXPIRY_STORAGE_KEY = "zohelo_gdrive_access_token_expires_at";
 
 let tokenClientInstance: GoogleTokenClient | null = null;
 let currentAccessToken: string | null = null;
+let currentAccessTokenExpiresAt: number | null | undefined;
+
+const readStoredExpiry = (): number | null => {
+  try {
+    const raw = sessionStorage.getItem(EXPIRY_STORAGE_KEY);
+    if (!raw?.trim()) return null;
+    const expiry = Number(raw);
+    return Number.isFinite(expiry) && expiry >= 0 ? expiry : null;
+  } catch {
+    return null;
+  }
+};
 
 export const resolveGoogleClientId = (
   runtimeEnv?: Partial<Window["env"]>,
@@ -49,11 +62,27 @@ const toOAuthErrorMessage = (errorCode: string): string => {
 };
 
 export const getStoredToken = (): string | null => {
+  if (
+    currentAccessToken &&
+    currentAccessTokenExpiresAt !== undefined &&
+    currentAccessTokenExpiresAt !== null &&
+    Date.now() >= currentAccessTokenExpiresAt
+  ) {
+    clearStoredToken();
+    return null;
+  }
   if (currentAccessToken) return currentAccessToken;
   try {
     const stored = sessionStorage.getItem(STORAGE_KEY);
     if (stored) {
       currentAccessToken = stored;
+      // Legacy raw-token entries have no expiry and remain usable until Drive
+      // rejects them. Manual tokens likewise deliberately have unknown TTL.
+      currentAccessTokenExpiresAt = readStoredExpiry();
+      if (currentAccessTokenExpiresAt !== null && Date.now() >= currentAccessTokenExpiresAt) {
+        clearStoredToken();
+        return null;
+      }
       return stored;
     }
   } catch (err) {
@@ -62,13 +91,31 @@ export const getStoredToken = (): string | null => {
   return null;
 };
 
-export const setStoredToken = (token: string | null): void => {
+export const isStoredTokenExpired = (token: string): boolean => {
+  if (!token) return false;
+  let expiresAt = currentAccessToken === token ? currentAccessTokenExpiresAt : undefined;
+  if (expiresAt === undefined) {
+    try {
+      if (sessionStorage.getItem(STORAGE_KEY) !== token) return false;
+      expiresAt = readStoredExpiry();
+    } catch {
+      return false;
+    }
+  }
+  return expiresAt !== null && expiresAt !== undefined && Date.now() >= expiresAt;
+};
+
+export const setStoredToken = (token: string | null, expiresAt?: number): void => {
   currentAccessToken = token;
+  currentAccessTokenExpiresAt = token ? (expiresAt ?? null) : null;
   try {
     if (token) {
       sessionStorage.setItem(STORAGE_KEY, token);
+      if (expiresAt === undefined) sessionStorage.removeItem(EXPIRY_STORAGE_KEY);
+      else sessionStorage.setItem(EXPIRY_STORAGE_KEY, String(expiresAt));
     } else {
       sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(EXPIRY_STORAGE_KEY);
     }
   } catch (err) {
     console.warn("[GoogleAuth] Failed to update sessionStorage:", err);
@@ -77,6 +124,19 @@ export const setStoredToken = (token: string | null): void => {
 
 export const clearStoredToken = (): void => {
   setStoredToken(null);
+};
+
+export const clearStoredTokenIfCurrent = (token: string): boolean => {
+  if (!token || (currentAccessToken !== null && currentAccessToken !== token)) return false;
+  try {
+    const stored = sessionStorage.getItem(STORAGE_KEY);
+    if (stored && stored !== token) return false;
+  } catch {
+    // Memory identity below still protects against clearing a newer token.
+  }
+  if (currentAccessToken !== token) return false;
+  clearStoredToken();
+  return true;
 };
 
 export const waitForGoogleIdentity = async (timeoutMs = 10000): Promise<boolean> => {
@@ -125,7 +185,11 @@ export const requestGoogleAccessToken = async (options?: {
             return;
           }
           if (response.access_token) {
-            setStoredToken(response.access_token);
+            const expiresAt =
+              typeof response.expires_in === "number"
+                ? Date.now() + response.expires_in * 1000
+                : undefined;
+            setStoredToken(response.access_token, expiresAt);
             resolve(response.access_token);
           } else {
             reject(new Error("No access token returned from Google Sign-In"));

@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { asLocalDuckSession } from "@/services/engine";
 import {
   clearStoredToken,
+  clearStoredTokenIfCurrent,
   createDefaultLakehouseTree,
   getStoredToken,
   listDataFilesInFolder,
@@ -11,6 +12,7 @@ import {
   loadTableIntoDuckDB,
   requestGoogleAccessToken,
   resolveLayerFolderId,
+  isGoogleDriveAuthError,
   setStoredToken,
   type LakehouseLayer,
   type LakehouseTable,
@@ -18,6 +20,21 @@ import {
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
+
+const handleDriveAuthFailure = (
+  set: (state: Partial<DuckStoreState>) => void,
+  get: () => DuckStoreState,
+  token: string,
+  error: unknown
+): boolean => {
+  if (!isGoogleDriveAuthError(error) || get().googleAuth.token !== token) return false;
+  clearStoredTokenIfCurrent(token);
+  set({
+    googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: error.message },
+    lakehouseStatusMessage: "Google Drive authorization expired or was revoked. Sign in again.",
+  });
+  return true;
+};
 
 async function loadTableFiles(table: LakehouseTable, token: string): Promise<LakehouseTable> {
   if (!table.id) throw new Error(`Dataset '${table.name}' has no Drive folder.`);
@@ -131,8 +148,11 @@ export const createGoogleDriveSlice: StateCreator<
       toast.success(`Loaded '${label}'`);
       return queryTarget;
     } catch (error) {
+      const authFailure = handleDriveAuthFailure(set, get, token ?? "", error);
       if (current()) {
-        const message = `Error loading '${label}': ${messageOf(error)}`;
+        const message = authFailure
+          ? "Google Drive authorization expired or was revoked. Sign in again."
+          : `Error loading '${label}': ${messageOf(error)}`;
         set({ lakehouseStatusMessage: message });
         toast.error(message);
       }
@@ -233,8 +253,11 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: "Catalog loaded. Select a dataset to query.",
         });
       } catch (error) {
+        const authFailure = handleDriveAuthFailure(set, get, token, error);
         if (get().googleAuth.token === token) {
-          const message = `Catalog refresh error: ${messageOf(error)}`;
+          const message = authFailure
+            ? "Google Drive authorization expired or was revoked. Sign in again."
+            : `Catalog refresh error: ${messageOf(error)}`;
           set({ lakehouseStatusMessage: message });
           toast.error(message);
         }
@@ -269,8 +292,14 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: `Loaded ${updated.children.length} dataset(s) in '${layerName}'.`,
         });
       } catch (error) {
-        if (get().googleAuth.token === token)
-          set({ lakehouseStatusMessage: `Error loading '${layerName}': ${messageOf(error)}` });
+        const authFailure = handleDriveAuthFailure(set, get, token, error);
+        if (get().googleAuth.token === token) {
+          set({
+            lakehouseStatusMessage: authFailure
+              ? "Google Drive authorization expired or was revoked. Sign in again."
+              : `Error loading '${layerName}': ${messageOf(error)}`,
+          });
+        }
       } finally {
         busy = false;
         set({ isLakehouseLoading: false });
@@ -313,8 +342,14 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: `Found ${updated.children.length} file(s) in '${tableName}'.`,
         });
       } catch (error) {
-        if (get().googleAuth.token === token)
-          set({ lakehouseStatusMessage: `Error loading '${tableName}': ${messageOf(error)}` });
+        const authFailure = handleDriveAuthFailure(set, get, token, error);
+        if (get().googleAuth.token === token) {
+          set({
+            lakehouseStatusMessage: authFailure
+              ? "Google Drive authorization expired or was revoked. Sign in again."
+              : `Error loading '${tableName}': ${messageOf(error)}`,
+          });
+        }
       } finally {
         busy = false;
         set({ isLakehouseLoading: false });

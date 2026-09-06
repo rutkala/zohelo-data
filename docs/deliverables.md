@@ -37,7 +37,7 @@ The architecture remains proposed. Drive is durable authority for data and relea
 - Contracts cover A/B/C rates and gold prices, including currency/commodity keys, rate units, effective/publication dates, source batch identity, and revised values.
 - Rules specify watermarks, overlap, checkpoints, retries, duplicates, schema changes, catch-up, and full rebuild from retained raw.
 - A fact/dimension design and bus matrix declare grain and aggregation rules, and reuse dimensions where definitions match; date and currency are initial candidates.
-- Point-in-time treatment for revised history remains an explicit business decision with alternatives recorded.
+- [NBP revision policy](decisions/0001-nbp-corrections.md): normal analysis uses current corrected values, with detected changes and raw versions retained for traceability. A historical-comparison interface is outside the current release scope; the pipeline implementation remains pending.
 
 ## D4. Complete NBP end-to-end
 
@@ -98,4 +98,4 @@ These apply across D1–D5, not as extra projects:
 
 The next release should complete essential D1–D5 work. Optional cleanup need not delay it. D6 source additions and D7 redesign follow afterward; source discovery can inform the earlier modeling discussion.
 
-Business decisions to resolve during design, one at a time: metric use cases, treatment of historical revisions, metric availability/serving mode, and source priorities or commercial reuse needs. These are not implementation assumptions.
+Business decisions to resolve during design, one at a time: metric use cases, metric availability/serving mode, and source priorities or commercial reuse needs. Historical revisions now have the policy linked above. These remaining choices are not implementation assumptions.
