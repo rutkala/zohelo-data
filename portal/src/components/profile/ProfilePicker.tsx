@@ -18,6 +18,7 @@ import ProfileEditor from "./ProfileEditor";
 import ProfileAvatar from "./ProfileAvatar";
 
 import Logo from "/logo.png";
+import PlatformInfoLinks from "@/components/PlatformInfoLinks";
 
 interface ProfilePickerProps {
   profiles: Profile[];
@@ -70,7 +71,7 @@ export default function ProfilePicker({
       <div className="text-center max-w-3xl w-full px-6 space-y-8">
         <img src={Logo} alt="Duck-UI" className="h-16 mx-auto" />
         <h1 className="text-3xl font-bold tracking-tight">
-          {profiles.length === 0 ? "Welcome to Duck-UI" : "Choose Profile"}
+          {profiles.length === 0 ? "Welcome to Zohelo-data" : "Choose Profile"}
         </h1>
 
         {profiles.length > 0 && (
@@ -115,10 +116,10 @@ export default function ProfilePicker({
           Create New Profile
         </Button>
         <p className="text-xs text-muted-foreground">
-          Your profiles are stored locally on your device. Creating a profile does not share any
-          data... This application is 100% offline and private by design, it's runs on the client
-          side and does not send any data to any server.
+          Profiles are stored locally on your device. Zohelo-data runs in your browser; optional
+          connections such as Google Drive or remote services can send data when you enable them.
         </p>
+        <PlatformInfoLinks className="text-xs text-muted-foreground" />
       </div>
 
       {selectedProfile && (
@@ -141,6 +142,7 @@ export default function ProfilePicker({
             onSave={handleCreate}
             onCancel={() => setShowCreateDialog(false)}
           />
+          <PlatformInfoLinks className="text-xs text-muted-foreground pt-2" />
         </DialogContent>
       </Dialog>
     </div>

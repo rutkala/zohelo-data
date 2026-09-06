@@ -45,8 +45,8 @@ jobs:
         run: npm test
       - name: Install test browser
         run: npx --no-install playwright install --with-deps chromium
-      - name: Browser regression with synthetic Drive responses
-        run: npm run test:e2e -- e2e/googleDrive.spec.ts --retries=0
+      - name: Browser regressions for Drive and public app information
+        run: npm run test:e2e -- e2e/googleDrive.spec.ts e2e/publicInfo.spec.ts --retries=0
       - name: Retain failed browser traces
         if: failure()
         uses: actions/upload-artifact@v4
