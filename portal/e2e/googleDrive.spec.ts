@@ -51,7 +51,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
     await route.fulfill({ headers, json: { files } });
   });
 
-  await page.goto("/");
+  await page.goto("./");
   const profile = page.getByRole("dialog", { name: "Create Profile" });
   await profile.getByPlaceholder("Profile name").fill("Drive regression");
   await profile.getByRole("button", { name: "Create Profile" }).click();

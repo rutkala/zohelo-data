@@ -2,6 +2,13 @@
 
 Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
 
+**Own the technical handoff.**
+
+- The owner supplies goals and business decisions. Handle routine branches, pull requests, checks and deployment within the authorized task; do not leave those as unexplained homework for the owner.
+- Creating a branch or passing tests is not the same as updating `main` or the live portal. State which of these has actually happened, and finish the authorized delivery or name the concrete blocker.
+- Keep owner-facing updates short and in plain language. Ask one necessary business question at a time. If an owner action is unavoidable, give one clear next step.
+- Do not imply that work continues after a reply unless a specific background task has actually been started.
+
 **Start with the task and repository context.**
 
 - Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md). The architecture document is marked **Proposed**: it describes a target, not a claim that every component exists or a request to implement every milestone.

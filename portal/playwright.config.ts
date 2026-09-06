@@ -1,5 +1,9 @@
 import { defineConfig } from "@playwright/test";
 
+const configuredBase = process.env.DUCK_UI_BASEPATH ?? "./";
+const basePath = configuredBase === "./" ? "/" : configuredBase;
+const previewUrl = `http://localhost:4599${basePath}`;
+
 /**
  * E2E smoke tests against the REAL production build (`vite preview` serves
  * dist/ with the same COOP/COEP + CSP headers as the Docker image). Run
@@ -13,12 +17,12 @@ export default defineConfig({
   workers: 1, // OPFS/IndexedDB state is per-origin; serialize to keep runs deterministic
   reporter: process.env.CI ? [["github"], ["list"]] : [["list"]],
   use: {
-    baseURL: "http://localhost:4599",
+    baseURL: previewUrl,
     trace: "retain-on-failure",
   },
   webServer: {
     command: "npm exec -- vite preview --port 4599 --strictPort",
-    url: "http://localhost:4599",
+    url: previewUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

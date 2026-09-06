@@ -17,6 +17,10 @@ permissions:
   pages: write
   id-token: write
 
+concurrency:
+  group: portal-pages
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,6 +28,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Read the existing Pages site configuration
+        id: pages
+        uses: actions/configure-pages@v5
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -48,13 +56,25 @@ jobs:
 
       - name: Install portal dependencies
         working-directory: portal
-        run: npm ci
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Build Duck-UI portal
         working-directory: portal
         env:
+          DUCK_UI_BASEPATH: ${{ steps.pages.outputs.base_path }}/
           DUCK_UI_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
         run: npm run build
+
+      - name: Identify the deployed portal code
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          Path('portal/dist/portal-build.json').write_text(
+              json.dumps({'git_commit': os.environ['GITHUB_SHA']}) + '\n'
+          )
+          PY
 
       - name: Copy dbt docs into portal build output
         run: |
