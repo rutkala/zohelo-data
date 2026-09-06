@@ -67,13 +67,18 @@ export const createGoogleDriveSlice: StateCreator<
   const select = async (
     layerName: string,
     tableName: string,
-    fileName?: string
+    fileId?: string
   ): Promise<string | null> => {
     if (busy) return null;
     const session = get().currentSession;
     const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
-    const label = fileName ?? tableName;
+    const table = get()
+      .lakehouseCatalog.find((layer) => layer.name === layerName)
+      ?.children.find((item) => item.name === tableName);
+    const file =
+      fileId === undefined ? undefined : table?.children.find((item) => item.id === fileId);
+    const label = file?.name ?? tableName;
     const current = () => get().currentSession === session && get().googleAuth.token === token;
     if (!local) {
       set({
@@ -88,14 +93,10 @@ export const createGoogleDriveSlice: StateCreator<
       lakehouseStatusMessage: `Loading '${label}' from Google Drive...`,
     });
     try {
-      const table = get()
-        .lakehouseCatalog.find((layer) => layer.name === layerName)
-        ?.children.find((item) => item.name === tableName);
       if (!table) throw new Error(`Dataset '${tableName}' was not found in the catalog.`);
       let queryTarget: string;
-      if (fileName !== undefined) {
-        const file = table.children.find((item) => item.name === fileName);
-        if (!file) throw new Error(`File '${fileName}' was not found in the catalog.`);
+      if (fileId !== undefined) {
+        if (!file) throw new Error("The requested file was not found in the catalog.");
         ({ queryTarget } = await loadFileIntoDuckDB(
           local.db,
           local.connection,
@@ -320,6 +321,6 @@ export const createGoogleDriveSlice: StateCreator<
       }
     },
     selectLakehouseDataset: (layerName, tableName) => select(layerName, tableName),
-    selectLakehouseFile: (layerName, tableName, fileName) => select(layerName, tableName, fileName),
+    selectLakehouseFile: (layerName, tableName, fileId) => select(layerName, tableName, fileId),
   };
 };

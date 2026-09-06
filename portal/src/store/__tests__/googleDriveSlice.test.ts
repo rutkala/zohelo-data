@@ -115,11 +115,18 @@ describe("Drive selection state", () => {
   it("does not return a SQL target after a failed single-file load", async () => {
     const store = makeStore();
     vi.mocked(loadFileIntoDuckDB).mockRejectedValueOnce(new Error("Forbidden"));
-    expect(
-      await store.getState().selectLakehouseFile("02_bronze", "rates", "data.parquet")
-    ).toBeNull();
+    expect(await store.getState().selectLakehouseFile("02_bronze", "rates", "file")).toBeNull();
     expect(store.getState().activeLakehouseDataset).toBeNull();
     expect(store.getState().lakehouseStatusMessage).toContain("Forbidden");
+  });
+
+  it("selects the requested Drive ID when two files have the same name", async () => {
+    const store = makeStore();
+    const table = store.getState().lakehouseCatalog[0].children[0];
+    const second = { ...table.children[0], id: "second-file" };
+    table.children.push(second);
+    await store.getState().selectLakehouseFile("02_bronze", "rates", second.id);
+    expect(vi.mocked(loadFileIntoDuckDB).mock.calls[0][3]).toEqual(second);
   });
 
   it("serializes rapid selections", async () => {

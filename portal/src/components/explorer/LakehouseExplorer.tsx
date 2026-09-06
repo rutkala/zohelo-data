@@ -71,9 +71,14 @@ export default function LakehouseExplorer() {
     await openPreview(target, `${layerName}/${tableName}`);
   };
 
-  const handleSelectFile = async (layerName: string, tableName: string, fileName: string) => {
+  const handleSelectFile = async (
+    layerName: string,
+    tableName: string,
+    fileName: string,
+    fileId: string
+  ) => {
     if (isLakehouseLoading) return;
-    const target = await selectLakehouseFile(layerName, tableName, fileName);
+    const target = await selectLakehouseFile(layerName, tableName, fileId);
     await openPreview(target, `${layerName}/${tableName}/${fileName}`);
   };
 
@@ -306,15 +311,15 @@ export default function LakehouseExplorer() {
                           <div className="ml-4 pl-2 border-l border-border/40 space-y-0.5">
                             {table.children.length === 0 ? (
                               <div className="py-0.5 px-2 text-[10px] text-muted-foreground italic">
-                                No parquet files
+                                No data files
                               </div>
                             ) : (
                               table.children.map((file) => (
                                 <div
-                                  key={file.name}
+                                  key={file.id}
                                   className="flex items-center gap-1.5 py-0.5 px-1.5 rounded hover:bg-muted/40 cursor-pointer text-[11px] text-muted-foreground hover:text-foreground"
                                   onClick={() =>
-                                    handleSelectFile(layer.name, table.name, file.name)
+                                    handleSelectFile(layer.name, table.name, file.name, file.id)
                                   }
                                 >
                                   <FileSpreadsheet className="h-3 w-3 text-emerald-500 shrink-0" />

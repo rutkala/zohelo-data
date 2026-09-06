@@ -642,7 +642,7 @@ export interface GoogleDriveSlice {
   toggleLakehouseLayer: (layerName: string) => Promise<void>;
   toggleLakehouseTable: (layerName: string, tableName: string) => Promise<void>;
   selectLakehouseDataset: (layerName: string, tableName: string) => Promise<string | null>;
-  selectLakehouseFile: (layerName: string, tableName: string, fileName: string) => Promise<string | null>;
+  selectLakehouseFile: (layerName: string, tableName: string, fileId: string) => Promise<string | null>;
 }
 
 //
