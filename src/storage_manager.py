@@ -28,9 +28,33 @@ class StorageManager:
             self.drive_service = self._authenticate_gdrive()
 
     def _authenticate_gdrive(self):
-        """Authenticates using service account JSON or OAuth credentials from env."""
+        """Prefer complete owner OAuth credentials; otherwise use legacy JSON auth."""
         scopes = ['https://www.googleapis.com/auth/drive']
         is_github_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+
+        # One explicit, complete OAuth configuration wins in every runtime.
+        # Never switch identities when its refresh fails, and do not parse
+        # unused legacy credentials when this path is selected.
+        oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+        oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
+        oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+
+        if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+            self.auth_source = "oauth_environment"
+            credentials = UserCredentials(
+                token=None,
+                refresh_token=oauth_refresh_token,
+                token_uri="https://oauth2.googleapis.com/token",
+                client_id=oauth_client_id,
+                client_secret=oauth_client_secret,
+                scopes=scopes,
+            )
+            try:
+                credentials.refresh(HttpLib2Request(httplib2.Http()))
+            except Exception as exc:
+                raise RuntimeError("Failed to refresh Google OAuth access token from GOOGLE_OAUTH_* env vars.") from exc
+            return build('drive', 'v3', credentials=credentials)
+
         creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_JSON")
         creds_dict = json.loads(creds_json) if creds_json else None
 
@@ -65,27 +89,6 @@ class StorageManager:
                     else "typed_credentials_json"
                 )
                 return build("drive", "v3", credentials=credentials)
-
-        # Preferred OAuth path when service account JSON is not available.
-        oauth_client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
-        oauth_client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
-        oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
-
-        if oauth_client_id and oauth_client_secret and oauth_refresh_token:
-            self.auth_source = "oauth_environment"
-            credentials = UserCredentials(
-                token=None,
-                refresh_token=oauth_refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=oauth_client_id,
-                client_secret=oauth_client_secret,
-                scopes=scopes,
-            )
-            try:
-                credentials.refresh(HttpLib2Request(httplib2.Http()))
-            except Exception as exc:
-                raise RuntimeError("Failed to refresh Google OAuth access token from GOOGLE_OAUTH_* env vars.") from exc
-            return build('drive', 'v3', credentials=credentials)
 
         # Fallback path: OAuth client JSON in GCP_SERVICE_ACCOUNT_JSON.
         if not creds_dict:
