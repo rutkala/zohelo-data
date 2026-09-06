@@ -48,6 +48,24 @@ The check refreshes/authenticates through the same `StorageManager` path, calls 
 | `platform_folder_not_visible` / `ambiguous_platform_folder` | Authentication reached Drive but the configured folder cannot be selected safely. Nothing is created or replaced. |
 | `read_access_verified` | The selected credentials reached Drive and could inspect/list the platform folder; writes remain untested. |
 
+## Explicit upload diagnostic
+
+For an owner-authorized upload check, the responsible agent can run:
+
+```bash
+python scripts/check_google_upload.py --allow-write-test
+```
+
+Without that flag the script returns before authentication or any Drive request. With it, the script uses the same noninteractive `StorageManager` path and requires `oauth_environment`, so the test exercises the owner's configured upload identity. It finds exactly one existing `zohelo-data` root and requires its add-child capability; it never initializes folders or invokes ingestion or transformation.
+
+The probe creates one uniquely named `zohelo-upload-check-*.txt` file smaller than 1 KB directly under that root. It reserves a Drive file ID before uploading, downloads the result and compares the exact bytes. Cleanup uses only that reserved ID and checks the invocation's name, parent, application marker, nonce, text MIME type and ownership before deleting. A missing upload response can therefore still be followed by cleanup of the known candidate. See Google's [pre-generated upload IDs](https://developers.google.com/workspace/drive/api/guides/manage-uploads#use_a_pre-generated_id_to_upload_files).
+
+Success requires `status=upload_readback_cleanup_verified` and all three flags `upload_verified`, `readback_verified` and `cleanup_verified`. A failed or unconfirmed cleanup is a failed diagnostic and reports `cleanup_required=true` with the unique test filename for recovery. Do not infer a clean pass from upload permission or an accepted upload alone. A forcibly terminated runner can prevent cleanup; inspect the diagnostic's marked test file before retrying an interrupted run. Never clean up by deleting a dataset or everything matching a broad name pattern.
+
+The **Check Google Drive upload** workflow runs on main by manual dispatch. For an already-authorized test performed through a connector that cannot dispatch workflows, a reviewed main merge may opt in with `[verify-drive-upload]` in its commit message, provided that merge changes the diagnostic script or its workflow. Ordinary changes without that marker do not run the write job. There is no schedule or downstream data-pipeline trigger, and concurrent requests do not cancel an active cleanup. This is an execution mechanism, not standing authorization to perform new write tests.
+
+The report contains status codes, booleans, payload size/hash and optional recovery filename, not credentials, private account details or Drive IDs. It establishes only a small upload/read-back/cleanup round trip in the runtime that executed it. Large or resumable uploads, writes to other folders, production dataset replacement, release publication recovery and another runtime's write access remain separate checks.
+
 ## Remaining account checks and recovery
 
 ### Owner evidence and public application pages
