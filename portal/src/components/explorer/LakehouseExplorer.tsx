@@ -46,6 +46,8 @@ export default function LakehouseExplorer() {
 
   const [manualToken, setManualToken] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const baseUrl = import.meta.env.BASE_URL === "./" ? "/" : (import.meta.env.BASE_URL ?? "/");
+  const privacyUrl = `${baseUrl.replace(/\/$/, "")}/privacy.html`;
 
   const handleApplyManualToken = async () => {
     if (!manualToken.trim()) return;
@@ -181,6 +183,18 @@ export default function LakehouseExplorer() {
             </Button>
           )}
         </div>
+      </div>
+
+      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex items-center gap-1">
+        <span>Google sign-in uses read-only Google Drive access.</span>
+        <a
+          href={privacyUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          Privacy
+        </a>
       </div>
 
       {/* Auth Status & Notification Pill */}

@@ -38,6 +38,7 @@ import { demoDatasets, type DemoDataset } from "@/lib/demoDatasets";
 import { getUiConfig } from "@/lib/appConfig";
 import { stageRemoteTextFile } from "@/services/duckdb";
 import { toast } from "sonner";
+import PlatformInfoLinks from "@/components/PlatformInfoLinks";
 
 const quickStartActions = [
   {
@@ -284,7 +285,7 @@ SELECT * FROM 'https://blobs.duckdb.org/stations.parquet' LIMIT 1000;
         >
           <img src={theme === "dark" ? Logo : LogoLight} alt="Logo" className="h-12" />
           <h1 className="text-4xl font-bold tracking-tight">
-            {currentProfile ? `Welcome, ${currentProfile.name}` : "Welcome to Duck-UI"}
+            {currentProfile ? `Welcome, ${currentProfile.name}` : "Welcome to Zohelo-data"}
           </h1>
         </motion.div>
 
@@ -360,8 +361,8 @@ SELECT * FROM 'https://blobs.duckdb.org/stations.parquet' LIMIT 1000;
 
           <TabsContent value="sample" className="space-y-6">
             <p className="text-sm text-muted-foreground">
-              No data yet? Click a dataset to load it instantly from a public source and start
-              querying — nothing leaves your browser.
+              Click a public sample dataset to open a ready-to-run query. Local queries use your
+              browser; external connections send queries to the selected service.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {demoDatasets.map((dataset, index) => (
@@ -566,6 +567,7 @@ SELECT * FROM 'https://blobs.duckdb.org/stations.parquet' LIMIT 1000;
         <p className="text-muted-foreground text-center text-xs">
           Duck-UI Version: {duck_ui_version} - Released on: {duck_ui_release_date}
         </p>
+        <PlatformInfoLinks className="text-xs text-muted-foreground" />
       </div>
 
       <ShareLiveDialog open={shareOpen} onOpenChange={setShareOpen} />

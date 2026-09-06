@@ -48,10 +48,30 @@ The check refreshes/authenticates through the same `StorageManager` path, calls 
 
 ## Remaining account checks and recovery
 
-This session could not inspect the Google Cloud client's type, authorized origins, consent publishing status, API settings, private secret stores or an active personal Codespace. The GitHub connector does not expose those settings, and its secret-metadata endpoints were unavailable. Workflow results are the evidence for Actions; do not infer live Codespaces success from them.
+### Owner evidence and public application pages
+
+The owner subsequently supplied Google Cloud screenshots confirming an **External / Testing** app, an enabled web client, the live `https://data.zohelo.com` JavaScript origin, and an incomplete-branding banner. The owner also reported replacing the client ID and client secret while retaining the old refresh token. Testing gives Drive refresh grants a seven-day lifetime; a token issued to a different client also cannot be transferred by changing the two client variables. These are plausible causes of the observed failure, not proof of which grant was rejected. The existing `GCP_SERVICE_ACCOUNT_JSON` secret can still affect credential selection.
+
+The portal now supplies these public pages, accessible without Google sign-in or a local profile:
+
+| Google Branding field | Value |
+| --- | --- |
+| Application home page | `https://data.zohelo.com/about.html` |
+| Application privacy policy link | `https://data.zohelo.com/privacy.html` |
+| Application terms of service link | `https://data.zohelo.com/terms.html` |
+
+Use the descriptive About page as Google's homepage rather than the workspace's initial profile dialog. The public pages are static files in `portal/public/`; they load no scripts and are linked from the profile dialog, workspace home and Drive privacy disclosure. Keep the privacy text synchronized with actual persistence, optional remote AI, sharing and pipeline behavior. Do not restore blanket claims that the complete app never transmits data or that disconnecting Drive deletes all retained copies.
+
+The owner must save the Branding settings and then use **Audience → Publish app** when Google enables it. If it remains disabled, inspect Google's specific remaining message; supplying these pages is not a promise of Google approval or domain verification. Personal-use verification exemptions and publishing status are separate. See [Google's branding requirements](https://support.google.com/cloud/answer/15549049?hl=en) and [personal-use exemption](https://support.google.com/cloud/answer/13464323?hl=en).
+
+After the publishing status changes, obtain a fresh offline grant for the intended current client and scope and store the refresh token securely in each required runtime. Publishing alone does not repair an expired, revoked or mismatched token. Re-run the read-only authorization check before production data jobs. No new refresh token or Google Cloud publication has been performed as part of adding these pages.
+
+### Checks still requiring account access
+
+This session cannot directly inspect or change private Google Cloud settings, secret stores or an active personal Codespace. The owner's screenshots provide the client type, shown origins and Testing status described above; enabled APIs, granted scopes and live Codespaces access remain unverified. The GitHub connector does not expose those settings, and its secret-metadata endpoints were unavailable. Workflow results are the evidence for Actions; do not infer live Codespaces success from them.
 
 One common cause of refresh failure is an external OAuth app remaining in **Testing**. Google documents a seven-day refresh-token lifetime for that configuration when Drive scopes are used. Other causes exist, including revoked access and token limits, so `invalid_grant` alone does not prove Testing is the cause. See [Google's refresh-token rules](https://developers.google.com/identity/protocols/oauth2#expiration).
 
-The next owner-side check is the publishing status in the selected Cloud project's [OAuth Audience screen](https://console.cloud.google.com/auth/audience). Once the configuration is understood, complete Google's consent flow for the intended Drive scope and offline access, then store the resulting refresh token securely in each required runtime. The assistant handles the technical steps where access permits; user consent/account access cannot be manufactured from the client secret. Never paste tokens or client secrets into chat, issues, commits, browser bundles or public logs.
+Complete the app configuration using the public pages above, then check the selected Cloud project's [OAuth Audience screen](https://console.cloud.google.com/auth/audience). Once the configuration is ready, complete Google's consent flow for the intended Drive scope and offline access, then store the resulting refresh token securely in each required runtime. The assistant handles the technical steps where access permits; user consent/account access cannot be manufactured from the client secret. Never paste tokens or client secrets into chat, issues, commits, browser bundles or public logs.
 
-For browser access, the live origin is `https://data.zohelo.com`. A Codespaces preview has its own exact origin, commonly `https://<codespace-name>-5173.app.github.dev`, and localhost is a separate origin again. Their registration and the client's web application type must be verified in the Cloud project; the public-ID fallback fixes application wiring, not Google's origin allowlist.
+For browser access, the live origin `https://data.zohelo.com` and web client type appear in the owner's screenshot. A Codespaces preview has its own exact origin, commonly `https://<codespace-name>-5173.app.github.dev`, and localhost is a separate origin again. No Codespaces preview origin appears in the supplied list; the actual preview address and its registration still need verification. The public-ID fallback fixes application wiring, not Google's origin allowlist.
