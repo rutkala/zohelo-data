@@ -12,369 +12,314 @@ import {
   requestGoogleAccessToken,
   resolveLayerFolderId,
   setStoredToken,
-  type LakehouseFile,
   type LakehouseLayer,
   type LakehouseTable,
 } from "@/services/googleDrive";
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
+
+async function loadTableFiles(table: LakehouseTable, token: string): Promise<LakehouseTable> {
+  if (!table.id) throw new Error(`Dataset '${table.name}' has no Drive folder.`);
+  const files = await listDataFilesInFolder(table.id, token);
+  return {
+    ...table,
+    loaded: true,
+    children: files.map((file) => ({
+      ...file,
+      tableName: table.name,
+      layer: table.layer,
+    })),
+  };
+}
+
+async function loadLayer(layer: LakehouseLayer, token: string): Promise<LakehouseLayer> {
+  const id = await resolveLayerFolderId(layer.name, token);
+  if (!id) return { ...layer, id: null, loaded: true, children: [] };
+  const folders = await listSubfolders(id, token);
+  folders.sort((a, b) => a.name.localeCompare(b.name));
+  const children = await Promise.all(
+    folders.map(async (folder) => {
+      const previous = layer.children.find((table) => table.id === folder.id);
+      const table: LakehouseTable = {
+        type: "table",
+        name: folder.name,
+        id: folder.id,
+        layer: layer.name,
+        expanded: previous?.expanded ?? false,
+        loaded: false,
+        children: [],
+      };
+      return table.expanded ? loadTableFiles(table, token) : table;
+    })
+  );
+  return { ...layer, id, loaded: true, children };
+}
 
 export const createGoogleDriveSlice: StateCreator<
   DuckStoreState,
   [["zustand/devtools", never]],
   [],
   GoogleDriveSlice
-> = (set, get) => ({
-  googleAuth: {
-    token: getStoredToken(),
-    isAuthenticated: !!getStoredToken(),
-    authSource: getStoredToken() ? "google_identity" : "none",
-    error: null,
-  },
-  lakehouseCatalog: createDefaultLakehouseTree(),
-  isLakehouseLoading: false,
-  lakehouseStatusMessage: "Ready. Sign in to browse Google Drive lakehouse datasets.",
-  activeLakehouseDataset: "nbp_exchange_rates_table_a",
-  activeLakehouseLayer: "02_bronze",
-
-  signInWithGoogle: async (promptConsent = false) => {
-    try {
-      set({
-        isLakehouseLoading: true,
-        lakehouseStatusMessage: "Requesting Google Sign-In authorization...",
-      });
-
-      const token = await requestGoogleAccessToken({ promptConsent });
-      set({
-        googleAuth: {
-          token,
-          isAuthenticated: true,
-          authSource: "google_identity",
-          error: null,
-        },
-        lakehouseStatusMessage: "Google Drive connected. Synchronizing catalog...",
-      });
-
-      toast.success("Signed in with Google Drive");
-      await get().refreshLakehouseCatalog();
-      return true;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Google Sign-In failed";
-      set({
-        googleAuth: {
-          token: null,
-          isAuthenticated: false,
-          authSource: "none",
-          error: msg,
-        },
-        lakehouseStatusMessage: `Authentication error: ${msg}`,
-      });
-      toast.error(msg);
-      return false;
-    } finally {
-      set({ isLakehouseLoading: false });
-    }
-  },
-
-  setManualGoogleToken: async (token: string) => {
-    const trimmed = token.trim();
-    if (!trimmed) {
-      toast.error("Please enter a valid Google OAuth token");
-      return false;
-    }
-
-    setStoredToken(trimmed);
-    set({
-      googleAuth: {
-        token: trimmed,
-        isAuthenticated: true,
-        authSource: "manual",
-        error: null,
-      },
-      lakehouseStatusMessage: "Manual token applied. Refreshing catalog...",
-    });
-
-    toast.success("Manual Google Token applied");
-    try {
-      await get().refreshLakehouseCatalog();
-      return true;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Catalog sync failed";
-      toast.error(msg);
-      return false;
-    }
-  },
-
-  disconnectGoogleDrive: () => {
-    clearStoredToken();
-    set({
-      googleAuth: {
-        token: null,
-        isAuthenticated: false,
-        authSource: "none",
-        error: null,
-      },
-      lakehouseCatalog: createDefaultLakehouseTree(),
-      lakehouseStatusMessage: "Disconnected from Google Drive.",
-    });
-    toast.info("Disconnected from Google Drive");
-  },
-
-  refreshLakehouseCatalog: async () => {
+> = (set, get) => {
+  // Serialize catalog/load operations, including rapid clicks before React renders.
+  let busy = false;
+  const select = async (
+    layerName: string,
+    tableName: string,
+    fileName?: string
+  ): Promise<string | null> => {
+    if (busy) return null;
+    const session = get().currentSession;
+    const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
-    if (!token) {
+    const label = fileName ?? tableName;
+    const current = () => get().currentSession === session && get().googleAuth.token === token;
+    if (!local) {
       set({
-        lakehouseStatusMessage: "Sign in with Google to browse private lakehouse datasets.",
+        lakehouseStatusMessage:
+          "DuckDB is still initializing. Please wait, then select the dataset again.",
       });
-      return;
+      return null;
     }
-
+    busy = true;
     set({
       isLakehouseLoading: true,
-      lakehouseStatusMessage: "Scanning Google Drive lakehouse layers...",
+      lakehouseStatusMessage: `Loading '${label}' from Google Drive...`,
     });
-
     try {
-      const currentTree = [...get().lakehouseCatalog];
-      const updatedTree: LakehouseLayer[] = [];
-
-      for (const layerNode of currentTree) {
-        let layerId = layerNode.id;
-        try {
-          layerId = await resolveLayerFolderId(layerNode.name, token);
-        } catch {
-          layerId = null;
-        }
-
-        const newLayer: LakehouseLayer = {
-          ...layerNode,
-          id: layerId,
-          children: [...layerNode.children],
-        };
-
-        // If layer folder found and is expanded or is 02_bronze, load datasets
-        if (layerId && (layerNode.expanded || layerNode.name === "02_bronze")) {
-          try {
-            const subfolders = await listSubfolders(layerId, token);
-            subfolders.sort((a, b) => a.name.localeCompare(b.name));
-
-            newLayer.children = await Promise.all(
-              subfolders.map(async (folder) => {
-                const existingTable = layerNode.children.find((t) => t.name === folder.name);
-                let files: LakehouseFile[] = existingTable?.children || [];
-
-                if (existingTable?.expanded || folder.name === "nbp_exchange_rates_table_a") {
-                  const driveFiles = await listDataFilesInFolder(folder.id, token);
-                  files = driveFiles.map((f) => ({
-                    id: f.id,
-                    name: f.name,
-                    mimeType: f.mimeType,
-                    size: f.size,
-                    tableName: folder.name,
-                    layer: layerNode.name,
-                  }));
-                }
-
-                const table: LakehouseTable = {
-                  type: "table",
-                  name: folder.name,
-                  id: folder.id,
-                  layer: layerNode.name,
-                  expanded: existingTable?.expanded ?? (folder.name === "nbp_exchange_rates_table_a"),
-                  loaded: true,
-                  children: files,
-                };
-                return table;
-              })
-            );
-            newLayer.loaded = true;
-          } catch (err) {
-            console.error(`Error loading datasets for layer ${layerNode.name}:`, err);
-          }
-        }
-
-        updatedTree.push(newLayer);
+      const table = get()
+        .lakehouseCatalog.find((layer) => layer.name === layerName)
+        ?.children.find((item) => item.name === tableName);
+      if (!table) throw new Error(`Dataset '${tableName}' was not found in the catalog.`);
+      let queryTarget: string;
+      if (fileName !== undefined) {
+        const file = table.children.find((item) => item.name === fileName);
+        if (!file) throw new Error(`File '${fileName}' was not found in the catalog.`);
+        ({ queryTarget } = await loadFileIntoDuckDB(
+          local.db,
+          local.connection,
+          tableName,
+          file,
+          token ?? ""
+        ));
+      } else {
+        ({ queryTarget } = await loadTableIntoDuckDB(
+          local.db,
+          local.connection,
+          tableName,
+          table.id,
+          table.children,
+          token ?? "",
+          layerName
+        ));
       }
-
+      if (!current()) return null;
+      let schemaWarning = "";
+      try {
+        await get().fetchDatabasesAndTablesInfo();
+      } catch (error) {
+        schemaWarning = ` Schema refresh failed: ${messageOf(error)}`;
+      }
+      if (!current()) return null;
       set({
-        lakehouseCatalog: updatedTree,
-        lakehouseStatusMessage: "Lakehouse catalog synchronized with Google Drive.",
+        activeLakehouseDataset: tableName,
+        activeLakehouseLayer: layerName,
+        lakehouseStatusMessage: `Loaded '${label}'. Query ${queryTarget}.${schemaWarning}`,
       });
-
-      // Auto-load bronze default dataset if available
-      const bronzeLayer = updatedTree.find((l) => l.name === "02_bronze");
-      const defaultTable =
-        bronzeLayer?.children.find((t) => t.name === "nbp_exchange_rates_table_a") ||
-        bronzeLayer?.children[0];
-
-      if (defaultTable) {
-        await get().selectLakehouseDataset("02_bronze", defaultTable.name);
+      toast.success(`Loaded '${label}'`);
+      return queryTarget;
+    } catch (error) {
+      if (current()) {
+        const message = `Error loading '${label}': ${messageOf(error)}`;
+        set({ lakehouseStatusMessage: message });
+        toast.error(message);
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to refresh catalog";
-      set({ lakehouseStatusMessage: `Catalog refresh error: ${msg}` });
-      console.error("[GoogleDrive] Catalog refresh error:", err);
+      return null;
     } finally {
+      busy = false;
       set({ isLakehouseLoading: false });
     }
-  },
+  };
 
-  toggleLakehouseLayer: async (layerName: string) => {
-    const catalog = [...get().lakehouseCatalog];
-    const layer = catalog.find((l) => l.name === layerName);
-    if (!layer) return;
+  const token = getStoredToken();
+  return {
+    googleAuth: {
+      token,
+      isAuthenticated: !!token,
+      authSource: token ? "google_identity" : "none",
+      error: null,
+    },
+    lakehouseCatalog: createDefaultLakehouseTree(),
+    isLakehouseLoading: false,
+    lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
+    activeLakehouseDataset: null,
+    activeLakehouseLayer: null,
 
-    layer.expanded = !layer.expanded;
-    set({ lakehouseCatalog: catalog });
-
-    const token = get().googleAuth.token;
-    if (layer.expanded && !layer.loaded && token) {
+    signInWithGoogle: async (promptConsent = false) => {
       try {
-        set({ isLakehouseLoading: true, lakehouseStatusMessage: `Loading ${layerName}...` });
-        const layerId = layer.id || (await resolveLayerFolderId(layer.name, token));
-        layer.id = layerId;
-
-        if (layerId) {
-          const subfolders = await listSubfolders(layerId, token);
-          subfolders.sort((a, b) => a.name.localeCompare(b.name));
-          layer.children = subfolders.map((f) => ({
-            type: "table",
-            name: f.name,
-            id: f.id,
-            layer: layer.name,
-            expanded: false,
-            loaded: false,
-            children: [],
-          }));
-          layer.loaded = true;
-          set({
-            lakehouseCatalog: [...catalog],
-            lakehouseStatusMessage: `Loaded ${subfolders.length} dataset(s) in ${layerName}.`,
-          });
-        }
-      } catch (err) {
-        console.error(`Failed to expand layer ${layerName}:`, err);
+        set({
+          isLakehouseLoading: true,
+          lakehouseStatusMessage: "Requesting Google Sign-In authorization...",
+        });
+        const token = await requestGoogleAccessToken({ promptConsent });
+        set({
+          googleAuth: { token, isAuthenticated: true, authSource: "google_identity", error: null },
+        });
+        await get().refreshLakehouseCatalog();
+        return true;
+      } catch (error) {
+        const message = messageOf(error);
+        set({ lakehouseStatusMessage: `Google Drive connection error: ${message}` });
+        toast.error(message);
+        return false;
       } finally {
         set({ isLakehouseLoading: false });
       }
-    }
-  },
+    },
 
-  toggleLakehouseTable: async (layerName: string, tableName: string) => {
-    const catalog = [...get().lakehouseCatalog];
-    const layer = catalog.find((l) => l.name === layerName);
-    const table = layer?.children.find((t) => t.name === tableName);
-    if (!table) return;
-
-    table.expanded = !table.expanded;
-    set({ lakehouseCatalog: [...catalog] });
-
-    const token = get().googleAuth.token;
-    if (table.expanded && (!table.loaded || table.children.length === 0) && table.id && token) {
-      try {
-        const driveFiles = await listDataFilesInFolder(table.id, token);
-        table.children = driveFiles.map((f) => ({
-          id: f.id,
-          name: f.name,
-          mimeType: f.mimeType,
-          size: f.size,
-          tableName: table.name,
-          layer: layerName,
-        }));
-        table.loaded = true;
-        set({ lakehouseCatalog: [...catalog] });
-      } catch (err) {
-        console.error(`Failed to expand table ${tableName}:`, err);
+    setManualGoogleToken: async (token) => {
+      const trimmed = token.trim();
+      if (!trimmed) {
+        toast.error("Please enter a valid Google OAuth token");
+        return false;
       }
-    }
-  },
-
-  selectLakehouseDataset: async (layerName: string, tableName: string) => {
-    const local = asLocalDuckSession(get().currentSession)?.local;
-    if (!local) {
-      toast.error("DuckDB engine is still initializing. Please wait...");
-      return;
-    }
-
-    const token = get().googleAuth.token;
-    const catalog = get().lakehouseCatalog;
-    const layer = catalog.find((l) => l.name === layerName);
-    const table = layer?.children.find((t) => t.name === tableName);
-
-    set({
-      isLakehouseLoading: true,
-      activeLakehouseDataset: tableName,
-      activeLakehouseLayer: layerName,
-      lakehouseStatusMessage: `Fetching '${tableName}' Parquet from Google Drive and registering in DuckDB-WASM...`,
-    });
-
-    try {
-      const { loadedFiles } = await loadTableIntoDuckDB(
-        local.db,
-        local.connection,
-        tableName,
-        table?.id || null,
-        table?.children || [],
-        token || ""
-      );
-
-      // Refresh DuckDB schema introspection so DataExplorer knows about active_layer and the new table
-      await get().fetchDatabasesAndTablesInfo();
-
+      setStoredToken(trimmed);
       set({
-        lakehouseStatusMessage:
-          loadedFiles.length > 0
-            ? `Registered '${tableName}' (${loadedFiles.length} file(s)) as active_layer.`
-            : `Using demo data for '${tableName}'.`,
+        googleAuth: { token: trimmed, isAuthenticated: true, authSource: "manual", error: null },
       });
+      try {
+        await get().refreshLakehouseCatalog();
+        return true;
+      } catch {
+        return false;
+      }
+    },
 
-      toast.success(`Loaded dataset "${tableName}" into DuckDB-WASM`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load dataset";
-      set({ lakehouseStatusMessage: `Error loading '${tableName}': ${msg}` });
-      toast.error(`Error loading dataset "${tableName}": ${msg}`);
-      console.error("[GoogleDrive] Load dataset error:", err);
-    } finally {
-      set({ isLakehouseLoading: false });
-    }
-  },
-
-  selectLakehouseFile: async (layerName: string, tableName: string, fileName: string) => {
-    const local = asLocalDuckSession(get().currentSession)?.local;
-    if (!local) {
-      toast.error("DuckDB engine is still initializing. Please wait...");
-      return;
-    }
-
-    const token = get().googleAuth.token;
-    const catalog = get().lakehouseCatalog;
-    const layer = catalog.find((l) => l.name === layerName);
-    const table = layer?.children.find((t) => t.name === tableName);
-    const file = table?.children.find((f) => f.name === fileName);
-
-    if (!file) return;
-
-    set({
-      isLakehouseLoading: true,
-      activeLakehouseDataset: tableName,
-      activeLakehouseLayer: layerName,
-      lakehouseStatusMessage: `Fetching '${fileName}' from Google Drive into DuckDB-WASM...`,
-    });
-
-    try {
-      await loadFileIntoDuckDB(local.db, local.connection, tableName, file, token || "");
-      await get().fetchDatabasesAndTablesInfo();
-
+    disconnectGoogleDrive: () => {
+      clearStoredToken();
       set({
-        lakehouseStatusMessage: `Registered file '${fileName}' as active_layer.`,
+        googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: null },
+        lakehouseCatalog: createDefaultLakehouseTree(),
+        activeLakehouseDataset: null,
+        activeLakehouseLayer: null,
+        isLakehouseLoading: false,
+        lakehouseStatusMessage: "Disconnected from Google Drive.",
       });
+    },
 
-      toast.success(`Loaded file "${fileName}"`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to load file";
-      set({ lakehouseStatusMessage: `Error loading file '${fileName}': ${msg}` });
-      toast.error(`Error loading file "${fileName}": ${msg}`);
-    } finally {
-      set({ isLakehouseLoading: false });
-    }
-  },
-});
+    refreshLakehouseCatalog: async () => {
+      if (busy) return;
+      const token = get().googleAuth.token;
+      if (!token) {
+        set({ lakehouseStatusMessage: "Sign in to browse Google Drive datasets." });
+        return;
+      }
+      busy = true;
+      set({ isLakehouseLoading: true, lakehouseStatusMessage: "Loading Google Drive catalog..." });
+      try {
+        const tree: LakehouseLayer[] = [];
+        for (const layer of get().lakehouseCatalog) {
+          tree.push(
+            layer.expanded
+              ? await loadLayer(layer, token)
+              : { ...layer, id: null, loaded: false, children: [] }
+          );
+        }
+        if (get().googleAuth.token !== token) return;
+        set({
+          lakehouseCatalog: tree,
+          lakehouseStatusMessage: "Catalog loaded. Select a dataset to query.",
+        });
+      } catch (error) {
+        if (get().googleAuth.token === token) {
+          const message = `Catalog refresh error: ${messageOf(error)}`;
+          set({ lakehouseStatusMessage: message });
+          toast.error(message);
+        }
+        throw error;
+      } finally {
+        busy = false;
+        set({ isLakehouseLoading: false });
+      }
+    },
+
+    toggleLakehouseLayer: async (layerName) => {
+      if (busy) return;
+      const layer = get().lakehouseCatalog.find((item) => item.name === layerName);
+      if (!layer) return;
+      let updated = { ...layer, expanded: !layer.expanded };
+      const replace = () =>
+        set({
+          lakehouseCatalog: get().lakehouseCatalog.map((item) =>
+            item.name === layerName ? updated : item
+          ),
+        });
+      replace();
+      const token = get().googleAuth.token;
+      if (!updated.expanded || updated.loaded || !token) return;
+      busy = true;
+      set({ isLakehouseLoading: true, lakehouseStatusMessage: `Loading '${layerName}'...` });
+      try {
+        updated = await loadLayer(updated, token);
+        if (get().googleAuth.token !== token) return;
+        replace();
+        set({
+          lakehouseStatusMessage: `Loaded ${updated.children.length} dataset(s) in '${layerName}'.`,
+        });
+      } catch (error) {
+        if (get().googleAuth.token === token)
+          set({ lakehouseStatusMessage: `Error loading '${layerName}': ${messageOf(error)}` });
+      } finally {
+        busy = false;
+        set({ isLakehouseLoading: false });
+      }
+    },
+
+    toggleLakehouseTable: async (layerName, tableName) => {
+      if (busy) return;
+      const table = get()
+        .lakehouseCatalog.find((item) => item.name === layerName)
+        ?.children.find((item) => item.name === tableName);
+      if (!table) return;
+      let updated = { ...table, expanded: !table.expanded };
+      const replace = () =>
+        set({
+          lakehouseCatalog: get().lakehouseCatalog.map((layer) =>
+            layer.name === layerName
+              ? {
+                  ...layer,
+                  children: layer.children.map((item) =>
+                    item.name === tableName ? updated : item
+                  ),
+                }
+              : layer
+          ),
+        });
+      replace();
+      const token = get().googleAuth.token;
+      if (!updated.expanded || updated.loaded || !token) return;
+      busy = true;
+      set({
+        isLakehouseLoading: true,
+        lakehouseStatusMessage: `Loading files for '${tableName}'...`,
+      });
+      try {
+        updated = await loadTableFiles(updated, token);
+        if (get().googleAuth.token !== token) return;
+        replace();
+        set({
+          lakehouseStatusMessage: `Found ${updated.children.length} file(s) in '${tableName}'.`,
+        });
+      } catch (error) {
+        if (get().googleAuth.token === token)
+          set({ lakehouseStatusMessage: `Error loading '${tableName}': ${messageOf(error)}` });
+      } finally {
+        busy = false;
+        set({ isLakehouseLoading: false });
+      }
+    },
+    selectLakehouseDataset: (layerName, tableName) => select(layerName, tableName),
+    selectLakehouseFile: (layerName, tableName, fileName) => select(layerName, tableName, fileName),
+  };
+};
