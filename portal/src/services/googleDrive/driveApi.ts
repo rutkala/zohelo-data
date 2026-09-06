@@ -1,12 +1,29 @@
 /**
  * Google Drive REST API Client for Lakehouse Catalog & File Storage
  */
-import { DRIVE_ROOT, LAKEHOUSE_LAYERS } from "./auth";
+import { DRIVE_ROOT, isStoredTokenExpired, LAKEHOUSE_LAYERS } from "./auth";
 import type { LakehouseLayer } from "./types";
+
+export class GoogleDriveAuthError extends Error {
+  readonly status = 401;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "GoogleDriveAuthError";
+  }
+}
+
+export const isGoogleDriveAuthError = (error: unknown): error is GoogleDriveAuthError =>
+  error instanceof GoogleDriveAuthError;
 
 export const driveRequest = async (url: string, token: string): Promise<Response> => {
   if (!token) {
     throw new Error("No Google Drive OAuth token available");
+  }
+  if (isStoredTokenExpired(token)) {
+    throw new GoogleDriveAuthError(
+      "Google Drive authorization expired or was revoked. Sign in again."
+    );
   }
 
   const response = await fetch(url, {
@@ -17,6 +34,11 @@ export const driveRequest = async (url: string, token: string): Promise<Response
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
+    if (response.status === 401) {
+      throw new GoogleDriveAuthError(
+        "Google Drive authorization expired or was revoked. Sign in again."
+      );
+    }
     throw new Error(
       `Google Drive API error (${response.status}): ${errorBody || response.statusText}`
     );

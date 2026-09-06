@@ -40,6 +40,14 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  // Codespaces exposes GOOGLE_OAUTH_CLIENT_ID. Only this public identifier may
+  // cross into the browser; the client secret and refresh token remain private.
+  const googleClientId = env.DUCK_UI_GOOGLE_CLIENT_ID?.trim()
+    || process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
+  if (googleClientId) {
+    processEnvValues['import.meta.env.DUCK_UI_GOOGLE_CLIENT_ID'] = JSON.stringify(googleClientId);
+  }
+
   return {
     base: process.env.DUCK_UI_BASEPATH ?? './',
     plugins: [

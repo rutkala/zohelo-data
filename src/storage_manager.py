@@ -11,8 +11,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 class StorageManager:
-    def __init__(self, backend="gdrive"):
+    def __init__(self, backend="gdrive", *, allow_interactive_auth=True):
         self.backend = backend
+        self.allow_interactive_auth = allow_interactive_auth
+        self.auth_source = "not_selected"
         self.master_folder_name = "zohelo-data"
         self.zones = [
             "01_landing", 
@@ -42,6 +44,7 @@ class StorageManager:
             and creds_dict.get("private_key")
         )
         if is_service_account_type or has_service_account_fields_without_type:
+            self.auth_source = "service_account_json"
             service_account_info = dict(creds_dict)
             service_account_info.setdefault("type", "service_account")
             service_account_info.setdefault("token_uri", "https://oauth2.googleapis.com/token")
@@ -56,6 +59,11 @@ class StorageManager:
             except (DefaultCredentialsError, ValueError):
                 pass
             else:
+                self.auth_source = (
+                    "authorized_user_json"
+                    if creds_dict.get("type") == "authorized_user"
+                    else "typed_credentials_json"
+                )
                 return build("drive", "v3", credentials=credentials)
 
         # Preferred OAuth path when service account JSON is not available.
@@ -64,6 +72,7 @@ class StorageManager:
         oauth_refresh_token = os.environ.get("GOOGLE_OAUTH_REFRESH_TOKEN")
 
         if oauth_client_id and oauth_client_secret and oauth_refresh_token:
+            self.auth_source = "oauth_environment"
             credentials = UserCredentials(
                 token=None,
                 refresh_token=oauth_refresh_token,
@@ -96,7 +105,8 @@ class StorageManager:
         if not resolved_client_id or not resolved_client_secret:
             raise ValueError("OAuth client JSON is missing client_id/client_secret.")
 
-        if is_github_actions:
+        self.auth_source = "oauth_client_json"
+        if is_github_actions or not self.allow_interactive_auth:
             refresh_token = oauth_refresh_token
             if not refresh_token:
                 raise ValueError("Secret GOOGLE_OAUTH_REFRESH_TOKEN not found in environment!")
@@ -112,7 +122,7 @@ class StorageManager:
             try:
                 credentials.refresh(HttpLib2Request(httplib2.Http()))
             except Exception as exc:
-                raise RuntimeError("Failed to refresh Google OAuth access token in GitHub Actions.") from exc
+                raise RuntimeError("Failed to refresh Google OAuth access token in the non-interactive OAuth client flow.") from exc
         else:
             # Local development flow (interactive browser auth)
             flow = InstalledAppFlow.from_client_config(creds_dict, scopes=scopes)

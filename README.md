@@ -9,6 +9,8 @@ Data Platform for zohelo.com
 
 [Development setup](docs/development.md) — Codespaces, consistent runtimes and credential-free validation.
 
+[Google authorization](docs/google-authorization.md) — Which credentials each component needs, diagnostic results and account checks.
+
 [Architecture proposal](docs/architecture.md) — Proposed design, open decisions, and implementation milestones.
 
 [Agent instructions](AGENTS.md) — Shared setup, validation, and contribution guidance for coding agents.

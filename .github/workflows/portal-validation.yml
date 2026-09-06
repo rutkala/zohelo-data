@@ -35,6 +35,8 @@ jobs:
           cache-dependency-path: portal/package-lock.json
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check Google client-ID mapping and secret isolation
+        run: node scripts/check-google-env.mjs
       - name: Lint
         run: npm run lint
       - name: Production build and type check

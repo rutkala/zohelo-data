@@ -8,6 +8,7 @@ import {
   loadFileIntoDuckDB,
   resolveLayerFolderId,
   listSubfolders,
+  GoogleDriveAuthError,
 } from "@/services/googleDrive";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -102,6 +103,44 @@ describe("Drive selection state", () => {
     expect(store.getState().activeLakehouseDataset).toBe("previous");
     expect(store.getState().lakehouseStatusMessage).toContain("Download unavailable");
     expect(store.getState().isLakehouseLoading).toBe(false);
+  });
+
+  it("clears an expired token after a 401 while preserving loaded results", async () => {
+    const store = makeStore();
+    store.setState({ activeLakehouseDataset: "previous", activeLakehouseLayer: "03_silver" });
+    vi.mocked(loadTableIntoDuckDB).mockRejectedValueOnce(
+      new GoogleDriveAuthError("Google Drive authorization expired or was revoked. Sign in again.")
+    );
+    expect(await store.getState().selectLakehouseDataset("02_bronze", "rates")).toBeNull();
+    expect(store.getState().googleAuth.isAuthenticated).toBe(false);
+    expect(store.getState().googleAuth.token).toBeNull();
+    expect(store.getState().activeLakehouseDataset).toBe("previous");
+    expect(store.getState().lakehouseStatusMessage).toContain("Sign in again");
+  });
+
+  it("does not clear a newer token when an older request receives a 401", async () => {
+    const store = makeStore();
+    let reject!: (error: Error) => void;
+    vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
+      new Promise((_, fail) => {
+        reject = fail;
+      })
+    );
+    const pending = store.getState().selectLakehouseDataset("02_bronze", "rates");
+    store.setState({
+      googleAuth: {
+        token: "new-token",
+        isAuthenticated: true,
+        authSource: "google_identity",
+        error: null,
+      },
+    });
+    reject(
+      new GoogleDriveAuthError("Google Drive authorization expired or was revoked. Sign in again.")
+    );
+    expect(await pending).toBeNull();
+    expect(store.getState().googleAuth.token).toBe("new-token");
+    expect(store.getState().googleAuth.isAuthenticated).toBe(true);
   });
 
   it("does not use another dataset when the requested catalog entry is missing", async () => {
