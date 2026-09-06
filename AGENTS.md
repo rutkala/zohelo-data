@@ -12,8 +12,12 @@ Shared instructions for coding work in this repository. Run commands from the re
 **Start with the task and repository context.**
 
 - Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md). The architecture document is marked **Proposed**: it describes a target, not a claim that every component exists or a request to implement every milestone.
+- Read [docs/deliverables.md](docs/deliverables.md) for the approved work programme and [the foundation audit](docs/audits/2026-09-06-foundation.md) for verified gaps. The new NBP release includes ingestion repair and the business catalogue; the earlier demonstration's ingestion deferral is historical.
 - Follow the assigned task and explicitly accepted architecture decisions. Keep changes scoped, preserve unrelated work, and state assumptions in the pull request. Record a newly agreed architectural choice in an ADR when the task resolves one.
 - Use this file as the common guide for GitHub agents and Codespaces work. For a tool that does not load it automatically, include “Read AGENTS.md and docs/architecture.md before editing” in its task prompt.
+- Keep Claude/Gemini/Copilot entrypoints as pointers to this guide, not competing instruction sets. Repository instructions guide agents; executable checks and reviewed evidence establish correctness.
+- Separate observed facts, technical inferences and unresolved business decisions. Verify uncertain technical behavior against code, fixtures or current primary documentation. Ask the owner only for a consequential business choice; do not invent metric definitions, revision policy, availability promises or a new paid service.
+- Use economical delegation for concrete independent tasks. Select a lighter available model explicitly for inventory or straightforward implementation; keep architecture, ambiguous failures and integration with the lead agent. Do not spawn agents merely to fill slots or let them silently inherit an expensive model. Report delegation honestly; actual billed savings may be unavailable.
 
 **Repository map.**
 
@@ -38,26 +42,28 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Setup and checks.**
 
-Use an isolated Python environment. The devcontainer and silver workflow use Python 3.12; the portal deployment's dbt docs step currently uses 3.11. Portal deployment uses Node.js 20. Check the relevant workflow and package requirements when changing dependencies; Python dependencies are currently unpinned.
+Use an isolated Python 3.12 environment and Node from `.node-version`. These runtime files are shared with CI; the devcontainer Node feature must match. Python's complete resolved dependency set is pinned in `requirements.txt`; direct dependencies are listed in `requirements.in`. See [docs/development.md](docs/development.md) for setup and update instructions. Opening Codespaces starts the local preview only; optional AI tools are installed and started explicitly.
 
 Install only the dependencies needed for the assigned work:
 
 ```bash
 python -m pip install -r requirements.txt
-npm --prefix portal ci
+npm --prefix portal ci --ignore-scripts --no-audit --no-fund
 ```
 
 Choose checks for the affected component:
 
 | Change | Check |
 | --- | --- |
-| Python storage/ingestion/orchestration | `python -m unittest discover -s tests -p 'test_*.py'`; add focused fixtures or mocks for changed behavior |
+| Python storage/ingestion/orchestration and dbt changes | `bash scripts/check-data.sh`; add focused fixtures or mocks for changed behavior |
 | dbt project/model definitions | `dbt parse --profiles-dir .` |
 | Local NBP Table A and its gold mart | `dbt build --profiles-dir . --select +mart_exchange_rates_daily`, after preparing the local inputs described below |
 | Portal logic or UI | `npm --prefix portal run lint`, `npm --prefix portal test`, and `npm --prefix portal run build` |
 | Documentation/instructions only | Check referenced paths, commands, links and the diff; application test suites are not required |
 
-For local dbt execution, set `ZOHELO_DATA_ROOT` to a fixture directory and `ZOHELO_DUCKDB_PATH` to a disposable local database. The Table A staging model expects matching Parquet under `02_bronze/nbp_exchange_rates_table_a/*.parquet` beneath that root, including its nested `rates` structure. Prepare equivalent inputs when selecting other models. Parsing does not validate data results. The repository does not yet provide a complete fixture-based medallion/MetricFlow test command; do not claim end-to-end coverage from the current auth tests.
+`bash scripts/check-data.sh` prepares temporary bronze Parquet for A/B/C, executes the existing models, checks expected rows and duplicate replay, verifies dbt docs artifacts and missing-input failure, and runs the mocked auth tests. Gold prices, ingestion catch-up, publication recovery and executable MetricFlow remain uncovered until implemented. Do not claim full platform coverage from this command.
+
+For ad hoc dbt execution, set `ZOHELO_DATA_ROOT` to local fixtures and `ZOHELO_DUCKDB_PATH` to a disposable database. Models currently expect nested NBP Parquet under `02_bronze/nbp_exchange_rates_table_{a,b,c}/*.parquet`. Parsing alone does not validate data results.
 
 The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use additional checks when relevant, and inspect `portal/playwright.config.ts` and browser prerequisites before running end-to-end tests.
 

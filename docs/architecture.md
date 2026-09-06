@@ -2,6 +2,8 @@
 
 Version 0.1. Prepared 5 September 2026. **Status: Proposed.** Repository inspected: [rutkala/zohelo-data at 2634be2](https://github.com/rutkala/zohelo-data/tree/2634be278f7c5086f6b4251f52aff6bb51a0fd42). This is a design review based on source inspection and current upstream documentation; it is not a benchmark or a deployment validation.
 
+**Scope update accepted on 6 September 2026:** the owner approved starting [the delivery plan](deliverables.md). The next NBP release includes ingestion repair/catch-up, all four NBP datasets, gold modeling, executable metrics and the business catalogue. The existing-data-only deferral below remains the history of the initial demonstration, not a restriction on the newly approved work. Kimball modeling, historical revision treatment and metric serving choices remain open until explicitly decided. See the [foundation audit](audits/2026-09-06-foundation.md) for current evidence and gaps.
+
 The proposed stack uses Google Drive as the durable data store, Parquet as the published table format, DuckDB as the compute engine, dbt Core as the transformation framework, and self-managed MetricFlow as the metrics engine. The existing React portal provides the catalog and query interface.
 
 In this proposal, “all storage on Google Drive” means all authoritative, durable platform data and data-release metadata. Computation still uses RAM and a local working directory. Those copies must be disposable and recoverable from Drive plus GitHub. This interpretation matches the existing silver builder.

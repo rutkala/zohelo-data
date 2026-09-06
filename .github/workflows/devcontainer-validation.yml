@@ -1,0 +1,32 @@
+name: Validate development container
+
+on:
+  pull_request:
+    paths:
+      - '.devcontainer/**'
+      - '.python-version'
+      - '.node-version'
+      - 'requirements.*'
+      - '.github/workflows/devcontainer-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devcontainer-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  development:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the actual development environment and check startup
+        uses: devcontainers/ci@v0.3
+        with:
+          push: never
+          runCmd: bash .devcontainer/verify.sh
