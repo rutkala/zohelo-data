@@ -5,3 +5,11 @@ target/
 *.pyc
 node_modules/
 dist/
+.venv/
+.local/
+.env
+.env.*
+!.env.example
+*.duckdb
+*.duckdb.wal
+dbt_packages/

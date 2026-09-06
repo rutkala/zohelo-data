@@ -1,53 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PORTAL_DIR="${ROOT_DIR}/portal"
-PORTAL_LOG="/tmp/zohelo-portal.log"
-AGY_LOG="/tmp/zohelo-agy.log"
+ZOHELO_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ZOHELO_STATE_DIR="${ZOHELO_REPO_ROOT}/.local"
+ZOHELO_PID_FILE="${ZOHELO_STATE_DIR}/portal.pid"
+ZOHELO_PORTAL_LOG="${ZOHELO_STATE_DIR}/portal.log"
+mkdir -p "${ZOHELO_STATE_DIR}"
 
-start_portal() {
-  if pgrep -f "npm run dev -- --host 0.0.0.0 --port 5173" >/dev/null 2>&1; then
-    return
-  fi
+if [[ -f "${ZOHELO_PID_FILE}" ]] && kill -0 "$(cat "${ZOHELO_PID_FILE}")" 2>/dev/null; then
+  echo 'Portal process is already running; forwarded port: 5173.'
+  exit 0
+fi
 
-  nohup bash -lc "cd '${PORTAL_DIR}' && npm run dev -- --host 0.0.0.0 --port 5173" >"${PORTAL_LOG}" 2>&1 &
-}
+if [[ ! -d "${ZOHELO_REPO_ROOT}/portal/node_modules" ]]; then
+  echo 'Portal dependencies are missing. Run bash .devcontainer/setup.sh first.' >&2
+  exit 1
+fi
 
-install_agy_if_missing() {
-  if command -v agy >/dev/null 2>&1; then
-    return
-  fi
-
-  curl -fsSL https://antigravity.google/cli/install.sh | bash || true
-}
-
-get_agy_resume_flag() {
-  local help_text
-  help_text="$(agy --help 2>/dev/null || true)"
-
-  if grep -q -- "--resume" <<<"${help_text}"; then
-    echo "--resume"
-  elif grep -q -- "--continue" <<<"${help_text}"; then
-    echo "--continue"
-  fi
-}
-
-start_agy() {
-  local resume_flag
-
-  if ! command -v agy >/dev/null 2>&1; then
-    return
-  fi
-
-  if pgrep -f "agy --dangerously-skip-permissions" >/dev/null 2>&1; then
-    return
-  fi
-
-  resume_flag="$(get_agy_resume_flag)"
-  nohup bash -lc "agy --dangerously-skip-permissions ${resume_flag}" >"${AGY_LOG}" 2>&1 &
-}
-
-start_portal
-install_agy_if_missing
-start_agy
+nohup npm --prefix "${ZOHELO_REPO_ROOT}/portal" run dev -- --host 0.0.0.0 --port 5173 --strictPort >"${ZOHELO_PORTAL_LOG}" 2>&1 &
+echo "$!" >"${ZOHELO_PID_FILE}"
+echo "Portal starting on forwarded port 5173. Log: ${ZOHELO_PORTAL_LOG}"
