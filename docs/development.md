@@ -21,11 +21,11 @@ Python patch releases, the base image, devcontainer features and Actions tags ca
 
 1. Creating/rebuilding the container runs `.devcontainer/setup.sh`: verify runtimes, create `.venv`, install the pinned Python and locked portal packages.
 2. Starting the container starts only the local Vite preview on forwarded port 5173. Its PID and log are under ignored `.local/`. `--strictPort` avoids silently switching to a different port.
-3. Opening the environment does not launch an AI agent or a production data job. Production OAuth variables are not forwarded by this configuration. Codespaces secrets, if separately configured by the owner, are a distinct mechanism and are not removed by this change.
+3. Opening the environment does not launch an AI agent or a production data job. Production OAuth variables are not forwarded by this configuration. Codespaces secrets are a distinct mechanism and are not removed by this change. After updating them, a running Codespace may need to be stopped and restarted before its environment sees the new values.
 
 Optional AI CLIs are not required to build or test the project. Before installing one, the responsible agent verifies its current official installation method, version, authentication and cost. Installation and startup are explicit, and a missing optional tool must not break ordinary development. The previous automatic remote installer and unrestricted Antigravity startup have been removed.
 
-The [development-container workflow](../.github/workflows/devcontainer-validation.yml) builds the actual configuration, executes data checks inside it and checks that the portal responds. This validates the container definition on a GitHub runner; it does not prove a particular owner's existing Codespace was rebuilt or authenticated. See [devcontainers CI](https://github.com/devcontainers/ci) for the underlying action.
+The [development-container workflow](../.github/workflows/devcontainer-validation.yml) builds the actual configuration, executes data checks inside it and checks that the portal responds. This validates the container definition on a GitHub runner; it does not prove a particular owner's existing Codespace was rebuilt or authenticated. For the agent's bounded credential check, stop and restart a running Codespace after a secret update, then run `python scripts/check_google_access.py` in that environment. A rebuild is not required just to refresh secrets. The diagnostic is read-only and must not be replaced with an ingestion smoke test. See [devcontainers CI](https://github.com/devcontainers/ci) for the underlying action.
 
 ## Local data checks
 
@@ -58,4 +58,4 @@ When changing Node, update `.node-version` and the matching feature version toge
 
 Folder reconciliation is now explicitly manual and named **Reconcile Drive folders**. Ordinary code merges no longer invoke it. The existing ingestion → bronze → silver chain remains operational code under audit: it does not yet carry immutable batch manifests or guarantee one code revision across all stages.
 
-Do not use any production entrypoint as a smoke test. The current storage implementation still targets `zohelo-data`, and the current silver publisher deletes old files before uploading replacements. Fix root enforcement and publication before using a remote development root or claiming safe recovery. The known Actions OAuth refresh failure also remains unresolved; portal sign-in is a separate authorization path.
+Do not use any production entrypoint as a smoke test. The current storage implementation still targets `zohelo-data`, and the current silver publisher deletes old files before uploading replacements. Fix root enforcement and publication before using a remote development root or claiming safe recovery. The [6 September Actions read-only OAuth check](google-authorization.md) succeeded, but it did not test writes; portal sign-in remains a separate authorization path.
