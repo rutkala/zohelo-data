@@ -474,10 +474,9 @@ test("discovers a source-defined metric and follows its physical lineage", async
   // Use native search and reference links rather than navigating iframe URLs.
   // The metric → semantic-model → physical-model edges come from dbt's manifest.
   await docs.getByPlaceholder("Search for models...").fill("nbp_gold_price_pln_per_gram_1000");
+  // Native search renders clickable result divs (data-ui-state), not anchors.
   await docs
-    .locator('a[href*="metric/metric.zohelo_data.nbp_gold_price_pln_per_gram_1000"]')
-    .filter({ visible: true })
-    .first()
+    .getByRole("heading", { name: `${semanticFixture.metric.label} metric`, exact: true })
     .click();
   await expect(details).toContainText(semanticFixture.metric.description);
   await expect(details).toContainText("source_defined");
