@@ -3,7 +3,7 @@ Data Platform for zohelo.com
 
 [Open the data portal](https://data.zohelo.com/).
 
-[Short portal guide](docs/using-the-portal.md) — Catalogue navigation and SQL examples for the v2 data release, pending live acceptance.
+[Short portal guide](docs/using-the-portal.md) — Catalogue navigation and SQL examples for the verified v2 data release (7 September 2026).
 
 [About Zohelo-data](https://data.zohelo.com/about.html) · [Privacy policy](https://data.zohelo.com/privacy.html) · [Terms of use](https://data.zohelo.com/terms.html).
 
@@ -13,6 +13,8 @@ Data Platform for zohelo.com
 
 [Foundation audit](docs/audits/2026-09-06-foundation.md) — Evidence, completed fixes and remaining release blockers.
 
+[Verified v2 release evidence](docs/releases/2026-09-07-nbp-platform.md) — Live data, migration, and portal verification from 7 September 2026.
+
 [Development setup](docs/development.md) — Codespaces, consistent runtimes and credential-free validation.
 
 [Google authorization](docs/google-authorization.md) — Which credentials each component needs, diagnostic results and account checks.
@@ -21,4 +23,4 @@ Data Platform for zohelo.com
 
 [Agent instructions](AGENTS.md) — Shared setup, validation, and contribution guidance for coding agents.
 
-PR57 merged the consolidated [`NBP data platform`](.github/workflows/daily-ingestion.yml) workflow and `python src/nbp_platform.py --mode ...` entrypoint on `main`. Data and portal checks passed; live bootstrap remains in progress, and the current live consumer remains on the validated v1 silver release until v2 coverage and publication are proven and explicitly confirmed.
+The NBP v2 data release is live as of 7 September 2026, with 15 physical tables, source and lineage catalogue metadata, and gold tables available. Governed metrics await business definitions. The earlier v1 silver release is retained as a historical baseline. See the [verified v2 release evidence](docs/releases/2026-09-07-nbp-platform.md).

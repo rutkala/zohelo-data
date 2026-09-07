@@ -1,6 +1,12 @@
 # NBP platform operations
 
-**Status: PR57 is merged on `main`; live v2 proof remains pending.** Data/portal checks passed, while the initial live bootstrap retained progress before the [published-zero-quote rejection](nbp-data-contracts.md#published-zero-fx-quotes-7-september-2026). The repair and resumed live proof remain to be verified. The current live consumer remains on the validated v1 silver release; a v2 platform release is not claimed until final coverage, restore, query, and raw-replay checks pass.
+**Status: The v2 data release has verified live proof dated 7 September 2026.** PR57 remains merged on `main`; the repaired release passed coverage, fresh-process restore/query, raw replay, migration preservation, and portal deployment checks. The full platform remains incomplete because metrics are still `[]` awaiting business approval and no native query backend is available. The earlier v1 silver release is retained as a historical baseline. See the [verified v2 release evidence](releases/2026-09-07-nbp-platform.md).
+
+## Verified live release
+
+Release `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1` was produced by code `f071669937829a3d0775a13146b3170e1b283b4e`. The [NBP data platform run](https://github.com/rutkala/zohelo-data/actions/runs/34096483209) passed at 08:45:24 UTC on 7 September 2026 with 15 physical tables, 52 dbt tests (67 nodes passed), fresh SQL reads across all 15 tables, and exact raw replay of all 15 tables with 1,314,774 rows matched. Sources were checked through 6 September; the latest observed dates are 4 September for Tables A, C and gold, and 2 September for Table B. The release counts are A 198,842, B 143,767, C 83,737, and gold 3,449.
+
+The [migration check](https://github.com/rutkala/zohelo-data/actions/runs/34098420713) passed at 08:46:16 UTC. All 429,611 previously published four-silver keys were retained with zero missing keys; the current silver total is 429,795, an increase of 184. The [portal deployment](https://github.com/rutkala/zohelo-data/actions/runs/34096483163) also passed for producer code `f071669937829a3d0775a13146b3170e1b283b4e` and supports release formats 1 and 2. These checks establish live data and portal availability; they do not establish approved semantics or a native query service.
 
 ## Entry point and workflow
 
@@ -24,7 +30,7 @@ Outside GitHub Actions, the runner still requires an explicitly selected Drive r
 
 Each successful response is retained as immutable raw bytes with its Drive file ID and SHA-256. Append-only attempts, immutable state snapshots, and the current-state pointer record request progress and provenance. Pointer updates use readback and drift detection; Drive does not provide compare-and-swap here. Raw and state history has no garbage collection, so retention growth must be measured before a long-running deployment.
 
-The merged platform build defines 15 datasets: four bronze source-aligned tables, four silver tables, `nbp_change_events`, `fact_fx_quotes`, `fact_gold_prices`, `dim_date`, `dim_currency`, `dim_source_table`, and `dim_commodity`. The release includes the four-source business catalogue and dbt ancestor lineage. Its metrics list is empty with `metrics_status=awaiting_business_approval`; no aggregation, return, spread, or other business metric is invented.
+The verified v2 release defines 15 datasets: four bronze source-aligned tables, four silver tables, `nbp_change_events`, `fact_fx_quotes`, `fact_gold_prices`, `dim_date`, `dim_currency`, `dim_source_table`, and `dim_commodity`. The release includes the four-source business catalogue and dbt ancestor lineage. Its metrics list is empty with `metrics_status=awaiting_business_approval`; no aggregation, return, spread, or other business metric is invented. Production NBP MetricFlow definitions/execution and a served query backend remain open work; native runtime compatibility already has a passing synthetic fixture.
 
 Catalogue dataset metadata contains business fields only: `dataset_id`, `table_name`, `layer`, `model_name`, `row_count`, `min_date`, `max_date`, `date_column`, and `columns`. Scratch paths and model IDs are excluded before the catalogue artifact is written.
 
@@ -38,7 +44,7 @@ Open decisions remain business metric definitions and approval, additional sourc
 
 ## Preservation of previously published history
 
-Raw replay proves that a new release can be rebuilt from its recorded inputs. A separate read-only migration check compares the four silver tables against the last pre-migration snapshot: release `1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea`, produced from code `474bbb61a2bb9d88266808e872f8a7613aca23d6` on 7 September 2026.
+Raw replay proves that a new release can be rebuilt from its recorded inputs. The historical v1 migration baseline is release `1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea`, produced from code `474bbb61a2bb9d88266808e872f8a7613aca23d6` on 7 September 2026. The read-only migration check against that baseline passed for the verified v2 release; its exact result is recorded above and in the [release evidence](releases/2026-09-07-nbp-platform.md).
 
 The [migration workflow](../.github/workflows/nbp-migration-check.yml) runs manually or after a relevant reviewed merge marked `[verify-nbp-migration]`. It shares production concurrency so it waits for publication and recovery checks. It reads the immutable baseline by release ID, verifies both releases, and checks that every previously published date/currency key (date for gold prices) still exists. It also rejects a regression in the latest observation date. Value changes are allowed under the accepted correction policy. The check writes no Drive objects and does not publish data; a failed check is an acceptance failure, not an automatic rollback.
 

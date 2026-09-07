@@ -1,6 +1,6 @@
 # Using the portal
 
-**For the v2 data release. Availability awaits successful data publication; the current live portal still serves the v1 silver release.**
+**The NBP v2 data release is live as of 7 September 2026.** The source and lineage catalogue and gold tables are available; governed metrics await business definitions. See the [release evidence](releases/2026-09-07-nbp-platform.md).
 
 Open [Zohelo-data](https://data.zohelo.com/) and choose **Sign in** in the **Lakehouse (Google Drive)** panel. Approve the existing Google read-only Drive login. After **Drive Connected** appears, refresh the lakehouse if needed. The release badge identifies the data snapshot currently loaded.
 
