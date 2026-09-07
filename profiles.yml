@@ -4,4 +4,6 @@ zohelo_data:
     dev:
       type: duckdb
       path: "{{ env_var('ZOHELO_DUCKDB_PATH', '/tmp/zohelo_docs.duckdb') }}"
-      threads: 4
+      # Serialize dbt model DDL; concurrent adapter renames failed fresh WAL
+      # replay in the regression environment. DuckDB query execution is separate.
+      threads: 1

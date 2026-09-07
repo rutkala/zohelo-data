@@ -13,6 +13,15 @@ sources:
       - name: nbp_gold_prices
         description: "NBP gold-price data in bronze format, using the API's data and cena fields."
 
+  - name: nbp_verified_raw
+    description: "Immutable, newline-delimited verified NBP request envelopes. The body_json column retains the exact API response bytes as a string."
+    tables:
+      - name: nbp_batches
+        description: "Recorded NBP API responses with batch and request provenance; supplied locally through ZOHELO_NBP_BATCHES_PATH."
+        meta:
+          formatter: template
+          external_location: "read_json('{{ env_var('ZOHELO_NBP_BATCHES_PATH', '/tmp/zohelo_data/01_landing/nbp_batches/*.jsonl') }}', format = 'newline_delimited', columns = {'source_id': 'VARCHAR', 'batch_id': 'VARCHAR', 'ingestion_sequence': 'BIGINT', 'requested_start_date': 'VARCHAR', 'requested_end_date': 'VARCHAR', 'retrieved_at_utc': 'VARCHAR', 'response_sha256': 'VARCHAR', 'raw_file_id': 'VARCHAR', 'body_json': 'VARCHAR'})"
+
 models:
   - name: stg_nbp_table_a
     description: "03_silver staging model for NBP exchange rates table A with flattened and deduplicated average rates."
@@ -86,3 +95,147 @@ models:
 
   - name: mart_exchange_rates_daily
     description: "04_gold baseline mart model built from silver staging exchange rates table A."
+
+
+  - name: br_nbp_table_a
+    description: "Bronze Table A observations flattened from every retained verified raw response, retaining request and raw-file provenance."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_table_b
+    description: "Bronze Table B observations flattened from every retained verified raw response, retaining request and raw-file provenance."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_table_c
+    description: "Bronze Table C observations flattened from every retained verified raw response. no and trading_date remain nullable where source history omits them."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_gold_prices
+    description: "Bronze NBP gold-price observations flattened from every retained verified raw response."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+
+  - name: nbp_change_events
+    description: "Detected transitions between retained source observations. A row is an observed source value or metadata change, never an asserted NBP correction time or reason."
+    columns:
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['source_value_changed', 'source_metadata_changed']
+
+  - name: dim_date
+    description: "Conformed effective/publication dates observed in NBP current records; this date dimension does not imply an observation on every calendar date."
+    columns:
+      - name: date_key
+        tests: [not_null, unique]
+      - name: calendar_year
+        tests: [not_null]
+      - name: calendar_month
+        tests: [not_null]
+      - name: calendar_day
+        tests: [not_null]
+      - name: iso_weekday
+        tests: [not_null]
+  - name: dim_currency
+    description: "Observed NBP currency codes and source labels, plus PLN as the documented quote currency. No historic validity intervals are inferred."
+    columns:
+      - name: currency_key
+        tests: [not_null, unique]
+  - name: dim_source_table
+    description: "Conformed NBP Table A, B and C identities for FX facts."
+    columns:
+      - name: source_table_key
+        tests: [not_null, unique]
+  - name: dim_commodity
+    description: "Technical source-specific commodity identity for NBP's 1000-fineness, one-gram gold quotation."
+    columns:
+      - name: commodity_key
+        tests: [not_null, unique]
+
+  - name: fact_fx_quotes
+    description: "FX quotation fact. Grain: NBP source table, effective date and currency. API numbers and published source units are unchanged."
+    columns:
+      - name: source_table_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_source_table')
+                field: source_table_key
+      - name: effective_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: trading_date
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: currency_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+      - name: quote_currency_key
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [source_table_key, effective_date, currency_key]
+  - name: fact_gold_prices
+    description: "Gold price fact. Grain: NBP effective date and nbp_gold_1000_gram. Prices are PLN per one gram at 1000 fineness."
+    columns:
+      - name: effective_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: commodity_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_commodity')
+                field: commodity_key
+      - name: quote_currency_key
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [effective_date, commodity_key]

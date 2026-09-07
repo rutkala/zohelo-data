@@ -24,7 +24,9 @@ class SilverPublicationTests(unittest.TestCase):
 
     def test_real_dbt_outputs_publish_and_restore_without_builder_files(self):
         store = MemoryStore()
-        with tempfile.TemporaryDirectory(prefix="zohelo-publish-fixture-") as directory:
+        temporary_root = REPO_ROOT / ".local/test-tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="zohelo-publish-fixture-", dir=temporary_root) as directory:
             workspace = Path(directory)
             fixture_names = {"nbp_exchange_rates_table_a": "table_a", "nbp_exchange_rates_table_b": "table_b",
                              "nbp_exchange_rates_table_c": "table_c", "nbp_gold_prices": "gold_prices"}
@@ -43,7 +45,7 @@ class SilverPublicationTests(unittest.TestCase):
             self.assertEqual(first["manifest"]["release_scope"], "nbp_silver")
         # The builder directory/database and every source Parquet have now gone.
         manifest = restore_current_release(store, "root")
-        with tempfile.TemporaryDirectory(prefix="zohelo-fresh-consumer-") as directory:
+        with tempfile.TemporaryDirectory(prefix="zohelo-fresh-consumer-", dir=temporary_root) as directory:
             con = duckdb.connect()
             try:
                 for dataset in manifest["datasets"]:

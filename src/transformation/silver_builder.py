@@ -126,8 +126,8 @@ def build_silver(workspace):
     target = workspace / "target"
     env = dict(os.environ, ZOHELO_DATA_ROOT=str(workspace), ZOHELO_DUCKDB_PATH=str(database),
                DBT_SEND_ANONYMOUS_USAGE_STATS="false", DO_NOT_TRACK="1")
-    executable = shutil.which("dbt")
-    if not executable:
+    executable = Path(sys.executable).parent / "dbt"
+    if not executable.is_file():
         raise RuntimeError("Install the pinned repository dependencies before building silver")
     common = ["--profiles-dir", str(REPO_ROOT), "--target-path", str(target),
               "--log-path", str(workspace / "logs"), "--no-partial-parse"]
@@ -180,6 +180,8 @@ def process_silver():
     sha = _code_sha()
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     root_id = storage.resolve_root(create=False)
+    if DriveReleaseStore(storage, root_id).find("ingestion-control", root_id):
+        raise RuntimeError("Verified ingestion is active. Use src/nbp_platform.py; legacy publication is disabled.")
     storage.authorize_writes()
     with tempfile.TemporaryDirectory(prefix="zohelo-silver-") as temporary:
         workspace = Path(temporary)

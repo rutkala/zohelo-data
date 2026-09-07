@@ -77,6 +77,10 @@ def _move_file(drive_service, file_id: str, source_parent_id: str, dest_parent_i
 def process_bronze():
     print("🥉 Starting Bronze Layer transformation...")
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
+    from drive_release_store import DriveReleaseStore
+    root_id = storage.resolve_root(create=False)
+    if DriveReleaseStore(storage, root_id).find("ingestion-control", root_id):
+        raise RuntimeError("Verified ingestion is active. Use src/nbp_platform.py; legacy archival is disabled.")
     storage.authorize_writes()
     drive = storage.drive_service
     con = duckdb.connect(":memory:")

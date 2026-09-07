@@ -30,6 +30,41 @@ EXPECTED_STAGING_MODELS = {
     "nbp_gold_prices": "model.zohelo_data.stg_nbp_gold_prices",
 }
 REQUIRED_ARTIFACTS = frozenset({"manifest.json", "catalog.json", "run_results.json"})
+PLATFORM_REQUIRED_ARTIFACTS = REQUIRED_ARTIFACTS | frozenset({"business-catalog.json", "ingestion-state.json"})
+PLATFORM_DATASETS = {
+    "bronze_nbp_exchange_rates_table_a": ("02_bronze", "model.zohelo_data.br_nbp_table_a"),
+    "bronze_nbp_exchange_rates_table_b": ("02_bronze", "model.zohelo_data.br_nbp_table_b"),
+    "bronze_nbp_exchange_rates_table_c": ("02_bronze", "model.zohelo_data.br_nbp_table_c"),
+    "bronze_nbp_gold_prices": ("02_bronze", "model.zohelo_data.br_nbp_gold_prices"),
+    "nbp_exchange_rates_table_a": ("03_silver", "model.zohelo_data.stg_nbp_table_a"),
+    "nbp_exchange_rates_table_b": ("03_silver", "model.zohelo_data.stg_nbp_table_b"),
+    "nbp_exchange_rates_table_c": ("03_silver", "model.zohelo_data.stg_nbp_table_c"),
+    "nbp_gold_prices": ("03_silver", "model.zohelo_data.stg_nbp_gold_prices"),
+    "nbp_change_events": ("03_silver", "model.zohelo_data.nbp_change_events"),
+    "fact_fx_quotes": ("04_gold", "model.zohelo_data.fact_fx_quotes"),
+    "fact_gold_prices": ("04_gold", "model.zohelo_data.fact_gold_prices"),
+    "dim_date": ("04_gold", "model.zohelo_data.dim_date"),
+    "dim_currency": ("04_gold", "model.zohelo_data.dim_currency"),
+    "dim_source_table": ("04_gold", "model.zohelo_data.dim_source_table"),
+    "dim_commodity": ("04_gold", "model.zohelo_data.dim_commodity"),
+}
+PLATFORM_DATE_COLUMNS = {
+    "bronze_nbp_exchange_rates_table_a": "effective_date",
+    "bronze_nbp_exchange_rates_table_b": "effective_date",
+    "bronze_nbp_exchange_rates_table_c": "effective_date",
+    "bronze_nbp_gold_prices": "effective_date",
+    "nbp_exchange_rates_table_a": "effectiveDate",
+    "nbp_exchange_rates_table_b": "effectiveDate",
+    "nbp_exchange_rates_table_c": "effectiveDate",
+    "nbp_gold_prices": "effectiveDate",
+    "nbp_change_events": "effective_date",
+    "fact_fx_quotes": "effective_date",
+    "fact_gold_prices": "effective_date",
+    "dim_date": "date_key",
+    "dim_currency": None,
+    "dim_source_table": None,
+    "dim_commodity": None,
+}
 _ALLOWED_RESULT_STATUSES = frozenset({"success", "pass"})
 _MAX_ITEMS = 2_048
 _MAX_METADATA_BYTES = 1_000_000
@@ -37,6 +72,7 @@ _MAX_FILE_NAME = 180
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,255}$")
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _CODE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,199}$")
 
 
 class ReleaseStore(Protocol):
@@ -65,6 +101,7 @@ def publish_release(
     code_sha: str,
     measurements: dict[str, Any],
     release_id: str | None = None,
+    release_scope: str = "nbp_silver",
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
 
@@ -81,6 +118,7 @@ def publish_release(
         code_sha=code_sha,
         measurements=measurements,
         release_id=release_id,
+        release_scope=release_scope,
     )
 
     # A valid old pointer is read before *any* candidate remote write.
@@ -88,7 +126,9 @@ def publish_release(
     if previous is not None:
         # Do not silently replace a damaged "current" state: preserve an
         # operator-visible failure until the existing pointer is repaired.
-        restore_release(store, previous["value"])
+        previous_manifest = restore_release(store, previous["value"])
+        if previous_manifest["format_version"] == 2 and candidate["release_scope"] == "nbp_silver":
+            raise ReleaseProtocolError("A legacy silver candidate cannot replace a platform release")
 
     releases_ids = store.find("releases", root_id)
     if len(releases_ids) > 1:
@@ -133,9 +173,9 @@ def publish_release(
         )
 
     manifest = {
-        "format_version": 1,
+        "format_version": candidate["format_version"],
         "release_id": candidate["release_id"],
-        "release_scope": "nbp_silver",
+        "release_scope": candidate["release_scope"],
         "status": "validated",
         "created_at_utc": _utc_now(),
         "code_sha": candidate["code_sha"],
@@ -197,9 +237,11 @@ def restore_release(store: ReleaseStore, pointer: str | dict[str, Any]) -> dict[
     if _sha256(manifest_bytes) != value["manifest_sha256"]:
         raise ReleaseProtocolError("release manifest checksum does not match current pointer")
     manifest = _parse_json_object(manifest_bytes, "release manifest")
-    if manifest.get("format_version") != 1 or manifest.get("status") != "validated":
-        raise ReleaseProtocolError("release manifest is not a validated format-version-1 release")
-    if manifest.get("release_scope") != "nbp_silver":
+    format_version = manifest.get("format_version")
+    if format_version not in {1, 2} or manifest.get("status") != "validated":
+        raise ReleaseProtocolError("release manifest is not a validated supported release")
+    expected_scope = "nbp_silver" if format_version == 1 else "nbp_platform"
+    if manifest.get("release_scope") != expected_scope:
         raise ReleaseProtocolError("release manifest has an unexpected scope")
     if not isinstance(manifest.get("code_sha"), str) or not _CODE_SHA_RE.fullmatch(manifest["code_sha"]):
         raise ReleaseProtocolError("release manifest has an invalid code SHA")
@@ -207,7 +249,10 @@ def restore_release(store: ReleaseStore, pointer: str | dict[str, Any]) -> dict[
         raise ReleaseProtocolError("release manifest does not record passed tests")
     if manifest.get("release_id") != value["release_id"]:
         raise ReleaseProtocolError("release ID does not match current pointer")
-    _verify_manifest_files(store, manifest)
+    if format_version == 1:
+        _verify_manifest_files(store, manifest)
+    else:
+        _verify_platform_manifest_files(store, manifest)
     return manifest
 
 
@@ -225,6 +270,18 @@ read_current_release = restore_current_release
 
 
 def _validate_candidate(**kwargs: Any) -> dict[str, Any]:
+    scope = kwargs.get("release_scope")
+    if scope == "nbp_silver":
+        candidate = _validate_silver_candidate(**kwargs)
+        candidate["release_scope"] = "nbp_silver"
+        candidate["format_version"] = 1
+        return candidate
+    if scope == "nbp_platform":
+        return _validate_platform_candidate(**kwargs)
+    raise ReleaseProtocolError("release_scope must be 'nbp_silver' or 'nbp_platform'")
+
+
+def _validate_silver_candidate(**kwargs: Any) -> dict[str, Any]:
     datasets = kwargs["datasets"]
     artifacts = kwargs["artifacts"]
     inputs = kwargs["inputs"]
@@ -364,6 +421,210 @@ def _validate_run_results(raw: bytes) -> None:
         raise ReleaseProtocolError("run_results.json is incomplete: no successful dbt tests")
 
 
+def _validate_platform_candidate(**kwargs: Any) -> dict[str, Any]:
+    datasets = kwargs["datasets"]
+    artifacts = kwargs["artifacts"]
+    inputs = kwargs["inputs"]
+    measurements = kwargs["measurements"]
+    code_sha = kwargs["code_sha"]
+    supplied_release_id = kwargs["release_id"]
+    if not isinstance(datasets, list) or not isinstance(artifacts, list) or not isinstance(inputs, list):
+        raise ReleaseProtocolError("datasets, artifacts, and inputs must be lists")
+    if len(datasets) > _MAX_ITEMS or len(artifacts) > _MAX_ITEMS or len(inputs) > _MAX_ITEMS:
+        raise ReleaseProtocolError("candidate list exceeds publication limit")
+    if not isinstance(code_sha, str) or not _CODE_SHA_RE.fullmatch(code_sha):
+        raise ReleaseProtocolError("code_sha must be a 40-character lowercase hexadecimal Git SHA")
+    if not isinstance(measurements, dict):
+        raise ReleaseProtocolError("measurements must be an object")
+    _bounded_json(inputs, "inputs")
+    _bounded_json(measurements, "measurements")
+    release_id = str(uuid4()) if supplied_release_id is None else _parse_release_id(supplied_release_id)
+
+    by_id: dict[str, dict[str, Any]] = {}
+    for raw in datasets:
+        if not isinstance(raw, dict):
+            raise ReleaseProtocolError("each dataset must be an object")
+        dataset_id = raw.get("dataset_id")
+        if not isinstance(dataset_id, str) or dataset_id in by_id:
+            raise ReleaseProtocolError("dataset IDs must be unique strings")
+        by_id[dataset_id] = raw
+    expected_ids = set(PLATFORM_DATASETS)
+    if set(by_id) != expected_ids:
+        missing = sorted(expected_ids - set(by_id))
+        extra = sorted(set(by_id) - expected_ids)
+        raise ReleaseProtocolError(f"NBP platform release must contain exactly 15 datasets; missing={missing}, extra={extra}")
+
+    names: set[str] = {"release.json"}
+    table_names: set[tuple[str, str]] = set()
+    validated_datasets: list[dict[str, Any]] = []
+    for dataset_id in sorted(PLATFORM_DATASETS):
+        raw = by_id[dataset_id]
+        layer, model_id = PLATFORM_DATASETS[dataset_id]
+        if raw.get("layer") != layer:
+            raise ReleaseProtocolError(f"{dataset_id} must be published from layer {layer}")
+        if raw.get("model_id") != model_id:
+            raise ReleaseProtocolError(f"{dataset_id} must identify model {model_id}")
+        if raw.get("model_name") != model_id.rsplit(".", 1)[-1]:
+            raise ReleaseProtocolError(f"{dataset_id} must identify model_name {model_id.rsplit('.', 1)[-1]}")
+        table_name = raw.get("table_name")
+        if not isinstance(table_name, str) or not _TABLE_NAME_RE.fullmatch(table_name):
+            raise ReleaseProtocolError(f"{dataset_id} has an invalid table_name identifier")
+        table_key = (layer, table_name)
+        if table_key in table_names:
+            raise ReleaseProtocolError("NBP platform release has duplicate table_name values")
+        table_names.add(table_key)
+        rows = raw.get("row_count")
+        allows_zero = dataset_id == "nbp_change_events"
+        if not isinstance(rows, int) or isinstance(rows, bool) or rows < 0 or (rows == 0 and not allows_zero):
+            qualifier = "a nonnegative" if allows_zero else "a positive"
+            raise ReleaseProtocolError(f"{dataset_id} must have {qualifier} row_count")
+        _validate_platform_dates(dataset_id, raw, rows)
+        columns = _validate_columns(raw.get("columns"), dataset_id)
+        date_column = _validate_platform_date_column(dataset_id, raw.get("date_column"), columns)
+        data = _read_local_file(raw.get("path"), f"dataset {dataset_id}")
+        source_name = _safe_filename(Path(raw["path"]).name, f"dataset {dataset_id} filename")
+        upload_name = _safe_filename(f"{dataset_id}--{source_name}", f"dataset {dataset_id} upload filename")
+        if upload_name in names:
+            raise ReleaseProtocolError(f"duplicate candidate filename {upload_name}")
+        names.add(upload_name)
+        metadata = {
+            "dataset_id": dataset_id, "layer": layer, "model_name": raw["model_name"], "model_id": model_id,
+            "table_name": table_name, "row_count": rows,
+            "date_column": date_column, "min_date": raw.get("min_date"), "max_date": raw.get("max_date"),
+            "columns": columns,
+        }
+        validated_datasets.append({"metadata": metadata, "data": data, "upload_name": upload_name})
+
+    artifact_by_name: dict[str, dict[str, Any]] = {}
+    for raw in artifacts:
+        if not isinstance(raw, dict):
+            raise ReleaseProtocolError("each artifact must be an object")
+        name = _safe_filename(raw.get("name"), "artifact name")
+        if name in artifact_by_name or name in names:
+            raise ReleaseProtocolError(f"duplicate or reserved candidate filename {name}")
+        artifact_by_name[name] = raw
+        names.add(name)
+    missing = sorted(PLATFORM_REQUIRED_ARTIFACTS - set(artifact_by_name))
+    if missing:
+        raise ReleaseProtocolError(f"NBP platform release artifacts are missing required files: {missing}")
+    validated_artifacts = [
+        {"name": name, "data": _read_local_file(raw.get("path"), f"artifact {name}")}
+        for name, raw in sorted(artifact_by_name.items())
+    ]
+    artifact_data = {item["name"]: item["data"] for item in validated_artifacts}
+    _validate_platform_artifacts(artifact_data, code_sha)
+    _validate_platform_run_results(artifact_data["run_results.json"])
+    return {
+        "release_id": release_id, "release_scope": "nbp_platform", "format_version": 2,
+        "datasets": validated_datasets, "artifacts": validated_artifacts,
+        "inputs": json.loads(_bounded_json(inputs, "inputs")),
+        "measurements": json.loads(_bounded_json(measurements, "measurements")), "code_sha": code_sha,
+    }
+
+
+def _validate_platform_dates(dataset_id: str, raw: dict[str, Any], rows: int) -> None:
+    minimum, maximum = raw.get("min_date"), raw.get("max_date")
+    if PLATFORM_DATE_COLUMNS[dataset_id] is None and (minimum is not None or maximum is not None):
+        raise ReleaseProtocolError(f"{dataset_id} must not declare date bounds without a date_column")
+    allow_null = (dataset_id in {"dim_currency", "dim_source_table", "dim_commodity"}
+                  or (dataset_id == "nbp_change_events" and rows == 0))
+    if minimum is None and maximum is None and allow_null:
+        return
+    if not isinstance(minimum, str) or not isinstance(maximum, str) or not minimum.strip() or not maximum.strip() or len(minimum) > 64 or len(maximum) > 64:
+        raise ReleaseProtocolError(f"{dataset_id} has invalid min_date or max_date")
+    try:
+        minimum_date, maximum_date = date.fromisoformat(minimum), date.fromisoformat(maximum)
+    except ValueError as exc:
+        raise ReleaseProtocolError(f"{dataset_id} has invalid min_date or max_date") from exc
+    if minimum_date > maximum_date:
+        raise ReleaseProtocolError(f"{dataset_id} min_date is after max_date")
+
+
+def _validate_columns(columns: Any, dataset_id: str) -> list[dict[str, str]]:
+    if not isinstance(columns, list) or not columns or len(columns) > _MAX_ITEMS:
+        raise ReleaseProtocolError(f"{dataset_id} must declare nonempty columns")
+    seen: set[str] = set()
+    result: list[dict[str, str]] = []
+    for column in columns:
+        if not isinstance(column, dict) or not isinstance(column.get("name"), str) or not isinstance(column.get("type"), str):
+            raise ReleaseProtocolError(f"{dataset_id} has an invalid column declaration")
+        if not column["name"].strip() or not column["type"].strip() or len(column["name"]) > 200 or len(column["type"]) > 200 or column["name"] in seen:
+            raise ReleaseProtocolError(f"{dataset_id} has duplicate or blank column metadata")
+        seen.add(column["name"])
+        result.append({"name": column["name"], "type": column["type"]})
+    return result
+
+
+def _validate_platform_date_column(dataset_id: str, value: Any, columns: list[dict[str, str]]) -> str | None:
+    expected = PLATFORM_DATE_COLUMNS[dataset_id]
+    if value != expected:
+        raise ReleaseProtocolError(f"{dataset_id} must declare date_column {expected!r}")
+    if value is not None and (not isinstance(value, str) or not _TABLE_NAME_RE.fullmatch(value)):
+        raise ReleaseProtocolError(f"{dataset_id} has an invalid date_column identifier")
+    if value is not None and value not in {column["name"] for column in columns}:
+        raise ReleaseProtocolError(f"{dataset_id} date_column is not present in columns")
+    return value
+
+
+def _validate_platform_artifacts(artifacts: dict[str, bytes], code_sha: str) -> None:
+    manifest = _parse_json_object(artifacts["manifest.json"], "manifest.json")
+    if not isinstance(manifest.get("metadata"), dict) or not isinstance(manifest.get("nodes"), dict):
+        raise ReleaseProtocolError("manifest.json is not a minimal dbt manifest")
+    catalog = _parse_json_object(artifacts["catalog.json"], "catalog.json")
+    if not isinstance(catalog.get("nodes"), dict):
+        raise ReleaseProtocolError("catalog.json is not a minimal dbt catalog")
+    state = _parse_json_object(artifacts["ingestion-state.json"], "ingestion-state.json")
+    if state.get("format_version") != 1 or not isinstance(state.get("sources"), dict):
+        raise ReleaseProtocolError("ingestion-state.json must be a format-version-1 state snapshot")
+    catalogue = _parse_json_object(artifacts["business-catalog.json"], "business-catalog.json")
+    if catalogue.get("format_version") != 1 or catalogue.get("code_sha") != code_sha:
+        raise ReleaseProtocolError("business-catalog.json must bind format-version-1 metadata to candidate code_sha")
+    sources = catalogue.get("sources")
+    lineage = catalogue.get("lineage")
+    if not isinstance(sources, list) or not isinstance(lineage, dict) or not isinstance(lineage.get("nodes"), list) or not isinstance(lineage.get("edges"), list):
+        raise ReleaseProtocolError("business-catalog.json has invalid sources or lineage")
+    if not isinstance(catalogue.get("metrics"), list) or catalogue.get("metrics_status") not in {"awaiting_business_approval", "proposed"}:
+        raise ReleaseProtocolError("business-catalog.json has invalid metrics status")
+    for source in sources:
+        required = ("source_id", "name", "description", "status", "checked_through", "latest_observation_date", "last_successful_ingestion_at", "last_attempt_at", "raw_response_count")
+        if not isinstance(source, dict) or any(key not in source for key in required) or source.get("status") != "published_snapshot":
+            raise ReleaseProtocolError("business-catalog.json has invalid source metadata")
+        if not isinstance(source["source_id"], str) or not isinstance(source["name"], str) or not isinstance(source["description"], str) or not isinstance(source["raw_response_count"], int) or isinstance(source["raw_response_count"], bool) or source["raw_response_count"] < 0:
+            raise ReleaseProtocolError("business-catalog.json has invalid source metadata")
+    for node in lineage["nodes"]:
+        if not isinstance(node, dict) or not all(isinstance(node.get(key), str) and node[key] for key in ("id", "label", "kind", "layer", "description")):
+            raise ReleaseProtocolError("business-catalog.json has invalid lineage node")
+    for edge in lineage["edges"]:
+        if not isinstance(edge, dict) or not all(isinstance(edge.get(key), str) and edge[key] for key in ("from", "to")):
+            raise ReleaseProtocolError("business-catalog.json has invalid lineage edge")
+
+
+def _validate_platform_run_results(raw: bytes) -> None:
+    document = _parse_json_object(raw, "run_results.json")
+    if not isinstance(document.get("metadata"), dict) or not isinstance(document.get("metadata", {}).get("dbt_schema_version"), str):
+        raise ReleaseProtocolError("run_results.json is incomplete: dbt metadata is missing")
+    results = document.get("results")
+    if not isinstance(results, list) or not results:
+        raise ReleaseProtocolError("run_results.json is incomplete: results must be nonempty")
+    successful_models: set[str] = set()
+    successful_tests: list[str] = []
+    for result in results:
+        if not isinstance(result, dict) or result.get("status") not in _ALLOWED_RESULT_STATUSES or not isinstance(result.get("unique_id"), str):
+            raise ReleaseProtocolError("run_results.json contains failed, skipped, or malformed results")
+        unique_id = result["unique_id"]
+        if unique_id in {model for _layer, model in PLATFORM_DATASETS.values()}:
+            successful_models.add(unique_id)
+        if unique_id.startswith("test."):
+            successful_tests.append(unique_id)
+    expected_models = {model for _layer, model in PLATFORM_DATASETS.values()}
+    missing = sorted(expected_models - successful_models)
+    if missing:
+        raise ReleaseProtocolError(f"run_results.json is incomplete: missing successful platform models {missing}")
+    uncovered = sorted(model for model in expected_models if not any(model.rsplit(".", 1)[-1] in test_id for test_id in successful_tests))
+    if uncovered:
+        raise ReleaseProtocolError(f"run_results.json is incomplete: missing successful test coverage for platform models {uncovered}")
+
+
 def _read_pointer(store: ReleaseStore, root_id: str) -> dict[str, Any] | None:
     ids = store.find("current-release.json", root_id)
     if len(ids) > 1:
@@ -445,6 +706,67 @@ def _verify_manifest_files(store: ReleaseStore, manifest: dict[str, Any]) -> Non
         file_ids.add(_verify_file_entry(store, file_entry, file_ids))
     if not REQUIRED_ARTIFACTS.issubset(artifact_names):
         raise ReleaseProtocolError("release manifest is missing required dbt artifacts")
+
+
+def _verify_platform_manifest_files(store: ReleaseStore, manifest: dict[str, Any]) -> None:
+    datasets = manifest.get("datasets")
+    artifacts = manifest.get("artifacts")
+    if not isinstance(datasets, list) or len(datasets) != len(PLATFORM_DATASETS):
+        raise ReleaseProtocolError("platform release manifest must contain exactly 15 datasets")
+    if not isinstance(artifacts, list) or not artifacts or len(artifacts) > _MAX_ITEMS:
+        raise ReleaseProtocolError("platform release manifest has invalid artifacts")
+    dataset_ids: set[str] = set()
+    table_names: set[tuple[str, str]] = set()
+    artifact_names: set[str] = set()
+    file_ids: set[str] = set()
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            raise ReleaseProtocolError("platform release manifest has an invalid dataset")
+        dataset_id = dataset.get("dataset_id")
+        if not isinstance(dataset_id, str) or dataset_id in dataset_ids or dataset_id not in PLATFORM_DATASETS:
+            raise ReleaseProtocolError("platform release manifest has duplicate or invalid dataset IDs")
+        dataset_ids.add(dataset_id)
+        _validate_platform_dataset_metadata(dataset, dataset_id, table_names)
+        files = dataset.get("files")
+        if not isinstance(files, list) or len(files) != 1:
+            raise ReleaseProtocolError("platform release manifest has invalid dataset files")
+        file_ids.add(_verify_file_entry(store, files[0], file_ids))
+    if dataset_ids != set(PLATFORM_DATASETS):
+        raise ReleaseProtocolError("platform release manifest has incomplete platform datasets")
+    artifact_data: dict[str, bytes] = {}
+    for entry in artifacts:
+        if not isinstance(entry, dict):
+            raise ReleaseProtocolError("platform release manifest has an invalid artifact")
+        name = _safe_filename(entry.get("name"), "artifact name")
+        if name in artifact_names:
+            raise ReleaseProtocolError("platform release manifest has duplicate artifact names")
+        artifact_names.add(name)
+        file_id = _verify_file_entry(store, entry, file_ids)
+        file_ids.add(file_id)
+        artifact_data[name] = _read_bytes(store, file_id, f"released artifact {name}")
+    if not PLATFORM_REQUIRED_ARTIFACTS.issubset(artifact_names):
+        raise ReleaseProtocolError("platform release manifest is missing required artifacts")
+    _validate_platform_artifacts(artifact_data, manifest["code_sha"])
+    _validate_platform_run_results(artifact_data["run_results.json"])
+
+
+def _validate_platform_dataset_metadata(dataset: dict[str, Any], dataset_id: str, table_names: set[tuple[str, str]]) -> None:
+    layer, model_id = PLATFORM_DATASETS[dataset_id]
+    if dataset.get("layer") != layer or dataset.get("model_id") != model_id:
+        raise ReleaseProtocolError(f"platform release manifest has invalid model metadata for {dataset_id}")
+    if dataset.get("model_name") != model_id.rsplit(".", 1)[-1]:
+        raise ReleaseProtocolError(f"platform release manifest has invalid model name for {dataset_id}")
+    table_name = dataset.get("table_name")
+    table_key = (layer, table_name) if isinstance(table_name, str) else None
+    if not isinstance(table_name, str) or not _TABLE_NAME_RE.fullmatch(table_name) or table_key in table_names:
+        raise ReleaseProtocolError(f"platform release manifest has invalid table name for {dataset_id}")
+    table_names.add(table_key)
+    rows = dataset.get("row_count")
+    if not isinstance(rows, int) or isinstance(rows, bool) or rows < 0 or (rows == 0 and dataset_id != "nbp_change_events"):
+        raise ReleaseProtocolError(f"platform release manifest has invalid row count for {dataset_id}")
+    _validate_platform_dates(dataset_id, dataset, rows)
+    columns = _validate_columns(dataset.get("columns"), dataset_id)
+    _validate_platform_date_column(dataset_id, dataset.get("date_column"), columns)
 
 
 def _validate_dataset_metadata(dataset: dict[str, Any], dataset_id: str) -> None:

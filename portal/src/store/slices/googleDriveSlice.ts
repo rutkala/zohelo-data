@@ -80,21 +80,22 @@ function treeFromRelease(
   release: Extract<ReleaseCatalogResolution, { kind: "release" }>
 ): LakehouseLayer[] {
   return createDefaultLakehouseTree().map((layer) => {
-    if (layer.name !== "03_silver") return { ...layer, expanded: false, loaded: true };
     return {
       ...layer,
       id: null,
-      expanded: true,
+      expanded: layer.name === "03_silver",
       loaded: true,
-      children: release.manifest.datasets.map((dataset) => ({
-        type: "table" as const,
-        name: dataset.dataset_id,
-        id: null,
-        layer: "03_silver",
-        expanded: false,
-        loaded: true,
-        children: dataset.files.map((file) => ({ ...file, tableName: dataset.dataset_id })),
-      })),
+      children: release.manifest.datasets
+        .filter((dataset) => dataset.layer === layer.name)
+        .map((dataset) => ({
+          type: "table" as const,
+          name: dataset.table_name,
+          id: null,
+          layer: dataset.layer,
+          expanded: false,
+          loaded: true,
+          children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
+        })),
     };
   });
 }

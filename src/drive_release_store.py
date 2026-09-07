@@ -42,6 +42,7 @@ class DriveReleaseStore:
 
     def create(self, name, data, parent_id):
         self.storage.authorize_writes()
+        self.storage._assert_parent_within_selected_root(parent_id)
         if not isinstance(data, bytes) or not data:
             raise ValueError("Release objects must contain bytes")
         allocated = self.files.generateIds(count=1, space="drive", type="files").execute()

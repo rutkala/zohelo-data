@@ -1,3 +1,7 @@
+{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view') }}
+{% if var('nbp_verified_batches', false) %}
+{{ nbp_current_gold_prices() }}
+{% else %}
 with bronze_data as (
     select *
     from read_parquet(
@@ -52,3 +56,5 @@ from deduplicated_prices as prices
 cross join validation
 where prices.row_number = 1
   and validation.validation_result = 1
+
+{% endif %}
