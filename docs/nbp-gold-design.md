@@ -1,6 +1,6 @@
 # Proposed NBP gold design
 
-**Status: Implemented on the feature branch; the dimensional interpretation remains proposed.** The branch builds 15 physical platform datasets (bronze, silver, change events, facts, and dimensions) and publishes their metadata. This does not approve a business metric, a time aggregation rule, or a commodity master-data policy. The source facts and units below follow the [NBP data contracts](nbp-data-contracts.md) and [correction decision](decisions/0001-nbp-corrections.md).
+**Status: Implemented on `main`; live v2 acceptance remains pending.** The runner builds 15 physical platform datasets (bronze, silver, change events, facts, and dimensions) and publishes their metadata. This does not approve a business metric, a time aggregation rule, or a commodity master-data policy. The source facts and units below follow the [NBP data contracts](nbp-data-contracts.md) and [correction decision](decisions/0001-nbp-corrections.md).
 
 ## Recommendation
 
@@ -11,7 +11,7 @@ Use a small Kimball-style gold layer with conformed dimensions and two facts:
 
 This fits an owner-only platform with four small datasets because the stars are easy to query, expose clear grains, and can be consumed directly by SQL or a future MetricFlow model. Shared dates and currency identities can be governed once while source-specific measures remain visible. The requested business catalogue should expose each fact’s grain and source relationships, then connect approved metric definitions.
 
-An Inmon-style normalized warehouse would centralize source history and relationships before presenting dimensional marts. That can help when many domains, teams, and integration rules need one canonical enterprise model, but it adds joins and governance work before this NBP use case needs them. A hybrid can retain a normalized integration layer and publish dimensional marts later; that is compatible with the platform’s bronze/silver layers and retained raw versions, but should be chosen only if future sources create a demonstrated need. The recommendation is therefore Kimball-style gold over the existing retained source history, as a technical implementation recommendation matching the owner’s requested facts, dimensions and bus matrix. The modeled layer is implemented in the feature branch. Business metric definitions still require approval, and the current live consumer remains on the v1 silver release until the v2 platform publication is confirmed.
+An Inmon-style normalized warehouse would centralize source history and relationships before presenting dimensional marts. That can help when many domains, teams, and integration rules need one canonical enterprise model, but it adds joins and governance work before this NBP use case needs them. A hybrid can retain a normalized integration layer and publish dimensional marts later; that is compatible with the platform’s bronze/silver layers and retained raw versions, but should be chosen only if future sources create a demonstrated need. The recommendation is therefore Kimball-style gold over the existing retained source history, as a technical implementation recommendation matching the owner’s requested facts, dimensions and bus matrix. The modeled layer is implemented on `main`. Business metric definitions still require approval, and the current live consumer remains on the v1 silver release until the v2 platform publication is confirmed.
 
 ## Facts and grains
 
@@ -22,7 +22,7 @@ An Inmon-style normalized warehouse would centralize source history and relation
 
 `fact_fx_quotes` must keep Table A/B average quotations distinct from Table C buy and sell quotations. A Table A or B row has `mid`; a Table C row has `bid` and `ask`, with no implied `mid`. `source_table_key` is required so a query cannot silently combine A, B and C values that have different publication behavior and meanings.
 
-The current silver models use `(table type, effective date, code)` as the analytical current-value key after conflict validation. They do not retain every source field needed by the gold design: silver currently drops the NBP table number `no` and Table C `tradingDate`. Gold provenance and date-role enrichment must therefore read the actual bronze/raw fields and recorded batch metadata. Do not invent publication numbers, trading dates, or revision identifiers.
+The v2 silver models use `(table type, effective date, code)` as the analytical current-value key after conflict validation. Unlike the earlier v1 projections, the verified-raw path retains the NBP table number `no`, Table C `tradingDate` when supplied, raw file identity/hash, and ingestion sequence. Gold carries these source fields through silver. Missing source fields stay missing; the build does not invent publication numbers, trading dates, or revision identifiers.
 
 ## Conformed dimensions and date roles
 
@@ -56,5 +56,4 @@ ask the owner only when a consequential business interpretation is needed.
 Historical unit checks and cross-source mappings require source evidence,
 not an owner guess.
 
-Current corrected source values should feed normal analysis after validation, while retained raw versions and detected-change records remain available for traceability. This design does not require a comparison interface. The feature branch publishes no metrics until business approval (`metrics=[]`, `metrics_status=awaiting_business_approval`).
-
+Current corrected source values feed normal analysis after validation, while retained raw versions and detected-change records remain available for traceability. This design does not require a comparison interface. The merged implementation publishes no metrics until business approval (`metrics=[]`, `metrics_status=awaiting_business_approval`).

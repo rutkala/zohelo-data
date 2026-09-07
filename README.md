@@ -3,6 +3,8 @@ Data Platform for zohelo.com
 
 [Open the data portal](https://data.zohelo.com/).
 
+[Short portal guide](docs/using-the-portal.md) — Catalogue navigation and SQL examples for the v2 data release, pending live acceptance.
+
 [About Zohelo-data](https://data.zohelo.com/about.html) · [Privacy policy](https://data.zohelo.com/privacy.html) · [Terms of use](https://data.zohelo.com/terms.html).
 
 [Delivery plan](docs/deliverables.md) — Approved scope for completing NBP, governed metrics and the business data catalogue.

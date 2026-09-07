@@ -35,3 +35,17 @@ The current runner bounds one invocation to 2,048 observation batches total acro
 Long-term growth of raw/state history, latency of the rotating historical recheck, and missing original legacy history that was never retained before migration remain explicit limitations. A latest-date observation does not prove complete historical coverage. Provider change events are observations of different returned values; they are not claims of an officially announced NBP correction.
 
 Open decisions remain business metric definitions and approval, additional sources and their commercial reuse licences, and a future served-backend or availability requirement. The merged implementation does not close those decisions.
+
+## Preservation of previously published history
+
+Raw replay proves that a new release can be rebuilt from its recorded inputs. A separate read-only migration check compares the four silver tables against the last pre-migration snapshot: release `1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea`, produced from code `474bbb61a2bb9d88266808e872f8a7613aca23d6` on 7 September 2026.
+
+The [migration workflow](../.github/workflows/nbp-migration-check.yml) runs manually or after a relevant reviewed merge marked `[verify-nbp-migration]`. It shares production concurrency so it waits for publication and recovery checks. It reads the immutable baseline by release ID, verifies both releases, and checks that every previously published date/currency key (date for gold prices) still exists. It also rejects a regression in the latest observation date. Value changes are allowed under the accepted correction policy. The check writes no Drive objects and does not publish data; a failed check is an acceptance failure, not an automatic rollback.
+
+```bash
+python scripts/check_nbp_migration.py \
+  --baseline-release-id 1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea \
+  --baseline-code-sha 474bbb61a2bb9d88266808e872f8a7613aca23d6
+```
+
+The result records the compared release identities and per-table missing-key counts. A pass covers the previously published key set; it does not establish that NBP's historical API contains every original version or that no source-side revision occurred.
