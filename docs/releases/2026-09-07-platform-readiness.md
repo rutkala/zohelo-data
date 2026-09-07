@@ -57,6 +57,14 @@ Previous verified live release evidence remains
 15 tables and 429,795 cleaned NBP observations. Those historical results are not
 substitutes for running the new semantic release.
 
+A separate read-only Drive metadata check found the current-release pointer
+last modified at **16:29:49 UTC** and the ingestion-state pointer at **16:24:45
+UTC**, both on 7 September. Their contents could not be retrieved through this
+session's connector file-delivery route (HTTP 403). Therefore this check does
+not independently establish pointer contents or current capacity/headroom.
+Those measurements remain for the native read-only health report in H-LIVE;
+old volume figures are not presented as current measurements.
+
 ## Current project record
 
 [Deliverables and owner decisions](../deliverables.md) distinguish completed
