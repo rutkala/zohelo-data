@@ -8,7 +8,7 @@ The architecture remains proposed. Drive is durable authority for data and relea
 
 ## Delivery status
 
-Updated 7 September 2026. **The complete data-platform release is not finished.** PR57 is merged on `main` at [`a2400c5`](https://github.com/rutkala/zohelo-data/commit/a2400c570b3ee55b42c629dc13ca4b0bb815a5de), including the consolidated runner, 15-table platform build, catalogue, and portal v2 guard. Data CI, devcontainer, portal validation/deploy checks passed; live bootstrap [run 34089760722](https://github.com/rutkala/zohelo-data/actions/runs/34089760722) is still running, with no final coverage or publication proof. The current live consumer remains on v1 silver.
+Updated 7 September 2026. **The complete data-platform release is not finished.** PR57 is merged on `main` at [`a2400c5`](https://github.com/rutkala/zohelo-data/commit/a2400c570b3ee55b42c629dc13ca4b0bb815a5de), including the consolidated runner, 15-table platform build, catalogue, and portal v2 guard. Data CI, devcontainer, portal validation/deploy checks passed; the initial live bootstrap retained progress before rejecting a published zero quote. The [documented repair](nbp-data-contracts.md#published-zero-fx-quotes-7-september-2026) and resumed live proof are being verified. The current live consumer remains on v1 silver.
 
 | Deliverable | Status | Completed / implemented | Remaining for acceptance |
 | --- | --- | --- | --- |

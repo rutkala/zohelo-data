@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -17,13 +18,13 @@ DBT_CLI = "from dbt.cli.main import cli; cli()"
 OFFLINE = REPO_ROOT / "tests" / "helpers" / "run_offline.py"
 
 
-def envelope(source_id, sequence, body, *, suffix="", batch_id=None):
+def envelope(source_id, sequence, body, *, suffix="", batch_id=None, requested_date="2020-01-01"):
     return {
         "source_id": source_id,
         "batch_id": batch_id or f"{source_id}-{sequence}{suffix}",
         "ingestion_sequence": sequence,
-        "requested_start_date": "2020-01-01",
-        "requested_end_date": "2020-01-01",
+        "requested_start_date": requested_date,
+        "requested_end_date": requested_date,
         "retrieved_at_utc": f"2020-01-{sequence + 1:02d}T00:00:00Z",
         "response_sha256": f"sha-{source_id}-{sequence}{suffix}",
         "raw_file_id": f"raw-{source_id}-{sequence}{suffix}",
@@ -69,8 +70,11 @@ class NbpPlatformModelTests(unittest.TestCase):
             "rates": [{"currency": "US dollar revised label", "code": "USD", "mid": 3.80}],
         }]
         b = [{
-            "table": "B", "no": "001/B/NBP/2020", "effectiveDate": "2020-01-01",
-            "rates": [{"currency": "US dollar", "code": "USD", "mid": 3.81}],
+            "table": "B", "no": "006/B/NBP/2009", "effectiveDate": "2009-02-11",
+            "rates": [
+                {"currency": "Zimbabwe dollar", "code": "ZWR", "mid": 0.0},
+                {"currency": "US dollar", "code": "USD", "mid": 3.81},
+            ],
         }]
         c = [{
             "table": "C", "no": None, "tradingDate": "2019-12-31", "effectiveDate": "2020-01-01",
@@ -83,7 +87,7 @@ class NbpPlatformModelTests(unittest.TestCase):
             envelope("nbp_exchange_rates_table_a", 3, a_changed),
             envelope("nbp_exchange_rates_table_a", 4, a_metadata_only),
             envelope("nbp_exchange_rates_table_a", 5, a_reverted),
-            envelope("nbp_exchange_rates_table_b", 1, b),
+            envelope("nbp_exchange_rates_table_b", 1, b, requested_date="2009-02-11"),
             envelope("nbp_exchange_rates_table_c", 1, c),
             envelope("nbp_gold_prices", 1, gold),
             envelope("nbp_gold_prices", 2, gold, suffix="-replay"),
@@ -139,6 +143,16 @@ class NbpPlatformModelTests(unittest.TestCase):
             self.assertNotIn("body_json", bronze_columns)
             self.assertTrue({"raw_file_id", "response_sha256"}.issubset(bronze_columns))
             self.assertEqual(con.execute(
+                "select mid from br_nbp_table_b where code = 'ZWR'"
+            ).fetchone()[0], 0.0)
+            self.assertEqual(con.execute(
+                "select code, mid, has_zero_source_quote from stg_nbp_table_b order by code"
+            ).fetchall(), [("USD", 3.81, False), ("ZWR", 0.0, True)])
+            self.assertEqual(con.execute(
+                "select currency_key, mid, has_zero_source_quote from fact_fx_quotes "
+                "where source_table_key = 'B' order by currency_key"
+            ).fetchall(), [("USD", 3.81, False), ("ZWR", 0.0, True)])
+            self.assertEqual(con.execute(
                 "select event_type, ingestion_sequence from nbp_change_events "
                 "where source_id = 'nbp_exchange_rates_table_a' order by ingestion_sequence"
             ).fetchall(), [
@@ -179,13 +193,14 @@ class NbpPlatformModelTests(unittest.TestCase):
     def test_gold_grains_dimensions_and_unmodified_api_numbers(self):
         with self.connection() as con:
             self.assertEqual(con.execute(
-                "select source_table_key, currency_key, mid, bid, ask from fact_fx_quotes "
+                "select source_table_key, currency_key, mid, bid, ask, has_zero_source_quote from fact_fx_quotes "
                 "order by source_table_key, currency_key"
             ).fetchall(), [
-                ("A", "EUR", 4.2, None, None),
-                ("A", "USD", 3.8, None, None),
-                ("B", "USD", 3.81, None, None),
-                ("C", "USD", None, 3.7, 3.95),
+                ("A", "EUR", 4.2, None, None, False),
+                ("A", "USD", 3.8, None, None, False),
+                ("B", "USD", 3.81, None, None, False),
+                ("B", "ZWR", 0.0, None, None, True),
+                ("C", "USD", None, 3.7, 3.95, False),
             ])
             self.assertEqual(con.execute(
                 "select cast(effective_date as varchar), commodity_key, price_pln_per_gram_1000, raw_cena "
@@ -198,9 +213,12 @@ class NbpPlatformModelTests(unittest.TestCase):
                 left join dim_source_table s on f.source_table_key = s.source_table_key
                 where d.date_key is null or c.currency_key is null or s.source_table_key is null
             """).fetchone()[0], 0)
-            self.assertEqual(con.execute(
-                "select cast(date_key as varchar) from dim_date order by date_key"
-            ).fetchall(), [("2019-12-31",), ("2020-01-01",)])
+            date_keys = {row[0] for row in con.execute(
+                "select cast(date_key as varchar) from dim_date"
+            ).fetchall()}
+            self.assertTrue({"2009-02-11", "2019-12-31", "2020-01-01"}.issubset(date_keys))
+            self.assertEqual((min(date_keys), max(date_keys)), ("2009-02-11", "2020-01-01"))
+            self.assertEqual(len(date_keys), (date(2020, 1, 1) - date(2009, 2, 11)).days + 1)
             self.assertEqual(con.execute(
                 "select calendar_year, calendar_month, calendar_day, iso_weekday "
                 "from dim_date where date_key = date '2019-12-31'"

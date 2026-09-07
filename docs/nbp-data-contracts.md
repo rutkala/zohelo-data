@@ -89,3 +89,9 @@ Primary endpoints: [Table A](https://api.nbp.pl/api/exchangerates/tables/A/2002-
 [Table B](https://api.nbp.pl/api/exchangerates/tables/B/2002-01-02/2002-01-04/?format=json),
 [Table C](https://api.nbp.pl/api/exchangerates/tables/C/2002-01-02/2002-01-04/?format=json),
 [gold](https://api.nbp.pl/api/cenyzlota/2013-01-02/2013-01-04/?format=json).
+
+## Published zero FX quotes, 7 September 2026
+
+The actual [Table B response for 17 November 2008–17 February 2009](https://api.nbp.pl/api/exchangerates/tables/B/2008-11-17/2009-02-17/?format=json) includes `6/B/NBP/2009`, publication date `2009-02-11`, Zimbabwe dollar `ZWR`, and `mid: 0.0`. The initial live bootstrap rejected this as nonpositive. FX validation now accepts finite nonnegative source quotes, rejects negative/nonfinite values, and retains the existing bid <= ask check. Gold prices remain strictly positive.
+
+Zero is preserved unchanged in bronze, silver and gold. Verified FX silver and `fact_fx_quotes` expose `has_zero_source_quote`; this identifies the observed source value without claiming it is an economically usable conversion rate, a missing value, a rounding rule, or an officially announced correction. Inverse conversions must not divide by zero. A focused dbt fixture proves preservation and the flag, while a positive USD quote remains unflagged.

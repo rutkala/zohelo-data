@@ -148,6 +148,7 @@ class NBPStateTests(unittest.TestCase):
         plan = plan_requests(loaded.state, self.specs, date(2002, 1, 2), recent_recheck_days=1)[0]
         bad_json = self._commit(loaded, plan, body=b"not json", code_sha="a" * 40)
         self.assertFalse(bad_json.advanced)
+        self.assertEqual(bad_json.validation_error, "200 response is not valid JSON")
         self.assertEqual(bad_json.state["global_sequence"], 0)
         failed_attempt = json.loads(self.store.read(bad_json.attempt_file_id))
         self.assertEqual(failed_attempt["response_size_bytes"], len(b"not json"))
@@ -232,6 +233,13 @@ class NBPStateTests(unittest.TestCase):
         self.store.drift = None
         restored = load_state(self.store, self.root, self.specs)
         self.assertEqual(restored.state["global_sequence"], 1)
+
+    def test_official_legacy_zero_fx_rate_is_preserved_but_negative_is_rejected(self):
+        zero = b'[{"table":"B","no":"6/B/NBP/2009","effectiveDate":"2009-02-11","rates":[{"country":"Zimbabwe","currency":"dolar","code":"ZWR","mid":0.0}]}]'
+        self.assertEqual(validate_nbp_response("nbp_exchange_rates_table_b", 200, zero).observation_count, 1)
+        negative = zero.replace(b'0.0', b'-0.1')
+        with self.assertRaisesRegex(NBPStateError, "nonnegative"):
+            validate_nbp_response("nbp_exchange_rates_table_b", 200, negative)
 
     def test_table_b_table_c_and_gold_payload_contracts(self):
         b = json.dumps([{"table": "B", "no": "001/B/NBP/2020", "effectiveDate": "2020-01-01", "rates": [{"currency": "x", "code": "USD", "mid": 4.0}]}]).encode()

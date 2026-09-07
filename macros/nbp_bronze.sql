@@ -118,6 +118,9 @@ select
     mid,
     bid,
     ask,
+    coalesce(mid = 0, false)
+        or coalesce(bid = 0, false)
+        or coalesce(ask = 0, false) as has_zero_source_quote,
     source_table,
     no,
     trading_date as tradingDate,
