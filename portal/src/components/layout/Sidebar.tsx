@@ -5,7 +5,6 @@
 
 import { useState } from "react";
 import {
-  LayoutDashboard,
   Home,
   Database,
   Cable,
@@ -21,7 +20,6 @@ import {
   Bookmark,
   ChevronRight,
   Layers,
-  ClipboardList,
 } from "lucide-react";
 import { useDuckStore, type EditorTabType } from "@/store";
 import { getUiConfig } from "@/lib/appConfig";
@@ -39,9 +37,7 @@ import {
 import { useTheme } from "@/components/theme/theme-provider";
 import { Separator } from "@/components/ui/separator";
 import QueryHistory from "../workspace/QueryHistory";
-import SessionIndicator from "@/components/collaboration/SessionIndicator";
 import SavedQueriesPanel from "@/components/saved-queries/SavedQueriesPanel";
-import DashboardsPanel from "@/components/dashboard/DashboardsPanel";
 import { lazy, Suspense } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
@@ -67,8 +63,6 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
   const switchProfile = useDuckStore((s) => s.switchProfile);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [savedQueriesOpen, setSavedQueriesOpen] = useState(false);
-  const dashboardsOpen = useDuckStore((s) => s.isDashboardsPanelOpen);
-  const setDashboardsOpen = useDuckStore((s) => s.setDashboardsPanelOpen);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [switchTarget, setSwitchTarget] = useState<(typeof profiles)[0] | null>(null);
   const ui = getUiConfig();
@@ -149,7 +143,9 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
                     </button>
                   </DropdownMenuTrigger>
                 </TooltipTrigger>
-                <TooltipContent side="right">{currentProfile?.name || "Duck-UI"}</TooltipContent>
+                <TooltipContent side="right">
+                  {currentProfile?.name || "Zohelo-data"}
+                </TooltipContent>
               </Tooltip>
             </TooltipProvider>
             <DropdownMenuContent side="right" align="start">
@@ -230,7 +226,7 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
 
           <Separator className="my-2 mx-2" />
 
-          {/* Business catalogue */}
+          {/* Data catalogue */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -238,30 +234,13 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
                   variant={isTabActive("catalog") ? "secondary" : "ghost"}
                   size="icon"
                   className="mx-auto h-9 w-9"
-                  onClick={() => openOrFocusTab("catalog", "Business catalogue")}
-                  aria-label="Business catalogue"
+                  onClick={() => openOrFocusTab("catalog", "Data catalogue")}
+                  aria-label="Data catalogue"
                 >
-                  <Layers className="h-4 w-4 text-amber-500" />
+                  <Layers className="h-4 w-4 text-primary" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right">Business catalogue</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={isTabActive("review") ? "secondary" : "ghost"}
-                  size="icon"
-                  className="mx-auto h-9 w-9"
-                  aria-label="Review and decisions"
-                  onClick={() => openOrFocusTab("review", "Review & decisions")}
-                >
-                  <ClipboardList className="h-4 w-4 text-amber-500" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Review &amp; decisions · 2 open items</TooltipContent>
+              <TooltipContent side="right">Data catalogue</TooltipContent>
             </Tooltip>
           </TooltipProvider>
 
@@ -284,28 +263,6 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
               </Tooltip>
             </TooltipProvider>
           )}
-
-          {/* Dashboards index. A dashboard must always be reachable from
-              here — a closed tab or a reload must never mean a lost report. */}
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={dashboardsOpen ? "secondary" : "ghost"}
-                  size="icon"
-                  className="mx-auto h-9 w-9"
-                  onClick={() => setDashboardsOpen(!dashboardsOpen)}
-                  aria-label="Dashboards"
-                >
-                  <LayoutDashboard className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Dashboards</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* Live session — a primary capability, not a footer utility. */}
-          <SessionIndicator />
 
           <Separator className="my-2 mx-2" />
 
@@ -515,16 +472,6 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
           <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Loading…</div>}>
             {connectionsOpen && <ConnectionsContent />}
           </Suspense>
-        </SheetContent>
-      </Sheet>
-
-      <Sheet open={dashboardsOpen} onOpenChange={setDashboardsOpen}>
-        <SheetContent
-          side="right"
-          className="w-full gap-0 overflow-hidden p-0 sm:max-w-md [&>button]:hidden"
-        >
-          <SheetTitle className="sr-only">Dashboards</SheetTitle>
-          <DashboardsPanel onClose={() => setDashboardsOpen(false)} />
         </SheetContent>
       </Sheet>
 

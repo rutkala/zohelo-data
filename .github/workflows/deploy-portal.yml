@@ -5,11 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'portal/**'
-      - 'models/**'
-      - 'macros/**'
-      - 'dbt_project.yml'
-      - '.dbtignore'
-      - 'profiles.yml'
+      - 'scripts/prepare_dbt_viewer.py'
       - 'requirements.txt'
       - '.python-version'
       - '.node-version'
@@ -50,12 +46,13 @@ jobs:
           cache: 'pip'
           cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
-        run: |
-          python -m pip install -r requirements.txt
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
 
-      - name: Generate dbt docs
-        run: dbt docs generate --profiles-dir .
+      - name: Stage the generic dbt Docs viewer template
+        run: |
+          rm -rf portal/public/docs
+          python scripts/prepare_dbt_viewer.py
 
       - name: Set up shared Node.js version
         uses: actions/setup-node@v4
@@ -67,12 +64,6 @@ jobs:
       - name: Install portal dependencies
         working-directory: portal
         run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Stage generated dbt docs as portal static assets
-        run: |
-          mkdir -p portal/public/docs
-          cp target/index.html portal/public/docs/index.html
-          cp target/*.json portal/public/docs/
 
       - name: Build Duck-UI portal
         working-directory: portal
@@ -92,13 +83,14 @@ jobs:
           )
           PY
 
-      - name: Verify generated dbt docs are deployed with the portal
+      - name: Verify the generic dbt Docs viewer is deployed
         run: |
-          test -s portal/dist/docs/index.html
-          test -s portal/dist/docs/manifest.json
-          test -s portal/dist/docs/catalog.json
+          test -s portal/dist/docs/viewer-template.html
+          test ! -e portal/dist/docs/index.html
+          test ! -e portal/dist/docs/manifest.json
+          test ! -e portal/dist/docs/catalog.json
 
-      - name: Remove staged generated dbt docs
+      - name: Remove staged dbt Docs viewer template
         if: always()
         run: rm -rf portal/public/docs
 

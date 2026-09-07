@@ -1,123 +1,84 @@
 # Zohelo-data delivery plan
 
-Approved work programme, 6 September 2026. The owner approved starting this scope after reviewing the deliverables. It combines the nine requested points with the business data catalogue. Approval to start does not settle the open business or architecture choices identified below. See [foundation audit](audits/2026-09-06-foundation.md) for verified implementation status.
+Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
-The sole initial user is the owner. Scope includes all already-ingested NBP history: Tables A, B, C and gold prices. The owner demonstrated a silver Table A query in the earlier live portal. The new v2 data release has verified request coverage through 6 September 2026, all four sources through modeled gold, matching source/lineage catalogue metadata, fresh native SQL reads and exact raw replay. Every key from the preceding silver release is retained. Executable approved metrics remain open.
+## Current status
 
-The architecture remains proposed. Drive is durable authority for data and release metadata; Git stores code and definitions; Python handles transport/publication; dbt owns transformations; native DuckDB and MetricFlow are disposable compute; and the existing React/DuckDB WASM portal is the consumer. Respect the free-cost boundary and existing subscriptions, verify actual allowances, and do not promise free unlimited or always-on compute. The assistant owns technical work; the owner supplies business decisions one at a time.
+Updated 7 September 2026. The verified NBP v2 data foundation is live. It contains all four NBP sources through modeled gold, source and lineage metadata, fresh native SQL reads, exact raw replay, and preservation of every key from the preceding silver release. Governed metrics and a semantic serving layer are **not** complete.
 
-## Delivery status
+The current portal code is on `main` at [`bed463`](https://github.com/rutkala/zohelo-data/commit/bed463) ([PR 62](https://github.com/rutkala/zohelo-data/pull/62)) and its portal changes are deployed. The owner has rejected project-management and owner-review material inside the data portal or catalogue. The corrective data-first catalogue and full SQL experience are now active technical work; they still need portal validation, CI, and deployment before being called live. The catalogue is for published release data, source status, lineage, and approved metric definitions. This page is the single project-status and owner-question record; answer a question ID in chat and the assistant will maintain it.
 
-Updated 7 September 2026 after the successful 08:45–08:46 UTC checks. **The NBP data foundation is live; the complete platform scope remains open for governed metrics.** Release `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1` was produced by [`f071669`](https://github.com/rutkala/zohelo-data/commit/f071669937829a3d0775a13146b3170e1b283b4e). Its 15 tables passed publication, fresh native SQL reads, exact raw replay and comparison against the prior live silver key set. The matching portal deployed successfully. See [dated release evidence and measurements](releases/2026-09-07-nbp-platform.md); this is not a completed semantic layer or a published GitHub Release.
+**Status meanings:** **Done** is delivered and evidenced. **In progress** is active technical work. **Not started** is technical work that has not begun. **Waiting for your input** needs one owner business decision. **Deferred** is intentionally postponed.
 
-| Deliverable | Status | Completed / implemented | Remaining for acceptance |
+| Deliverable | Work item | Status | Current position |
 | --- | --- | --- | --- |
-| D1. Repository, architecture and Actions audit | Audit and major repairs delivered | [Workflow map and findings](audits/2026-09-07-platform.md); consistent runtimes/CI; credential repair; consolidated writer; live checkpoint resume, publication, recovery and measured NBP workload | Operational follow-ups: routine incremental-run measurement, retained-state growth, peak RAM, representative queries and account-specific allowances; no free-unlimited claim |
-| D2. Development environment and AI instructions | Delivered | Declared Python/Node, pinned dependencies, tested actual container, fixture command, shared AGENTS entrypoints and executable synthetic MetricFlow proof | Ongoing maintenance as dependencies and implementation change |
-| D3. Contracts, ingestion rules and gold design | Implemented; unit follow-up open | Accepted correction policy; [source contracts](nbp-data-contracts.md); resumable full/incremental rules; exact raw replay; [facts, dimensions and bus matrix](nbp-gold-design.md) | Historical FX unit normalization requires provider evidence; values remain as published. Cross-source mappings and business aggregation rules remain open |
-| D4. Complete NBP flow | Data through gold live; semantics open | All four sources; 429,795 silver observations; every prior key preserved; 15 published tables; fresh SQL and exact raw recovery; matching portal deployed | Approve and execute NBP business metrics on the same release; decide the native metric-serving experience |
-| D5. Business catalogue | Sources and lineage live; metrics open | Release-bound four-source catalogue, coverage/status distinctions, dbt lineage and portal views. Full-page catalogue, a prepared SQL join example, and a Review & decisions hub linked from Home and navigation. | Business metric definitions, approval and executable semantic lineage; owner usability feedback on the new catalogue |
-| D6. Additional sources | Candidate research prepared | [Eurostat and WDI access/reuse inventory](source-candidates.md), with dataset-specific exceptions | Owner priorities and selected-dataset commercial reuse evidence before onboarding |
-| D7. Tailored UI | Deferred | Existing SQL portal retained | Evaluate after the essential NBP/catalogue work; redesign scope requires an owner decision |
+| D1. Platform, repository and GitHub Actions audit | Audit and essential platform repairs | **Done** | [Audit evidence](audits/2026-09-07-platform.md) records the workflow, environment, authorization, publication, recovery, and release repairs. |
+| D1 | Routine incremental-run, retained-state growth, peak-memory, browser/query, and account-allowance measurements | **Not started** | Technical follow-up; no owner action is needed. |
+| D2. Reproducible development environment and AI instructions | Pinned environment, fixture checks, and shared instructions | **Done** | Python/Node versions, locked dependencies, container validation, and the fixture path are in place. |
+| D3. Contracts, ingestion rules and gold design | Source contracts, revision policy, full/incremental rules, and NBP gold design | **Done** | See [NBP contracts](nbp-data-contracts.md), [revision policy](decisions/0001-nbp-corrections.md), and [gold design](nbp-gold-design.md). |
+| D3 | Historical FX quote-unit normalization from provider evidence | **Not started** | Technical research is required; API values remain published as received. |
+| D3 | Business aggregation rules | **Waiting for your input** | See **Q-M1**. |
+| D4. Complete NBP end-to-end | All four NBP datasets through bronze, silver, modeled gold, release publication, SQL, portal, and replay | **Done** | [Verified v2 release evidence](releases/2026-09-07-nbp-platform.md) records 15 tables, 429,795 silver observations, fresh SQL, exact raw replay, and prior-key preservation. |
+| D4 | First governed NBP metric definition and acceptance examples | **Waiting for your input** | See **Q-M1**. |
+| D4 | Executable semantic definitions, checked metric values, and a native metric-serving experience | **Not started** | Technical implementation starts after the metric scope is agreed. The synthetic MetricFlow check is runtime evidence only. |
+| D5. Business data catalogue | Released source, dataset-status, and lineage metadata | **Done** | The v2 release binds four source records and dbt lineage to published data. |
+| D5 | One native dbt catalogue for published data, lineage, and metric definitions; no project-management or owner-review UI | **In progress** | Corrective data-first catalogue work is active and awaits portal checks, CI, and deployment. The current release has no published metric definitions. |
+| D5 | Approved metric definitions and executable semantic lineage in the catalogue | **Not started** | Depends on question Q-M1 and D4 implementation. |
+| D6. Source expansion research and onboarding | Candidate-source research | **Done** | [Eurostat and WDI inventory](source-candidates.md) records access, reuse evidence, attribution, and exceptions. |
+| D6 | Select the next source and intended business use | **Waiting for your input** | See **Q-S1**. |
+| D6 | Onboard a selected source | **Not started** | Technical work begins only after selection and dataset-specific reuse review. |
+| D7. Data-first portal and SQL experience | Automatically load every released table referenced by SQL, including joins, unions, and CTEs, within the browser download limit | **In progress** | Active implementation; portal checks, CI, and deployment are required before this is live. |
+| D7 | Focused modern palette and layout that supports the catalogue and SQL experience | **In progress** | Authorized UI enhancement; keep the scope bounded to the data-first experience and validate it before calling it deployed. |
 
-Verified authorization evidence: [OAuth preference and read check, PR 53](https://github.com/rutkala/zohelo-data/pull/53); [56-byte upload, matching download and confirmed removal](https://github.com/rutkala/zohelo-data/actions/runs/34067541199). These checks did not publish NBP data or finish D4.
+Items marked **In progress** or **Not started** are technical work. Only rows marked **Waiting for your input** need an owner decision.
 
-[Earlier v1 delivery evidence](releases/2026-09-07-nbp-silver.md) records the initial 429,449-row snapshot. A subsequent v1 release reached 429,611 rows. The new v2 preservation audit retained every one of those later keys and recovered 184 additional historical records; current silver totals 429,795. The earlier evidence is historical, not the current freshness statement.
+## Questions for your input
 
-The current live implementation and limits are described in [NBP platform operations](nbp-platform-operations.md). [NBP silver publication](nbp-silver-publication.md) describes the retained v1 compatibility path. The [short portal guide](using-the-portal.md) covers source/lineage navigation and gold queries. No technical action is required from the owner to finish these completed jobs.
+These are the only open owner questions. Reply in chat with an ID and your answer; the assistant will update this page. The linked documents are research, not decisions or approvals.
 
-## D1. Platform, repository and GitHub Actions audit
+| ID | Decision needed | Research |
+| --- | --- | --- |
+| Q-M1 | What is the first NBP business use case? Choose published daily values, daily values plus a defined Table C spread, or describe a different decision/comparison. Include the table, currency or commodity, period, and missing-observation rule if relevant. | [NBP business-definition proposals](nbp-business-definitions.md) |
+| Q-S1 | What source or topic should be considered next: Eurostat, World Bank WDI, or another source? State the intended business use. | [Candidate-source research](source-candidates.md) |
 
-**Outcome:** A bounded audit and repair plan assesses business goals, architecture, code quality, security, workflows and cost feasibility. The historical findings at commit `32f875c1` came from source inspection: four configured NBP sources and only a Table A gold projection. The [current audit supplement](audits/2026-09-07-platform.md) records the implemented repairs, measured live NBP release and remaining limitations.
+## Evidence and current limits
 
-**Completion criteria:**
+The v2 Drive release is `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1`, produced by [`f071669`](https://github.com/rutkala/zohelo-data/commit/f071669937829a3d0775a13146b3170e1b283b4e). The [dated release evidence](releases/2026-09-07-nbp-platform.md) records the 15 published tables, all-four-source coverage checked through 6 September, fresh reads, and exact raw rebuild. It is evidence for a Drive data snapshot, not a published GitHub Release or a completed semantic layer.
 
-- A workflow map identifies triggers, Python versions, dependencies, stage inputs/outputs, commit identity, and retries.
-- A requirements matrix links each business goal to implementation, evidence and gaps; fixes are ranked by impact and necessity for release.
-- Effective Drive paths and development/production boundaries are demonstrated, including archive behavior.
-- A repair list covers OAuth recovery, workflow version consistency, stage handoff, and immutable publication without claiming repairs prematurely.
+[Foundation audit](audits/2026-09-06-foundation.md) and the [current platform audit](audits/2026-09-07-platform.md) record the verified repair history and the limits still to measure. [NBP platform operations](nbp-platform-operations.md) describes the live implementation and bounds; [silver publication](nbp-silver-publication.md) describes the retained v1 compatibility path. [Earlier v1 release evidence](releases/2026-09-07-nbp-silver.md) is historical context, not a current freshness statement. Verified authorization evidence is available in [PR 53](https://github.com/rutkala/zohelo-data/pull/53) and the [upload verification run](https://github.com/rutkala/zohelo-data/actions/runs/34067541199); neither of those checks published the v2 release.
 
-## D2. Reproducible Codespaces/dev environment and shared AI instructions
+Historical FX unit normalization remains unproven. No source is approved for expansion, and public access does not establish commercial reuse permission. The release does not establish unlimited free compute, a service-level commitment, or measured performance for larger sources.
 
-**Outcome:** A fresh Codespace runs bounded local checks and the portal with consistent dependencies, while GitHub/Copilot/ChatGPT-style agents start from shared instructions. Side effects remain visible.
+## Approved scope by deliverable
 
-**Completion criteria:**
+### D1. Platform, repository and GitHub Actions audit
 
-- Fresh setup uses explicit Python/Node versions and a locked, tested dependency set shared with CI; any environment differences have a documented reason.
-- One fixture-only command exercises ingestion-shaped inputs through dbt and query checks without credentials or remote writes.
-- `AGENTS.md` and linked entrypoints require evidence, distinguish proposed from accepted architecture, require economical explicit model choice for bounded tasks, and forbid invented completion.
-- Startup and optional AI tools are explicitly defined. Opening the environment does not automatically run production pipelines or start an unrestricted AI agent.
+Audit business goals, architecture, code quality, security, workflows, effective Drive boundaries, and cost feasibility. Keep a workflow and requirements map, repair OAuth/workflow/stage-handoff/publication failures, and base claims on evidence.
 
-## D3. Data contracts, full/incremental rules and gold dimensional design
+### D2. Reproducible development environment and AI instructions
 
-**Outcome:** Each dataset states one row’s meaning, keys, units, date roles, corrections, and deduplication. The implementation separates resumable historical bootstrap, incremental catch-up/rechecks, and rebuilding from retained raw. The [gold design](nbp-gold-design.md) records the comparison with Inmon/hybrid and implements Kimball-style facts, conformed dimensions and a bus matrix for NBP. Business aggregation rules remain unapproved.
+Provide a fresh Codespaces path for bounded local data and portal checks with explicit Python and Node versions, locked dependencies, shared agent instructions, and visible side effects. Opening the environment must not run production pipelines or an unrestricted agent.
 
-**Completion criteria:**
+### D3. Data contracts, ingestion rules and gold dimensional design
 
-- Contracts cover A/B/C rates and gold prices, including currency/commodity keys, rate units, effective/publication dates, source batch identity, and revised values.
-- Rules specify watermarks, overlap, checkpoints, retries, duplicates, schema changes, catch-up, and full rebuild from retained raw.
-- A fact/dimension design and bus matrix declare grain and aggregation rules, and reuse dimensions where definitions match; date and currency are initial candidates.
-- [NBP revision policy](decisions/0001-nbp-corrections.md): normal analysis uses current validated values, with detected changes and raw versions retained for traceability. A historical-comparison interface is outside the current scope. Detection is implemented by recent and rotating historical rechecks; it is not an official correction notification feed.
+For A/B/C FX rates and gold prices, document row grain, keys, units, date roles, corrections, deduplication, source batches, watermarks, overlaps, retries, schema handling, catch-up, and rebuild from retained raw. Use current validated values for normal analysis while retaining raw versions and detected changes; a historical-comparison UI is outside scope. The gold design must state fact/dimension grain and business aggregation rules rather than invent them.
 
-## D4. Complete NBP end-to-end
+### D4. Complete NBP end-to-end
 
-**Outcome:** One reviewed release makes all four NBP datasets, their existing history and agreed catch-up range available through bronze, silver, modeled gold, semantic definitions and the portal. Source inputs are recorded for replay; missing legacy raw inputs are identified explicitly. MetricFlow and SQL use matching released data and definitions.
+Make all four NBP datasets, existing history, and agreed catch-up range available through bronze, silver, modeled gold, semantic definitions, and the portal. Record inputs for replay, identify unavailable legacy raw inputs, keep SQL and any semantic service on the matching release, restore a release in a fresh process, and preserve the prior complete release if publication fails.
 
-**Completion criteria:**
+### D5. Business data catalogue
 
-- Ingestion authorization and catch-up work; all four datasets have verified coverage, keys, units and representative values. Full and incremental results agree for the same inputs and cutoff under the chosen revision policy.
-- All four datasets have tested gold and semantic coverage. Agreed business metrics execute with checked values, filters and time aggregation. An initial small compatibility test precedes the complete build; parsing alone is insufficient.
-- A fresh process restores the release and runs SQL and MetricFlow, returning its release ID and clear unavailable-input errors.
-- Failed publication leaves the prior complete release usable; recovery rebuilds from raw and publishes a new version.
+The catalogue covers the connected release: sources and datasets (description, licence/reuse terms, coverage, frequency, status, and identity); release-specific lineage from source through gold and any approved semantic models; and approved metrics with definition, formula, unit, dimensions, time aggregation, approval state, and version. It distinguishes last attempt, last successful ingestion, latest observation, and latest validated publication. It must let the owner discover data and trace an approved metric to physical data and validated publication without GitHub or code. It must not contain project-management or owner-review content.
 
-## D5. Business data catalogue
+### D6. Source expansion research and onboarding
 
-**Outcome:** The catalogue is core to the NBP release and lets the owner trace and assess a metric without GitHub or code. It combines actual ingestion records with dbt and semantic artifacts; dbt does not become presumed live ingestion monitoring. Metadata matches the queried release. It has three linked views:
+Maintain a business-led, prioritized onboarding path. A source must be public, free to obtain, and permitted for the intended commercial use; record attribution, redistribution, and dataset-specific conditions. For a chosen source, add contracts, fixtures, extraction, lineage, recovery, release controls, and testing without weakening the NBP platform boundary.
 
-1. **Sources and datasets:** description, licence/reuse terms, coverage, frequency, status, and identity.
-2. **Lineage:** source, landing, bronze, silver, gold, semantic models, and metrics, release-specific.
-3. **Metrics:** definition, formula, unit, dimensions, time aggregation, approval state, and version.
+### D7. Data-first portal and SQL experience
 
-Status distinguishes last attempt, last successful ingestion, latest observation, and latest validated publication. Editing descriptions or approving definitions inside the UI is a separate business decision, not a silently assumed feature.
-
-The portal includes [Review & decisions](business-review.md): an owner-facing path from the catalogue to two narrow choices, **BR-001** first NBP metrics and **BR-002** next-source priority. It presents researched NBP definitions and candidate-source evidence as proposals. Responses are local browser/profile drafts that the owner copies or downloads to chat; they do not send a message, approve a metric, alter a release, or onboard a source.
-
-**Completion criteria:**
-
-- All four NBP datasets expose coverage and status distinctions, with each metric linked to source and model lineage.
-- Published metadata combines ingestion records with matching [dbt artifacts](https://docs.getdbt.com/reference/artifacts/dbt-artifacts) and semantic definitions. Data, lineage, quality results and metric definitions identify the release they describe.
-- The portal supports discovery, lineage, metric review and SQL navigation without requiring the owner to use GitHub or read code.
-- An owner query traces metric to physical data and back to validated publication.
-
-## D6. Source expansion research and onboarding
-
-**Outcome:** A business-led, prioritized source catalogue and onboarding plan. Sources must be public, free to obtain and permitted for the intended commercial use, with any attribution or redistribution conditions recorded.
-
-**Completion criteria:**
-
-- Candidate profiles record business value, coverage, update behavior, access limits and licensing evidence with a review date. Public access alone does not establish commercial reuse permission.
-- Selected sources have an explicit priority and onboarding requirements for contracts, fixtures, extraction, lineage and recovery.
-- Onboarding preserves NBP’s release, catalogue, testing, and cost boundaries.
-
-## D7. Optional tailored UI evaluation
-
-**Outcome:** A focused evaluation decides whether to adapt or redesign the existing portal for catalogue, SQL, and metric work. It follows data contracts and release work.
-
-**Completion criteria:**
-
-- Review covers mobile usability, discovery, lineage, results, provenance/release visibility and failures using real NBP examples.
-- Any redesign proposal has a bounded scope and demonstrated benefit over the current layout.
-- No rebuild is required until the owner accepts scope and resource implications.
+Deliver a focused data-first portal update: one native dbt catalogue for published data, lineage, and metric definitions; no project-management or owner-review UI; and SQL that automatically loads every released table referenced by a statement, including joins, unions, and CTEs. Keep published data-file downloads within 64 MiB per engine session and explain a limit failure before execution. Catalogue artifacts have a separate 16 MiB limit; these download limits are not guarantees about query memory use. A modern palette and layout may support this bounded experience. Portal validation, CI, and deployment are required before any of this new behavior is described as live.
 
 ## Cross-cutting acceptance requirements
 
-These apply across D1–D5, not as extra projects:
-
-- **Correctness:** business examples and representative fixtures verify results; full/incremental equivalence uses the same inputs, cutoff and revision policy.
-- **Safe versioned publication:** rollback and rebuild from raw are proven; failed publish leaves the previous release usable.
-- **Operational clarity:** status, provenance, errors, source batches, release IDs, and code versions are understandable.
-- **Measured limits:** download size, disk/RAM, runtime, and actual allowances are measured within the free-cost boundary; no exact SLA, numeric cost, or date is assumed.
-
-The next release should complete essential D1–D5 work. Optional cleanup need not delay it. D6 source additions and D7 redesign follow afterward; source discovery can inform the earlier modeling discussion.
-
-Business decisions to resolve during design, one at a time: metric use cases, metric availability/serving mode, and source priorities or commercial reuse needs. Historical revisions now have the policy linked above. These remaining choices are not implementation assumptions.
+Across D1–D5: verify business examples and representative fixtures; use the same inputs, cutoff, and revision policy for full/incremental equivalence; prove safe versioned publication and raw rebuild; expose release, provenance, status, errors, and source batches clearly; and measure operating limits without assuming a date, cost, SLA, or unlimited free capacity.

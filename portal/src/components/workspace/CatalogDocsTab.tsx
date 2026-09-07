@@ -1,114 +1,191 @@
-/**
- * Catalog & Lineage Tab
- * Displays the generated dbt documentation and lineage graph in an embedded iframe.
- */
-import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, RefreshCw, Layers } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { dbtDocsUrl, isDbtDocsHtml } from "@/lib/dbtDocs";
+import { useDuckStore } from "@/store";
+import { dbtDocsUrl, populateDbtDocs } from "@/lib/dbtDocs";
+import { loadReleaseDbtArtifacts, prepareDbtManifest } from "@/services/googleDrive/dbtCatalog";
+import type { ReleaseCatalogResolution } from "@/services/googleDrive/types";
 
-type DocsStatus = "checking" | "ready" | "error";
+let templatePromise: Promise<string> | undefined;
+function loadTemplate(): Promise<string> {
+  templatePromise ??= fetch(dbtDocsUrl(import.meta.env.BASE_URL, window.location.origin))
+    .then(async (response) => {
+      if (!response.ok)
+        throw new Error("The catalogue viewer could not be loaded. Please try again.");
+      return response.text();
+    })
+    .catch((error: unknown) => {
+      templatePromise = undefined;
+      throw error;
+    });
+  return templatePromise;
+}
+
+// Desktop/mobile workspaces share verified metadata, but own their iframe URLs.
+// A different token or resolution always causes new verification.
+const documentCache = new WeakMap<
+  ReleaseCatalogResolution,
+  { token: string; html: Promise<string> }
+>();
+function loadDocument(release: ReleaseCatalogResolution, token: string): Promise<string> {
+  const cached = documentCache.get(release);
+  if (cached?.token === token) return cached.html;
+  const html = Promise.all([loadTemplate(), loadReleaseDbtArtifacts(release, token)])
+    .then(([template, artifacts]) =>
+      populateDbtDocs(template, prepareDbtManifest(artifacts.manifest, release), artifacts.catalog)
+    )
+    .catch((error: unknown) => {
+      documentCache.delete(release);
+      throw error;
+    });
+  documentCache.set(release, { token, html });
+  return html;
+}
+
+function NativeDbtViewer({ html }: { html: string }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const hostUrl = new URL(
+    "catalogue-viewer.html",
+    new URL(import.meta.env.BASE_URL, window.location.origin)
+  ).toString();
+  useEffect(() => {
+    let nonce: string | null = null;
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow || event.origin !== "null") return;
+      const message = event.data;
+      if (!message || typeof message !== "object") return;
+      if (
+        message.type === "zohelo-catalogue-viewer-ready" &&
+        typeof message.nonce === "string" &&
+        !nonce
+      ) {
+        nonce = message.nonce;
+        frame.current?.contentWindow?.postMessage(
+          { type: "zohelo-catalogue-viewer-document", nonce, html },
+          "*"
+        );
+      } else if (message.type === "zohelo-catalogue-viewer-error" && nonce === message.nonce) {
+        setError(
+          typeof message.message === "string"
+            ? message.message
+            : "The catalogue viewer could not start."
+        );
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [html]);
+  if (error)
+    return (
+      <p role="alert" className="p-6 text-sm">
+        Data catalogue unavailable: {error}
+      </p>
+    );
+  return (
+    <iframe
+      ref={frame}
+      src={hostUrl}
+      onLoad={() =>
+        frame.current?.contentWindow?.postMessage({ type: "zohelo-catalogue-viewer-request" }, "*")
+      }
+      title="Data catalogue — dbt Docs"
+      sandbox="allow-scripts"
+      className="min-h-0 flex-1 w-full border-0 bg-white"
+    />
+  );
+}
 
 export default function CatalogDocsTab() {
-  const [iframeKey, setIframeKey] = useState(0);
-  const [docsStatus, setDocsStatus] = useState<DocsStatus>("checking");
-  const [error, setError] = useState<string | null>(null);
-  const docsUrl = useMemo(() => dbtDocsUrl(import.meta.env.BASE_URL, window.location.origin), []);
-
+  const release = useDuckStore((state) => state.lakehouseRelease);
+  const token = useDuckStore((state) => state.googleAuth.token);
+  const [attempt, setAttempt] = useState(0);
+  const [document, setDocument] = useState<{
+    html: string;
+    release: ReleaseCatalogResolution;
+    token: string;
+    attempt: number;
+  } | null>(null);
+  const [failure, setFailure] = useState<{
+    message: string;
+    release: ReleaseCatalogResolution;
+    token: string;
+    attempt: number;
+  } | null>(null);
   useEffect(() => {
-    const controller = new AbortController();
-
-    fetch(docsUrl, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`The docs server returned ${response.status}.`);
-        }
-
-        const html = await response.text();
-        if (!isDbtDocsHtml(html)) {
-          throw new Error("The deployed file was not a dbt Docs document.");
-        }
-      })
-      .then(() => {
-        if (!controller.signal.aborted) setDocsStatus("ready");
+    let cancelled = false;
+    if (!token || release?.kind !== "release") return;
+    loadDocument(release, token)
+      .then((html) => {
+        if (cancelled) return;
+        setDocument({ html, release, token, attempt });
       })
       .catch((cause: unknown) => {
-        if (controller.signal.aborted) return;
-        setDocsStatus("error");
-        setError(cause instanceof Error ? cause.message : "The docs could not be loaded.");
+        if (!cancelled)
+          setFailure({
+            message: cause instanceof Error ? cause.message : "The catalogue could not be loaded.",
+            release,
+            token,
+            attempt,
+          });
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [release, token, attempt]);
 
-    return () => controller.abort();
-  }, [docsUrl, iframeKey]);
-
-  const handleRefresh = () => {
-    setDocsStatus("checking");
-    setError(null);
-    setIframeKey((prev) => prev + 1);
-  };
-
-  const handleOpenExternal = () => {
-    window.open(docsUrl, "_blank", "noopener,noreferrer");
-  };
-
+  const ready =
+    document &&
+    document.release === release &&
+    document.token === token &&
+    document.attempt === attempt;
+  const error =
+    failure?.release === release && failure?.token === token && failure?.attempt === attempt
+      ? failure.message
+      : null;
   return (
-    <div className="flex flex-col h-full w-full bg-background overflow-hidden">
-      {/* Top action bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-muted/30">
+    <section className="flex h-full min-h-0 flex-col bg-background" aria-label="Data catalogue">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3">
         <div className="flex items-center gap-2">
           <Layers className="h-4 w-4 text-primary" />
-          <span className="text-sm font-medium">dbt Catalog &amp; Lineage Graph</span>
+          <h1 className="text-sm font-semibold">Data catalogue</h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={handleRefresh}
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Reload Docs
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1.5 text-xs"
-            onClick={handleOpenExternal}
-            disabled={docsStatus !== "ready"}
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-            Open in New Window
-          </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!token || release?.kind !== "release"}
+          onClick={() => {
+            if (release) documentCache.delete(release);
+            templatePromise = undefined;
+            setAttempt((value) => value + 1);
+          }}
+        >
+          <RefreshCw className="mr-2 h-3.5 w-3.5" />
+          Refresh catalogue
+        </Button>
+      </header>
+      {release?.kind === "release" && (
+        <p className="break-all border-b bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          Sources, tables and lineage · Release {release.manifest.release_id}
+        </p>
+      )}
+      {!token || release?.kind !== "release" ? (
+        <p className="p-6 text-sm text-muted-foreground">
+          Connect Google Drive to view the catalogue for your published data release.
+        </p>
+      ) : error ? (
+        <div className="m-6 max-w-xl space-y-2" role="alert">
+          <p className="font-medium">Data catalogue unavailable</p>
+          <p className="text-sm text-muted-foreground">{error}</p>
+          <p className="text-sm text-muted-foreground">You can continue using the SQL workspace.</p>
         </div>
-      </div>
-
-      {/* Embedded dbt Docs Frame */}
-      <div className="flex-1 w-full h-full relative">
-        {docsStatus === "checking" ? (
-          <div
-            className="flex h-full items-center justify-center text-sm text-muted-foreground"
-            role="status"
-          >
-            Checking generated dbt documentation…
-          </div>
-        ) : docsStatus === "ready" ? (
-          <iframe
-            key={iframeKey}
-            src={docsUrl}
-            title="dbt Catalog & Lineage"
-            className="w-full h-full border-none"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center p-6">
-            <div className="max-w-lg space-y-2 text-center" role="alert">
-              <p className="font-medium">Generated dbt documentation is unavailable.</p>
-              <p className="text-sm text-muted-foreground">
-                {error} Redeploy the portal after generating dbt docs, then reload this tab.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
+      ) : ready ? (
+        <NativeDbtViewer html={document.html} />
+      ) : (
+        <p className="p-6 text-sm text-muted-foreground" role="status">
+          Loading verified release documentation…
+        </p>
+      )}
+    </section>
   );
 }

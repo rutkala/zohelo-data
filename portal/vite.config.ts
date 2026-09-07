@@ -94,7 +94,7 @@ export default defineConfig(({ mode }) => {
           navigateFallback: 'index.html',
           // Public OAuth information must stay accessible without booting the
           // workspace, including when a previous visit installed the worker.
-          navigateFallbackDenylist: [/\/(about|privacy|terms)\.html$/, /\/docs(?:\/|$)/],
+          navigateFallbackDenylist: [/\/(about|privacy|terms|catalogue-viewer)\.html$/, /\/docs(?:\/|$)/],
           runtimeCaching: [
             {
               // Hashed build chunks (immutable filenames) — cached as the

@@ -13,6 +13,7 @@ import {
   loadTableIntoDuckDB,
   loadTablesIntoDuckDB,
   requestGoogleAccessToken,
+  resolvePublishedTableReferences,
   resolveLayerFolderId,
   resolveReleaseCatalog,
   isGoogleDriveAuthError,
@@ -120,6 +121,7 @@ export const createGoogleDriveSlice: StateCreator<
     }
     return budget;
   };
+  const tableKey = (layerName: string, tableName: string) => `${layerName}\u0000${tableName}`;
 
   const select = async (
     layerName: string,
@@ -181,7 +183,9 @@ export const createGoogleDriveSlice: StateCreator<
       // publishViews has completed at this point. Keep this engine pinned even if the
       // caller changed token/session while the request was in flight.
       const fingerprint = releaseFingerprint(source);
-      if (fingerprint) loadedCatalogFingerprints.set(local.db, fingerprint);
+      if (fingerprint) {
+        loadedCatalogFingerprints.set(local.db, fingerprint);
+      }
       if (!current()) return null;
       let schemaWarning = "";
       try {
@@ -305,7 +309,9 @@ export const createGoogleDriveSlice: StateCreator<
       // download was pending, but never open a tab whose SQL was not prepared
       // against the still-current pinned release.
       const fingerprint = releaseFingerprint(source);
-      if (fingerprint) loadedCatalogFingerprints.set(local.db, fingerprint);
+      if (fingerprint) {
+        loadedCatalogFingerprints.set(local.db, fingerprint);
+      }
       if (!current()) return null;
       let schemaWarning = "";
       try {
@@ -333,6 +339,123 @@ export const createGoogleDriveSlice: StateCreator<
         toast.error(message);
       }
       return null;
+    } finally {
+      busy = false;
+      set({ isLakehouseLoading: false });
+    }
+  };
+
+  /**
+   * Loads precisely the pinned-release datasets a SQL statement references.
+   * This runs before the engine execution begins; it never opens a tab or
+   * submits the statement itself.
+   */
+  const preparePublishedTablesForQuery = async (sql: string): Promise<void> => {
+    const session = get().currentSession;
+    const local = asLocalDuckSession(session)?.local;
+    const token = get().googleAuth.token;
+    const source = get().lakehouseRelease;
+    // Remote engines, ordinary local SQL, and legacy catalogs keep their
+    // existing execution path. Only a resolved immutable release participates.
+    if (!local || source?.kind !== "release") return;
+    const current = () =>
+      get().currentSession === session &&
+      get().googleAuth.token === token &&
+      get().lakehouseRelease === source;
+    if (busy) {
+      throw new Error(
+        "Google Drive is already loading data. Wait for it to finish, then run the query again."
+      );
+    }
+
+    busy = true;
+    try {
+      const referenced = await resolvePublishedTableReferences(
+        local.connection,
+        sql,
+        source.manifest.datasets
+      );
+      if (!current()) {
+        throw new Error("Google Drive session changed before SQL dependencies could be resolved.");
+      }
+      if (referenced.length === 0) return;
+      const loadedFingerprint = loadedCatalogFingerprints.get(local.db);
+      if (loadedFingerprint && loadedFingerprint !== source.fingerprint) {
+        throw new Error(
+          "This DuckDB session has views from a different release. Start a fresh DuckDB session before querying this release."
+        );
+      }
+
+      // Check actual relations, not a remembered "loaded" flag. This preserves
+      // user-created relations and lets a dropped release view be loaded again.
+      const relations = await local.connection.query(
+        "SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = current_database()"
+      );
+      if (!current())
+        throw new Error("The active data session changed before loading could start.");
+      const existing = new Set(
+        relations
+          .toArray()
+          .map((row) =>
+            tableKey(String(row.table_schema).toLowerCase(), String(row.table_name).toLowerCase())
+          )
+      );
+      const pending = referenced.filter(
+        (table) =>
+          !existing.has(tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase()))
+      );
+      if (pending.length === 0) return;
+      if (!token)
+        throw new Error("Sign in to Google Drive before querying published release data.");
+
+      const label = pending.map((table) => `${table.layerName}.${table.datasetName}`).join(", ");
+      set({
+        isLakehouseLoading: true,
+        lakehouseStatusMessage: `Loading ${pending.length} published dataset(s) referenced by this SQL query...`,
+      });
+      await loadTablesIntoDuckDB(
+        local.db,
+        local.connection,
+        pending.map((table) => ({
+          datasetName: table.datasetName,
+          tableFolderId: null,
+          files: table.files,
+          layerName: table.layerName,
+        })),
+        token,
+        budgetForEngine(local.db),
+        () => {
+          if (!current()) {
+            throw new Error(
+              "Google Drive session changed before the referenced tables could be loaded."
+            );
+          }
+        }
+      );
+      if (!current()) {
+        throw new Error("Google Drive session changed before the query could run.");
+      }
+      loadedCatalogFingerprints.set(local.db, source.fingerprint);
+      // Refresh visible workspace relations after lazy loading; a metadata
+      // refresh failure must not discard verified data already available.
+      await get()
+        .fetchDatabasesAndTablesInfo()
+        .catch(() => undefined);
+      if (!current())
+        throw new Error("The active data session changed before this query could run.");
+      set({
+        lakehouseStatusMessage: `Loaded ${pending.length} published dataset(s) for this query: ${label}.`,
+      });
+    } catch (error) {
+      const authFailure = token ? handleDriveAuthFailure(set, get, token, error) : false;
+      if (current()) {
+        set({
+          lakehouseStatusMessage: authFailure
+            ? "Google Drive authorization expired or was revoked. Sign in again."
+            : `Could not load published query data: ${messageOf(error)}`,
+        });
+      }
+      throw error;
     } finally {
       busy = false;
       set({ isLakehouseLoading: false });
@@ -579,5 +702,6 @@ export const createGoogleDriveSlice: StateCreator<
     selectLakehouseDataset: (layerName, tableName) => select(layerName, tableName),
     selectLakehouseFile: (layerName, tableName, fileId) => select(layerName, tableName, fileId),
     prepareLakehouseQuery,
+    preparePublishedTablesForQuery,
   };
 };

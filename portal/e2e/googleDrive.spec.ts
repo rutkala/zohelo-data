@@ -58,7 +58,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
   await expect(
-    page.getByRole("status").filter({ hasText: "Legacy/unversioned catalog loaded" })
+    page.getByRole("status").filter({ hasText: "Legacy/unversioned catalog loaded" }).first()
   ).toBeVisible({
     timeout: 60000,
   });
@@ -120,7 +120,7 @@ const platformLayer = (id: string) =>
       ? "04_gold"
       : "03_silver";
 
-test("v2 business catalogue remains bounded while gold tables stay queryable", async ({ page }) => {
+test("v2 release keeps gold tables queryable without a duplicate catalogue", async ({ page }) => {
   const releaseId = "123e4567-e89b-42d3-a456-426614174000";
   const codeSha = "a".repeat(40);
   const goldCsv = "currency_code,mid_rate\nTEST,1.23\n";
@@ -264,17 +264,7 @@ test("v2 business catalogue remains bounded while gold tables stay queryable", a
     timeout: 60000,
   });
 
-  await dataExplorer.getByRole("button", { name: "Business catalogue" }).click();
-  await expect(dataExplorer.getByText("Published Snapshot", { exact: true }).first()).toBeVisible();
-  await expect(dataExplorer.getByText("Checked through", { exact: true }).first()).toBeVisible();
-  await expect(dataExplorer.getByText("2026-09-01", { exact: true }).first()).toBeVisible();
-  await expect(dataExplorer.getByText("Latest observation", { exact: true }).first()).toBeVisible();
-  await expect(dataExplorer.getByText("2026-08-30", { exact: true }).first()).toBeVisible();
-  await dataExplorer.getByRole("tab", { name: "metrics" }).click();
-  await expect(
-    dataExplorer.getByText("Governed metric definitions are awaiting business approval.")
-  ).toBeVisible();
-  await dataExplorer.getByRole("button", { name: "Business catalogue" }).click();
+  await expect(dataExplorer.getByRole("button", { name: "Business catalogue" })).toHaveCount(0);
 
   await dataExplorer.getByText("04_gold", { exact: true }).click();
   await dataExplorer.getByText("fact_fx_quotes", { exact: true }).click();

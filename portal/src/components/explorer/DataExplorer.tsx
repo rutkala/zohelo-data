@@ -22,6 +22,12 @@ import { getUiConfig } from "@/lib/appConfig";
 import { type ImportOptions } from "@/components/common/ImportOptionsPopover";
 import { toast } from "sonner";
 
+const browserWorkspaceNames = new Set(["memory", ":memory:"]);
+
+function databaseDisplayName(name: string): string {
+  return browserWorkspaceNames.has(name) ? "Browser workspace" : name;
+}
+
 export default function DataExplorer() {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
@@ -82,6 +88,10 @@ export default function DataExplorer() {
   const buildTreeData = () => {
     const treeData: TreeNodeData[] = databases.map((db) => ({
       name: db.name,
+      label: databaseDisplayName(db.name),
+      description: browserWorkspaceNames.has(db.name)
+        ? "Temporary workspace in this browser"
+        : undefined,
       type: "database",
       children: db.tables.map((table) => ({
         name: table.name,
@@ -156,7 +166,12 @@ export default function DataExplorer() {
             ) : (
               <Database className="h-4 w-4 text-primary" />
             )}
-            <CardTitle className="text-lg font-semibold">Explorer</CardTitle>
+            <div>
+              <CardTitle className="text-lg font-semibold">Data explorer</CardTitle>
+              <p className="text-[11px] text-muted-foreground">
+                Browse connected data and this browser&apos;s workspace
+              </p>
+            </div>
           </div>
 
           <div className="flex items-center gap-1">
@@ -221,7 +236,7 @@ export default function DataExplorer() {
               />
               <div className="flex items-center justify-between px-2 mt-2">
                 <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Databases
+                  Workspace databases
                 </span>
               </div>
               <ul className="ml-2" role="tree" aria-label="Database schema">
