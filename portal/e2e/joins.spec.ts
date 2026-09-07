@@ -353,7 +353,7 @@ for (const mobile of [false, true]) {
       await page.setViewportSize({ width: 768, height: 1024 });
       await expect(editor).toContainText("responsive_draft");
       await expect(page.locator(".monaco-editor")).toHaveCount(1);
-      await page.getByText("04_gold", { exact: true }).filter({ visible: true }).click();
+      // The expanded Gold folder is shared across explorer layouts.
       const action = page
         .getByRole("button", { name: "Actions for dim_date", exact: true })
         .filter({ visible: true });

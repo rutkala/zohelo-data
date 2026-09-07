@@ -348,8 +348,9 @@ async function ensureProfile(page: Page) {
 
 async function openCatalogue(page: Page) {
   await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Data catalogue" })
+    .getByRole("button", { name: "Data catalogue", exact: true })
+    .filter({ visible: true })
+    .first()
     .click();
 }
 
