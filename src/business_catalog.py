@@ -35,7 +35,7 @@ _DATASET_FIELDS = (
 # A configuration-provided display name/label takes precedence when present.
 _DEFAULT_SOURCE_NAMES = {
     "nbp_exchange_rates_table_a": "NBP Table A (Convertible FX)",
-    "nbp_exchange_rates_table_b": "NBP Table B (Non-convertible FX)",
+    "nbp_exchange_rates_table_b": "NBP Table B (Middle FX)",
     "nbp_exchange_rates_table_c": "NBP Table C (Bid / Ask FX)",
     "nbp_gold_prices": "NBP Gold Prices",
 }
@@ -93,15 +93,20 @@ def build_business_catalog(
         {field: deepcopy(item[field]) for field in _DATASET_FIELDS if field in item}
         for item in dataset_metadata
     ]
+    metrics = _source_metrics(dbt_manifest)
     return {
         "format_version": 1,
         "code_sha": code_sha,
         "sources": sources,
         "datasets": datasets,
         "lineage": lineage,
-        "metrics": [],
-        "metrics_status": "awaiting_business_approval",
-        "metrics_explanation": "No business metrics are published until their definitions are approved.",
+        "metrics": metrics,
+        "metrics_status": "source_defined" if metrics else "awaiting_business_approval",
+        "metrics_explanation": (
+            "Source-defined daily NBP observations. Use the governed native query command; "
+            "prices are not additive over dates, currencies or quotation types."
+            if metrics else "No governed source metrics are present in this release's dbt manifest."
+        ),
     }
 
 
@@ -186,6 +191,10 @@ def _build_source_entry(source_id: str, configured: Any, state: Any) -> dict[str
         # or file inventory is sufficient to infer this flag.
         "coverage_complete": state_map.get("coverage_complete"),
     }
+    for field in ("provider_url", "documentation_url", "publication_schedule_url", "frequency",
+                  "coverage_start", "reuse_terms_url", "reuse_summary", "quote_unit", "methodology_notes"):
+        if field in metadata:
+            result[field] = deepcopy(metadata[field])
     raw_count = result["raw_response_count"]
     if not isinstance(raw_count, int) or isinstance(raw_count, bool) or raw_count < 0:
         raise BusinessCatalogError(f"{source_id} raw_response_count must be a nonnegative integer")
@@ -203,7 +212,7 @@ def _build_lineage(
         raise BusinessCatalogError("dbt_manifest must be an object")
 
     records: dict[str, Mapping[str, Any]] = {}
-    for section in ("sources", "nodes"):
+    for section in ("sources", "nodes", "semantic_models", "metrics"):
         values = dbt_manifest.get(section, {})
         if not isinstance(values, Mapping):
             continue
@@ -245,6 +254,8 @@ def _build_lineage(
 
     for unique_id in sorted(exported_ids):
         visit(unique_id)
+    for metric in _source_metrics(dbt_manifest):
+        visit(metric["unique_id"])
 
     nodes: list[dict[str, str]] = []
     for unique_id in sorted(included):
@@ -285,6 +296,28 @@ def _build_lineage(
                 seen_edges.add(edge)
                 edges.append({"from": dependency_id, "to": unique_id})
     return {"nodes": nodes, "edges": edges}
+
+
+def _source_metrics(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Use only real dbt metric records explicitly marked as source definitions."""
+    metrics = manifest.get("metrics", {})
+    if not isinstance(metrics, Mapping):
+        return []
+    result = []
+    for unique_id, record in sorted(metrics.items()):
+        if not isinstance(record, Mapping) or _excluded_manifest_record(unique_id, record):
+            continue
+        config = record.get("config", {})
+        meta = config.get("meta", {}) if isinstance(config, Mapping) else {}
+        if not meta:
+            meta = record.get("meta", {})
+        if not isinstance(meta, Mapping) or meta.get("definition_status") != "source_defined":
+            continue
+        result.append({"unique_id": unique_id, **{
+            field: deepcopy(record[field]) for field in
+            ("name", "label", "description", "type", "type_params", "filter", "depends_on") if field in record
+        }, "meta": deepcopy(meta)})
+    return result
 
 
 def _excluded_manifest_record(unique_id: str, record: Mapping[str, Any]) -> bool:

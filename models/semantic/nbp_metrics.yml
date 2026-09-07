@@ -1,0 +1,157 @@
+version: 2
+
+semantic_models:
+  - name: nbp_fx_quotes
+    description: >-
+      Current published NBP API quotes. One row per publication date, source
+      table and currency. Values are retained as published without additional
+      scaling. Use scripts/query_metrics.py to enforce this non-additive grain.
+    model: ref('fact_fx_quotes')
+    defaults:
+      agg_time_dimension: effective_date
+    entities:
+      - name: fx_quote
+        type: primary
+        expr: "source_table_key || ':' || cast(effective_date as varchar) || ':' || currency_key"
+    dimensions:
+      - name: effective_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: currency
+        type: categorical
+        expr: currency_key
+      - name: source_table
+        type: categorical
+        expr: source_table_key
+    measures:
+      - name: nbp_mid_at_publication
+        description: >-
+          Identity selector at the validated unique daily/source/currency grain.
+          MAX is an implementation requirement, not approval to aggregate quotes.
+        agg: max
+        expr: mid
+      - name: nbp_bid_at_publication
+        description: Identity selector at the validated unique daily/source/currency grain.
+        agg: max
+        expr: bid
+      - name: nbp_ask_at_publication
+        description: Identity selector at the validated unique daily/source/currency grain.
+        agg: max
+        expr: ask
+
+  - name: nbp_gold_prices
+    description: >-
+      Current published NBP price in PLN for one gram of gold of 1000 fineness.
+      One row per publication date and commodity. No time aggregation or filling.
+    model: ref('fact_gold_prices')
+    defaults:
+      agg_time_dimension: effective_date
+    entities:
+      - name: gold_price
+        type: primary
+        expr: "cast(effective_date as varchar) || ':' || commodity_key"
+    dimensions:
+      - name: effective_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: commodity
+        type: categorical
+        expr: commodity_key
+    measures:
+      - name: nbp_gold_price_at_publication
+        description: Identity selector at the validated unique daily/commodity grain.
+        agg: max
+        expr: price_pln_per_gram_1000
+
+metrics:
+  - name: nbp_table_a_mid
+    config:
+      meta:
+        definition_status: source_defined
+        unit: "NBP API quote in PLN; values retained as published, without additional scaling"
+        required_grain: [effective_date, source_table_key, currency_key]
+        methodology_url: https://api.nbp.pl/en.html
+        aggregation_policy: identity_at_daily_source_grain
+        version: "1"
+    label: NBP Table A published mid rate
+    description: >-
+      Table A daily mid quote in PLN, retained as published by the NBP API.
+      Publication date and currency must be retained; no additional scaling,
+      summing, averaging, conversion or forward filling is applied.
+    type: simple
+    type_params:
+      measure: nbp_mid_at_publication
+    filter: "{{ Dimension('fx_quote__source_table') }} = 'A'"
+  - name: nbp_table_b_mid
+    config:
+      meta:
+        definition_status: source_defined
+        unit: "NBP API quote in PLN; values retained as published, without additional scaling"
+        required_grain: [effective_date, source_table_key, currency_key]
+        methodology_url: https://api.nbp.pl/en.html
+        aggregation_policy: identity_at_daily_source_grain
+        version: "1"
+    label: NBP Table B published mid rate
+    description: >-
+      Table B daily mid quote in PLN, retained as published by the NBP API.
+      Publication date and currency must be retained. Published zero values stay
+      zero. No additional scaling, summing, averaging or forward filling.
+    type: simple
+    type_params:
+      measure: nbp_mid_at_publication
+    filter: "{{ Dimension('fx_quote__source_table') }} = 'B'"
+  - name: nbp_table_c_bid
+    config:
+      meta:
+        definition_status: source_defined
+        unit: "NBP API quote in PLN; values retained as published, without additional scaling"
+        required_grain: [effective_date, source_table_key, currency_key]
+        methodology_url: https://api.nbp.pl/en.html
+        aggregation_policy: identity_at_daily_source_grain
+        version: "1"
+    label: NBP Table C published bid rate
+    description: >-
+      Table C daily bid quote in PLN, retained as published by the NBP API.
+      Time means publication effective_date, not trading_date. Publication date
+      and currency must be retained; no additional scaling or aggregation.
+    type: simple
+    type_params:
+      measure: nbp_bid_at_publication
+    filter: "{{ Dimension('fx_quote__source_table') }} = 'C'"
+  - name: nbp_table_c_ask
+    config:
+      meta:
+        definition_status: source_defined
+        unit: "NBP API quote in PLN; values retained as published, without additional scaling"
+        required_grain: [effective_date, source_table_key, currency_key]
+        methodology_url: https://api.nbp.pl/en.html
+        aggregation_policy: identity_at_daily_source_grain
+        version: "1"
+    label: NBP Table C published ask rate
+    description: >-
+      Table C daily ask quote in PLN, retained as published by the NBP API.
+      Time means publication effective_date, not trading_date. Publication date
+      and currency must be retained; no additional scaling or aggregation.
+    type: simple
+    type_params:
+      measure: nbp_ask_at_publication
+    filter: "{{ Dimension('fx_quote__source_table') }} = 'C'"
+  - name: nbp_gold_price_pln_per_gram_1000
+    config:
+      meta:
+        definition_status: source_defined
+        unit: "PLN per gram of gold of 1000 fineness"
+        required_grain: [effective_date, commodity_key]
+        methodology_url: https://api.nbp.pl/en.html
+        aggregation_policy: identity_at_daily_source_grain
+        version: "1"
+    label: NBP published gold price, PLN per gram of 1000 fineness
+    description: >-
+      Daily NBP price of one gram of gold of 1000 fineness in PLN, on its
+      publication date. This is a source value, not a retail purchase offer.
+      Daily commodity grain is required; no time aggregation or forward filling.
+    type: simple
+    type_params:
+      measure: nbp_gold_price_at_publication

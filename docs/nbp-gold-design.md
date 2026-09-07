@@ -1,17 +1,17 @@
-# Proposed NBP gold design
+# NBP gold design
 
-**Status: Implemented on `main`; the v2 data release has verified live proof dated 7 September 2026.** The runner builds 15 physical platform datasets (bronze, silver, change events, facts, and dimensions) and publishes their metadata. The full platform remains incomplete because metrics are still `[]` awaiting business approval and no native query backend is available. See the [verified v2 release evidence](releases/2026-09-07-nbp-platform.md). This does not approve a business metric, a time aggregation rule, or a commodity master-data policy. The source facts and units below follow the [NBP data contracts](nbp-data-contracts.md) and [correction decision](decisions/0001-nbp-corrections.md).
+The runner defines 15 platform datasets across bronze, silver, change evidence, facts and dimensions. See [the delivery record](deliverables.md) for the verified release and [source-observation definitions](nbp-business-definitions.md) for the five daily MetricFlow metrics. This design does not imply a period aggregation or cross-source master-data policy.
 
-## Recommendation
+## Chosen design
 
 Use a small Kimball-style gold layer with conformed dimensions and two facts:
 
 - `fact_fx_quotes`, containing exchange-rate observations from Tables A, B and C.
 - `fact_gold_prices`, containing NBP gold-price observations.
 
-This fits an owner-only platform with four small datasets because the stars are easy to query, expose clear grains, and can be consumed directly by SQL or a future MetricFlow model. Shared dates and currency identities can be governed once while source-specific measures remain visible. The requested business catalogue should expose each fact’s grain and source relationships, then connect approved metric definitions.
+This fits an owner-only platform with four small datasets because the stars are easy to query, expose clear grains, and can be consumed directly by SQL or the daily MetricFlow models. Shared dates and currency identities can be governed once while source-specific measures remain visible. The requested business catalogue should expose each fact’s grain and source relationships, then connect approved metric definitions.
 
-An Inmon-style normalized warehouse would centralize source history and relationships before presenting dimensional marts. That can help when many domains, teams, and integration rules need one canonical enterprise model, but it adds joins and governance work before this NBP use case needs them. A hybrid can retain a normalized integration layer and publish dimensional marts later; that is compatible with the platform’s bronze/silver layers and retained raw versions, but should be chosen only if future sources create a demonstrated need. The recommendation is therefore Kimball-style gold over the existing retained source history, as a technical implementation recommendation matching the owner’s requested facts, dimensions and bus matrix. The modeled layer is implemented on `main` and included in the verified v2 data release. Business metric definitions still require approval, and no native query backend is available. The earlier v1 silver release remains retained as a historical baseline.
+An Inmon-style normalized warehouse would centralize source history and relationships before presenting dimensional marts. That can help when many domains, teams, and integration rules need one canonical enterprise model, but it adds joins and governance work before this NBP use case needs them. A hybrid can retain a normalized integration layer and publish dimensional marts later; that is compatible with the platform’s bronze/silver layers and retained raw versions, but should be chosen only if future sources create a demonstrated need. The recommendation is therefore Kimball-style gold over the existing retained source history, as a technical implementation recommendation matching the owner’s requested facts, dimensions and bus matrix. The modeled layer is implemented on `main` and included in the verified v2 data release. Source-defined daily metrics use the native on-demand query interface; optional derived calculations and a hosted API are separate scope. The earlier v1 silver release remains retained as a historical baseline.
 
 ## Facts and grains
 
@@ -46,14 +46,15 @@ The dimensions are conformed where their meanings match. Source-table and commod
 
 ## Aggregation boundaries and open decisions
 
-FX rates and gold prices are measures of quotation level. They must never be summed across currencies or across days. A future time-series metric may average observations only after the owner approves the source table, currency/commodity selection, publication-day treatment, missing-observation rule, and handling of revised values. Table C bid and ask should remain separate unless an owner-approved spread or other formula is defined. Gold aggregation likewise remains open; this document does not invent a daily, monthly, or cross-commodity metric.
+FX rates and gold prices are measures of quotation level. They must never be summed across currencies or across days. A future time-series metric may average observations only after the owner approves the source table, currency/commodity selection, publication-day treatment, missing-observation rule, and handling of revised values. Table C bid and ask should remain separate unless an owner-approved spread or other formula is defined. Gold aggregation likewise remains open; the five daily source-observation metrics do not authorize monthly or cross-commodity aggregation.
 
-The next owner decision is which business metric examples to support first;
-the availability of dynamic queries is a separate later question. Native
-MetricFlow remains the planned governed engine alongside SQL. Currency keys,
-source-specific commodity keys and calendar attributes are engineering work;
-ask the owner only when a consequential business interpretation is needed.
-Historical unit checks and cross-source mappings require source evidence,
-not an owner guess.
+The five daily source-observation definitions are researched and implemented in
+MetricFlow YAML. `scripts/query_metrics.py` enforces their required grain; it is
+the supported native query path. Currency keys, source-specific commodity keys
+and calendar attributes remain engineering definitions. Historical currency
+identity and cross-source mappings require evidence rather than owner guesses.
 
-Current corrected source values feed normal analysis after validation, while retained raw versions and detected-change records remain available for traceability. This design does not require a comparison interface. The merged implementation publishes no metrics until business approval (`metrics=[]`, `metrics_status=awaiting_business_approval`).
+Current corrected source values feed normal analysis after validation. Retained
+raw versions, typed-record change evidence and immutable releases support audit
+and recovery. Optional derived metrics and an always-on semantic API are held
+with reopening conditions in the delivery record.

@@ -1,4 +1,4 @@
-name: Deploy Unified Data Portal
+name: Deploy portal
 
 on:
   push:
@@ -14,8 +14,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: portal-pages
@@ -23,6 +21,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -31,16 +30,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
       - name: Read the existing Pages site configuration
         id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - name: Set up shared Python version
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version-file: '.python-version'
           cache: 'pip'
@@ -55,7 +54,7 @@ jobs:
           python scripts/prepare_dbt_viewer.py
 
       - name: Set up shared Node.js version
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: '.node-version'
           cache: 'npm'
@@ -64,6 +63,14 @@ jobs:
       - name: Install portal dependencies
         working-directory: portal
         run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Lint portal source
+        working-directory: portal
+        run: npm run lint
+
+      - name: Run portal unit and engine regression tests
+        working-directory: portal
+        run: npm test
 
       - name: Build Duck-UI portal
         working-directory: portal
@@ -95,17 +102,22 @@ jobs:
         run: rm -rf portal/public/docs
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: portal/dist
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

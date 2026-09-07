@@ -9,59 +9,37 @@ sources:
       geography: "poland"
       provider_type: "public_governed_official"
       source_name: "NBP"
-      description: "Table A: Average exchange rates of convertible foreign currencies."
-    technical:
-      ingestion_type: "api_rest"
-      auth_method: "none"
-      source_system: "NBP_API"
-      landing_subpath: ["exchange_rates_convertible"]
-      target_zone: "01_landing"
-      file_extension: "json"
-    load_methods:
-      incremental:
-        endpoint: "https://api.nbp.pl/api/exchangerates/tables/A/last/1"
-        params:
-          format: "json"
-        frequency: "daily"
-      full:
-        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/A/{start_date}/{end_date}"
-        params:
-          format: "json"
-        pagination_strategy: "date_chunking"
-        max_chunk_days: 93
-        historical_start_date: "2002-01-02"
+      provider_url: "https://nbp.pl/"
+      documentation_url: "https://api.nbp.pl/en.html"
+      publication_schedule_url: "https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/informacja-o-terminach-publikacji-kursow-walut/"
+      frequency: "each working day"
+      coverage_start: "2002-01-02"
+      reuse_terms_url: "https://nbp.pl/regulaminy/"
+      reuse_summary: "Public read access; commercial redistribution and attribution requirements unresolved."
+      quote_unit: "NBP API quote in PLN; values retained without additional scaling"
+      methodology_notes: "NBP Table A calculated middle rate. Preserve API values unchanged; website quotation quantities are presentation metadata."
+      description: "Table A: NBP-calculated middle exchange rates of foreign currencies in Polish zlotys."
 
   # ==========================================
-  # SOURCE 2: NBP Table B (Non-Convertible FX)
+  # SOURCE 2: NBP Table B (Middle FX)
   # ==========================================
   nbp_exchange_rates_table_b:
     metadata:
       domain: "finance"
-      category: "exchange_rates_non_convertible"
+      category: "exchange_rates_table_b"
       geography: "poland"
       provider_type: "public_governed_official"
       source_name: "NBP"
-      description: "Table B: Average exchange rates of non-convertible currencies (Published Wednesdays)."
-    technical:
-      ingestion_type: "api_rest"
-      auth_method: "none"
-      source_system: "NBP_API"
-      landing_subpath: ["exchange_rates_non_convertible"]
-      target_zone: "01_landing"
-      file_extension: "json"
-    load_methods:
-      incremental:
-        endpoint: "https://api.nbp.pl/api/exchangerates/tables/B/last/1"
-        params:
-          format: "json"
-        frequency: "weekly"
-      full:
-        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/B/{start_date}/{end_date}"
-        params:
-          format: "json"
-        pagination_strategy: "date_chunking"
-        max_chunk_days: 93
-        historical_start_date: "2002-01-02"
+      provider_url: "https://nbp.pl/"
+      documentation_url: "https://api.nbp.pl/en.html"
+      publication_schedule_url: "https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/informacja-o-terminach-publikacji-kursow-walut/"
+      frequency: "each Wednesday, or the preceding working day when Wednesday is a holiday"
+      coverage_start: "2002-01-02"
+      reuse_terms_url: "https://nbp.pl/regulaminy/"
+      reuse_summary: "Public read access; commercial redistribution and attribution requirements unresolved."
+      quote_unit: "NBP API quote in PLN; values retained without additional scaling"
+      methodology_notes: "NBP Table B calculated middle rate. Preserve API values unchanged; website quotation quantities are presentation metadata."
+      description: "Table B: NBP-calculated middle exchange rates of foreign currencies in Polish zlotys."
 
   # ==========================================
   # SOURCE 3: NBP Table C (Bid / Ask FX)
@@ -73,27 +51,16 @@ sources:
       geography: "poland"
       provider_type: "public_governed_official"
       source_name: "NBP"
-      description: "Table C: Buy and sell prices of foreign currencies."
-    technical:
-      ingestion_type: "api_rest"
-      auth_method: "none"
-      source_system: "NBP_API"
-      landing_subpath: ["exchange_rates_bid_ask"]
-      target_zone: "01_landing"
-      file_extension: "json"
-    load_methods:
-      incremental:
-        endpoint: "https://api.nbp.pl/api/exchangerates/tables/C/last/1"
-        params:
-          format: "json"
-        frequency: "daily"
-      full:
-        endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/C/{start_date}/{end_date}"
-        params:
-          format: "json"
-        pagination_strategy: "date_chunking"
-        max_chunk_days: 93
-        historical_start_date: "2002-01-02"
+      provider_url: "https://nbp.pl/"
+      documentation_url: "https://api.nbp.pl/en.html"
+      publication_schedule_url: "https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/informacja-o-terminach-publikacji-kursow-walut/"
+      frequency: "each working day"
+      coverage_start: "2002-01-02"
+      reuse_terms_url: "https://nbp.pl/regulaminy/"
+      reuse_summary: "Public read access; commercial redistribution and attribution requirements unresolved."
+      quote_unit: "NBP API quote in PLN; values retained without additional scaling"
+      methodology_notes: "NBP Table C calculated buy (bid) and sell (ask) rates. Preserve effectiveDate as publication date and tradingDate as a separate Table C role."
+      description: "Table C: NBP-calculated buy and sell exchange rates of foreign currencies for Polish zlotys."
 
   # ==========================================
   # SOURCE 4: NBP Gold Prices
@@ -105,24 +72,13 @@ sources:
       geography: "poland"
       provider_type: "public_governed_official"
       source_name: "NBP"
-      description: "Current and historic prices of gold calculated by NBP."
-    technical:
-      ingestion_type: "api_rest"
-      auth_method: "none"
-      source_system: "NBP_API"
-      landing_subpath: ["gold_prices"]
-      target_zone: "01_landing"
-      file_extension: "json"
-    load_methods:
-      incremental:
-        endpoint: "https://api.nbp.pl/api/cenyzlota/last/1"
-        params:
-          format: "json"
-        frequency: "daily"
-      full:
-        endpoint_template: "https://api.nbp.pl/api/cenyzlota/{start_date}/{end_date}"
-        params:
-          format: "json"
-        pagination_strategy: "date_chunking"
-        max_chunk_days: 93
-        historical_start_date: "2013-01-02"
+      provider_url: "https://nbp.pl/"
+      documentation_url: "https://api.nbp.pl/en.html"
+      publication_schedule_url: "https://nbp.pl/statystyka-i-sprawozdawczosc/kursy/cena-zlota/"
+      frequency: "publication-day observations; the API does not promise a value for every calendar day"
+      coverage_start: "2013-01-02"
+      reuse_terms_url: "https://nbp.pl/regulaminy/"
+      reuse_summary: "Public read access; commercial redistribution and attribution requirements unresolved."
+      quote_unit: "PLN per gram of gold at 1000 millesimal fineness"
+      methodology_notes: "NBP-calculated price of 1 g of gold at 1000 fineness; preserve the API cena value unchanged."
+      description: "Current and historic NBP-calculated prices in PLN for 1 g of gold at 1000 millesimal fineness."

@@ -10,6 +10,10 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const releaseId = "123e4567-e89b-42d3-a456-426614174000";
 const codeSha = "a".repeat(40);
 const errors = new WeakMap<Page, string[]>();
+const semanticFixture = JSON.parse(
+  fs.readFileSync(path.join(here, "fixtures", "nbp-gold-semantic.json"), "utf8")
+);
+type ReleaseFixtureOptions = { catalogHash?: string; withMetric?: boolean };
 
 const feeds = [
   ["nbp_exchange_rates_table_a", "br_nbp_table_a", "NBP Table A"],
@@ -37,8 +41,16 @@ const datasets = [
 
 function model(name: string, description: string, dependencies: string[] = []) {
   const unique_id = `model.zohelo_data.${name}`;
-  const directory = name.startsWith("br_") ? "bronze" : "silver";
-  const schema = name.startsWith("br_") ? "02_bronze" : "03_silver";
+  const directory = name.startsWith("br_")
+    ? "bronze"
+    : name.startsWith("fact_")
+      ? "gold"
+      : "silver";
+  const schema = name.startsWith("br_")
+    ? "02_bronze"
+    : name.startsWith("fact_")
+      ? "04_gold"
+      : "03_silver";
   return [
     unique_id,
     {
@@ -97,13 +109,23 @@ function model(name: string, description: string, dependencies: string[] = []) {
   ] as const;
 }
 
-function dbtArtifacts() {
+function dbtArtifacts(withMetric = false) {
   const entries = feeds.map(([, name]) => model(name, `Native model for ${name}.`));
   const tableA = "model.zohelo_data.br_nbp_table_a";
   const downstream = "model.zohelo_data.sl_nbp_table_a";
   entries.push(model("sl_nbp_table_a", "Native downstream lineage model.", [tableA]));
+  if (withMetric)
+    entries.push(model("fact_gold_prices", "Gold price fact: PLN per gram of 1000 fineness."));
   const nodes = Object.fromEntries(entries) as Record<string, { name: string }>;
   const nodeIds = Object.keys(nodes);
+  const metric = semanticFixture.metric;
+  const semanticModel = semanticFixture.semanticModel;
+  const semanticParents = withMetric
+    ? {
+        [metric.unique_id]: metric.depends_on.nodes,
+        [semanticModel.unique_id]: semanticModel.depends_on.nodes,
+      }
+    : {};
   const manifest = JSON.stringify({
     metadata: {
       dbt_schema_version: "https://schemas.getdbt.com/dbt/manifest/v12.json",
@@ -130,15 +152,27 @@ function dbtArtifacts() {
       },
     },
     exposures: {},
-    metrics: {},
+    metrics: withMetric ? { [metric.unique_id]: metric } : {},
     groups: {},
     selectors: {},
     disabled: {},
-    parent_map: Object.fromEntries(nodeIds.map((id) => [id, id === downstream ? [tableA] : []])),
-    child_map: Object.fromEntries(nodeIds.map((id) => [id, id === tableA ? [downstream] : []])),
+    parent_map: {
+      ...Object.fromEntries(nodeIds.map((id) => [id, id === downstream ? [tableA] : []])),
+      ...semanticParents,
+    },
+    child_map: {
+      ...Object.fromEntries(nodeIds.map((id) => [id, id === tableA ? [downstream] : []])),
+      ...(withMetric
+        ? {
+            "model.zohelo_data.fact_gold_prices": [semanticModel.unique_id],
+            [semanticModel.unique_id]: [metric.unique_id],
+            [metric.unique_id]: [],
+          }
+        : {}),
+    },
     group_map: {},
     saved_queries: {},
-    semantic_models: {},
+    semantic_models: withMetric ? { [semanticModel.unique_id]: semanticModel } : {},
     unit_tests: {},
     functions: {},
   });
@@ -146,7 +180,11 @@ function dbtArtifacts() {
     metadata: {
       name,
       type: "VIEW",
-      schema: name.startsWith("br_") ? "02_bronze" : "03_silver",
+      schema: name.startsWith("br_")
+        ? "02_bronze"
+        : name.startsWith("fact_")
+          ? "04_gold"
+          : "03_silver",
       database: "catalogue_fixture",
       comment: `Native dbt catalog metadata for ${name}.`,
       owner: null,
@@ -183,8 +221,8 @@ function dbtArtifacts() {
   return { manifest, catalog };
 }
 
-function releaseFixture(options: { catalogHash?: string } = {}) {
-  const { manifest: dbtManifest, catalog: dbtCatalog } = dbtArtifacts();
+function releaseFixture(options: ReleaseFixtureOptions = {}) {
+  const { manifest: dbtManifest, catalog: dbtCatalog } = dbtArtifacts(options.withMetric);
   const businessCatalog = JSON.stringify({
     format_version: 1,
     code_sha: codeSha,
@@ -198,6 +236,14 @@ function releaseFixture(options: { catalogHash?: string } = {}) {
       last_successful_ingestion_at: "2026-09-07T00:00:00Z",
       last_attempt_at: "2026-09-07T00:01:00Z",
       raw_response_count: 2,
+      ...(options.withMetric
+        ? {
+            provider_url: "https://nbp.pl/",
+            documentation_url: "https://api.nbp.pl/en.html",
+            frequency: "Publication on working days",
+            reuse_summary: "Attribute Narodowy Bank Polski as the source.",
+          }
+        : {}),
     })),
     lineage: {
       nodes: [
@@ -218,7 +264,7 @@ function releaseFixture(options: { catalogHash?: string } = {}) {
       ],
       edges: [{ from: "br-a", to: "sl-a" }],
     },
-    metrics: [],
+    metrics: options.withMetric ? [semanticFixture.metric] : [],
   });
   const fakeHash = "a".repeat(64);
   const artifacts = [
@@ -286,7 +332,7 @@ function releaseFixture(options: { catalogHash?: string } = {}) {
   };
 }
 
-async function installReleaseFixture(page: Page, options: { catalogHash?: string } = {}) {
+async function installReleaseFixture(page: Page, options: ReleaseFixtureOptions = {}) {
   const fixture = releaseFixture(options);
   await page.addInitScript(() => {
     if (window.top === window.self) {
@@ -408,6 +454,40 @@ test("renders a verified release in native dbt Docs", async ({ page }) => {
   await expect(docs.locator("body")).toContainText("mid_rate");
   await expect(docs.locator("body")).toContainText("sl_nbp_table_a");
   await page.screenshot({ path: "test-results/catalogue.png", fullPage: true });
+});
+
+test("discovers a source-defined metric and follows its physical lineage", async ({ page }) => {
+  await installReleaseFixture(page, { withMetric: true });
+  await page.goto("./");
+  await ensureProfile(page);
+  await openCatalogue(page);
+
+  const docs = page.frameLocator('iframe[title="Data catalogue — dbt Docs"]:visible');
+  const details = docs.locator(".app-content");
+  await expect(details).toContainText("1 governed metric definition is published");
+  await expect(details).toContainText(`Release ID: ${releaseId}`);
+  await docs.getByRole("link", { name: "NBP Gold Prices", exact: true }).click();
+  await expect(details).toContainText("https://api.nbp.pl/en.html");
+  await expect(details).toContainText("Publication on working days");
+  await expect(details).toContainText("Attribute Narodowy Bank Polski as the source.");
+
+  // Use native search and reference links rather than navigating iframe URLs.
+  // The metric → semantic-model → physical-model edges come from dbt's manifest.
+  await docs.getByPlaceholder("Search for models...").fill("nbp_gold_price_pln_per_gram_1000");
+  // Native search renders clickable result divs (data-ui-state), not anchors.
+  await docs
+    .getByRole("heading", { name: `${semanticFixture.metric.label} metric`, exact: true })
+    .click();
+  await expect(details).toContainText(semanticFixture.metric.description);
+  await expect(details).toContainText("source_defined");
+  await expect(details).toContainText("PLN per gram of gold of 1000 fineness");
+  await details
+    .locator('a[href*="semantic_model/semantic_model.zohelo_data.nbp_gold_prices"]')
+    .click();
+  await expect(details).toContainText(semanticFixture.semanticModel.description);
+  await details.locator('a[href*="model/model.zohelo_data.fact_gold_prices"]').click();
+  await expect(details).toContainText("Gold price fact: PLN per gram of 1000 fineness.");
+  await expect(details).toContainText("04_gold");
 });
 
 test("keeps native catalogue navigation and details usable on mobile", async ({ page }) => {

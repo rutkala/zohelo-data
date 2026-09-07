@@ -1,5 +1,6 @@
 """Exercise the verified NBP raw-to-gold dbt graph without network access."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -18,17 +19,27 @@ DBT_CLI = "from dbt.cli.main import cli; cli()"
 OFFLINE = REPO_ROOT / "tests" / "helpers" / "run_offline.py"
 
 
-def envelope(source_id, sequence, body, *, suffix="", batch_id=None, requested_date="2020-01-01"):
+def envelope(
+    source_id,
+    sequence,
+    body,
+    *,
+    suffix="",
+    batch_id=None,
+    requested_date="2020-01-01",
+    requested_end_date=None,
+):
+    body_json = json.dumps(body, separators=(",", ":"))
     return {
         "source_id": source_id,
         "batch_id": batch_id or f"{source_id}-{sequence}{suffix}",
         "ingestion_sequence": sequence,
         "requested_start_date": requested_date,
-        "requested_end_date": requested_date,
+        "requested_end_date": requested_end_date or requested_date,
         "retrieved_at_utc": f"2020-01-{sequence + 1:02d}T00:00:00Z",
-        "response_sha256": f"sha-{source_id}-{sequence}{suffix}",
+        "response_sha256": hashlib.sha256(body_json.encode()).hexdigest(),
         "raw_file_id": f"raw-{source_id}-{sequence}{suffix}",
-        "body_json": json.dumps(body, separators=(",", ":")),
+        "body_json": body_json,
     }
 
 
@@ -69,6 +80,13 @@ class NbpPlatformModelTests(unittest.TestCase):
             "table": "A", "no": "004/A/NBP/2020", "effectiveDate": "2020-01-01",
             "rates": [{"currency": "US dollar revised label", "code": "USD", "mid": 3.80}],
         }]
+        a_reappeared = [{
+            "table": "A", "no": "004/A/NBP/2020", "effectiveDate": "2020-01-01",
+            "rates": [
+                {"currency": "US dollar revised label", "code": "USD", "mid": 3.80},
+                {"currency": "Euro", "code": "EUR", "mid": 4.20},
+            ],
+        }]
         b = [{
             "table": "B", "no": "006/B/NBP/2009", "effectiveDate": "2009-02-11",
             "rates": [
@@ -87,6 +105,7 @@ class NbpPlatformModelTests(unittest.TestCase):
             envelope("nbp_exchange_rates_table_a", 3, a_changed),
             envelope("nbp_exchange_rates_table_a", 4, a_metadata_only),
             envelope("nbp_exchange_rates_table_a", 5, a_reverted),
+            envelope("nbp_exchange_rates_table_a", 6, a_reappeared),
             envelope("nbp_exchange_rates_table_b", 1, b, requested_date="2009-02-11"),
             envelope("nbp_exchange_rates_table_c", 1, c),
             envelope("nbp_gold_prices", 1, gold),
@@ -119,24 +138,28 @@ class NbpPlatformModelTests(unittest.TestCase):
 
     def test_replay_reversion_and_missing_rows_preserve_current_values(self):
         with self.connection() as con:
-            # EUR is absent from the changed and later observations but remains current from its unchanged replay.
+            # A missing candidate never deletes EUR; a later response can re-establish it.
             self.assertEqual(con.execute(
                 'select code, mid, ingestion_sequence from "03_silver"."nbp_exchange_rates_table_a" order by code'
-            ).fetchall(), [("EUR", 4.2, 2), ("USD", 3.8, 5)])
+            ).fetchall(), [("EUR", 4.2, 6), ("USD", 3.8, 6)])
             self.assertEqual(con.execute(
                 'select count(*) from "02_bronze"."nbp_exchange_rates_table_a" where code = \'USD\''
-            ).fetchone()[0], 5)
+            ).fetchone()[0], 6)
             # NBP can repeat one code for multiple countries in a single publication.
             # Bronze retains both source rows; current silver collapses identical values deterministically.
             self.assertEqual(con.execute(
                 'select count(*) from "02_bronze"."nbp_exchange_rates_table_a" where code = \'EUR\''
-            ).fetchone()[0], 4)
+            ).fetchone()[0], 5)
             self.assertEqual(con.execute(
                 'select currency from "03_silver"."nbp_exchange_rates_table_a" where code = \'EUR\''
             ).fetchone()[0], "Euro")
             self.assertEqual(con.execute(
-                'select count(*) from "03_silver"."nbp_change_events" where code = \'EUR\''
-            ).fetchone()[0], 0)
+                'select event_type, ingestion_sequence, changed_fields, evidence_status '
+                'from "03_silver"."nbp_change_events" where code = \'EUR\' order by ingestion_sequence'
+            ).fetchall(), [
+                ("source_record_missing", 3, '["record_presence","mid","currency","country","symbol","no"]', "candidate_for_investigation"),
+                ("source_record_reappeared", 6, '["record_presence","mid","currency","no"]', "candidate_for_investigation"),
+            ])
             # Raw response bytes remain immutable landing objects addressed by hash/file id;
             # they are not repeated once per flattened currency observation.
             bronze_columns = {row[0] for row in con.execute('describe "02_bronze"."nbp_exchange_rates_table_a"').fetchall()}
@@ -154,12 +177,86 @@ class NbpPlatformModelTests(unittest.TestCase):
             ).fetchall(), [("USD", 3.81, False), ("ZWR", 0.0, True)])
             self.assertEqual(con.execute(
                 'select event_type, ingestion_sequence from "03_silver"."nbp_change_events" '
-                "where source_id = 'nbp_exchange_rates_table_a' order by ingestion_sequence"
+                "where source_id = 'nbp_exchange_rates_table_a' and code = 'USD' order by ingestion_sequence"
             ).fetchall(), [
                 ("source_value_changed", 3),
                 ("source_metadata_changed", 4),
                 ("source_value_changed", 5),
             ])
+            value_evidence = con.execute(
+                'select previous_mid, mid, record_contract_version, detection_method, '
+                'previous_record_sha256, current_record_sha256, provider_event_asserted '
+                'from "03_silver"."nbp_change_events" '
+                "where code = 'USD' and event_type = 'source_value_changed' order by ingestion_sequence"
+            ).fetchall()
+            self.assertEqual([(row[0], row[1]) for row in value_evidence], [(3.8, 3.9), (3.9, 3.8)])
+            for row in value_evidence:
+                self.assertEqual(row[2:4], ("nbp_typed_record_v1", "typed_record_comparison_v1"))
+                self.assertRegex(row[4], r"^[0-9a-f]{64}$")
+                self.assertRegex(row[5], r"^[0-9a-f]{64}$")
+                self.assertNotEqual(row[4], row[5])
+                self.assertFalse(row[6])
+            hash_chain = con.execute(
+                'select ingestion_sequence, previous_record_sha256, current_record_sha256 '
+                'from "03_silver"."nbp_change_events" '
+                "where code = 'USD' order by ingestion_sequence"
+            ).fetchall()
+            self.assertEqual(hash_chain[1][1], hash_chain[0][2])
+            self.assertEqual(hash_chain[2][1], hash_chain[1][2])
+
+    def test_absent_publication_and_unmaterialized_404_do_not_imply_withdrawal(self):
+        # A completed 404 is attempt/coverage evidence, not a landing data envelope.
+        # This JSONL therefore mirrors the only model input: validated 200 bodies.
+        # The second response covers both requested dates but contains only a new
+        # publication date; absence of the prior publication remains ambiguous.
+        batches = self.workspace / "ambiguous-absence.jsonl"
+        database = self.workspace / "ambiguous-absence.duckdb"
+        rows = [
+            envelope("nbp_exchange_rates_table_a", 1, [{
+                "table": "A", "effectiveDate": "2020-01-01",
+                "rates": [
+                    {"currency": "US dollar", "code": "USD", "mid": 3.8},
+                    {"currency": "Euro", "code": "EUR", "mid": 4.2},
+                ],
+            }]),
+            envelope(
+                "nbp_exchange_rates_table_a", 2, [{
+                    "table": "A", "effectiveDate": "2020-01-02",
+                    "rates": [{"currency": "US dollar", "code": "USD", "mid": 3.81}],
+                }],
+                requested_date="2020-01-01",
+                requested_end_date="2020-01-02",
+            ),
+            envelope("nbp_exchange_rates_table_a", 3, [{
+                "table": "A", "effectiveDate": "2020-01-01",
+                "rates": [{"currency": "US dollar", "code": "USD", "mid": 3.8}],
+            }]),
+            envelope("nbp_exchange_rates_table_b", 1, [{
+                "table": "B", "effectiveDate": "2020-01-01",
+                "rates": [{"currency": "US dollar", "code": "USD", "mid": 3.82}],
+            }]),
+            envelope("nbp_exchange_rates_table_c", 1, [{
+                "table": "C", "effectiveDate": "2020-01-01",
+                "rates": [{"currency": "US dollar", "code": "USD", "bid": 3.7, "ask": 3.95}],
+            }]),
+            envelope("nbp_gold_prices", 1, [{"data": "2020-01-01", "cena": 200.11}]),
+        ]
+        batches.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+        result = self.run_dbt(batches, database, self.workspace / "ambiguous-target")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        with duckdb.connect(str(database), read_only=True) as con:
+            # Sequence 2 did not contain the prior publication date and is not
+            # withdrawal evidence. Sequence 3 did contain that date, so its
+            # missing EUR is a bounded candidate; the retained value remains current.
+            self.assertEqual(con.execute(
+                'select code, event_type, previous_ingestion_sequence, ingestion_sequence '
+                'from "03_silver"."nbp_change_events" '
+                "where event_type in ('source_record_missing', 'source_record_reappeared')"
+            ).fetchall(), [("EUR", "source_record_missing", 1, 3)])
+            self.assertEqual(con.execute(
+                'select mid, ingestion_sequence from "03_silver"."nbp_exchange_rates_table_a" '
+                "where effectiveDate = date '2020-01-01' and code = 'EUR'"
+            ).fetchone(), (4.2, 1))
 
     def test_gold_replay_emits_no_change_event_and_zero_event_relation_is_valid(self):
         with self.connection() as con:

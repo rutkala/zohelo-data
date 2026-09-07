@@ -11,9 +11,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from release_protocol import (  # noqa: E402
     ReleaseProtocolError,
     publish_release,
+    promote_retained_release,
     restore_current_release,
     restore_release,
 )
+from release_validation import validate_staged_release  # noqa: E402
 
 
 class MemoryStore:
@@ -140,7 +142,10 @@ class ReleaseProtocolTests(unittest.TestCase):
 
     def test_legacy_candidate_cannot_downgrade_a_platform_publication(self):
         store = MemoryStore()
-        published = publish_release(store, "root", **self._platform_candidate())
+        published = publish_release(
+            store, "root", **self._platform_candidate(),
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
         writes_before = store.writes
         with self.assertRaisesRegex(ReleaseProtocolError, "legacy silver candidate"):
             publish_release(store, "root", **self._candidate())
@@ -404,7 +409,10 @@ class ReleaseProtocolTests(unittest.TestCase):
     def test_platform_release_restores_v2_and_keeps_v1_pointer_contract(self):
         store = MemoryStore()
         _old_pointer_id, old_pointer, _old_file_id, _old_data = self._install_old_pointer(store)
-        report = publish_release(store, "root", **self._platform_candidate())
+        report = publish_release(
+            store, "root", **self._platform_candidate(),
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
 
         self.assertEqual(report["manifest"]["format_version"], 2)
         self.assertEqual(report["manifest"]["release_scope"], "nbp_platform")
@@ -436,6 +444,176 @@ class ReleaseProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseProtocolError, "missing successful platform models"):
             publish_release(store, "root", **candidate)
         self.assertEqual(store.writes, 0)
+
+    def test_platform_requires_pre_promotion_validator_before_remote_writes(self):
+        store = MemoryStore()
+        with self.assertRaisesRegex(ReleaseProtocolError, "requires staged content validation"):
+            publish_release(store, "root", **self._platform_candidate())
+        self.assertEqual(store.writes, 0)
+
+    def test_failed_staged_validation_preserves_current_pointer(self):
+        store = MemoryStore()
+        pointer_id, old_pointer, _old_file_id, _old_data = self._install_old_pointer(store)
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "failed pre-promotion validation"):
+            publish_release(
+                store, "root", **self._platform_candidate(),
+                pre_promote_validator=validate_staged_release,
+            )
+        self.assertEqual(store.files[pointer_id]["data"], old_pointer)
+
+    def test_retained_release_promotion_is_pinned_validated_and_audited(self):
+        store = MemoryStore()
+        current = publish_release(store, "root", **self._candidate())
+        target_candidate = self._candidate()
+        target_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        target = publish_release(store, "root", **target_candidate)
+
+        seen = []
+        result = promote_retained_release(
+            store,
+            "root",
+            target_release_id=current["release_id"],
+            expected_current_release_id=target["release_id"],
+            pre_promote_validator=lambda _store, pointer: seen.append(pointer["release_id"]),
+        )
+        self.assertEqual(seen, [current["release_id"]])
+        self.assertEqual(result["status"], "retained_release_promoted")
+        self.assertEqual(restore_current_release(store, "root")["release_id"], current["release_id"])
+        pointer = json.loads(store.files[result["pointer_file_id"]]["data"])
+        self.assertEqual(pointer["promotion_audit_file_id"], result["audit_file_id"])
+        audit = json.loads(store.files[result["audit_file_id"]]["data"])
+        self.assertEqual(audit["event_type"], "retained_release_promotion_requested")
+        self.assertEqual(audit["expected_current_release_id"], target["release_id"])
+
+    def test_retained_release_promotion_rejects_wrong_current_pin_without_writes(self):
+        store = MemoryStore()
+        first = publish_release(store, "root", **self._candidate())
+        writes_before = store.writes
+        with self.assertRaisesRegex(ReleaseProtocolError, "expected-current"):
+            promote_retained_release(
+                store,
+                "root",
+                target_release_id="9cfa4638-2df2-4c31-936e-8fcaa787289d",
+                expected_current_release_id="cc2022b2-02ac-4748-a62e-7ce867f9c63e",
+                pre_promote_validator=lambda _store, _pointer: None,
+            )
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(restore_current_release(store, "root")["release_id"], first["release_id"])
+
+    def test_retained_release_promotion_recovers_damaged_current_files(self):
+        for damaged_kind in ("dataset", "artifact"):
+            with self.subTest(damaged_kind=damaged_kind):
+                store = MemoryStore()
+                target = publish_release(store, "root", **self._candidate())
+                current_candidate = self._candidate()
+                current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+                current = publish_release(store, "root", **current_candidate)
+                damaged_entry = (
+                    current["manifest"]["datasets"][0]["files"][0]
+                    if damaged_kind == "dataset" else current["manifest"]["artifacts"][0]
+                )
+                store.files[damaged_entry["id"]]["data"] = b"damaged current file"
+
+                result = promote_retained_release(
+                    store, "root", target_release_id=target["release_id"],
+                    expected_current_release_id=current["release_id"],
+                    pre_promote_validator=restore_release,
+                )
+
+                self.assertEqual(result["status"], "retained_release_promoted")
+                self.assertEqual(restore_current_release(store, "root")["release_id"], target["release_id"])
+                pointer = json.loads(store.read(result["pointer_file_id"]))
+                self.assertEqual(pointer["promotion_audit_file_id"], result["audit_file_id"])
+
+    def test_retained_release_promotion_rejects_damaged_target_files(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        pointer_before = store.read(current["pointer_file_id"])
+        damaged_entry = target["manifest"]["datasets"][0]["files"][0]
+        store.files[damaged_entry["id"]]["data"] = b"damaged target file"
+        writes_before = store.writes
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "target retained release failed validation"):
+            promote_retained_release(
+                store, "root", target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=restore_release,
+            )
+
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(store.read(current["pointer_file_id"]), pointer_before)
+        self.assertEqual(restore_current_release(store, "root")["release_id"], current["release_id"])
+
+    def test_retained_release_promotion_rejects_damaged_current_manifest(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        pointer_before = store.read(current["pointer_file_id"])
+        store.files[current["manifest_file_id"]]["data"] = b"damaged current manifest"
+        writes_before = store.writes
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "manifest checksum"):
+            promote_retained_release(
+                store, "root", target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=restore_release,
+            )
+
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(store.read(current["pointer_file_id"]), pointer_before)
+
+    def test_retained_release_promotion_rejects_protocol_downgrade(self):
+        store = MemoryStore()
+        legacy = publish_release(store, "root", **self._candidate())
+        platform_candidate = self._platform_candidate()
+        platform_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        platform = publish_release(
+            store, "root", **platform_candidate,
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
+        writes_before = store.writes
+        with self.assertRaisesRegex(ReleaseProtocolError, "protocol differs"):
+            promote_retained_release(
+                store,
+                "root",
+                target_release_id=legacy["release_id"],
+                expected_current_release_id=platform["release_id"],
+                pre_promote_validator=lambda _store, _pointer: None,
+            )
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"], platform["release_id"]
+        )
+
+    def test_retained_release_validation_failure_preserves_current_pointer(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        writes_before = store.writes
+
+        def reject(_store, _pointer):
+            raise ValueError("invalid SQL contents")
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "failed validation"):
+            promote_retained_release(
+                store,
+                "root",
+                target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=reject,
+            )
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"], current["release_id"]
+        )
 
 
 if __name__ == "__main__":

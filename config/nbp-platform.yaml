@@ -1,0 +1,48 @@
+format_version: 1
+
+# Inclusive dated-request planning. These are recovery bounds, not a freshness SLA.
+planner:
+  recent_recheck_days: 93
+  max_catch_up_chunks: 512
+  max_historical_recheck_chunks: 1
+
+# One invocation checkpoints each accepted response before enforcing these limits.
+runtime:
+  max_requests: 512
+  max_run_seconds: 3600
+  max_response_bytes: 12000000
+
+http:
+  attempts: 4
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 45
+  max_retry_delay_seconds: 8
+
+sources:
+  nbp_exchange_rates_table_a:
+    endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/A/{start_date}/{end_date}"
+    params:
+      format: "json"
+    max_chunk_days: 93
+    historical_start_date: "2002-01-02"
+
+  nbp_exchange_rates_table_b:
+    endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/B/{start_date}/{end_date}"
+    params:
+      format: "json"
+    max_chunk_days: 93
+    historical_start_date: "2002-01-02"
+
+  nbp_exchange_rates_table_c:
+    endpoint_template: "https://api.nbp.pl/api/exchangerates/tables/C/{start_date}/{end_date}"
+    params:
+      format: "json"
+    max_chunk_days: 93
+    historical_start_date: "2002-01-02"
+
+  nbp_gold_prices:
+    endpoint_template: "https://api.nbp.pl/api/cenyzlota/{start_date}/{end_date}"
+    params:
+      format: "json"
+    max_chunk_days: 93
+    historical_start_date: "2013-01-02"

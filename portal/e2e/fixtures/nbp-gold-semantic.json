@@ -1,0 +1,188 @@
+{
+  "_fixture": "Metric and semantic model copied from dbt 1.12.3 production manifest; generated timestamps omitted and disposable database renamed. Physical rows are synthetic browser fixtures.",
+  "metric": {
+    "name": "nbp_gold_price_pln_per_gram_1000",
+    "resource_type": "metric",
+    "package_name": "zohelo_data",
+    "path": "semantic/nbp_metrics.yml",
+    "original_file_path": "models/semantic/nbp_metrics.yml",
+    "unique_id": "metric.zohelo_data.nbp_gold_price_pln_per_gram_1000",
+    "fqn": ["zohelo_data", "semantic", "nbp_gold_price_pln_per_gram_1000"],
+    "description": "Daily NBP price of one gram of gold of 1000 fineness in PLN, on its publication date. This is a source value, not a retail purchase offer. Daily commodity grain is required; no time aggregation or forward filling.",
+    "label": "NBP published gold price, PLN per gram of 1000 fineness",
+    "type": "simple",
+    "type_params": {
+      "measure": {
+        "name": "nbp_gold_price_at_publication",
+        "filter": null,
+        "alias": null,
+        "join_to_timespine": false,
+        "fill_nulls_with": null
+      },
+      "input_measures": [
+        {
+          "name": "nbp_gold_price_at_publication",
+          "filter": null,
+          "alias": null,
+          "join_to_timespine": false,
+          "fill_nulls_with": null
+        }
+      ],
+      "numerator": null,
+      "denominator": null,
+      "expr": null,
+      "window": null,
+      "grain_to_date": null,
+      "metrics": [],
+      "conversion_type_params": null,
+      "cumulative_type_params": null,
+      "metric_aggregation_params": null,
+      "fill_nulls_with": null,
+      "join_to_timespine": false,
+      "is_private": null
+    },
+    "filter": null,
+    "metadata": null,
+    "time_granularity": null,
+    "config": {
+      "enabled": true,
+      "group": null,
+      "meta": {
+        "definition_status": "source_defined",
+        "unit": "PLN per gram of gold of 1000 fineness",
+        "required_grain": ["effective_date", "commodity_key"],
+        "methodology_url": "https://api.nbp.pl/en.html",
+        "aggregation_policy": "identity_at_daily_source_grain",
+        "version": "1"
+      }
+    },
+    "unrendered_config": {
+      "meta": {
+        "definition_status": "source_defined",
+        "unit": "PLN per gram of gold of 1000 fineness",
+        "required_grain": ["effective_date", "commodity_key"],
+        "methodology_url": "https://api.nbp.pl/en.html",
+        "aggregation_policy": "identity_at_daily_source_grain",
+        "version": "1"
+      }
+    },
+    "sources": [],
+    "depends_on": {
+      "macros": [],
+      "nodes": ["semantic_model.zohelo_data.nbp_gold_prices"]
+    },
+    "refs": [],
+    "metrics": [],
+    "group": null,
+    "meta": {
+      "definition_status": "source_defined",
+      "unit": "PLN per gram of gold of 1000 fineness",
+      "required_grain": ["effective_date", "commodity_key"],
+      "methodology_url": "https://api.nbp.pl/en.html",
+      "aggregation_policy": "identity_at_daily_source_grain",
+      "version": "1"
+    },
+    "tags": []
+  },
+  "semanticModel": {
+    "name": "nbp_gold_prices",
+    "resource_type": "semantic_model",
+    "package_name": "zohelo_data",
+    "path": "semantic/nbp_metrics.yml",
+    "original_file_path": "models/semantic/nbp_metrics.yml",
+    "unique_id": "semantic_model.zohelo_data.nbp_gold_prices",
+    "fqn": ["zohelo_data", "semantic", "nbp_gold_prices"],
+    "model": "ref('fact_gold_prices')",
+    "node_relation": {
+      "alias": "fact_gold_prices",
+      "schema_name": "04_gold",
+      "database": "catalogue_fixture",
+      "relation_name": "\"catalogue_fixture\".\"04_gold\".\"fact_gold_prices\""
+    },
+    "description": "Current published NBP price in PLN for one gram of gold of 1000 fineness. One row per publication date and commodity. No time aggregation or filling.",
+    "label": null,
+    "defaults": {
+      "agg_time_dimension": "effective_date"
+    },
+    "entities": [
+      {
+        "name": "gold_price",
+        "type": "primary",
+        "description": null,
+        "label": null,
+        "role": null,
+        "expr": "cast(effective_date as varchar) || ':' || commodity_key",
+        "config": {
+          "meta": {}
+        }
+      }
+    ],
+    "measures": [
+      {
+        "name": "nbp_gold_price_at_publication",
+        "agg": "max",
+        "description": "Identity selector at the validated unique daily/commodity grain.",
+        "label": null,
+        "create_metric": false,
+        "expr": "price_pln_per_gram_1000",
+        "agg_params": null,
+        "non_additive_dimension": null,
+        "agg_time_dimension": null,
+        "config": {
+          "meta": {}
+        }
+      }
+    ],
+    "dimensions": [
+      {
+        "name": "effective_date",
+        "type": "time",
+        "description": null,
+        "label": null,
+        "is_partition": false,
+        "type_params": {
+          "time_granularity": "day",
+          "validity_params": null
+        },
+        "expr": null,
+        "metadata": null,
+        "config": {
+          "meta": {}
+        }
+      },
+      {
+        "name": "commodity",
+        "type": "categorical",
+        "description": null,
+        "label": null,
+        "is_partition": false,
+        "type_params": null,
+        "expr": "commodity_key",
+        "metadata": null,
+        "config": {
+          "meta": {}
+        }
+      }
+    ],
+    "metadata": null,
+    "depends_on": {
+      "macros": [],
+      "nodes": ["model.zohelo_data.fact_gold_prices"]
+    },
+    "refs": [
+      {
+        "name": "fact_gold_prices",
+        "package": null,
+        "version": null
+      }
+    ],
+    "config": {
+      "enabled": true,
+      "group": null,
+      "meta": {}
+    },
+    "unrendered_config": {},
+    "primary_entity": null,
+    "group": null
+  }
+}

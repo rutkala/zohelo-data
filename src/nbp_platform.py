@@ -17,23 +17,22 @@ import requests
 import yaml
 
 from business_catalog import build_business_catalog
+from capacity_report import capacity_report, process_memory_report
 from drive_release_store import DriveReleaseStore
 from ingestion.drive_state_store import DriveStateStore
 from ingestion.nbp_http import fetch_response
 from ingestion.nbp_state import (LoadedState, commit_response, list_successful_response_descriptors,
                                  load_state, plan_requests, response_envelope,
-                                 source_specs_from_config)
+                                 ingestion_config_from_config, validate_non_regressive_cutoff)
 from release_protocol import publish_release
+from release_validation import validate_staged_release
+from semantic_query import validate_release_metrics
 from storage_manager import StorageManager
-from transformation.silver_builder import _code_sha
+from runtime_metadata import _code_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAX_RAW_BYTES = 256 * 1024 * 1024
 MAX_OBSERVATION_BATCHES = 2048
-# Measured Drive checkpoint latency makes the remaining bootstrap about 50
-# minutes. Keep intake bounded and reserve 30 minutes of the 90-minute job for
-# publication, fresh reads and cold replay.
-MAX_RUN_SECONDS = 60 * 60
 DATASET_MODELS = {}
 for suffix in ("a", "b", "c"):
     source = f"nbp_exchange_rates_table_{suffix}"
@@ -63,17 +62,24 @@ def coverage_complete(state, cutoff):
                for source in state["sources"].values())
 
 
-def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
+def ingest(storage, *, specs, settings, cutoff, mode, code_sha, max_requests=512):
     """Persist after each dated response; a failed/capped run never publishes."""
     root = storage.resolve_root(create=False)
     control = storage.get_or_create_nested_folder(["ingestion-control"], root_id=root)
     store = DriveStateStore(storage, root, control)
     loaded = load_state(store, control, specs)
+    validate_non_regressive_cutoff(loaded.state, cutoff)
+    current_capacity = capacity_report(loaded.state, max_observation_batches=MAX_OBSERVATION_BATCHES,
+                                       max_raw_bytes=MAX_RAW_BYTES)
+    for warning in current_capacity["warnings"]:
+        print(f"::warning::NBP capacity review required: {warning}", flush=True)
+    if max_requests > settings.max_requests:
+        raise ValueError("Request budget exceeds the configured maximum")
     if mode == "rebuild":
         if not coverage_complete(loaded.state, cutoff):
             raise ValueError("Raw replay requires complete verified date coverage through the selected cutoff")
         return store, loaded, {"requests": 0, "retrieved_bytes": 0, "network_retries": 0}
-    landing = storage.resolve_zone("01_landing", create=True)
+    landing = storage.resolve_zone("landing", create=True)
     folders = {source: storage.get_or_create_nested_folder([source], root_id=landing) for source in specs}
     started = time.monotonic()
     completed = set()
@@ -82,15 +88,17 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
     totals = {"requests": 0, "retrieved_bytes": 0, "network_retries": 0}
     with requests.Session() as session:
         while True:
-            plans = plan_requests(loaded.state, specs, cutoff, max_catch_up_chunks=512,
-                                  recent_recheck_days=93, max_historical_recheck_chunks=1)
+            plans = plan_requests(loaded.state, specs, cutoff,
+                                  max_catch_up_chunks=settings.max_catch_up_chunks,
+                                  recent_recheck_days=settings.recent_recheck_days,
+                                  max_historical_recheck_chunks=settings.max_historical_recheck_chunks)
             pending = [plan for plan in plans if (plan.source_id, plan.mode, plan.requested_start_date,
                                                   plan.requested_end_date) not in completed
                        and not (plan.mode == "historical_recheck" and plan.source_id in historical_sources)]
             if not pending:
                 break
             for plan in pending:
-                if totals["requests"] >= max_requests or time.monotonic() - started >= MAX_RUN_SECONDS:
+                if totals["requests"] >= max_requests or time.monotonic() - started >= settings.max_run_seconds:
                     print(json.dumps({"status": "nbp_ingestion_checkpointed", "reason": "run_budget_reached",
                                       **totals, "elapsed_seconds": round(time.monotonic() - started, 3),
                                       "checked_through": {key: value.get("last_checked_through_date")
@@ -98,7 +106,10 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
                     raise RuntimeError("Run budget reached; verified raw progress is saved for the next run")
                 requested_at = datetime.now(timezone.utc)
                 try:
-                    status, body, retries = fetch_response(plan, session=session)
+                    status, body, retries = fetch_response(plan, session=session,
+                        max_bytes=settings.max_response_bytes, attempts=settings.http_attempts,
+                        timeout=(settings.http_connect_timeout_seconds, settings.http_read_timeout_seconds),
+                        max_retry_delay_seconds=settings.max_retry_delay_seconds)
                 except (RuntimeError, ValueError, requests.RequestException):
                     # Persist the failed request as an attempt without advancing date coverage.
                     commit_response(store, control, loaded, specs, plan, http_status=0, body=b"",
@@ -205,8 +216,11 @@ def build_platform(workspace, envelopes):
                              "max_date": last.isoformat() if last is not None else None,
                              "columns": [{"name": row[0], "type": row[1]} for row in
                                          connection.execute(f"DESCRIBE {relation}").fetchall()]})
+    semantic_report = validate_release_metrics(database, target / "semantic_manifest.json", workspace / "metric-validation")
+    (target / "metric-validation.json").write_text(json.dumps(semantic_report, sort_keys=True))
     return datasets, [{"name": name, "path": str(target / name)}
-                      for name in ("manifest.json", "catalog.json", "run_results.json")]
+                      for name in ("manifest.json", "catalog.json", "run_results.json",
+                                   "semantic_manifest.json", "metric-validation.json")]
 
 
 def check_portal_compatibility():
@@ -230,11 +244,12 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
     if cutoff >= datetime.now(timezone.utc).date():
         raise ValueError("Only completed UTC days can be marked checked")
     config = yaml.safe_load((REPO_ROOT / "config/sources.yaml").read_text())
-    specs = source_specs_from_config(config)
+    settings = ingestion_config_from_config(REPO_ROOT / "config/nbp-platform.yaml")
+    specs = settings.source_specs
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     storage.authorize_writes()
     print(json.dumps({"stage": "ingestion", "status": "started", "cutoff": cutoff.isoformat(), "code_sha": sha}), flush=True)
-    store, loaded, ingestion_totals = ingest(storage, specs=specs, cutoff=cutoff, mode=mode,
+    store, loaded, ingestion_totals = ingest(storage, specs=specs, settings=settings, cutoff=cutoff, mode=mode,
                                             code_sha=sha, max_requests=max_requests)
     ingested = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="zohelo-platform-") as temporary:
@@ -251,6 +266,7 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
                         "latest_observation_date": item["latest_observation_date"],
                         "last_successful_ingestion_at": item["last_successful_ingestion_at_utc"],
                         "last_attempt_at": item["last_attempt_at_utc"],
+                        "coverage_complete": item["last_checked_through_date"] >= cutoff.isoformat(),
                         "raw_response_count": len(item["successful_responses"])}
             for source_id, item in loaded.state["sources"].items()}}
         catalogue = build_business_catalog(code_sha=sha, source_config=config, ingestion_state=catalogue_state,
@@ -268,18 +284,21 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
                         "ingestion_seconds": round(ingested - started, 3),
                         "download_seconds": round(downloaded - ingested, 3),
                         "dbt_and_export_seconds": round(built - downloaded, 3),
-                        "working_directory_bytes": sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file())}
+                        "working_directory_bytes": sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file()),
+                        "capacity": capacity_report(loaded.state, max_observation_batches=MAX_OBSERVATION_BATCHES,
+                                                    max_raw_bytes=MAX_RAW_BYTES),
+                        "process_memory": process_memory_report()}
         check_portal_compatibility()
         print(json.dumps({"stage": "publication", "status": "started", "datasets": len(datasets)}), flush=True)
         result = publish_release(DriveReleaseStore(storage, store.root_id), store.root_id, datasets=datasets,
                                  artifacts=artifacts, inputs=inputs, code_sha=sha, measurements=measurements,
-                                 release_scope="nbp_platform")
+                                 release_scope="nbp_platform", pre_promote_validator=validate_staged_release)
         report = {"status": "nbp_platform_published", "release_id": result["release_id"], "code_sha": sha,
                   "cutoff": cutoff.isoformat(), "coverage": catalogue_state["sources"],
                   "datasets": [{key: item[key] for key in ("dataset_id", "row_count", "min_date", "max_date")}
                                for item in datasets],
                   "measurements": {**measurements, "publication_seconds": round(time.monotonic() - built, 3)},
-                  "limitations": ["Metric definitions await business approval", "Older corrections are detected by a rotating recheck, not an NBP correction feed"]}
+                  "limitations": ["Governed metrics retain daily source grain; period aggregation is not defined", "Older corrections are detected by a rotating recheck, not an NBP correction feed"]}
         rendered = json.dumps(report, indent=2, sort_keys=True)
         print(rendered, flush=True)
         if os.environ.get("GITHUB_STEP_SUMMARY"):

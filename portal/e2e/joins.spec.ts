@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -236,6 +236,76 @@ JOIN "04_gold"."dim_date" AS dates ON dates.date_key = rates.effective_date;`
   expect(new Set(downloadedDataFileIds)).toEqual(
     new Set(["fact-fx-file", "dim-currency-file", "dim-date-file"])
   );
+});
+
+test("keeps the light and dark layout palettes consistent across desktop and mobile", async ({
+  page,
+}) => {
+  await installReleaseFixture(page);
+  await page.addInitScript(() => localStorage.setItem("vite-ui-theme", "dark"));
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("./");
+  const profile = page.getByRole("dialog", { name: "Create Profile" });
+  await profile.getByPlaceholder("Profile name").fill("Theme regression");
+  await profile.getByRole("button", { name: "Create Profile" }).click();
+  await expect(profile).toBeHidden();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect(page.getByRole("status").filter({ hasText: "nbp_platform" }).first()).toBeVisible();
+  await page.getByRole("button", { name: "New SQL query", exact: true }).click();
+
+  // This test compares final palette values, not animation frames. Disable
+  // transitions only in this isolated page so a theme switch cannot capture
+  // an interpolated desktop colour before the mobile comparison.
+  await page.addStyleTag({
+    content: "*, *::before, *::after { transition: none !important; animation: none !important; }",
+  });
+
+  const palette = (locator: Locator) =>
+    locator.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        foreground: style.color,
+        border: style.borderColor,
+      };
+    });
+  const themeTokens = () =>
+    page.locator("html").evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.getPropertyValue("--background"),
+        foreground: style.getPropertyValue("--foreground"),
+        input: style.getPropertyValue("--input"),
+      };
+    });
+
+  const expectResponsivePalette = async (theme: "light" | "dark") => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+    const desktopTokens = await themeTokens();
+    const desktopNavigation = await palette(
+      page.getByRole("navigation", { name: "Main navigation" })
+    );
+    const desktopRun = await palette(
+      page.getByRole("button", { name: "Run Query", exact: true }).filter({ visible: true })
+    );
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator("html")).toHaveClass(new RegExp(theme));
+    const tables = page.getByRole("button", { name: "Tables", exact: true });
+    const mobileRun = page.getByRole("button", { name: "Run", exact: true });
+    await expect(tables).toBeVisible();
+    await expect(mobileRun).toBeVisible();
+
+    expect(await themeTokens()).toEqual(desktopTokens);
+    expect(await palette(tables.locator(".."))).toEqual(desktopNavigation);
+    expect(await palette(mobileRun)).toEqual(desktopRun);
+  };
+
+  await expectResponsivePalette("dark");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expectResponsivePalette("light");
 });
 
 for (const mobile of [false, true]) {

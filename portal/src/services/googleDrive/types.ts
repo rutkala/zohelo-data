@@ -123,6 +123,7 @@ export interface PlatformReleaseManifest extends ReleaseManifestBase {
 export type ReleaseManifest = SilverReleaseManifest | PlatformReleaseManifest;
 
 export interface BusinessCatalogueSource {
+  provider_metadata?: Record<string, string>;
   source_id: string;
   name: string;
   description: string;

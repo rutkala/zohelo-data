@@ -1,4 +1,6 @@
-# NBP silver publication
+# NBP silver publication (historical v1)
+
+> **Superseded milestone record.** This document describes the intermediate v1 Silver publication path and preserves its original implementation boundaries. Do not use its entrypoint or workflow descriptions for current operations. Use [NBP platform operations](nbp-platform-operations.md) for the consolidated v2 workflow and [the delivery plan](deliverables.md) for current status.
 
 This implements one intermediate delivery: all four NBP silver datasets in a verified immutable snapshot. It is not the complete gold/MetricFlow data-platform release. Verification results belong in the delivery PR and its Actions runs; implementing the protocol alone does not establish historical coverage.
 

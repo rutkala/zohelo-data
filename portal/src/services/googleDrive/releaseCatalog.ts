@@ -391,6 +391,21 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
 
 function parseBusinessSource(raw: unknown): BusinessCatalogueSource {
   if (!isRecord(raw)) throw new Error("Business catalogue has an invalid source.");
+  const providerMetadata: Record<string, string> = {};
+  for (const field of [
+    "provider_url",
+    "documentation_url",
+    "publication_schedule_url",
+    "frequency",
+    "coverage_start",
+    "reuse_terms_url",
+    "reuse_summary",
+    "quote_unit",
+    "methodology_notes",
+  ]) {
+    if (raw[field] !== undefined)
+      providerMetadata[field] = asNonEmptyString(raw[field], `source.${field}`);
+  }
   return {
     source_id: asNonEmptyString(raw.source_id, "source_id"),
     name: asNonEmptyString(raw.name, "source.name"),
@@ -407,6 +422,7 @@ function parseBusinessSource(raw: unknown): BusinessCatalogueSource {
     ),
     last_attempt_at: asNullableTimestamp(raw.last_attempt_at, "source.last_attempt_at"),
     raw_response_count: asNonNegativeInteger(raw.raw_response_count, "source.raw_response_count"),
+    ...(Object.keys(providerMetadata).length ? { provider_metadata: providerMetadata } : {}),
   };
 }
 

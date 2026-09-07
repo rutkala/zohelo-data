@@ -17,6 +17,13 @@ from uuid import uuid4
 
 MAX_CHUNK_DAYS = 93
 DEFAULT_MAX_RESPONSE_BYTES = 12_000_000
+MAX_CATCH_UP_CHUNKS = 512
+MAX_HISTORICAL_RECHECK_CHUNKS = 1
+MAX_REQUESTS_PER_RUN = 512
+MAX_RUN_SECONDS = 5_400
+MAX_HTTP_ATTEMPTS = 8
+MAX_HTTP_TIMEOUT_SECONDS = 120
+MAX_RETRY_DELAY_SECONDS = 60
 MAX_STATE_BYTES = 8_000_000
 MAX_RESPONSES = 25_000
 NBP_SOURCE_IDS = frozenset({"nbp_exchange_rates_table_a", "nbp_exchange_rates_table_b", "nbp_exchange_rates_table_c", "nbp_gold_prices"})
@@ -48,6 +55,24 @@ class SourceSpec:
     endpoint_template: str
     params: dict[str, str]
     max_chunk_days: int = MAX_CHUNK_DAYS
+
+
+@dataclass(frozen=True)
+class NBPIngestionConfig:
+    """Validated effective settings for one bounded NBP ingestion run."""
+
+    format_version: int
+    source_specs: dict[str, SourceSpec]
+    recent_recheck_days: int
+    max_catch_up_chunks: int
+    max_historical_recheck_chunks: int
+    max_requests: int
+    max_run_seconds: int
+    max_response_bytes: int
+    http_attempts: int
+    http_connect_timeout_seconds: int
+    http_read_timeout_seconds: int
+    max_retry_delay_seconds: int
 
 
 @dataclass(frozen=True)
@@ -98,17 +123,86 @@ class CommitResult:
     validation_error: str | None = None
 
 
-def source_specs_from_config(config: str | Path | Mapping[str, Any], source_ids: list[str] | None = None) -> dict[str, SourceSpec]:
-    """Read only the explicitly supported configured NBP dated sources."""
+def _config_document(config: str | Path | Mapping[str, Any]) -> Mapping[str, Any]:
     if isinstance(config, (str, Path)):
         try:
             import yaml  # project dependency; isolated from the pure state protocol
         except ImportError as exc:  # pragma: no cover
-            raise NBPStateError("PyYAML is required to read a sources.yaml path") from exc
+            raise NBPStateError("PyYAML is required to read an NBP configuration path") from exc
         with Path(config).open("r", encoding="utf-8") as handle:
             document = yaml.safe_load(handle)
     else:
         document = config
+    if not isinstance(document, Mapping):
+        raise NBPStateError("NBP configuration must be an object")
+    return document
+
+
+def ingestion_config_from_config(config: str | Path | Mapping[str, Any]) -> NBPIngestionConfig:
+    """Load the versioned production planner, transport, and source settings."""
+    document = _config_document(config)
+    version = document.get("format_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        raise NBPStateError("NBP ingestion configuration has an unsupported format_version")
+    planner = document.get("planner")
+    runtime = document.get("runtime")
+    http = document.get("http")
+    if not all(isinstance(section, Mapping) for section in (planner, runtime, http)):
+        raise NBPStateError("NBP ingestion configuration requires planner, runtime, and http objects")
+    specs = _source_specs(document, None, canonical=True)
+    if set(specs) != NBP_SOURCE_IDS:
+        raise NBPStateError("NBP ingestion configuration must define all supported sources")
+    return NBPIngestionConfig(
+        format_version=1,
+        source_specs=specs,
+        recent_recheck_days=_bounded_int(
+            planner, "recent_recheck_days", 1, MAX_CHUNK_DAYS
+        ),
+        max_catch_up_chunks=_bounded_int(
+            planner, "max_catch_up_chunks", 1, MAX_CATCH_UP_CHUNKS
+        ),
+        max_historical_recheck_chunks=_bounded_int(
+            planner,
+            "max_historical_recheck_chunks",
+            0,
+            MAX_HISTORICAL_RECHECK_CHUNKS,
+        ),
+        max_requests=_bounded_int(runtime, "max_requests", 1, MAX_REQUESTS_PER_RUN),
+        max_run_seconds=_bounded_int(runtime, "max_run_seconds", 1, MAX_RUN_SECONDS),
+        max_response_bytes=_bounded_int(
+            runtime, "max_response_bytes", 1, DEFAULT_MAX_RESPONSE_BYTES
+        ),
+        http_attempts=_bounded_int(http, "attempts", 1, MAX_HTTP_ATTEMPTS),
+        http_connect_timeout_seconds=_bounded_int(
+            http, "connect_timeout_seconds", 1, MAX_HTTP_TIMEOUT_SECONDS
+        ),
+        http_read_timeout_seconds=_bounded_int(
+            http, "read_timeout_seconds", 1, MAX_HTTP_TIMEOUT_SECONDS
+        ),
+        max_retry_delay_seconds=_bounded_int(
+            http, "max_retry_delay_seconds", 0, MAX_RETRY_DELAY_SECONDS
+        ),
+    )
+
+
+def source_specs_from_config(
+    config: str | Path | Mapping[str, Any], source_ids: list[str] | None = None
+) -> dict[str, SourceSpec]:
+    """Read supported dated sources, including the legacy fixture shape.
+
+    Production uses the versioned direct source shape in ``nbp-platform.yaml``.
+    The old ``load_methods.full`` shape remains readable for stored test fixtures
+    and controlled migration only; its unused latest endpoint is ignored.
+    """
+    document = _config_document(config)
+    version = document.get("format_version")
+    canonical = isinstance(version, int) and not isinstance(version, bool) and version == 1
+    return _source_specs(document, source_ids, canonical=canonical)
+
+
+def _source_specs(
+    document: Mapping[str, Any], source_ids: list[str] | None, *, canonical: bool
+) -> dict[str, SourceSpec]:
     if not isinstance(document, Mapping) or not isinstance(document.get("sources"), Mapping):
         raise NBPStateError("sources configuration must contain a sources object")
     available = document["sources"]
@@ -123,9 +217,13 @@ def source_specs_from_config(config: str | Path | Mapping[str, Any], source_ids:
         raw = available.get(source_id)
         if not isinstance(raw, Mapping):
             raise NBPStateError(f"unknown configured source: {source_id}")
-        full = raw.get("load_methods", {}).get("full") if isinstance(raw.get("load_methods"), Mapping) else None
+        full = raw if canonical else (
+            raw.get("load_methods", {}).get("full")
+            if isinstance(raw.get("load_methods"), Mapping)
+            else None
+        )
         if not isinstance(full, Mapping):
-            raise NBPStateError(f"{source_id} has no full dated-request configuration")
+            raise NBPStateError(f"{source_id} has no dated-request configuration")
         template = full.get("endpoint_template")
         max_days = full.get("max_chunk_days")
         start = full.get("historical_start_date")
@@ -138,6 +236,15 @@ def source_specs_from_config(config: str | Path | Mapping[str, Any], source_ids:
             raise NBPStateError(f"{source_id} request params must be string pairs")
         specs[source_id] = SourceSpec(source_id, _parse_date(start, "historical_start_date"), template, dict(params), max_days)
     return specs
+
+
+def _bounded_int(
+    section: Mapping[str, Any], name: str, minimum: int, maximum: int
+) -> int:
+    value = section.get(name)
+    if not isinstance(value, int) or isinstance(value, bool) or not minimum <= value <= maximum:
+        raise NBPStateError(f"{name} must be an integer from {minimum} through {maximum}")
+    return value
 
 
 def new_state(specs: Mapping[str, SourceSpec], now_utc: datetime | None = None) -> dict[str, Any]:
@@ -166,6 +273,44 @@ def new_state(specs: Mapping[str, SourceSpec], now_utc: datetime | None = None) 
     }
 
 
+def validate_non_regressive_cutoff(
+    state: Mapping[str, Any], cutoff_utc: date | datetime
+) -> date:
+    """Reject a cutoff older than durable coverage already in the state.
+
+    A release produced from current durable state is not a historical as-of view.
+    Labeling it with an older selected cutoff would therefore be misleading.
+    """
+    if isinstance(cutoff_utc, datetime):
+        _timestamp(cutoff_utc)
+        cutoff = cutoff_utc.date()
+    else:
+        cutoff = cutoff_utc
+    if not isinstance(cutoff, date):
+        raise NBPStateError("cutoff_utc must be a UTC date or datetime")
+    sources = state.get("sources") if isinstance(state, Mapping) else None
+    if not isinstance(sources, Mapping):
+        raise NBPStateError("state is not an ingestion state object")
+    ahead: list[tuple[str, date]] = []
+    for source_id, source in sources.items():
+        _require_source_id(source_id)
+        if not isinstance(source, Mapping):
+            raise NBPStateError(f"invalid state for {source_id}")
+        saved = source.get("last_checked_through_date")
+        if saved is None:
+            continue
+        saved_date = _parse_date(saved, "last_checked_through_date")
+        if saved_date > cutoff:
+            ahead.append((source_id, saved_date))
+    if ahead:
+        details = ", ".join(f"{source_id}={saved.isoformat()}" for source_id, saved in ahead)
+        raise NBPStateError(
+            f"selected cutoff {cutoff.isoformat()} is older than saved coverage ({details}); "
+            "historical as-of publication is not supported"
+        )
+    return cutoff
+
+
 def plan_requests(
     state: Mapping[str, Any], specs: Mapping[str, SourceSpec], today_utc: date | datetime,
     *, recent_recheck_days: int = MAX_CHUNK_DAYS, max_catch_up_chunks: int = 64,
@@ -190,6 +335,7 @@ def plan_requests(
         today = today_utc
     if not isinstance(today, date):
         raise NBPStateError("today_utc must be a UTC date or datetime")
+    validate_non_regressive_cutoff(state, today)
     plans: list[RequestPlan] = []
     for source_id, spec in sorted(specs.items()):
         source = state["sources"][source_id]

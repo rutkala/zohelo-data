@@ -471,6 +471,7 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
         onClick={isExecuting ? handleCancelQuery : handleExecuteQuery}
         icon={isExecuting ? Square : Play}
         label={isExecuting ? "Stop" : "Run"}
+        variant="outline"
         className={isExecuting ? "animate-pulse" : ""}
       />
 

@@ -81,3 +81,10 @@ The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use
 - Report the commands actually run, their outcomes, skipped checks and missing prerequisites. Explain behavior changes and relevant recovery/consumer impacts in the PR. Update this guide when a task changes the documented workflow.
 
 Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-configuration/agents-md), [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions).
+
+## Audit handoff and source-defined semantics
+
+- Scope is zohelo-data/data.zohelo.com; the zohelo ChatGPT project is an umbrella, not another deployment target. Read docs/collaboration.md when starting a fresh chat.
+- Source-defined daily NBP metrics do not require another owner methodology question. Optional derived/period metrics remain separate decisions. Use scripts/query_metrics.py to enforce the documented grain; raw mf commands can bypass it.
+- Use config/nbp-platform.yaml for effective ingestion policy; config/sources.yaml contains provider metadata. Legacy transformation CLIs are retired.
+- Published candidates must pass remote Parquet/provenance checks before pointer promotion. Production rollback/promotion uses the serialized Actions operation and an expected-current release identity.

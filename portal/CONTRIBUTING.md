@@ -1,65 +1,37 @@
-# Contributing to Duck-UI
+# Contributing to the Zohelo Data portal
 
-Thanks for wanting to help. Duck-UI is maintained by one person with a full-time job, so this guide exists to make sure your effort lands instead of stalling.
+Read the repository-root [AGENTS.md](../AGENTS.md) and [development guide](../docs/development.md) before changing the portal. They define the current product boundaries, supported environment, and required evidence.
 
-## The short version
+## Setup
 
-1. **Open an issue before writing code** for anything bigger than a typo or an obvious small bug fix. Describe the problem and your intended approach. This is the single best way to avoid wasted work.
-2. Keep PRs **small and focused**. One fix or one feature per PR.
-3. Every bug fix needs a **regression test**. Every feature needs at least a happy-path test.
-4. Don't refactor code you aren't touching, and don't swap out tooling (build system, linter, formatter). PRs that rewrite project infrastructure without prior discussion will be closed.
-
-## Dev setup
+Use Node from `../.node-version` and npm with the committed lockfile:
 
 ```bash
-bun install        # npm works too, bun is preferred
-bun run dev        # http://localhost:5173
+npm ci --ignore-scripts --no-audit --no-fund
+npm run dev
 ```
 
-Before pushing:
+Do not introduce a second package manager or lockfile. Change intentional dependencies in `package.json`, regenerate `package-lock.json` with npm, and review the resolved diff.
+
+## Checks
+
+Run the checks that cover the change. The ordinary portal gate is:
 
 ```bash
-bun run build          # tsc -b + vite build — the real check, CI runs this
-bun run lint           # errors fail CI, warnings don't
-bun run format:check   # Prettier, gates CI
-bun run test           # Vitest
+npm run lint
+npm test
+npm run build
 ```
 
-Run all four. `bun run typecheck` alone is not enough; some errors only surface in the full build.
-
-## Project layout
-
-- `src/store/` — single Zustand store, one slice per domain. Types in `src/store/types.ts`.
-- `src/services/duckdb/` — DuckDB WASM, OPFS, and external-connection layers.
-- `src/services/persistence/` — IndexedDB persistence, repositories, crypto.
-- `src/lib/` — shared utilities (share codec, SQL sanitization, app config, Duck Brain providers).
-- `src/components/` — UI. shadcn/ui primitives live in `src/components/ui/`.
-- Tests live in `__tests__/` directories next to the code they test, named `*.test.ts`.
-
-More detail in `CLAUDE.md` and the README architecture section.
+Use `npm run format:check`, `npm run typecheck`, and `npm run test:e2e` when the affected code or workflow calls for them. The root [development guide](../docs/development.md) describes the authoritative CI and browser paths.
 
 ## Code conventions
 
-- TypeScript strict mode, no `any`.
-- Named exports over default exports.
-- Tailwind for styling; no custom CSS unless there's no other way.
-- Keep new files under ~500 lines. If your change makes a file bigger than that, split it.
-- Escape all SQL values through `sqlEscapeString` / `sqlEscapeIdentifier` (`src/lib/sqlSanitize.ts`). Never interpolate user input into SQL directly.
-- Unused variables are prefixed with `_`.
+- Keep TypeScript strict and avoid `any`.
+- Prefer named exports.
+- Keep SQL identifiers and values behind the sanitizing helpers in `src/lib/sqlSanitize.ts`.
+- Add focused regression coverage for behavior changes.
+- Split a component when a change would add another responsibility to an already large file.
+- Preserve the release boundary: portal queries must use one verified release and must fail visibly when released data cannot be loaded.
 
-## Commits
-
-Conventional commits: `type(scope): description`
-
-```
-fix(grid): render DECIMAL columns with correct scale
-feat(brain): show token estimate before sending
-```
-
-## Reporting bugs
-
-Include the query or file that triggers it, what you expected, what happened, browser and version, and whether you're on the hosted demo, Docker, or a local build. A screenshot of the console helps.
-
-## What gets merged fast
-
-Fixes with a failing-then-passing test, features that were discussed in an issue first, and anything on a `good first issue` label. Fast, in this repo, is often same-day.
+The portal is based on Duck-UI under the MIT license. Preserve [LICENSE.md](LICENSE.md) and relevant upstream attribution when reusing or modifying upstream code.

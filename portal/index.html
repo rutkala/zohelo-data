@@ -4,53 +4,51 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/logo-padding.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Zohelo Data Portal — Enterprise Lakehouse Explorer</title>
+    <title>Zohelo Data Portal</title>
     <meta
       name="description"
-      content="Zohelo Medallion Lakehouse Explorer &amp; DuckDB-WASM query workbench with Google Drive integration."
+      content="Explore the Zohelo Data catalogue and query published data releases."
     />
     <!-- Google Identity Services -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 
     <!-- Open Graph (Facebook, Slack, Discord, LinkedIn) -->
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Duck-UI" />
-    <meta property="og:title" content="Duck-UI — DuckDB in your browser" />
+    <meta property="og:site_name" content="Zohelo Data" />
+    <meta property="og:title" content="Zohelo Data Portal" />
     <meta
       property="og:description"
-      content="Query data and build charts with DuckDB, entirely in your browser. Share a link that reproduces the whole analysis — no backend, no signup."
+      content="Explore the Zohelo Data catalogue and query published releases with DuckDB in your browser."
     />
-    <meta property="og:url" content="https://duckui.com/" />
-    <meta property="og:image" content="https://demo.duckui.com/screenshot.png" />
+    <meta property="og:url" content="https://data.zohelo.com/" />
+    <meta property="og:image" content="https://data.zohelo.com/logo-padding.png" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Duck-UI — DuckDB in your browser" />
+    <meta name="twitter:title" content="Zohelo Data Portal" />
     <meta
       name="twitter:description"
-      content="Query data and build charts with DuckDB, entirely in your browser. Share a link that reproduces the whole analysis — no backend, no signup."
+      content="Explore the Zohelo Data catalogue and query published releases with DuckDB in your browser."
     />
-    <meta name="twitter:image" content="https://demo.duckui.com/screenshot.png" />
+    <meta name="twitter:image" content="https://data.zohelo.com/logo-padding.png" />
 
     <!-- Structured data for search engines -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
-        "name": "Duck-UI",
+        "name": "Zohelo Data Portal",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "Web",
-        "description": "A local-first, browser-based DuckDB interface. Query CSV/Parquet/JSON, build charts, and share reproducible analyses with no backend.",
-        "url": "https://duckui.com/",
-        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+        "description": "A browser-based catalogue and DuckDB workspace for published Zohelo Data releases.",
+        "url": "https://data.zohelo.com/"
       }
     </script>
   </head>
   <body>
     <div id="root"></div>
-    <!-- Runtime env (overwritten by the Docker entrypoint; empty default otherwise).
-         An external file instead of an injected inline script so the CSP can
-         stay free of 'unsafe-inline'. -->
+    <!-- Reserved runtime configuration surface. An external file keeps the CSP
+         free of an inline script. -->
     <script src="/env.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>

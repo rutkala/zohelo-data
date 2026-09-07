@@ -1,57 +1,100 @@
-# NBP platform operations
+# Operate the NBP platform without AI
 
-**Status: The v2 data release has verified live proof dated 7 September 2026.** PR57 remains merged on `main`; the repaired release passed coverage, fresh-process restore/query, raw replay, migration preservation, and portal deployment checks. The full platform remains incomplete because metrics are still `[]` awaiting business approval and no native query backend is available. The earlier v1 silver release is retained as a historical baseline. See the [verified v2 release evidence](releases/2026-09-07-nbp-platform.md).
+Use the [delivery record](deliverables.md) for current release identities and verified results. This guide describes supported operations; dated results live under `docs/releases/`.
 
-## Verified live release
+## Normal operation in GitHub
 
-Release `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1` was produced by code `f071669937829a3d0775a13146b3170e1b283b4e`. The [NBP data platform run](https://github.com/rutkala/zohelo-data/actions/runs/34096483209) passed at 08:45:24 UTC on 7 September 2026 with 15 physical tables, 52 dbt tests (67 nodes passed), fresh SQL reads across all 15 tables, and exact raw replay of all 15 tables with 1,314,774 rows matched. Sources were checked through 6 September; the latest observed dates are 4 September for Tables A, C and gold, and 2 September for Table B. The release counts are A 198,842, B 143,767, C 83,737, and gold 3,449.
+Open [Actions](https://github.com/rutkala/zohelo-data/actions). The [workflow inventory](audits/2026-09-07-workflows.md) explains the purpose and permissions of every workflow.
 
-The [migration check](https://github.com/rutkala/zohelo-data/actions/runs/34098420713) passed at 08:46:16 UTC. All 429,611 previously published four-silver keys were retained with zero missing keys; the current silver total is 429,795, an increase of 184. The [portal deployment](https://github.com/rutkala/zohelo-data/actions/runs/34096483163) also passed for producer code `f071669937829a3d0775a13146b3170e1b283b4e` and supports release formats 1 and 2. These checks establish live data and portal availability; they do not establish approved semantics or a native query service.
+| Need | Workflow / choice | Effect |
+| --- | --- | --- |
+| Daily ingestion/publication | **NBP data platform**, operation `publish`, mode `incremental` | Scheduled at 02:00 UTC; fills gaps, rechecks recent dates and rotates through history, validates and publishes. |
+| Resume a historical bootstrap | Same, mode `full` | Compatibility name for the same resumable planner. It does not erase checkpoints or force a redownload. |
+| Rebuild from retained raw | Same, mode `rebuild` | No NBP request. Build and publish from saved verified responses. |
+| Prove raw recovery as well | Enable `verify_raw_replay` | A separate process rebuilds exact released inputs and compares all tables. |
+| Restore a previous retained release | Same, operation `promote_retained_release` | Requires target and expected-current release UUIDs; verifies data before switching. See recovery below. |
+| Diagnose Google read access | **Check Google access** | Read-only credential/root check. |
+| Verify a temporary upload | **Check Google upload** | Explicit temporary upload, content readback and deletion. |
+| Create missing configured folders | **Reconcile Drive folders** | Manual metadata mutation; does not publish data. |
 
-## Entry point and workflow
+Use `main` for production. Production writers share one non-cancelling concurrency group. Do not start a parallel local production writer. A production push runs only when its reviewed merge message includes `[run-nbp-platform]`; normal commits do not silently ingest data.
 
-Run the platform from the repository root:
+A green deployment means the portal was deployed. A green data job means its listed validation stages passed. Read the stage that failed before retrying; do not interpret partial progress as a newly published release.
+
+## Local setup and safe checks
+
+Follow [development setup](development.md) and [Google authorization](google-authorization.md). The pinned Python environment and Linux/libseccomp are required for the supported native metric runner; Codespaces provides that path.
+
+From the repository root:
 
 ```bash
-python src/nbp_platform.py --mode incremental
-python src/nbp_platform.py --mode full
-python src/nbp_platform.py --mode rebuild
+.venv/bin/python scripts/check-workflows.py
+bash scripts/check-data.sh
+.venv/bin/python scripts/query_metrics.py --list
 ```
 
-`incremental` fills missing intervals, rechecks the most recent 93 days, and performs one rotating historical chunk per source and run. `full` uses the same resumable planner while bootstrapping missing historical coverage. It does not force a complete historical refresh in one invocation. `rebuild` performs a native cold replay from retained raw responses only and requires verified coverage through the selected cutoff; it does not call the NBP API.
+These checks use fixtures and do not publish production data. For a disposable development Drive root, set `ZOHELO_DRIVE_ROOT_ID` or `ZOHELO_DRIVE_ROOT_NAME` explicitly. Local production writes require an additional opt-in, but normal operation uses serialized Actions. Never place OAuth values in Git, SQL, screenshots or shared shell output.
 
-The scheduled and manual production entrypoint is [`daily-ingestion.yml`](../.github/workflows/daily-ingestion.yml), named **NBP data platform**. It runs at 02:00 UTC and exposes `incremental`, `full`, and `rebuild` as manual choices. A push on `main` runs only with the explicit commit marker `[run-nbp-platform]`. The former separate bronze, silver, and historical-backfill workflows are removed. The workflow serializes production writers and keeps a failed publication from replacing the prior validated release.
+## Restore current data and query metrics
 
-Before publication, the runner checks the deployed portal’s `portal-build.json` and requires support for release formats 1 and 2. The portal build writes that marker in [`deploy-portal.yml`](../.github/workflows/deploy-portal.yml).
-
-Outside GitHub Actions, the runner still requires an explicitly selected Drive root. For a development root, set `ZOHELO_DRIVE_ROOT_NAME` or `ZOHELO_DRIVE_ROOT_ID`. Writes to the production root named `zohelo-data` require `ZOHELO_ALLOW_PRODUCTION_WRITES=true`; the code rejects an unapproved outside-Actions write. Google OAuth client and refresh-token variables must be present in the selected runtime. No manual file staging or path-based publication is part of this entrypoint.
-
-## Durable state and release contents
-
-Each successful response is retained as immutable raw bytes with its Drive file ID and SHA-256. Append-only attempts, immutable state snapshots, and the current-state pointer record request progress and provenance. Pointer updates use readback and drift detection; Drive does not provide compare-and-swap here. Raw and state history has no garbage collection, so retention growth must be measured before a long-running deployment.
-
-The verified v2 release defines 15 datasets: four bronze source-aligned tables, four silver tables, `nbp_change_events`, `fact_fx_quotes`, `fact_gold_prices`, `dim_date`, `dim_currency`, `dim_source_table`, and `dim_commodity`. The release includes the four-source business catalogue and dbt ancestor lineage. Its metrics list is empty with `metrics_status=awaiting_business_approval`; no aggregation, return, spread, or other business metric is invented. Production NBP MetricFlow definitions/execution and a served query backend remain open work; native runtime compatibility already has a passing synthetic fixture.
-
-Catalogue dataset metadata contains business fields only: `dataset_id`, `table_name`, `layer`, `model_name`, `row_count`, `min_date`, `max_date`, `date_column`, and `columns`. Scratch paths and model IDs are excluded before the catalogue artifact is written.
-
-## Safety bounds and limitations
-
-The current runner bounds one invocation to 2,048 observation batches total across the four sources plus catch-up, 512 requests, 256 MiB of raw working data, 12 MB per response, and 60 minutes of intake. These are engineering bounds rather than service-level promises. A capped or failed run leaves verified ingestion progress and the previous validated release available for the next attempt. GitHub documents standard Actions runner minutes as free for public repositories in its [product billing guidance](https://docs.github.com/en/billing/concepts/product-billing/github-actions); Drive service limits are documented in the [Drive API quota policy](https://developers.google.com/workspace/drive/api/guides/limits). Account-specific quotas and billing were not inspected, and no free-unlimited promise is made.
-
-Long-term growth of raw/state history, latency of the rotating historical recheck, and missing original legacy history that was never retained before migration remain explicit limitations. A latest-date observation does not prove complete historical coverage. Provider change events are observations of different returned values; they are not claims of an officially announced NBP correction.
-
-Open decisions remain business metric definitions and approval, additional sources and their commercial reuse licences, and a future served-backend or availability requirement. The merged implementation does not close those decisions.
-
-## Preservation of previously published history
-
-Raw replay proves that a new release can be rebuilt from its recorded inputs. The historical v1 migration baseline is release `1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea`, produced from code `474bbb61a2bb9d88266808e872f8a7613aca23d6` on 7 September 2026. The read-only migration check against that baseline passed for the verified v2 release; its exact result is recorded above and in the [release evidence](releases/2026-09-07-nbp-platform.md).
-
-The [migration workflow](../.github/workflows/nbp-migration-check.yml) runs manually or after a relevant reviewed merge marked `[verify-nbp-migration]`. It shares production concurrency so it waits for publication and recovery checks. It reads the immutable baseline by release ID, verifies both releases, and checks that every previously published date/currency key (date for gold prices) still exists. It also rejects a regression in the latest observation date. Value changes are allowed under the accepted correction policy. The check writes no Drive objects and does not publish data; a failed check is an acceptance failure, not an automatic rollback.
+The following command reads Drive and creates a new local directory. It refuses to overwrite an existing workspace. Choose a new directory when refreshing a release.
 
 ```bash
-python scripts/check_nbp_migration.py \
+.venv/bin/python scripts/restore_release.py --output-dir .local/nbp-release
+```
+
+The output identifies the pinned release and producer SHA. The directory contains `release.duckdb`, `release.json` and the exact release artifacts, including `semantic_manifest.json` for semantic-enabled releases. Ordinary native DuckDB SQL can query the named medallion tables. No browser table-loading step is needed.
+
+Query a source-defined daily metric:
+
+```bash
+.venv/bin/python scripts/query_metrics.py \
+  --database .local/nbp-release/release.duckdb \
+  --semantic-manifest .local/nbp-release/semantic_manifest.json \
+  --metric nbp_table_c_bid \
+  --start-date 2026-09-01 \
+  --end-date 2026-09-04 \
+  --output .local/nbp-table-c-bid.csv
+```
+
+Use a date range covered by the release. Required daily currency/source or commodity dimensions are supplied automatically. Missing publications yield no fabricated rows. The input database stays read-only and native MetricFlow runs without network access. This interface rejects incompatible definitions/grain; arbitrary raw `mf` queries can bypass the safeguards and are not the governed interface.
+
+The five definitions are in [the source-methodology document](nbp-business-definitions.md) and `models/semantic/nbp_metrics.yml`. They preserve A/B middle rates, C buy/sell rates and NBP gold PLN/gram values. There is no implied time sum, period average, conversion, return, spread or forward filling. A static browser portal does not host the Python MetricFlow engine; local/native queries and CSV output are the supported semantic experience.
+
+## Recovery and explicit promotion
+
+A failed ingestion retains its verified progress. A failed candidate validation leaves the old current release selected. After correcting the cause, rerun the same incremental operation; do not delete raw/state files.
+
+For a bad current release after publication, use **NBP data platform → Run workflow → promote_retained_release**. Enter the retained target UUID and the current UUID you actually observed. The operation:
+
+1. Verifies the expected current release has not changed and its manifest identity/checksum is intact. Damaged current datasets or catalogue artifacts do not prevent recovery; a missing or damaged current manifest requires separate investigation.
+2. Locates exactly one retained target, reads/verifies its files and SQL-visible content/provenance.
+3. Writes an append-only promotion record and checks pointer drift again.
+4. Changes only the current release reference, retaining both releases.
+
+It does not rebuild old data using new model code. It does not make Drive transactional. A pointer mismatch stops; refresh the current identity and investigate instead of forcing the operation. Promotion is implemented/tested with isolated stores; do not assume a destructive live rollback drill occurred unless the delivery evidence says so.
+
+The former migration workflow is retired because its one-time acceptance passed. Its read-only script remains available for a deliberate historical comparison:
+
+```bash
+.venv/bin/python scripts/check_nbp_migration.py \
   --baseline-release-id 1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea \
   --baseline-code-sha 474bbb61a2bb9d88266808e872f8a7613aca23d6
 ```
 
-The result records the compared release identities and per-table missing-key counts. A pass covers the previously published key set; it does not establish that NBP's historical API contains every original version or that no source-side revision occurred.
+## Capacity, archive and limits
+
+Effective ingestion settings are in `config/nbp-platform.yaml`; source metadata is in `config/sources.yaml`. The native build also has explicit observation/byte limits. Limits are safety bounds, not service promises.
+
+```bash
+.venv/bin/python scripts/check_platform_health.py --read-drive
+.venv/bin/python scripts/check_platform_health.py --local-state .local/nbp-release/ingestion-state.json
+```
+
+Health checks are read-only. They distinguish build headroom, unique raw bytes, repeated observation evidence, state JSON size, bounded project inventory and account storage allowance. Incomplete inventory or unavailable quota is reported as unknown, not zero. At 70% of a build/state bound, the report requires a capacity review before expansion; it does not increase caps or delete evidence automatically.
+
+Current retention is **retain all, no automatic deletion**. Immutable raw, attempt/state snapshots and release manifests support audit/replay. Repeated observations are retained because an A→B→A value history is meaningful. Long-term compaction and reference-aware garbage collection need a separately tested migration before limits are reached. Deleting files merely because they are old can break retained release recovery.
+
+Source disappearance is an investigation event, not a deletion instruction. Current-value tables keep the last observed record. A 404 is never a withdrawal. Currency disappearance/reappearance within a returned publication is detected; entire missing publications remain an explicitly limited case. Failure-attempt snapshots may update operational attempt metadata, but do not advance coverage or the successful-observation sequence.
+
+Raw history before the original migration was not retained in all cases and cannot be recreated. Rotating historical rechecks detect changes later; NBP does not provide the correction feed assumed by a CDC database. Use [the revision decision](decisions/0001-nbp-corrections.md) for exact semantics.
