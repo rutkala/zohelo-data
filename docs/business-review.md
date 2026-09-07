@@ -7,3 +7,5 @@ Answer a listed question in chat with its ID and your choice or context. The ass
 ## Recovery
 
 If you lose a draft or cannot find the question, reopen [the delivery plan](deliverables.md), copy the relevant question ID, and send the ID with your answer in chat. If the repository page is unavailable, share the answer and any available context in chat; the assistant will restore it to the canonical record. No browser-local response is required or treated as approval.
+
+If you saved answers in the earlier portal form, [recover the saved input](https://data.zohelo.com/?view=review) in the same browser and profile. That page is read-only and lets you copy or download the draft; it does not submit an answer or approve a metric.

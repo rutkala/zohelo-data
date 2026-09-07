@@ -6,7 +6,9 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 Updated 7 September 2026. The verified NBP v2 data foundation is live. It contains all four NBP sources through modeled gold, source and lineage metadata, fresh native SQL reads, exact raw replay, and preservation of every key from the preceding silver release. Governed metrics and a semantic serving layer are **not** complete.
 
-The current portal code is on `main` at [`bed463`](https://github.com/rutkala/zohelo-data/commit/bed463) ([PR 62](https://github.com/rutkala/zohelo-data/pull/62)) and its portal changes are deployed. The owner has rejected project-management and owner-review material inside the data portal or catalogue. The corrective data-first catalogue and full SQL experience are now active technical work; they still need portal validation, CI, and deployment before being called live. The catalogue is for published release data, source status, lineage, and approved metric definitions. This page is the single project-status and owner-question record; answer a question ID in chat and the assistant will maintain it.
+The portal correction in [PR 63](https://github.com/rutkala/zohelo-data/pull/63) is deployed at [`1f82d96`](https://github.com/rutkala/zohelo-data/commit/1f82d96f45658109643471d36c91eece75536e84). It provides one native dbt Data catalogue, automatic loading for schema-qualified SELECT queries, and the focused slate/teal layout. [Browser and production-build checks](https://github.com/rutkala/zohelo-data/actions/runs/34115409234) and [deployment evidence](https://github.com/rutkala/zohelo-data/actions/runs/34115881096) verify the delivery.
+
+This page is the single project-status and owner-question record. Answer a question ID in chat and the assistant will maintain it. The portal contains data exploration and catalogue features; project planning stays here.
 
 **Status meanings:** **Done** is delivered and evidenced. **In progress** is active technical work. **Not started** is technical work that has not begun. **Waiting for your input** needs one owner business decision. **Deferred** is intentionally postponed.
 
@@ -22,13 +24,14 @@ The current portal code is on `main` at [`bed463`](https://github.com/rutkala/zo
 | D4 | First governed NBP metric definition and acceptance examples | **Waiting for your input** | See **Q-M1**. |
 | D4 | Executable semantic definitions, checked metric values, and a native metric-serving experience | **Not started** | Technical implementation starts after the metric scope is agreed. The synthetic MetricFlow check is runtime evidence only. |
 | D5. Business data catalogue | Released source, dataset-status, and lineage metadata | **Done** | The v2 release binds four source records and dbt lineage to published data. |
-| D5 | One native dbt catalogue for published data, lineage, and metric definitions; no project-management or owner-review UI | **In progress** | Corrective data-first catalogue work is active and awaits portal checks, CI, and deployment. The current release has no published metric definitions. |
+| D5 | One native dbt catalogue for published data, lineage, and metric definitions; no project-management or owner-review UI | **Done** | One native dbt viewer is deployed for the connected release. The current release has no published metric definitions. |
+| D5 | Complete provider licence/reuse, frequency and coverage metadata in the catalogue | **Not started** | The native viewer and released ingestion status are delivered; these further approved catalogue fields still require technical metadata work. |
 | D5 | Approved metric definitions and executable semantic lineage in the catalogue | **Not started** | Depends on question Q-M1 and D4 implementation. |
 | D6. Source expansion research and onboarding | Candidate-source research | **Done** | [Eurostat and WDI inventory](source-candidates.md) records access, reuse evidence, attribution, and exceptions. |
 | D6 | Select the next source and intended business use | **Waiting for your input** | See **Q-S1**. |
 | D6 | Onboard a selected source | **Not started** | Technical work begins only after selection and dataset-specific reuse review. |
-| D7. Data-first portal and SQL experience | Automatically load every released table referenced by SQL, including joins, unions, and CTEs, within the browser download limit | **In progress** | Active implementation; portal checks, CI, and deployment are required before this is live. |
-| D7 | Focused modern palette and layout that supports the catalogue and SQL experience | **In progress** | Authorized UI enhancement; keep the scope bounded to the data-first experience and validate it before calling it deployed. |
+| D7. Data-first portal and SQL experience | Automatically load released tables referenced by schema-qualified SELECT queries, including joins, unions, and CTEs, within the browser download limit | **Done** | Normal Run loads the referenced published tables; browser tests pass. |
+| D7 | Focused modern palette and layout that supports the catalogue and SQL experience | **Done** | Focused Home/navigation, slate/teal light and dark palettes, and the clearer Browser workspace label are deployed. |
 
 Items marked **In progress** or **Not started** are technical work. Only rows marked **Waiting for your input** need an owner decision.
 
@@ -38,7 +41,7 @@ These are the only open owner questions. Reply in chat with an ID and your answe
 
 | ID | Decision needed | Research |
 | --- | --- | --- |
-| Q-M1 | What is the first NBP business use case? Choose published daily values, daily values plus a defined Table C spread, or describe a different decision/comparison. Include the table, currency or commodity, period, and missing-observation rule if relevant. | [NBP business-definition proposals](nbp-business-definitions.md) |
+| Q-M1 | What is the first NBP business use case? Choose published daily values, daily values plus a defined Table C spread, or describe a different decision/comparison. | [NBP business-definition proposals](nbp-business-definitions.md) |
 | Q-S1 | What source or topic should be considered next: Eurostat, World Bank WDI, or another source? State the intended business use. | [Candidate-source research](source-candidates.md) |
 
 ## Evidence and current limits

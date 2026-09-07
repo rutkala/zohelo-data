@@ -1,8 +1,8 @@
 # Joining NBP v2 tables in the portal
 
-Reference the released physical tables directly in SQL. When **Run** is selected, the portal is being updated to identify referenced released tables and load them automatically, including references inside joins, unions, and CTEs. You do not need to preload tables in the Explorer or use a special join action.
+Reference the released physical tables directly in SQL. When **Run** is selected, the portal identifies schema-qualified published tables in SELECT queries and loads them automatically, including references inside joins, unions, and CTEs. You do not need to preload tables in the Explorer or use a special join action.
 
-The automatic load has a combined 64 MiB Google Drive download budget per browser DuckDB session. A query whose referenced released tables exceed the budget should show an actionable limit error before execution. This is active portal work and is not live until portal validation and deployment pass.
+The automatic load has a combined 64 MiB Google Drive download budget per browser DuckDB session. A query whose referenced released tables exceed the budget should show an actionable limit error before execution. This behavior is deployed in [PR 63](https://github.com/rutkala/zohelo-data/pull/63).
 
 This example joins published FX quotations to their currency label and calendar date:
 
