@@ -20,7 +20,7 @@ from business_catalog import build_business_catalog
 from drive_release_store import DriveReleaseStore
 from ingestion.drive_state_store import DriveStateStore
 from ingestion.nbp_http import fetch_response
-from ingestion.nbp_state import (commit_response, list_successful_response_descriptors,
+from ingestion.nbp_state import (LoadedState, commit_response, list_successful_response_descriptors,
                                  load_state, plan_requests, response_envelope,
                                  source_specs_from_config)
 from release_protocol import publish_release
@@ -105,7 +105,14 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
                                       "end_date": plan.requested_end_date.isoformat(), "http_status": status,
                                       "outcome": result.outcome, "attempt_file_id": result.attempt_file_id}), flush=True)
                     raise ValueError("NBP response failed validation; attempt retained and coverage unchanged")
-                loaded = load_state(store, control, specs)
+                # The commit already read back and verified both immutable state
+                # snapshot and mutable pointer. Keep those exact pointer bytes
+                # for the next commit's fresh drift comparison instead of
+                # downloading the same objects again.
+                loaded = LoadedState(
+                    result.state, result.pointer_file_id, result.pointer_raw,
+                    result.snapshot_file_id,
+                )
                 totals["requests"] += 1
                 totals["retrieved_bytes"] += len(body)
                 totals["network_retries"] += retries

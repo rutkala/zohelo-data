@@ -1,6 +1,6 @@
 # NBP platform operations
 
-**Status: Feature branch implementation; end-to-end and live v2 proof pending.** The current live consumer remains on the validated v1 silver release. A v2 platform release is not claimed until the new workflow has completed its restore, query, and raw-replay checks.
+**Status: PR57 is merged on `main`; live v2 proof remains pending.** Data/portal checks passed, while live bootstrap [run 34089760722](https://github.com/rutkala/zohelo-data/actions/runs/34089760722) is still running. The current live consumer remains on the validated v1 silver release; a v2 platform release is not claimed until final coverage, restore, query, and raw-replay checks pass.
 
 ## Entry point and workflow
 
@@ -24,14 +24,14 @@ Outside GitHub Actions, the runner still requires an explicitly selected Drive r
 
 Each successful response is retained as immutable raw bytes with its Drive file ID and SHA-256. Append-only attempts, immutable state snapshots, and the current-state pointer record request progress and provenance. Pointer updates use readback and drift detection; Drive does not provide compare-and-swap here. Raw and state history has no garbage collection, so retention growth must be measured before a long-running deployment.
 
-The feature branch builds 15 datasets: four bronze source-aligned tables, four silver tables, `nbp_change_events`, `fact_fx_quotes`, `fact_gold_prices`, `dim_date`, `dim_currency`, `dim_source_table`, and `dim_commodity`. The release includes the four-source business catalogue and dbt ancestor lineage. Its metrics list is empty with `metrics_status=awaiting_business_approval`; no aggregation, return, spread, or other business metric is invented.
+The merged platform build defines 15 datasets: four bronze source-aligned tables, four silver tables, `nbp_change_events`, `fact_fx_quotes`, `fact_gold_prices`, `dim_date`, `dim_currency`, `dim_source_table`, and `dim_commodity`. The release includes the four-source business catalogue and dbt ancestor lineage. Its metrics list is empty with `metrics_status=awaiting_business_approval`; no aggregation, return, spread, or other business metric is invented.
 
 Catalogue dataset metadata contains business fields only: `dataset_id`, `table_name`, `layer`, `model_name`, `row_count`, `min_date`, `max_date`, `date_column`, and `columns`. Scratch paths and model IDs are excluded before the catalogue artifact is written.
 
 ## Safety bounds and limitations
 
-The current runner bounds one invocation to 2,048 observation batches, 512 requests, 256 MiB of raw working data, 12 MB per response, and 45 minutes of intake. These are engineering bounds rather than service-level promises. A capped or failed run leaves verified ingestion progress and the previous validated release available for the next attempt.
+The current runner bounds one invocation to 2,048 observation batches total across the four sources plus catch-up, 512 requests, 256 MiB of raw working data, 12 MB per response, and 45 minutes of intake. These are engineering bounds rather than service-level promises. A capped or failed run leaves verified ingestion progress and the previous validated release available for the next attempt. GitHub documents standard Actions runner minutes as free for public repositories in its [product billing guidance](https://docs.github.com/en/billing/concepts/product-billing/github-actions); Drive service limits are documented in the [Drive API quota policy](https://developers.google.com/workspace/drive/api/guides/limits). Account-specific quotas and billing were not inspected, and no free-unlimited promise is made.
 
 Long-term growth of raw/state history, latency of the rotating historical recheck, and missing original legacy history that was never retained before migration remain explicit limitations. A latest-date observation does not prove complete historical coverage. Provider change events are observations of different returned values; they are not claims of an officially announced NBP correction.
 
-Open decisions remain business metric definitions and approval, additional sources and their commercial reuse licences, and a future served-backend or availability requirement. The feature branch implementation does not close those decisions.
+Open decisions remain business metric definitions and approval, additional sources and their commercial reuse licences, and a future served-backend or availability requirement. The merged implementation does not close those decisions.

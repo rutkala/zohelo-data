@@ -7,7 +7,7 @@ Data Platform for zohelo.com
 
 [Delivery plan](docs/deliverables.md) — Approved scope for completing NBP, governed metrics and the business data catalogue.
 
-[NBP platform operations](docs/nbp-platform-operations.md) — Feature-branch entrypoint, workflow modes, release guard, bounds and current proof status.
+[NBP platform operations](docs/nbp-platform-operations.md) — Merged entrypoint, workflow modes, release guard, bounds and current proof status.
 
 [Foundation audit](docs/audits/2026-09-06-foundation.md) — Evidence, completed fixes and remaining release blockers.
 
@@ -19,4 +19,4 @@ Data Platform for zohelo.com
 
 [Agent instructions](AGENTS.md) — Shared setup, validation, and contribution guidance for coding agents.
 
-The feature branch contains the consolidated [`NBP data platform`](.github/workflows/daily-ingestion.yml) workflow and `python src/nbp_platform.py --mode ...` entrypoint. The current live consumer remains on the validated v1 silver release until a v2 platform run is proven and explicitly confirmed.
+PR57 merged the consolidated [`NBP data platform`](.github/workflows/daily-ingestion.yml) workflow and `python src/nbp_platform.py --mode ...` entrypoint on `main`. Data and portal checks passed; live bootstrap remains in progress, and the current live consumer remains on the validated v1 silver release until v2 coverage and publication are proven and explicitly confirmed.

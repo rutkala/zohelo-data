@@ -90,6 +90,7 @@ class CommitResult:
     state: dict[str, Any]
     snapshot_file_id: str | None
     pointer_file_id: str | None
+    pointer_raw: bytes | None
     attempt_file_id: str
     raw_file_id: str | None
     outcome: str
@@ -380,8 +381,8 @@ def commit_response(
     candidate["updated_at_utc"] = finished
     _validate_state(candidate, specs)
     snapshot_id = _write_snapshot(store, control_root_id, candidate)
-    pointer_id = _advance_pointer(store, control_root_id, loaded, snapshot_id, candidate)
-    return CommitResult(candidate, snapshot_id, pointer_id, attempt_id, resolved_raw_id, validation.outcome, True)
+    pointer_id, pointer_raw = _advance_pointer(store, control_root_id, loaded, snapshot_id, candidate)
+    return CommitResult(candidate, snapshot_id, pointer_id, pointer_raw, attempt_id, resolved_raw_id, validation.outcome, True)
 
 
 def successful_response_observation_descriptors(state: Mapping[str, Any], source_id: str | None = None) -> list[dict[str, Any]]:
@@ -440,8 +441,8 @@ def _advance_failed_attempt(
     candidate["updated_at_utc"] = finished
     _validate_state(candidate, specs)
     snapshot_id = _write_snapshot(store, root, candidate)
-    pointer_id = _advance_pointer(store, root, loaded, snapshot_id, candidate)
-    return CommitResult(candidate, snapshot_id, pointer_id, attempt_id, raw_file_id, "parse_or_http_error", False)
+    pointer_id, pointer_raw = _advance_pointer(store, root, loaded, snapshot_id, candidate)
+    return CommitResult(candidate, snapshot_id, pointer_id, pointer_raw, attempt_id, raw_file_id, "parse_or_http_error", False)
 
 
 def _ensure_raw_reference(store: NBPStateStore, root: str, source_id: str, digest: str, raw_file_id: str, size_bytes: int) -> tuple[str, str]:
@@ -496,7 +497,7 @@ def _write_snapshot(store: NBPStateStore, root: str, state: dict[str, Any]) -> s
     return file_id
 
 
-def _advance_pointer(store: NBPStateStore, root: str, loaded: LoadedState, snapshot_id: str, state: dict[str, Any]) -> str:
+def _advance_pointer(store: NBPStateStore, root: str, loaded: LoadedState, snapshot_id: str, state: dict[str, Any]) -> tuple[str, bytes]:
     current = _read_pointer(store, root)
     current_raw = current[1] if current else None
     if current_raw != loaded.pointer_raw:
@@ -511,7 +512,7 @@ def _advance_pointer(store: NBPStateStore, root: str, loaded: LoadedState, snaps
         pointer_id = _require_id(store.create("current-ingestion-state.json", data, root), "state pointer id")
         if _read(store, pointer_id, "state pointer") != data:
             raise UncertainStatePointerError("new current-ingestion-state pointer did not read back exactly")
-        return pointer_id
+        return pointer_id, data
     pointer_id = current[0]
     try:
         store.replace(pointer_id, data)
@@ -521,12 +522,12 @@ def _advance_pointer(store: NBPStateStore, root: str, loaded: LoadedState, snaps
         except Exception as read_exc:
             raise UncertainStatePointerError("state pointer update failed and could not be read back") from read_exc
         if after == data:
-            return pointer_id
+            return pointer_id, data
         raise UncertainStatePointerError("state pointer update outcome is uncertain; prior pointer remains usable") from exc
     after = _read(store, pointer_id, "state pointer")
     if after != data:
         raise UncertainStatePointerError("state pointer readback differs after update")
-    return pointer_id
+    return pointer_id, data
 
 
 def _read_pointer(store: NBPStateStore, root: str) -> tuple[str, bytes, dict[str, Any]] | None:

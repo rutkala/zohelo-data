@@ -201,6 +201,21 @@ class NBPStateTests(unittest.TestCase):
         self.assertEqual(restored.state["sources"][plan_a.source_id]["last_checked_through_date"], "2002-01-02")
         self.assertIsNone(restored.state["sources"][plan_b.source_id]["last_checked_through_date"])
 
+    def test_verified_pointer_bytes_reused_in_process_still_detect_next_commit_drift(self):
+        loaded = self._loaded()
+        plan = plan_requests(loaded.state, self.specs, date(2002, 1, 2), recent_recheck_days=1)[0]
+        first = self._commit(loaded, plan)
+        self.assertEqual(first.pointer_raw, self.store.files[first.pointer_file_id]["data"])
+        reused = LoadedState(first.state, first.pointer_file_id, first.pointer_raw, first.snapshot_file_id)
+
+        competing = json.loads(first.pointer_raw)
+        competing["updated_at_utc"] = "2026-09-07T00:00:01Z"
+        self.store.files[first.pointer_file_id]["data"] = json.dumps(
+            competing, sort_keys=True, separators=(",", ":")
+        ).encode()
+        with self.assertRaisesRegex(NBPStateError, "pointer changed"):
+            self._commit(reused, plan, body=a_body("2002-01-02", 4.1))
+
     def test_uncertain_pointer_readback_does_not_claim_commit_and_fresh_restore_works(self):
         loaded = self._loaded()
         plan = plan_requests(loaded.state, self.specs, date(2002, 1, 2), recent_recheck_days=1)[0]
