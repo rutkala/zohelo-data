@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 7 September 2026. **The audit implementation is in final validation; it is not yet the verified live release.** The existing 15-table NBP release and portal remain available. No owner methodology question is blocking the technical work.
+Updated 7 September 2026. **The audit implementation is merged and its code/browser checks passed. The first live audit data release is on hold for explicit owner approval (H-LIVE).** Automatic approval review rejected that production write. Scheduled publication is temporarily paused; the existing 15-table release remains available. No methodology question blocks the five daily metrics.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -12,14 +12,14 @@ This is the single project-status and owner-question record. Research, architect
 
 | Deliverable | Status | What this means |
 | --- | --- | --- |
-| D1. Repository, architecture and all Actions audit | **In progress** | Audits complete; publication safeguards, recovery, workflow hardening, obsolete-path cleanup and capacity reporting are under integrated validation. [Audit](audits/2026-09-07-readiness.md), [all workflow decisions](audits/2026-09-07-workflows.md). |
+| D1. Repository, architecture and all Actions audit | **Done** | All nine original workflows and the repository/data architecture were audited. Repairs are merged and tested; live acceptance is H-LIVE. [Audit](audits/2026-09-07-readiness.md), [all workflow decisions](audits/2026-09-07-workflows.md). |
 | D2. Reproducible environment and shared instructions | **Done** | Pinned Python/Node dependencies, fresh-container checks and standard human/agent instructions exist. Audit updates preserve the supported npm/Python path. |
-| D3. Source contracts, correction evidence and gold design | **In progress** | Source definitions researched; missing/reappeared currency candidates, typed-record hashes and explicit ingestion policy are implemented and being verified. No source values are rescaled or deleted. |
-| D4. NBP end-to-end including semantic queries | **In progress** | Five source-defined daily MetricFlow metrics and a read-only local restore/query interface are implemented. Live metric/publication/replay evidence still needs the reviewed run. |
-| D5. One data catalogue with source and metric lineage | **In progress** | Existing native dbt viewer stays; release metadata now includes methodology/frequency/reuse evidence and real semantic definitions. Matching publication is pending. |
+| D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. First production application of the new detection rules is covered by H-LIVE. |
+| D4. NBP end-to-end including semantic queries | **On hold — H-LIVE** | Five daily MetricFlow metrics, local restore and native queries are implemented and pass real-engine tests. The production write, fresh live queries, raw replay and capacity inventory remain to be run. |
+| D5. One data catalogue with source and metric lineage | **On hold — H-LIVE** | The existing native viewer passes metric discovery, provider metadata and physical-lineage browser tests. Those new definitions still need a matching live data publication. |
 | D6. Define and onboard additional sources | **Waiting for input** | Candidate research exists. Selection is the next topic after this audit's verification; no new source is being ingested. Onboarding is **Not started**. |
-| D7. Portal UX and shared desktop/mobile theme | **In progress** | Prior portal delivery is done. Only a narrow Run-button palette alignment, identity/toolchain cleanup and regression checks are in this audit. |
-| Working agreement for the Zohelo-data subproject | **In progress** | [Collaboration instructions](collaboration.md) define focused chats, GitHub status, Drive artifacts and human-operable handoffs; included in the pending reviewed change. |
+| D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
+| Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
 
 ## Explicit holds and reopening conditions
@@ -28,6 +28,7 @@ These are visible limits, not claims of completed functionality. None requires i
 
 | ID | Held work | Why / when to reopen |
 | --- | --- | --- |
+| H-LIVE | First audit production publication and live acceptance | Automatic approval review rejected the production-data write because the audit instruction did not explicitly authorize that side effect. Code/fixtures/CI are complete. Await explicit approval to publish a new NBP release to Drive, switch its current reference after validation, run fresh SQL/MetricFlow/raw replay/health checks, and restore the 02:00 UTC schedule. No live rollback drill or data deletion is proposed. |
 | H-CAP | Reference-safe state compaction and automatic archive/release deletion | Current policy retains all evidence. Capacity reporting warns at 70% of any build/state bound. Design/test compaction before that threshold or before onboarding a source that would cross it; never raise caps or delete old files blindly. |
 | H-SERVE | Always-on/multi-user semantic API | On-demand native MetricFlow and CSV are the present supported experience. Reopen for a named BI integration, availability need or shared-service use case with hosting/authentication requirements. |
 | H-DERIVED | Spread, period average, return, conversion and other derived metrics | Optional business calculations need an intended use and explicit aggregation/missing-date rules. Source-defined daily values proceed without them. |
@@ -44,13 +45,14 @@ These are visible limits, not claims of completed functionality. None requires i
 
 | ID | Next decision | Preparation |
 | --- | --- | --- |
+| Q-LIVE | Approve the tested audit's production publication and restore scheduled ingestion? | [Reviewable code and checks](https://github.com/rutkala/zohelo-data/pull/66); exact scope and reason are H-LIVE above. |
 | Q-S1 | Which source/topic should be evaluated next, and what decision or analysis should it support? | [Eurostat and World Bank WDI research](source-candidates.md), plus any other source the owner proposes. Ask after the current verification is complete. |
 
 ## Evidence
 
 Previous verified release: `84784104-e014-4550-bb0c-095d967230b5`, producer [`71f79fc`](https://github.com/rutkala/zohelo-data/commit/71f79fc4fbaa7f8c1f2b2133b4f62106f13fcf02). It contains 15 tables and 429,795 cleaned observations, with fresh SQL and exact raw replay. [Prior portal/data evidence](releases/2026-09-07-medallion-portal.md).
 
-The current audit's final CI, deployment, actual metric-query, replay and capacity results will be recorded in one dated release evidence document before these active rows become Done. Local passing fixtures alone do not establish a live delivery.
+[Audit delivery evidence](releases/2026-09-07-platform-readiness.md) records merged code, 138 data tests, 678 portal unit tests and 14 browser flows for each deployment configuration. It separates completed deployment from the blocked production-data run. New live metric/replay/capacity results must be added before H-LIVE and the held rows can be closed.
 
 [Current architecture](architecture.md) explains tool choices and commercial/service boundaries. [Operations](nbp-platform-operations.md) gives the Actions and command-line path without AI. [Working agreement](collaboration.md) explains how to start a focused new chat and resume from this record.
 
