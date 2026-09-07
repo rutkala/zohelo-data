@@ -1,0 +1,7 @@
+metricflow_runtime_fixture:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('METRICFLOW_FIXTURE_DUCKDB_PATH') }}"
+      threads: 1

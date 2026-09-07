@@ -6,7 +6,9 @@ on:
     paths:
       - 'portal/**'
       - 'models/**'
+      - 'macros/**'
       - 'dbt_project.yml'
+      - '.dbtignore'
       - 'profiles.yml'
       - 'requirements.txt'
       - '.python-version'

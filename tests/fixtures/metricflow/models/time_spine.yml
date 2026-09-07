@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: all_days
+    description: Synthetic daily time spine for the MetricFlow runtime proof.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day

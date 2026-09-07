@@ -8,6 +8,8 @@ on:
       - 'src/release_protocol.py'
       - 'src/drive_release_store.py'
       - 'models/**'
+      - 'macros/**'
+      - '.dbtignore'
       - '.github/workflows/transform-silver.yml'
   workflow_dispatch:
   workflow_run:

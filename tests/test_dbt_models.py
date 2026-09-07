@@ -154,6 +154,13 @@ class NbpDbtFixtureTests(unittest.TestCase):
         self.assertIn(model_id, manifest["nodes"])
         self.assertIn(model_id, catalog["nodes"])
         self.assertIn("model.zohelo_data.stg_nbp_table_a", manifest["nodes"]["model.zohelo_data.mart_exchange_rates_daily"]["depends_on"]["nodes"])
+        for resource_type in ("nodes", "metrics", "semantic_models"):
+            for resource in manifest.get(resource_type, {}).values():
+                with self.subTest(resource_type=resource_type, resource=resource.get("unique_id")):
+                    self.assertFalse(
+                        resource.get("original_file_path", "").startswith("tests/fixtures/"),
+                        "standalone test fixtures must not enter the production dbt manifest",
+                    )
 
     def test_missing_bronze_input_fails_instead_of_passing_an_empty_build(self):
         empty_root = self.workspace / "missing-input"
