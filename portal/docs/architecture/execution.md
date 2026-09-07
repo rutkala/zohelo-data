@@ -260,5 +260,5 @@ any of this.
 | real DuckDB coercions | `services/duckdb/__tests__/engineIntegration.test.ts` |
 | app-level regressions | `e2e/smoke.spec.ts` |
 
-Note that `bun run typecheck` (`tsc -b --noEmit`) does **not** catch everything
-— `--noEmit` is ignored in build mode. `bun run build` is the real gate.
+Note that `npm run typecheck` (`tsc -b --noEmit`) does **not** catch everything
+— `--noEmit` is ignored in build mode. `npm run build` is the real gate.

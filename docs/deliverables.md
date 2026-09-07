@@ -4,58 +4,55 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 7 September 2026. The verified NBP v2 data foundation is live. It contains all four NBP sources through modeled gold, source and lineage metadata, fresh native SQL reads, exact raw replay, and preservation of every key from the preceding silver release. Governed metrics and a semantic serving layer are **not** complete.
+Updated 7 September 2026. **The audit implementation is in final validation; it is not yet the verified live release.** The existing 15-table NBP release and portal remain available. No owner methodology question is blocking the technical work.
 
-The portal and matching catalogue update in [PR 64](https://github.com/rutkala/zohelo-data/pull/64) is **Done**, deployed at [`71f79fc`](https://github.com/rutkala/zohelo-data/commit/71f79fc4fbaa7f8c1f2b2133b4f62106f13fcf02). It aligns medallion dbt folders/schemas/aliases, makes the single native catalogue usable on phones, and adds table menus, drag-and-drop and session views. Ordinary SQL still loads referenced published tables automatically.
+This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
-[Delivery evidence](releases/2026-09-07-medallion-portal.md) records 678 portal tests, 94 data tests, 24 browser executions across both deployment paths, successful deployment, and a live query/view check. The matching 15-table data release passed fresh SQL restore and exact raw replay. Views last for the browser database session; shared/durable user-authored views are not part of this delivery.
+**Status meanings:** **Done** = delivered and evidenced; **In progress** = active work or verification; **On hold** = explicitly excluded for now with a reason and reopening condition; **Waiting for input** = an owner choice; **Not started** = future implementation; **Cancelled** = intentionally retired.
 
-This page is the single project-status and owner-question record. Answer a question ID in chat and the assistant will maintain it. The portal contains data exploration and catalogue features; project planning stays here.
-
-**Status meanings:** **Done** is delivered and evidenced. **In progress** is active technical work. **Not started** is technical work that has not begun. **Waiting for your input** needs one owner business decision. **Deferred** is intentionally postponed.
-
-| Deliverable | Work item | Status | Current position |
-| --- | --- | --- | --- |
-| D1. Platform, repository and GitHub Actions audit | Audit and essential platform repairs | **Done** | [Audit evidence](audits/2026-09-07-platform.md) records the workflow, environment, authorization, publication, recovery, and release repairs. |
-| D1 | Routine incremental-run, retained-state growth, peak-memory, browser/query, and account-allowance measurements | **Not started** | Technical follow-up; no owner action is needed. |
-| D2. Reproducible development environment and AI instructions | Pinned environment, fixture checks, and shared instructions | **Done** | Python/Node versions, locked dependencies, container validation, and the fixture path are in place. |
-| D3. Contracts, ingestion rules and gold design | Source contracts, revision policy, full/incremental rules, and NBP gold design | **Done** | See [NBP contracts](nbp-data-contracts.md), [revision policy](decisions/0001-nbp-corrections.md), and [gold design](nbp-gold-design.md). |
-| D3 | Historical FX quote-unit normalization from provider evidence | **Not started** | Technical research is required; API values remain published as received. |
-| D3 | Business aggregation rules | **Waiting for your input** | See **Q-M1**. |
-| D4. Complete NBP end-to-end | All four NBP datasets through bronze, silver, modeled gold, release publication, SQL, portal, and replay | **Done** | [Verified v2 release evidence](releases/2026-09-07-nbp-platform.md) records 15 tables, 429,795 silver observations, fresh SQL, exact raw replay, and prior-key preservation. |
-| D4 | First governed NBP metric definition and acceptance examples | **Waiting for your input** | See **Q-M1**. |
-| D4 | Executable semantic definitions, checked metric values, and a native metric-serving experience | **Not started** | Technical implementation starts after the metric scope is agreed. The synthetic MetricFlow check is runtime evidence only. |
-| D5. Business data catalogue | Released source, dataset-status, and lineage metadata | **Done** | The v2 release binds four source records and dbt lineage to published data. |
-| D5 | One native dbt catalogue for published data, lineage, and metric definitions; no project-management or owner-review UI | **Done** | One native dbt viewer is deployed for the connected release. The current release has no published metric definitions. |
-| D5 | Complete provider licence/reuse, frequency and coverage metadata in the catalogue | **Not started** | The native viewer and released ingestion status are delivered; these further approved catalogue fields still require technical metadata work. |
-| D5 | Approved metric definitions and executable semantic lineage in the catalogue | **Not started** | Depends on question Q-M1 and D4 implementation. |
-| D6. Source expansion research and onboarding | Candidate-source research | **Done** | [Eurostat and WDI inventory](source-candidates.md) records access, reuse evidence, attribution, and exceptions. |
-| D6 | Select the next source and intended business use | **Waiting for your input** | See **Q-S1**. |
-| D6 | Onboard a selected source | **Not started** | Technical work begins only after selection and dataset-specific reuse review. |
-| D7. Data-first portal and SQL experience | Automatically load released tables referenced by schema-qualified SELECT queries, including joins, unions, and CTEs, within the browser download limit | **Done** | Normal Run loads the referenced published tables; browser tests pass. |
-| D7 | Medallion catalogue navigation, desktop/touch table actions, drag-and-drop, session views, and responsive UX regressions | **Done** | [Verified delivery](releases/2026-09-07-medallion-portal.md): portal deployed, matching catalogue published, browser checks passed, and all 15 tables restored and rebuilt exactly. |
-| D7 | Focused modern palette and layout that supports the catalogue and SQL experience | **Done** | Focused Home/navigation, slate/teal light and dark palettes, and the clearer Browser workspace label are deployed. |
-
-Items marked **In progress** or **Not started** are technical work. Only rows marked **Waiting for your input** need an owner decision.
-
-## Questions for your input
-
-These are the only open owner questions. Reply in chat with an ID and your answer; the assistant will update this page. The linked documents are research, not decisions or approvals.
-
-| ID | Decision needed | Research |
+| Deliverable | Status | What this means |
 | --- | --- | --- |
-| Q-M1 | What is the first NBP business use case? Choose published daily values, daily values plus a defined Table C spread, or describe a different decision/comparison. | [NBP business-definition proposals](nbp-business-definitions.md) |
-| Q-S1 | What source or topic should be considered next: Eurostat, World Bank WDI, or another source? State the intended business use. | [Candidate-source research](source-candidates.md) |
+| D1. Repository, architecture and all Actions audit | **In progress** | Audits complete; publication safeguards, recovery, workflow hardening, obsolete-path cleanup and capacity reporting are under integrated validation. [Audit](audits/2026-09-07-readiness.md), [all workflow decisions](audits/2026-09-07-workflows.md). |
+| D2. Reproducible environment and shared instructions | **Done** | Pinned Python/Node dependencies, fresh-container checks and standard human/agent instructions exist. Audit updates preserve the supported npm/Python path. |
+| D3. Source contracts, correction evidence and gold design | **In progress** | Source definitions researched; missing/reappeared currency candidates, typed-record hashes and explicit ingestion policy are implemented and being verified. No source values are rescaled or deleted. |
+| D4. NBP end-to-end including semantic queries | **In progress** | Five source-defined daily MetricFlow metrics and a read-only local restore/query interface are implemented. Live metric/publication/replay evidence still needs the reviewed run. |
+| D5. One data catalogue with source and metric lineage | **In progress** | Existing native dbt viewer stays; release metadata now includes methodology/frequency/reuse evidence and real semantic definitions. Matching publication is pending. |
+| D6. Define and onboard additional sources | **Waiting for input** | Candidate research exists. Selection is the next topic after this audit's verification; no new source is being ingested. Onboarding is **Not started**. |
+| D7. Portal UX and shared desktop/mobile theme | **In progress** | Prior portal delivery is done. Only a narrow Run-button palette alignment, identity/toolchain cleanup and regression checks are in this audit. |
+| Working agreement for the Zohelo-data subproject | **In progress** | [Collaboration instructions](collaboration.md) define focused chats, GitHub status, Drive artifacts and human-operable handoffs; included in the pending reviewed change. |
+| Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
 
-## Evidence and current limits
+## Explicit holds and reopening conditions
 
-The current verified v2 Drive release is `84784104-e014-4550-bb0c-095d967230b5`, produced by [`71f79fc`](https://github.com/rutkala/zohelo-data/commit/71f79fc4fbaa7f8c1f2b2133b4f62106f13fcf02). [Current release evidence](releases/2026-09-07-medallion-portal.md) records 15 tables, 429,795 clean Silver observations, all-four-source coverage checked through 6 September, fresh queries, and 1,322,051 exact rows matched across all layers during raw replay. The earlier release `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1` is retained as [historical verification evidence](releases/2026-09-07-nbp-platform.md).
+These are visible limits, not claims of completed functionality. None requires inventing an owner methodology answer to finish the five daily source metrics.
 
-Production builds and browser checks passed in GitHub before merge; the local Workbox/Chromium limitations were not used to waive those gates. The public portal's new query/view flow was also exercised after deployment. The full Drive-backed UI used release fixtures in browser CI, while the actual published data passed independent live restore and replay checks. This verifies a Drive data snapshot, not a completed semantic layer.
+| ID | Held work | Why / when to reopen |
+| --- | --- | --- |
+| H-CAP | Reference-safe state compaction and automatic archive/release deletion | Current policy retains all evidence. Capacity reporting warns at 70% of any build/state bound. Design/test compaction before that threshold or before onboarding a source that would cross it; never raise caps or delete old files blindly. |
+| H-SERVE | Always-on/multi-user semantic API | On-demand native MetricFlow and CSV are the present supported experience. Reopen for a named BI integration, availability need or shared-service use case with hosting/authentication requirements. |
+| H-DERIVED | Spread, period average, return, conversion and other derived metrics | Optional business calculations need an intended use and explicit aggregation/missing-date rules. Source-defined daily values proceed without them. |
+| H-FX | Exhaustive historic currency identity/unit validation | Sampled official comparisons support API normalization; values remain unchanged. Validate the specific currency/history before governed conversion/accounting use. No PLN redenomination transform applies to the post-2002 API. |
+| H-REUSE | Commercial redistribution of NBP data | Official material establishes public read access but did not establish the complete commercial redistribution/attribution grant. Resolve terms for the intended sharing product before releasing that feature. |
+| H-HOST | Commercial hosted service on GitHub Pages | Pages has commercial-hosting restrictions. Select suitable hosting before turning the owner project portal into a commercial data/SaaS service. |
+| H-GIT | Server-side branch protection/rulesets | The branch API reports `main` unprotected; the connector cannot administer this setting. Maintain reviewed PR/check discipline and configure enforcement before adding collaborators or depending on automatic protection. |
+| H-REV | Whole-publication disappearance and transformation-only row-delta ledger | Comparable currency omissions are detected; absent publications are ambiguous. Immutable raw/releases and code/contract versions remain evidence. Reopen for a real anomaly or a model migration requiring explicit cross-release deltas. |
+| H-SCALE | Broad portal feature pruning, module/package restructuring or orchestration/storage migration | The owner asked to keep the portal stable. Reopen against measured performance/maintenance needs or a selected source benchmark; no speculative framework replacement. |
 
-[Foundation audit](audits/2026-09-06-foundation.md) and the [current platform audit](audits/2026-09-07-platform.md) record the verified repair history and the limits still to measure. [NBP platform operations](nbp-platform-operations.md) describes the live implementation and bounds; [silver publication](nbp-silver-publication.md) describes the retained v1 compatibility path. [Earlier v1 release evidence](releases/2026-09-07-nbp-silver.md) is historical context, not a current freshness statement. Verified authorization evidence is available in [PR 53](https://github.com/rutkala/zohelo-data/pull/53) and the [upload verification run](https://github.com/rutkala/zohelo-data/actions/runs/34067541199); neither of those checks published the v2 release.
+## Owner decisions
 
-Historical FX unit normalization remains unproven. No source is approved for expansion, and public access does not establish commercial reuse permission. The release does not establish unlimited free compute, a service-level commitment, or measured performance for larger sources.
+**Q-M1 is resolved for the baseline:** the 7 September instruction authorizes researching and implementing source-defined daily NBP observations. Five definitions are documented in [NBP methodology](nbp-business-definitions.md). It is no longer a blocker. Optional derived metrics are H-DERIVED.
+
+| ID | Next decision | Preparation |
+| --- | --- | --- |
+| Q-S1 | Which source/topic should be evaluated next, and what decision or analysis should it support? | [Eurostat and World Bank WDI research](source-candidates.md), plus any other source the owner proposes. Ask after the current verification is complete. |
+
+## Evidence
+
+Previous verified release: `84784104-e014-4550-bb0c-095d967230b5`, producer [`71f79fc`](https://github.com/rutkala/zohelo-data/commit/71f79fc4fbaa7f8c1f2b2133b4f62106f13fcf02). It contains 15 tables and 429,795 cleaned observations, with fresh SQL and exact raw replay. [Prior portal/data evidence](releases/2026-09-07-medallion-portal.md).
+
+The current audit's final CI, deployment, actual metric-query, replay and capacity results will be recorded in one dated release evidence document before these active rows become Done. Local passing fixtures alone do not establish a live delivery.
+
+[Current architecture](architecture.md) explains tool choices and commercial/service boundaries. [Operations](nbp-platform-operations.md) gives the Actions and command-line path without AI. [Working agreement](collaboration.md) explains how to start a focused new chat and resume from this record.
 
 ## Approved scope by deliverable
 

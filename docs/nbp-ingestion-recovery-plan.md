@@ -1,4 +1,6 @@
-# NBP ingestion and recovery design
+# NBP ingestion and recovery design (historical)
+
+> **Superseded implementation plan.** This document preserves the design and acceptance state before the verified NBP v2 release. It is not an operations guide or a current progress report. Use [NBP platform operations](nbp-platform-operations.md) for the implemented workflow and current limits, and [the delivery plan](deliverables.md) for current status.
 
 **Status: Implemented on the feature branch; end-to-end proof and the current live release are pending.** This design covers the four configured NBP sources and the immutable platform-release protocol. It sets technical recovery behavior without promising an owner-facing update cadence, SLA, or metric definition.
 

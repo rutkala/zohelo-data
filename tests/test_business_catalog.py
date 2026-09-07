@@ -21,6 +21,30 @@ SOURCE_CONFIG = {
 
 
 class BusinessCatalogTests(unittest.TestCase):
+    def test_only_declared_source_metrics_and_real_semantic_dependencies_are_catalogued(self):
+        manifest = {
+            "nodes": {"model.p.fact": {"name": "fact", "resource_type": "model", "schema": "04_gold"}},
+            "semantic_models": {"semantic_model.p.quotes": {
+                "name": "quotes", "resource_type": "semantic_model",
+                "depends_on": {"nodes": ["model.p.fact"]},
+            }},
+            "metrics": {
+                "metric.p.daily_quote": {"name": "daily_quote", "resource_type": "metric",
+                    "config": {"meta": {"definition_status": "source_defined", "unit": "PLN"}},
+                    "depends_on": {"nodes": ["semantic_model.p.quotes"]}},
+                "metric.p.proposal": {"name": "proposal", "resource_type": "metric"},
+            },
+        }
+        result = build_business_catalog(code_sha="c" * 40, source_config=SOURCE_CONFIG,
+            ingestion_state={"sources": {}}, dbt_manifest=manifest,
+            dataset_metadata=[{"model_name": "fact"}])
+        self.assertEqual([x["name"] for x in result["metrics"]], ["daily_quote"])
+        self.assertEqual(result["metrics_status"], "source_defined")
+        self.assertEqual({x["id"] for x in result["lineage"]["nodes"]},
+                         {"model.p.fact", "semantic_model.p.quotes", "metric.p.daily_quote"})
+        self.assertIn({"from": "semantic_model.p.quotes", "to": "metric.p.daily_quote"},
+                      result["lineage"]["edges"])
+
     def test_builds_four_business_labeled_sources_from_observed_config_shape(self):
         state = {
             "sources": {

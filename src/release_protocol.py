@@ -11,7 +11,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from uuid import UUID, uuid4
 
 
@@ -102,6 +102,7 @@ def publish_release(
     measurements: dict[str, Any],
     release_id: str | None = None,
     release_scope: str = "nbp_silver",
+    pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
 
@@ -120,6 +121,10 @@ def publish_release(
         release_id=release_id,
         release_scope=release_scope,
     )
+    if candidate["format_version"] == 2 and pre_promote_validator is None:
+        raise ReleaseProtocolError(
+            "NBP platform publication requires staged content validation before promotion"
+        )
 
     # A valid old pointer is read before *any* candidate remote write.
     previous = _read_pointer(store, root_id)
@@ -189,14 +194,7 @@ def publish_release(
     manifest_file_id = _upload_verified(store, release_folder_id, "release.json", manifest_bytes)
     manifest_sha = _sha256(manifest_bytes)
 
-    # Check again immediately before the only mutable operation.
-    current = _read_pointer(store, root_id)
-    current_raw = current["raw"] if current is not None else None
-    previous_raw = previous["raw"] if previous is not None else None
-    if current_raw != previous_raw:
-        raise ReleaseProtocolError("current-release pointer changed during candidate upload")
-
-    pointer: dict[str, Any] = {
+    staged_pointer: dict[str, Any] = {
         "format_version": 1,
         "release_id": candidate["release_id"],
         "manifest_file_id": manifest_file_id,
@@ -204,7 +202,25 @@ def publish_release(
         "updated_at_utc": _utc_now(),
     }
     if previous is not None:
-        pointer["previous_manifest_file_id"] = previous["value"]["manifest_file_id"]
+        staged_pointer["previous_manifest_file_id"] = previous["value"]["manifest_file_id"]
+    if pre_promote_validator is not None:
+        try:
+            pre_promote_validator(store, dict(staged_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "staged release failed pre-promotion validation; current release retained"
+            ) from exc
+
+    # Check again immediately before the only mutable operation.
+    current = _read_pointer(store, root_id)
+    current_raw = current["raw"] if current is not None else None
+    previous_raw = previous["raw"] if previous is not None else None
+    if current_raw != previous_raw:
+        raise ReleaseProtocolError("current-release pointer changed during candidate upload")
+
+    pointer = staged_pointer
+    # Record the promotion instant after potentially long candidate validation.
+    pointer["updated_at_utc"] = _utc_now()
     pointer_bytes = _json_bytes(pointer)
     pointer_file_id = _write_pointer(store, root_id, previous, pointer_bytes)
 
@@ -214,6 +230,110 @@ def publish_release(
         "manifest_file_id": manifest_file_id,
         "manifest_sha256": manifest_sha,
         "pointer_file_id": pointer_file_id,
+        "manifest": manifest,
+    }
+
+
+def promote_retained_release(
+    store: ReleaseStore,
+    root_id: str,
+    *,
+    target_release_id: str,
+    expected_current_release_id: str,
+    pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
+) -> dict[str, Any]:
+    """Promote one retained, fully verified release behind an exact current pin.
+
+    Callers must serialize this operation with every production publisher. Drive
+    does not provide compare-and-swap, so the exact-current check and final
+    readback detect drift but do not make competing external writers safe.
+    """
+    root_id = _require_id(root_id, "root_id")
+    target_release_id = _parse_release_id(target_release_id)
+    expected_current_release_id = _parse_release_id(expected_current_release_id)
+    if not callable(pre_promote_validator):
+        raise ReleaseProtocolError("retained release promotion requires a content validator")
+
+    current = _read_pointer(store, root_id)
+    if current is None:
+        raise ReleaseProtocolError("no current release exists to pin for retained promotion")
+    if current["value"]["release_id"] != expected_current_release_id:
+        raise ReleaseProtocolError("current release does not match expected-current release ID")
+    if target_release_id == expected_current_release_id:
+        raise ReleaseProtocolError("target release is already current")
+    current_manifest = restore_release(store, current["value"])
+
+    releases_ids = store.find("releases", root_id)
+    if len(releases_ids) != 1:
+        raise ReleaseProtocolError("releases folder is missing or ambiguous")
+    releases_id = _require_id(releases_ids[0], "releases folder id")
+    target_folders = store.find(target_release_id, releases_id)
+    if len(target_folders) != 1:
+        raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
+    target_folder_id = _require_id(target_folders[0], "target release folder id")
+    manifest_ids = store.find("release.json", target_folder_id)
+    if len(manifest_ids) != 1:
+        raise ReleaseProtocolError("target retained release manifest is missing or ambiguous")
+    manifest_file_id = _require_id(manifest_ids[0], "target release manifest id")
+    manifest_bytes = _read_bytes(store, manifest_file_id, "target retained release manifest")
+    manifest = _parse_json_object(manifest_bytes, "target retained release manifest")
+    if manifest.get("release_id") != target_release_id:
+        raise ReleaseProtocolError("target folder and retained release manifest IDs differ")
+    if manifest.get("format_version") != current_manifest.get("format_version"):
+        raise ReleaseProtocolError(
+            "target retained release protocol differs from the current release"
+        )
+
+    target_pointer: dict[str, Any] = {
+        "format_version": 1,
+        "release_id": target_release_id,
+        "manifest_file_id": manifest_file_id,
+        "manifest_sha256": _sha256(manifest_bytes),
+        "updated_at_utc": _utc_now(),
+        "previous_manifest_file_id": current["value"]["manifest_file_id"],
+    }
+    try:
+        pre_promote_validator(store, dict(target_pointer))
+    except Exception as exc:
+        raise ReleaseProtocolError(
+            "target retained release failed validation; current release retained"
+        ) from exc
+
+    audit_id = str(uuid4())
+    audit = {
+        "format_version": 1,
+        "event_id": audit_id,
+        "event_type": "retained_release_promotion_requested",
+        "created_at_utc": _utc_now(),
+        "expected_current_release_id": expected_current_release_id,
+        "expected_current_manifest_file_id": current["value"]["manifest_file_id"],
+        "target_release_id": target_release_id,
+        "target_manifest_file_id": manifest_file_id,
+        "target_manifest_sha256": target_pointer["manifest_sha256"],
+    }
+    audit_folders = store.find("promotion-audits", root_id)
+    if len(audit_folders) > 1:
+        raise ReleaseProtocolError("promotion-audits folder is ambiguous")
+    audit_folder_id = (
+        _require_id(audit_folders[0], "promotion-audits folder id")
+        if audit_folders
+        else _require_id(store.mkdir("promotion-audits", root_id), "promotion-audits folder id")
+    )
+    audit_file_id = _upload_verified(
+        store, audit_folder_id, f"{audit_id}.json", _json_bytes(audit)
+    )
+    target_pointer["promotion_audit_file_id"] = audit_file_id
+
+    observed = _read_pointer(store, root_id)
+    if observed is None or observed["raw"] != current["raw"]:
+        raise ReleaseProtocolError("current-release pointer changed during retained release validation")
+    pointer_file_id = _write_pointer(store, root_id, current, _json_bytes(target_pointer))
+    return {
+        "status": "retained_release_promoted",
+        "target_release_id": target_release_id,
+        "previous_release_id": expected_current_release_id,
+        "pointer_file_id": pointer_file_id,
+        "audit_file_id": audit_file_id,
         "manifest": manifest,
     }
 
@@ -583,8 +703,15 @@ def _validate_platform_artifacts(artifacts: dict[str, bytes], code_sha: str) -> 
     lineage = catalogue.get("lineage")
     if not isinstance(sources, list) or not isinstance(lineage, dict) or not isinstance(lineage.get("nodes"), list) or not isinstance(lineage.get("edges"), list):
         raise ReleaseProtocolError("business-catalog.json has invalid sources or lineage")
-    if not isinstance(catalogue.get("metrics"), list) or catalogue.get("metrics_status") not in {"awaiting_business_approval", "proposed"}:
+    if not isinstance(catalogue.get("metrics"), list) or catalogue.get("metrics_status") not in {"awaiting_business_approval", "proposed", "source_defined"}:
         raise ReleaseProtocolError("business-catalog.json has invalid metrics status")
+    if catalogue.get("metrics_status") == "source_defined":
+        if not {"semantic_manifest.json", "metric-validation.json"}.issubset(artifacts):
+            raise ReleaseProtocolError("source-defined metrics require semantic validation artifacts")
+        semantic = _parse_json_object(artifacts["semantic_manifest.json"], "semantic_manifest.json")
+        validation = _parse_json_object(artifacts["metric-validation.json"], "metric-validation.json")
+        if not isinstance(semantic.get("metrics"), list) or validation.get("status") != "verified" or not isinstance(validation.get("metrics"), list):
+            raise ReleaseProtocolError("source-defined metric artifacts are invalid")
     for source in sources:
         required = ("source_id", "name", "description", "status", "checked_through", "latest_observation_date", "last_successful_ingestion_at", "last_attempt_at", "raw_response_count")
         if not isinstance(source, dict) or any(key not in source for key in required) or source.get("status") != "published_snapshot":
@@ -830,6 +957,8 @@ def _validate_pointer(value: dict[str, Any]) -> None:
         raise ReleaseProtocolError("current-release pointer has invalid updated_at_utc")
     if "previous_manifest_file_id" in value:
         _require_id(value["previous_manifest_file_id"], "pointer previous_manifest_file_id")
+    if "promotion_audit_file_id" in value:
+        _require_id(value["promotion_audit_file_id"], "pointer promotion_audit_file_id")
 
 
 def _upload_verified(store: ReleaseStore, parent_id: str, name: str, data: bytes) -> str:

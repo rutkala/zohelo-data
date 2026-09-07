@@ -169,6 +169,7 @@ function writeIngestionMeta(node: JsonRecord, source: BusinessCatalogueSource): 
   const existingMeta = isRecord(config.meta) ? config.meta : {};
   const nodeMeta = isRecord(node.meta) ? node.meta : {};
   const ingestionMeta = {
+    ...source.provider_metadata,
     zohelo_source_id: source.source_id,
     zohelo_ingestion_status: source.status,
     zohelo_checked_through: source.checked_through,

@@ -1,12 +1,12 @@
 # Development and verification
 
-The assistant handles technical setup and delivery. This page is a runbook for maintainers and coding agents; the owner does not need to operate these commands.
+This page is the shared runbook for human maintainers and coding agents. Run commands from the repository root unless a command says otherwise.
 
 ## Selected Drive root
 
 Storage reads `config/storage.yaml`, including the existing `05_archive` zone. For a development Drive area, select a different root using `ZOHELO_DRIVE_ROOT_NAME` or an explicit `ZOHELO_DRIVE_ROOT_ID`; a supplied ID is verified and is never silently replaced with a name lookup. Python callers can supply `root_name`, `root_id` and `config_path` explicitly. Constructor settings take precedence over environment settings, then repository configuration.
 
-Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. Production mutators call `authorize_writes()`. Outside GitHub Actions, writing to the production root `zohelo-data` requires `ZOHELO_ALLOW_PRODUCTION_WRITES=true` for an already-authorized operation. An ordinary Codespace opening does not set that opt-in. This is a guard for repository entrypoints, not a security boundary against arbitrary direct API calls. See [silver publication](nbp-silver-publication.md) for the serialized publisher and recovery limits.
+Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. Production mutators call `authorize_writes()`. Outside GitHub Actions, writing to the production root `zohelo-data` requires `ZOHELO_ALLOW_PRODUCTION_WRITES=true` for an already-authorized operation. An ordinary Codespace opening does not set that opt-in. This is a guard for repository entrypoints, not a security boundary against arbitrary direct API calls. See [NBP platform operations](nbp-platform-operations.md) for the current publisher and recovery limits.
 
 ## Supported environment
 
@@ -21,7 +21,7 @@ Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. P
 
 The Python dependency set starts from the packages recorded in the [successful deployment on 6 September](https://github.com/rutkala/zohelo-data/actions/runs/34023732492). CI validates it with Python 3.12 and the current models. The native MetricFlow CLI uses a separate distribution/version from its engine; see [runtime verification](metricflow-compatibility.md). A synthetic fixture is not a production metrics service. Node 24 is an LTS line; the previous Node 20 line is now EOL ([Node release status](https://nodejs.org/en/about/previous-releases)).
 
-Python patch releases, the base image, devcontainer features and Actions tags can advance. This is a shared, version-pinned application setup, not a bit-for-bit immutable image. Further image/action pinning and dependency update automation remain audit follow-ups. The inherited portal Dockerfile uses Bun and is not the supported Pages/Codespaces deployment path; do not claim it is covered by the npm checks.
+Python patch releases, the base image, devcontainer features and Actions tags can advance. This is a shared, version-pinned application setup, not a bit-for-bit immutable image. Further image/action pinning and dependency update automation remain audit follow-ups. The portal has one supported package-manager path: npm with `portal/package-lock.json`.
 
 ## Codespaces lifecycle
 
@@ -41,9 +41,9 @@ From an environment with the pinned dependencies installed:
 bash scripts/check-data.sh
 ```
 
-This checks dependency consistency, mocked storage authentication and real dbt execution against [synthetic NBP fixtures](../tests/fixtures/nbp/README.md). It covers A/B/C and gold prices, identical-input replay, mixed historical schemas, the existing Table A mart projection, immutable publication and fresh SQL reads, missing-input failure, and matching dbt artifacts. The standalone MetricFlow fixture checks exact synthetic results in fresh native processes with network calls blocked by Linux/libseccomp. No credentials or Drive writes are required.
+This checks dependency consistency, mocked storage authentication, ingestion planning and state handling, and real dbt execution against [synthetic NBP fixtures](../tests/fixtures/nbp/README.md). It covers all four NBP sources, full and incremental planning, repeated and conflicting observations, the Bronze/Silver/Gold graph, release publication and recovery, fresh SQL reads, replay checks, missing-input failures, and matching dbt artifacts. The standalone MetricFlow fixture checks exact synthetic results in fresh native processes with network calls blocked by Linux/libseccomp. No credentials or Drive writes are required.
 
-It does not yet test gold prices, ingestion catch-up, revised observations, immutable publication or executable business metrics. Those remain explicit work in [the delivery plan](deliverables.md). Synthetic tests are not proof of historical coverage or actual NBP correctness.
+These fixture checks do not prove production history, live Drive contents, current NBP correctness, runtime capacity, or approved business metrics. Live release evidence and remaining work are recorded in [the delivery plan](deliverables.md) and [NBP platform operations](nbp-platform-operations.md).
 
 Outside Codespaces, create a Python 3.12 virtual environment and install the lock before running the command:
 
@@ -62,6 +62,6 @@ When changing Node, update `.node-version` and the matching feature version toge
 
 ## Production operations
 
-Folder reconciliation is now explicitly manual and named **Reconcile Drive folders**. Ordinary code merges no longer invoke it. The existing ingestion → bronze → silver chain remains operational code under audit: it does not yet carry immutable batch manifests or guarantee one code revision across all stages.
+The supported production entrypoint is the consolidated [`NBP data platform`](../.github/workflows/daily-ingestion.yml) workflow, which invokes `python src/nbp_platform.py --mode ...`. It runs ingestion, dbt build, validation, immutable publication, and fresh-read checks from one code revision. The former direct Bronze and Silver entrypoints are retired and must not be used. Folder reconciliation remains an explicitly manual operation.
 
-Do not use any production entrypoint as a smoke test. The current storage implementation still targets `zohelo-data`, and the current silver publisher deletes old files before uploading replacements. Fix root enforcement and publication before using a remote development root or claiming safe recovery. The [6 September Actions read-only OAuth check](google-authorization.md) succeeded, but it did not test writes; portal sign-in remains a separate authorization path.
+Do not use a production entrypoint as a smoke test. Use fixtures for routine checks and the read-only authorization diagnostic when that check is explicitly requested. Production publication requires an explicitly selected Drive root and the write authorization described above. The publisher validates a complete candidate before replacing the current-release pointer and retains the preceding release on failure. See [NBP platform operations](nbp-platform-operations.md) for modes, limits, recovery, and current evidence; portal sign-in remains a separate authorization path.

@@ -1,3 +1,11 @@
+"""Legacy Bronze helpers retained for compatibility tests."""
+
+if __name__ == "__main__":
+    raise SystemExit(
+        "This legacy bronze transformer is retired. "
+        "Use: python src/nbp_platform.py --mode <incremental|full|rebuild>"
+    )
+
 import os
 import sys
 import duckdb
@@ -164,7 +172,3 @@ def process_bronze():
     )
     if fail_count > 0:
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    process_bronze()

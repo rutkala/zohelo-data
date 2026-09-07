@@ -1,10 +1,15 @@
 """Build all four NBP silver tables, then publish a verified immutable snapshot."""
+
+if __name__ == "__main__":
+    raise SystemExit(
+        "This legacy silver publisher is retired. "
+        "Use: python src/nbp_platform.py --mode <incremental|full|rebuild>"
+    )
+
 import hashlib
 import json
-import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +22,7 @@ from googleapiclient.http import MediaIoBaseDownload
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from drive_release_store import DriveReleaseStore
 from release_protocol import publish_release
+from runtime_metadata import _code_sha
 from storage_manager import StorageManager
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -166,17 +172,6 @@ def build_silver(workspace):
                       for name in ("manifest.json", "catalog.json", "run_results.json")]
 
 
-def _code_sha():
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip()
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise ValueError("Build code must identify a Git commit")
-    if subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True).strip():
-        raise ValueError("Commit the working tree before publishing a data release")
-    if os.environ.get("GITHUB_SHA", sha) != sha:
-        raise ValueError("Build checkout does not match the workflow commit")
-    return sha
-
-
 def process_silver():
     started = time.monotonic()
     sha = _code_sha()
@@ -217,13 +212,3 @@ def process_silver():
             with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
                 handle.write(f"release_id={result['release_id']}\n")
         return report
-
-
-if __name__ == "__main__":
-    logging.disable(logging.CRITICAL)
-    try:
-        process_silver()
-    except Exception as exc:
-        print(json.dumps({"status": "silver_release_failed", "error_type": type(exc).__name__,
-                          "message": "The candidate was not confirmed. Inspect build checks; prior releases are retained."}))
-        raise SystemExit(1)

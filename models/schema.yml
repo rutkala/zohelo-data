@@ -113,18 +113,49 @@ models:
         tests: [not_null]
 
   - name: nbp_change_events
-    description: "Detected transitions between retained source observations. A row is an observed source value or metadata change, never an asserted NBP correction time or reason."
+    description: "Detected transitions between retained, validated NBP HTTP-200 response observations. Value and metadata rows report typed-record differences. Missing/reappeared rows are investigation candidates only and are emitted only when the same source publication date remains present in consecutive responses. They never assert an NBP withdrawal, correction time, or reason; 404s and entirely absent publications cannot create them."
     columns:
       - name: event_type
         tests:
           - accepted_values:
               arguments:
-                values: ['source_value_changed', 'source_metadata_changed']
+                values: ['source_value_changed', 'source_metadata_changed', 'source_record_missing', 'source_record_reappeared']
+      - name: evidence_status
+        description: "Observed typed-record change, or candidate_for_investigation for a presence transition."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['observed_typed_record_change', 'candidate_for_investigation']
+      - name: provider_event_asserted
+        description: "Always false: the API provides no correction or withdrawal event field."
+        tests: [not_null]
+      - name: record_contract_version
+        description: "Version of the canonical typed-record representation used for comparison and record hashes."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['nbp_typed_record_v1']
+      - name: detection_method
+        description: "Versioned platform comparison method; this is transformation evidence, not provider event metadata."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['typed_record_comparison_v1']
+      - name: changed_fields
+        description: "JSON array of typed record fields that differ across the transition."
+        tests: [not_null]
+      - name: previous_record_sha256
+        description: "SHA-256 of the prior canonical typed record; null when the prior state is absence."
+      - name: current_record_sha256
+        description: "SHA-256 of the current canonical typed record; null for a missing-record candidate."
 
   - name: dim_date
+    time_spine:
+      standard_granularity_column: date_key
     description: "Conformed effective/publication dates observed in NBP current records; this date dimension does not imply an observation on every calendar date."
     columns:
       - name: date_key
+        granularity: day
         tests: [not_null, unique]
       - name: calendar_year
         tests: [not_null]

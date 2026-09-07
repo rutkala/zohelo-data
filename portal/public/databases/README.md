@@ -10,7 +10,7 @@ This directory is Duck-UI's build-time config surface. A single file,
    connections, importing data, and changing settings — so you can publish a
    fixed dataset (e.g. on GitHub Pages) where visitors only browse and query.
 
-Nothing here needs a server. `bun run build` produces a static `dist/` you can
+Nothing here needs a server. `npm run build` produces a static `dist/` you can
 push straight to GitHub Pages, Netlify, S3, or any static host.
 
 ## Manifest shape
@@ -122,14 +122,14 @@ echo '{
   ]
 }' > public/databases/manifest.json
 
-bun run build          # → dist/, ready to publish
+npm run build          # → dist/, ready to publish
 ```
 
 For a subpath deploy (e.g. `https://user.github.io/repo/`), set the base path so
 asset and manifest URLs resolve correctly:
 
 ```bash
-DUCK_UI_BASEPATH=/repo/ bun run build
+DUCK_UI_BASEPATH=/repo/ npm run build
 ```
 
 ## Notes

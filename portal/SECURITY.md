@@ -1,15 +1,15 @@
-# Security Policy
+# Security policy
 
 ## Supported versions
 
-The latest release is the only supported version. Duck-UI runs entirely in your browser with no backend, so upgrading is a page reload (or pulling the latest Docker image).
+The deployed Zohelo Data portal and the current `main` branch are supported. The portal runs its SQL workspace in the browser and connects to Google APIs for authenticated release discovery.
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities privately via [GitHub private vulnerability reporting](https://github.com/caioricciuti/duck-ui/security/advisories/new).
+Please use [GitHub private vulnerability reporting](https://github.com/rutkala/zohelo-data/security/advisories/new).
 
-Please don't open public issues for security problems. You'll normally get a first response within a few days; fixes for confirmed issues ship as fast-follow releases.
+Do not open a public issue for a vulnerability or include credentials, tokens, private Drive identities, or private data in a report.
 
 ## Scope notes
 
-Duck-UI executes user-supplied SQL in the user's own browser by design — SQL running in your own session is not a vulnerability. Things that ARE in scope: XSS through query results or shared links, deep links (`?load=`/`?sql=`) executing without the confirmation dialog, CSP bypasses, credential storage (AES-256-GCM in IndexedDB) weaknesses, and anything that lets one origin read another session's data.
+The portal executes user-supplied SQL in the user's own browser by design. Relevant reports include cross-site scripting through results or shared links, deep links that execute without the intended confirmation, content-security-policy bypasses, credential-storage weaknesses, release-integrity failures, and cross-origin access to another session's data.

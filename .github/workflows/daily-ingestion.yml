@@ -5,6 +5,11 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Publish current source data or promote an already retained, fully verified release'
+        type: choice
+        default: publish
+        options: [publish, promote_retained_release]
       mode:
         description: 'Incremental repairs gaps; full resumes historical bootstrap; rebuild uses retained raw only'
         type: choice
@@ -14,6 +19,14 @@ on:
         description: 'Also rebuild from the exact released raw inputs in a fresh process'
         type: boolean
         default: false
+      target_release_id:
+        description: 'Retained release UUID to promote; required only for promote_retained_release'
+        type: string
+        required: false
+      expected_current_release_id:
+        description: 'Current release UUID safety pin; required only for promote_retained_release'
+        type: string
+        required: false
   push:
     branches: [main]
     paths:
@@ -22,6 +35,13 @@ on:
       - 'macros/**'
       - 'config/**'
       - 'scripts/check_nbp_replay.py'
+      - 'scripts/check_platform_health.py'
+      - 'requirements.in'
+      - 'requirements.txt'
+      - '.python-version'
+      - 'dbt_project.yml'
+      - 'profiles.yml'
+      - '.dbtignore'
       - '.github/workflows/daily-ingestion.yml'
 
 permissions:
@@ -35,14 +55,15 @@ jobs:
   publish:
     if: >-
       github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || inputs.operation == 'publish') &&
       (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-nbp-platform]'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version-file: .python-version
           cache: pip
@@ -74,3 +95,54 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           DBT_SEND_ANONYMOUS_USAGE_STATS: 'false'
         run: python scripts/check_nbp_replay.py
+      - name: Measure read-only platform capacity and storage health
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python scripts/check_platform_health.py --read-drive > "$RUNNER_TEMP/platform-health.json"
+      - name: Retain platform health measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nbp-platform-health-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/platform-health.json
+          if-no-files-found: error
+          retention-days: 14
+
+  promote-retained-release:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.operation == 'promote_retained_release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Validate explicit promotion safety pins
+        env:
+          TARGET_RELEASE_ID: ${{ inputs.target_release_id }}
+          EXPECTED_CURRENT_RELEASE_ID: ${{ inputs.expected_current_release_id }}
+        run: |
+          test -n "$TARGET_RELEASE_ID"
+          test -n "$EXPECTED_CURRENT_RELEASE_ID"
+      - name: Verify and promote the retained release
+        env:
+          TARGET_RELEASE_ID: ${{ inputs.target_release_id }}
+          EXPECTED_CURRENT_RELEASE_ID: ${{ inputs.expected_current_release_id }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: >-
+          python scripts/promote_release.py
+          --target-release-id "$TARGET_RELEASE_ID"
+          --expected-current-release-id "$EXPECTED_CURRENT_RELEASE_ID"

@@ -170,7 +170,17 @@ describe("release dbt artifacts", () => {
   it("adds release state only to the existing bronze branches and native overview", async () => {
     const selected = await resolution();
     const original = dbtManifest();
+    selected.businessCatalogue!.sources[0].provider_metadata = {
+      documentation_url: "https://api.nbp.pl/en.html",
+      frequency: "each working day",
+      reuse_summary: "Commercial redistribution terms unresolved",
+    };
     const prepared = prepareDbtManifest(original, selected);
+    expect(prepared.nodes[bronzeModels.nbp_exchange_rates_table_a].meta).toMatchObject({
+      documentation_url: "https://api.nbp.pl/en.html",
+      frequency: "each working day",
+      reuse_summary: "Commercial redistribution terms unresolved",
+    });
 
     expect(original.nodes[bronzeModels.nbp_exchange_rates_table_a].config).toEqual({
       meta: { layer: "02_bronze" },

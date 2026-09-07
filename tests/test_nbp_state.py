@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from hashlib import sha256
 import sys
 import unittest
@@ -12,6 +13,7 @@ from ingestion.nbp_state import (  # noqa: E402
     UncertainStatePointerError,
     LoadedState,
     commit_response,
+    ingestion_config_from_config,
     list_successful_response_descriptors,
     load_state,
     plan_requests,
@@ -19,6 +21,7 @@ from ingestion.nbp_state import (  # noqa: E402
     new_state,
     SourceSpec,
     store_raw_response,
+    validate_non_regressive_cutoff,
     validate_nbp_response,
 )
 
@@ -64,7 +67,10 @@ class MemoryStore:
 
 
 def configured_specs():
-    return source_specs_from_config(Path(__file__).resolve().parents[1] / "config" / "sources.yaml", ["nbp_exchange_rates_table_a"])
+    return source_specs_from_config(
+        Path(__file__).resolve().parents[1] / "config" / "nbp-platform.yaml",
+        ["nbp_exchange_rates_table_a"],
+    )
 
 
 def a_body(day="2020-01-01", value=4.0):
@@ -87,6 +93,77 @@ class NBPStateTests(unittest.TestCase):
 
     def _commit(self, loaded, plan, status=200, body=None, **kwargs):
         return commit_response(self.store, self.root, loaded, self.specs, plan, http_status=status, body=a_body(plan.requested_start_date.isoformat()) if body is None else body, retrieved_at_utc=self.now, landing_source_folder_id=self.landing, **kwargs)
+
+    def test_versioned_ingestion_config_validates_effective_runtime_settings(self):
+        path = Path(__file__).resolve().parents[1] / "config" / "nbp-platform.yaml"
+        config = ingestion_config_from_config(path)
+        self.assertEqual(set(config.source_specs), {
+            "nbp_exchange_rates_table_a",
+            "nbp_exchange_rates_table_b",
+            "nbp_exchange_rates_table_c",
+            "nbp_gold_prices",
+        })
+        self.assertEqual(config.recent_recheck_days, 93)
+        self.assertEqual(config.max_historical_recheck_chunks, 1)
+        self.assertEqual(config.max_requests, 512)
+        self.assertEqual(config.max_run_seconds, 3600)
+        self.assertEqual(config.http_attempts, 4)
+
+        import yaml
+
+        document = yaml.safe_load(path.read_text())
+        invalid = deepcopy(document)
+        invalid["planner"]["recent_recheck_days"] = 94
+        with self.assertRaisesRegex(NBPStateError, "recent_recheck_days"):
+            ingestion_config_from_config(invalid)
+        invalid = deepcopy(document)
+        invalid["runtime"]["max_requests"] = True
+        with self.assertRaisesRegex(NBPStateError, "max_requests"):
+            ingestion_config_from_config(invalid)
+        invalid = deepcopy(document)
+        invalid["planner"]["max_historical_recheck_chunks"] = 2
+        with self.assertRaisesRegex(NBPStateError, "max_historical_recheck_chunks"):
+            ingestion_config_from_config(invalid)
+        invalid = deepcopy(document)
+        invalid["format_version"] = True
+        with self.assertRaisesRegex(NBPStateError, "format_version"):
+            ingestion_config_from_config(invalid)
+        invalid = deepcopy(document)
+        del invalid["sources"]["nbp_gold_prices"]
+        with self.assertRaisesRegex(NBPStateError, "all supported sources"):
+            ingestion_config_from_config(invalid)
+
+    def test_legacy_full_config_shape_remains_readable_for_migration(self):
+        legacy = {
+            "sources": {
+                "nbp_exchange_rates_table_a": {
+                    "load_methods": {
+                        "incremental": {"endpoint": "https://unused.invalid/last/1"},
+                        "full": {
+                            "endpoint_template": "https://api.nbp.pl/api/exchangerates/tables/A/{start_date}/{end_date}",
+                            "params": {"format": "json"},
+                            "max_chunk_days": 93,
+                            "historical_start_date": "2002-01-02",
+                        },
+                    }
+                }
+            }
+        }
+        spec = source_specs_from_config(legacy)["nbp_exchange_rates_table_a"]
+        self.assertIn("{start_date}", spec.endpoint_template)
+        self.assertNotIn("last/1", spec.endpoint_template)
+
+    def test_cutoff_cannot_move_behind_saved_checked_through_date(self):
+        state = self._loaded().state
+        source = state["sources"]["nbp_exchange_rates_table_a"]
+        source["last_checked_through_date"] = "2026-09-06"
+        self.assertEqual(
+            validate_non_regressive_cutoff(state, date(2026, 9, 6)), date(2026, 9, 6)
+        )
+        with self.assertRaisesRegex(NBPStateError, "historical as-of publication"):
+            validate_non_regressive_cutoff(state, date(2026, 9, 5))
+        with self.assertRaisesRegex(NBPStateError, "older than saved coverage"):
+            plan_requests(state, self.specs, date(2026, 9, 5))
 
     def test_93_day_chunks_are_inclusive_and_resume_same_hole(self):
         loaded = self._loaded()
@@ -189,7 +266,10 @@ class NBPStateTests(unittest.TestCase):
         self.assertEqual(self.store.find("current-ingestion-state.json", self.root), [])
 
     def test_multi_source_stale_pointer_cannot_hide_a_second_source_commit(self):
-        specs = source_specs_from_config(Path(__file__).resolve().parents[1] / "config" / "sources.yaml", ["nbp_exchange_rates_table_a", "nbp_exchange_rates_table_b"])
+        specs = source_specs_from_config(
+            Path(__file__).resolve().parents[1] / "config" / "nbp-platform.yaml",
+            ["nbp_exchange_rates_table_a", "nbp_exchange_rates_table_b"],
+        )
         base = load_state(self.store, self.root, specs, now_utc=self.now)
         plans = plan_requests(base.state, specs, date(2002, 1, 2), recent_recheck_days=1)
         plan_a = next(plan for plan in plans if plan.source_id.endswith("_a"))

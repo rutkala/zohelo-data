@@ -5,8 +5,8 @@ import pkg from './package.json';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// Applied by `vite preview` and the Docker serve config (serve.json — keep the
-// two in sync). Not applied to `vite dev`, whose HMR needs inline scripts.
+// Applied by `vite preview`. Production hosting supplies matching headers.
+// Not applied to `vite dev`, whose HMR needs inline scripts.
 // 'wasm-unsafe-eval' is DuckDB WASM; jsDelivr is the optional WASM CDN mode;
 // broad connect-src is the point of the app (httpfs reads, external servers,
 // AI providers). No 'unsafe-inline' for scripts — env.js is a real file.
@@ -57,10 +57,10 @@ export default defineConfig(({ mode }) => {
         registerType: 'autoUpdate',
         includeAssets: ['logo.png', 'logo-padding.png', 'logo-192.png', 'badge.svg'],
         manifest: {
-          name: 'Duck-UI',
-          short_name: 'Duck-UI',
+          name: 'Zohelo Data Portal',
+          short_name: 'Zohelo Data',
           description:
-            'DuckDB in your browser — SQL editor, notebooks, charts, and AI, fully local.',
+            'Explore the Zohelo Data catalogue and query published releases.',
           theme_color: '#0a0a0a',
           background_color: '#0a0a0a',
           display: 'standalone',

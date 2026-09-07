@@ -5,9 +5,8 @@ const basePath = configuredBase === "./" ? "/" : configuredBase;
 const previewUrl = `http://localhost:4599${basePath}`;
 
 /**
- * E2E smoke tests against the REAL production build (`vite preview` serves
- * dist/ with the same COOP/COEP + CSP headers as the Docker image). Run
- * `npm run build` first; CI does.
+ * E2E smoke tests against the real production build through `vite preview`.
+ * Run `npm run build` first; CI does.
  */
 export default defineConfig({
   testDir: "./e2e",
