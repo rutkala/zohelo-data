@@ -200,7 +200,9 @@
       backdrop.className = "zohelo-catalogue-nav-backdrop";
       backdrop.setAttribute("aria-label", "Close catalogue navigation");
       backdrop.addEventListener("click", () => setOpen(false));
-      document.body.append(backdrop);
+      // dbt's fixed .app establishes a stacking context. Keep the backdrop
+      // beside the menu so its lower z-index actually places it behind it.
+      menu.parentElement.append(backdrop);
 
       menu.addEventListener("click", (event) => {
         if (
