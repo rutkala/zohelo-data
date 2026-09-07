@@ -26,6 +26,7 @@ DATASET_MODELS = {
     "nbp_exchange_rates_table_c": "stg_nbp_table_c",
     "nbp_gold_prices": "stg_nbp_gold_prices",
 }
+SILVER_SCHEMA = "03_silver"
 MAX_INPUT_BYTES = 256 * 1024 * 1024
 MAX_INPUT_FILES = 2048
 
@@ -142,12 +143,13 @@ def build_silver(workspace):
     con = duckdb.connect(str(database), read_only=True)
     try:
         for dataset_id, model in DATASET_MODELS.items():
+            relation = f'"{SILVER_SCHEMA}"."{dataset_id}"'
             output = workspace / "03_silver" / f"{dataset_id}.parquet"
             output.parent.mkdir(exist_ok=True)
             escaped = str(output).replace("'", "''")
-            con.execute(f"COPY (SELECT * FROM {model}) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            con.execute(f"COPY (SELECT * FROM {relation}) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)")
             count, start, end = con.execute(
-                f"SELECT count(*), min(effectiveDate), max(effectiveDate) FROM {model}"
+                f"SELECT count(*), min(effectiveDate), max(effectiveDate) FROM {relation}"
             ).fetchone()
             if not count or start is None or end is None:
                 raise ValueError(f"Silver dataset is empty: {dataset_id}")
@@ -156,7 +158,7 @@ def build_silver(workspace):
                 "path": str(output), "row_count": count, "min_date": start.isoformat(),
                 "max_date": end.isoformat(),
                 "columns": [{"name": row[0], "type": row[1]}
-                            for row in con.execute(f"DESCRIBE {model}").fetchall()],
+                            for row in con.execute(f"DESCRIBE {relation}").fetchall()],
             })
     finally:
         con.close()

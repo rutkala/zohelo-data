@@ -9,7 +9,6 @@ import {
   ChevronDown,
   Folder,
   FileSpreadsheet,
-  FileCode,
   RefreshCw,
   Key,
   LogIn,
@@ -23,8 +22,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { qualifyTable } from "@/lib/sqlSanitize";
+import { setSqlRelationDragData } from "@/lib/sqlTableActions";
+import { TableActions } from "./TableActions";
 
-export default function LakehouseExplorer() {
+interface LakehouseExplorerProps {
+  onSqlAction?: () => void;
+}
+
+export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProps) {
   const googleAuth = useDuckStore((s) => s.googleAuth);
   const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
   const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
@@ -291,6 +297,7 @@ export default function LakehouseExplorer() {
                   layer.children.map((table) => {
                     const isActive =
                       table.name === activeLakehouseDataset && layer.name === activeLakehouseLayer;
+                    const relation = qualifyTable(undefined, layer.name, table.name);
                     return (
                       <div key={table.name} className="space-y-0.5">
                         {/* Table / Dataset Row */}
@@ -300,10 +307,14 @@ export default function LakehouseExplorer() {
                               ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
                               : "hover:bg-muted/60 text-foreground"
                           }`}
+                          draggable
+                          onDragStart={(event) =>
+                            setSqlRelationDragData(event.dataTransfer, relation)
+                          }
                         >
                           <button
                             type="button"
-                            className="p-0.5 hover:bg-muted rounded"
+                            className="shrink-0 rounded p-0.5 hover:bg-muted"
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleLakehouseTable(layer.name, table.name);
@@ -317,25 +328,20 @@ export default function LakehouseExplorer() {
                           </button>
 
                           <div
-                            className="flex items-center gap-1.5 flex-1 truncate"
+                            className="flex min-w-0 flex-1 items-center gap-1.5"
                             onClick={() => handleSelectDataset(layer.name, table.name)}
                           >
                             <TableIcon className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                            <span className="truncate font-mono text-[11px]">{table.name}</span>
+                            <span className="truncate font-mono text-[11px]" title={table.name}>
+                              {table.name}
+                            </span>
                           </div>
 
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5 opacity-0 group-hover:opacity-100 hover:bg-muted"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectDataset(layer.name, table.name);
-                            }}
-                            title="Query this dataset in SQL Editor"
-                          >
-                            <FileCode className="h-3 w-3 text-primary" />
-                          </Button>
+                          <TableActions
+                            relation={relation}
+                            displayName={table.name}
+                            onSqlAction={onSqlAction}
+                          />
                         </div>
 
                         {/* Files in Dataset */}

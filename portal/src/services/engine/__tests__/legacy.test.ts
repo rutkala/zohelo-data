@@ -170,6 +170,7 @@ describe("catalogToDatabaseInfo", () => {
           {
             name: "sales",
             schema: "main",
+            relationType: "view",
             rowCount: 42,
             columns: [{ name: "id", type: "BIGINT", nullable: false }],
           },
@@ -186,6 +187,7 @@ describe("catalogToDatabaseInfo", () => {
           {
             name: "sales",
             schema: "main",
+            relationType: "view",
             rowCount: 42,
             columns: [{ name: "id", type: "BIGINT", nullable: false }],
             createdAt: "2026-08-18T00:00:00.000Z",

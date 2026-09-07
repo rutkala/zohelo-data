@@ -112,15 +112,23 @@ class NbpDbtFixtureTests(unittest.TestCase):
         try:
             for model, (rates, expected) in cases.items():
                 with self.subTest(model=model):
+                    layer = "04_gold" if model == "mart_exchange_rates_daily" else "03_silver"
+                    aliases = {
+                        "stg_nbp_table_a": "nbp_exchange_rates_table_a",
+                        "stg_nbp_table_b": "nbp_exchange_rates_table_b",
+                        "stg_nbp_table_c": "nbp_exchange_rates_table_c",
+                        "stg_nbp_gold_prices": "nbp_gold_prices",
+                    }
+                    relation = f'"{layer}"."{aliases.get(model, model)}"'
                     key = "effectiveDate"
                     dimensions = "" if model == "stg_nbp_gold_prices" else ", code"
                     actual = con.execute(
                         f"SELECT cast({key} AS varchar){dimensions}, {rates} "
-                        f"FROM {model} ORDER BY effectiveDate"
+                        f"FROM {relation} ORDER BY effectiveDate"
                         f"{', code' if dimensions else ''}"
                     ).fetchall()
                     self.assertEqual(actual, expected)
-                    columns = con.execute(f"DESCRIBE {model}").fetchall()
+                    columns = con.execute(f"DESCRIBE {relation}").fetchall()
                     self.assertEqual(next(row[1] for row in columns if row[0] == "effectiveDate"), "DATE")
         finally:
             con.close()
@@ -130,13 +138,13 @@ class NbpDbtFixtureTests(unittest.TestCase):
         try:
             columns = {
                 row[0]: row[1]
-                for row in con.execute("DESCRIBE stg_nbp_gold_prices").fetchall()
+                for row in con.execute('DESCRIBE "03_silver"."nbp_gold_prices"').fetchall()
             }
             self.assertEqual(columns["effectiveDate"], "DATE")
             self.assertEqual(columns["price_pln_per_gram"], "DECIMAL(18,2)")
             actual = con.execute(
                 "SELECT cast(effectiveDate AS varchar), price_pln_per_gram, count(*) "
-                "FROM stg_nbp_gold_prices GROUP BY effectiveDate, price_pln_per_gram "
+                'FROM "03_silver"."nbp_gold_prices" GROUP BY effectiveDate, price_pln_per_gram '
                 "ORDER BY effectiveDate"
             ).fetchall()
             self.assertEqual(actual, [
@@ -155,6 +163,20 @@ class NbpDbtFixtureTests(unittest.TestCase):
         model_id = "model.zohelo_data.stg_nbp_table_a"
         self.assertIn(model_id, manifest["nodes"])
         self.assertIn(model_id, catalog["nodes"])
+        self.assertEqual(manifest["nodes"][model_id]["schema"], "03_silver")
+        self.assertEqual(manifest["nodes"][model_id]["alias"], "nbp_exchange_rates_table_a")
+        self.assertEqual(
+            manifest["nodes"]["model.zohelo_data.mart_exchange_rates_daily"]["schema"],
+            "04_gold",
+        )
+        self.assertEqual(
+            manifest["sources"]["source.zohelo_data.bronze.nbp_exchange_rates_table_a"]["schema"],
+            "02_bronze",
+        )
+        self.assertIn(
+            "source.zohelo_data.bronze.nbp_exchange_rates_table_a",
+            manifest["nodes"][model_id]["depends_on"]["nodes"],
+        )
         self.assertIn("model.zohelo_data.stg_nbp_table_a", manifest["nodes"]["model.zohelo_data.mart_exchange_rates_daily"]["depends_on"]["nodes"])
         for resource_type in ("nodes", "metrics", "semantic_models"):
             for resource in manifest.get(resource_type, {}).values():
@@ -311,7 +333,7 @@ class NbpDbtFixtureTests(unittest.TestCase):
             try:
                 self.assertEqual(
                     con.execute(
-                        "SELECT currency, mid FROM stg_nbp_table_a "
+                        'SELECT currency, mid FROM "03_silver"."nbp_exchange_rates_table_a" '
                         "WHERE effectiveDate = DATE '2002-01-02' AND code = 'USD'"
                     ).fetchall(),
                     [("synthetic US dollar", 4.0)],

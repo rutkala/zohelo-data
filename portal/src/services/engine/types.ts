@@ -308,6 +308,8 @@ export interface CatalogColumn {
 export interface CatalogTable {
   name: string;
   schema: string;
+  /** Defaults to table when an engine cannot distinguish views. */
+  relationType?: "table" | "view";
   columns: CatalogColumn[];
   /** -1 when the engine cannot report it cheaply. */
   rowCount: number;

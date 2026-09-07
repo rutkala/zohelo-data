@@ -1,14 +1,10 @@
-{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view') }}
+{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view', alias='nbp_gold_prices') }}
 {% if var('nbp_verified_batches', false) %}
 {{ nbp_current_gold_prices() }}
 {% else %}
 with bronze_data as (
     select *
-    from read_parquet(
-        '{{ env_var("ZOHELO_DATA_ROOT", "/tmp/zohelo_data") }}/02_bronze/nbp_gold_prices/*.parquet',
-        union_by_name = true,
-        filename = true
-    )
+    from {{ source('bronze', 'nbp_gold_prices') }}
 ),
 typed_prices as (
     select

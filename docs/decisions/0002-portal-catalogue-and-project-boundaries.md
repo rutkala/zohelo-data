@@ -18,3 +18,13 @@ The owner rejected duplicate catalogues and the mixture of data discovery, proje
 SQL, catalogue metadata and lineage remain tied to the same release. Publishing the portal does not publish a new data release or complete the semantic layer. Native MetricFlow execution remains separate work. Generated viewer code is disposable build output. Native dbt Docs remains recognizable and upgradeable with the pinned dbt dependency.
 
 Browser checks must exercise the real dbt viewer, valid release fixtures, failure handling, ordinary SQL editing and the deployment base paths. Passing a fake embedded HTML page is insufficient evidence for catalogue functionality.
+
+## Medallion navigation and SQL actions, 7 September 2026
+
+The owner's subsequent feedback authorizes consistent medallion project folders and physical relation names, table menus and drag-and-drop, session view creation, and desktop/mobile UX regression checks.
+
+- dbt's model folders and output schemas follow Bronze, Silver, and Gold. Physical aliases match the published portal relations; logical dbt model IDs stay stable so dependencies remain traceable. Landing identifies the actual verified raw source. Archive is documented as retained-file storage, not represented by a fabricated SQL model or lineage edge.
+- Native dbt Docs receives a small responsive adaptation for navigation and content on phones. Project/Database navigation and native model/lineage pages remain dbt-owned.
+- Table actions open SELECT SQL in a new tab, insert a quoted relation into the active editor, or copy its quoted name. Drag-and-drop performs an undoable editor insertion. None replaces an unrelated draft or runs a menu-generated SELECT automatically.
+- Create view generates and runs a single CREATE VIEW statement in the local Browser workspace. It loads published dependencies through the same bounded release loader and does not replace existing relations. The interface states the session lifetime. Shared/durable publication of user-authored views is not implemented by this feature.
+- Production acceptance includes unchanged published data contracts, actual-WASM SQL checks, native catalogue mobile navigation, draft preservation, touch menus, desktop drag/drop, and creating/querying a view whose source was not preloaded. Code, portal deployment, and the new release-bound data catalogue are separate delivery gates.

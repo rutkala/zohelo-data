@@ -129,6 +129,7 @@ export class LocalDuckSessionImpl implements LocalDuckSession {
         tables: database.tables.map((table) => ({
           name: table.name,
           schema: table.schema,
+          relationType: table.relationType,
           columns: table.columns,
           rowCount: table.rowCount,
         })),

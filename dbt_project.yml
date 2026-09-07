@@ -12,5 +12,10 @@ clean-targets:
 
 models:
   zohelo_data:
-    staging:
+    bronze:
+      +schema: 02_bronze
+    silver:
+      +schema: 03_silver
       +materialized: view
+    gold:
+      +schema: 04_gold

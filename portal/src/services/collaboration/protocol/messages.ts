@@ -114,6 +114,7 @@ export const sharedCapabilitySchema = z.object({
                 z.object({
                   name: z.string().max(MAX_NAME_LENGTH),
                   schema: z.string().max(MAX_NAME_LENGTH),
+                  relationType: z.enum(["table", "view"]).optional(),
                   columns: z
                     .array(
                       z.object({

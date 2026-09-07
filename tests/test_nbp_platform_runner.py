@@ -84,12 +84,23 @@ class PlatformRunnerTests(unittest.TestCase):
             batches = workspace / "batches.jsonl"
             model_fixtures.NbpPlatformModelTests._write_batches(batches)
             datasets, artifacts = build_platform(workspace, batches)
+            manifest = json.loads((workspace / "target/manifest.json").read_text())
+            catalog = json.loads((workspace / "target/catalog.json").read_text())
+            self.assertEqual(len(datasets), 15)
+            for dataset in datasets:
+                with self.subTest(dataset=dataset["dataset_id"]):
+                    node = manifest["nodes"][dataset["model_id"]]
+                    relation = catalog["nodes"][dataset["model_id"]]["metadata"]
+                    self.assertEqual(node["schema"], dataset["layer"])
+                    self.assertEqual(node["alias"], dataset["table_name"])
+                    self.assertEqual(relation["schema"], dataset["layer"])
+                    self.assertEqual(relation["name"], dataset["table_name"])
             configuration = yaml.safe_load((ROOT / "config/sources.yaml").read_text())
             state = {"format_version": 1, "sources": {key: {"checked_through": "2020-01-01",
                      "latest_observation_date": "2020-01-01", "raw_response_count": 1}
                      for key in configuration["sources"]}}
             catalogue = build_business_catalog(code_sha="a" * 40, source_config=configuration,
-                ingestion_state=state, dbt_manifest=json.loads((workspace / "target/manifest.json").read_text()),
+                ingestion_state=state, dbt_manifest=manifest,
                 dataset_metadata=datasets)
             for name, data in (("business-catalog.json", catalogue), ("ingestion-state.json", state)):
                 path = workspace / name

@@ -125,6 +125,8 @@ export type ColumnDistribution =
 export interface TableInfo {
   name: string;
   schema: string;
+  /** Defaults to table for catalog sources that do not report a relation kind. */
+  relationType?: "table" | "view";
   columns: ColumnInfo[];
   rowCount: number;
   createdAt: string;

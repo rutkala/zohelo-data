@@ -138,9 +138,12 @@ export const createEditor = (
 
   // Setup content change listener with debounce
   let timeoutId: number;
+  let pendingSave = false;
   const disposable = editor.onDidChangeModelContent(() => {
     clearTimeout(timeoutId);
+    pendingSave = true;
     timeoutId = window.setTimeout(() => {
+      pendingSave = false;
       const newValue = editor.getValue();
       useDuckStore.getState().updateTabQuery(tabId, newValue);
     }, 300);
@@ -150,6 +153,8 @@ export const createEditor = (
     editor,
     dispose: () => {
       clearTimeout(timeoutId);
+      // Switching tabs must retain edits made inside the debounce window.
+      if (pendingSave) useDuckStore.getState().updateTabQuery(tabId, editor.getValue());
       disposable.dispose();
       editor.dispose();
     },

@@ -1,4 +1,5 @@
 {% macro nbp_exchange_rate_bronze(dataset_name) %}
+    -- Legacy Bronze input relation: {{ source('bronze', dataset_name) }}
     {% set data_root = env_var("ZOHELO_DATA_ROOT", "/tmp/zohelo_data") %}
     {% set pattern = data_root ~ "/02_bronze/" ~ dataset_name ~ "/*.parquet" %}
     {% set quoted_pattern = "'" ~ pattern | replace("'", "''") ~ "'" %}

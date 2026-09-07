@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -37,9 +37,7 @@ test.afterEach(async ({ page }, info) => {
   }
 });
 
-test("a generated catalogue query lazily loads its referenced gold tables when run", async ({
-  page,
-}) => {
+async function installReleaseFixture(page: Page) {
   const releaseId = "123e4567-e89b-42d3-a456-426614174001";
   const codeSha = "b".repeat(40);
   const files: Record<string, string> = {
@@ -89,7 +87,7 @@ test("a generated catalogue query lazily loads its referenced gold tables when r
       return {
         dataset_id,
         layer: layerFor(dataset_id),
-        table_name: dataset_id,
+        table_name: dataset_id.replace(/^bronze_/, ""),
         row_count: dataset_id === "nbp_change_events" ? 0 : 1,
         min_date: [
           "dim_currency",
@@ -185,6 +183,13 @@ test("a generated catalogue query lazily loads its referenced gold tables when r
     await route.fulfill({ headers, json: { files: response } });
   });
 
+  return downloadedDataFileIds;
+}
+
+test("a generated catalogue query lazily loads its referenced gold tables when run", async ({
+  page,
+}) => {
+  const downloadedDataFileIds = await installReleaseFixture(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("./");
   const profile = page.getByRole("dialog", { name: "Create Profile" });
@@ -232,3 +237,145 @@ JOIN "04_gold"."dim_date" AS dates ON dates.date_key = rates.effective_date;`
     new Set(["fact-fx-file", "dim-currency-file", "dim-date-file"])
   );
 });
+
+for (const mobile of [false, true]) {
+  test(`table menus create and query a view without loading its source first (${mobile ? "phone" : "desktop"})`, async ({
+    page,
+  }) => {
+    const downloads = await installReleaseFixture(page);
+    await page.setViewportSize(
+      mobile ? { width: 390, height: 844 } : { width: 1440, height: 1000 }
+    );
+    await page.goto("./");
+    const profile = page.getByRole("dialog", { name: "Create Profile" });
+    await profile.getByPlaceholder("Profile name").fill("Table actions regression");
+    await profile.getByRole("button", { name: "Create Profile" }).click();
+    await expect(profile).toBeHidden();
+    await expect(
+      page.getByRole("status").filter({ hasText: "nbp_platform" }).first()
+    ).toBeVisible();
+    await page.getByRole("button", { name: "New SQL query", exact: true }).click();
+    const editor = page.locator(".monaco-editor .view-lines:visible").first();
+    const pasteSql = async (sql: string) => {
+      await editor.click();
+      await page.keyboard.press("ControlOrMeta+A");
+      await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+      await page.evaluate((text) => navigator.clipboard.writeText(text), sql);
+      await page.keyboard.press("ControlOrMeta+V");
+    };
+    await pasteSql("SELECT 42 AS keep_my_draft;");
+    if (mobile) await page.getByRole("button", { name: "Tables", exact: true }).click();
+    const explorer = mobile ? page.getByLabel("Data Explorer") : page.locator("main");
+    await explorer.getByText("04_gold", { exact: true }).click();
+    await explorer.getByRole("button", { name: "Actions for dim_currency", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Query as SELECT", exact: true }).click();
+    if (mobile) await expect(page.getByLabel("Data Explorer")).toBeHidden();
+    await expect(editor).toContainText('"04_gold"."dim_currency"');
+    expect(downloads).toEqual([]);
+
+    // The menu created a new query without destroying the existing draft.
+    await page
+      .getByRole("tab", { name: "Untitled Query", exact: true })
+      .filter({ visible: true })
+      .click();
+    await expect(editor).toContainText("keep_my_draft");
+    await page
+      .getByRole("tab", { name: "dim_currency", exact: true })
+      .filter({ visible: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Create view", exact: true })
+      .filter({ visible: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Create a view", exact: true });
+    await expect(dialog).toContainText("database session");
+    await dialog.getByRole("textbox", { name: "View name", exact: true }).fill("my_currency_view");
+    await dialog.getByRole("button", { name: "Create view", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await expect(editor).toContainText('CREATE VIEW "main"."my_currency_view"');
+    await expect(
+      page.getByText("View main.my_currency_view created in Browser workspace", { exact: true })
+    ).toBeVisible();
+    expect(downloads).toEqual(["dim-currency-file"]);
+
+    // A name collision must leave the existing view and its values intact.
+    await pasteSql("SELECT 'must_not_replace' AS source_currency_name;");
+    await page
+      .getByRole("button", { name: "Create view", exact: true })
+      .filter({ visible: true })
+      .click();
+    await dialog.getByRole("textbox", { name: "View name", exact: true }).fill("my_currency_view");
+    await dialog.getByRole("button", { name: "Create view", exact: true }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Query Error" })).toContainText(
+      /already exists/i
+    );
+
+    if (mobile) await page.getByRole("button", { name: "Tables", exact: true }).click();
+    await explorer.getByRole("treeitem", { name: "Browser workspace", exact: true }).click();
+    await expect(
+      explorer.getByRole("treeitem").filter({ hasText: "my_currency_view" }).last()
+    ).toBeVisible();
+    await explorer
+      .getByRole("button", { name: "Actions for my_currency_view", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Query as SELECT", exact: true }).click();
+    if (mobile) await expect(page.getByLabel("Data Explorer")).toBeHidden();
+    await expect(editor).toContainText('"my_currency_view"');
+    await page
+      .getByRole("button", { name: mobile ? "Run" : "Run Query", exact: true })
+      .filter({ visible: true })
+      .click();
+    await expect(page.getByRole("cell", { name: "US dollar", exact: true })).toBeVisible();
+
+    // Empty-canvas insertion supports touch; desktop also exercises real drag data.
+    await pasteSql("");
+    if (mobile) {
+      await page.getByRole("button", { name: "Tables", exact: true }).click();
+      await explorer.getByRole("button", { name: "Actions for dim_date", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Insert in SQL editor", exact: true }).click();
+      await expect(page.getByLabel("Data Explorer")).toBeHidden();
+    } else {
+      const source = explorer.locator('[draggable="true"]').filter({ hasText: "dim_date" }).first();
+      await source.dragTo(page.getByTestId("sql-drop-target").filter({ visible: true }), {
+        targetPosition: { x: 100, y: 50 },
+      });
+    }
+    await expect(editor).toContainText('SELECT * FROM "04_gold"."dim_date" LIMIT 100;');
+    await page
+      .getByRole("button", { name: mobile ? "Run" : "Run Query", exact: true })
+      .filter({ visible: true })
+      .click();
+    await expect(page.getByRole("cell", { name: "2026", exact: true })).toBeVisible();
+    await expect(page.locator(".monaco-editor")).toHaveCount(1);
+    if (mobile) {
+      // One editor survives both sides of the responsive breakpoint.
+      await pasteSql("SELECT 987 AS responsive_draft;");
+      await page.setViewportSize({ width: 768, height: 1024 });
+      await expect(editor).toContainText("responsive_draft");
+      await expect(page.locator(".monaco-editor")).toHaveCount(1);
+      await page.getByText("04_gold", { exact: true }).filter({ visible: true }).click();
+      const action = page
+        .getByRole("button", { name: "Actions for dim_date", exact: true })
+        .filter({ visible: true });
+      const actionBox = await action.boundingBox();
+      const panelBox = await page.locator("[data-panel]").filter({ has: action }).boundingBox();
+      expect(actionBox).not.toBeNull();
+      expect(panelBox).not.toBeNull();
+      expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(
+        panelBox!.x + panelBox!.width + 1
+      );
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(editor).toContainText("responsive_draft");
+      await expect(page.locator(".monaco-editor")).toHaveCount(1);
+    }
+    expect(downloads).toEqual(["dim-currency-file", "dim-date-file"]);
+    const size = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      scroll: document.documentElement.scrollWidth,
+    }));
+    expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+    await page.screenshot({
+      path: test.info().outputPath(`table-actions-${mobile ? "phone" : "desktop"}.png`),
+    });
+  });
+}

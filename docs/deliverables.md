@@ -8,6 +8,8 @@ Updated 7 September 2026. The verified NBP v2 data foundation is live. It contai
 
 The portal correction in [PR 63](https://github.com/rutkala/zohelo-data/pull/63) is deployed at [`1f82d96`](https://github.com/rutkala/zohelo-data/commit/1f82d96f45658109643471d36c91eece75536e84). It provides one native dbt Data catalogue, automatic loading for schema-qualified SELECT queries, and the focused slate/teal layout. [Browser and production-build checks](https://github.com/rutkala/zohelo-data/actions/runs/34115409234) and [deployment evidence](https://github.com/rutkala/zohelo-data/actions/runs/34115881096) verify the delivery.
 
+The next portal improvement is **In progress**, implemented locally in `77590e6`: consistent medallion dbt folders/schemas/aliases, a responsive native catalogue, accessible table actions and drag-and-drop, and session view creation. Local validation passed 678 portal tests, 93 data tests, lint and TypeScript checks. Production build/browser validation and deployment remain pending. The owner explicitly approved pushing, merging after checks, deploying the portal and publishing the matching catalogue in chat; that publication work is now underway. No new portal or data release has been deployed; the current live version remains the correction above.
+
 This page is the single project-status and owner-question record. Answer a question ID in chat and the assistant will maintain it. The portal contains data exploration and catalogue features; project planning stays here.
 
 **Status meanings:** **Done** is delivered and evidenced. **In progress** is active technical work. **Not started** is technical work that has not begun. **Waiting for your input** needs one owner business decision. **Deferred** is intentionally postponed.
@@ -31,6 +33,7 @@ This page is the single project-status and owner-question record. Answer a quest
 | D6 | Select the next source and intended business use | **Waiting for your input** | See **Q-S1**. |
 | D6 | Onboard a selected source | **Not started** | Technical work begins only after selection and dataset-specific reuse review. |
 | D7. Data-first portal and SQL experience | Automatically load released tables referenced by schema-qualified SELECT queries, including joins, unions, and CTEs, within the browser download limit | **Done** | Normal Run loads the referenced published tables; browser tests pass. |
+| D7 | Medallion catalogue navigation, desktop/touch table actions, drag-and-drop, session views, and responsive UX regressions | **In progress** | Implemented locally; 678 portal and 93 data tests passed. Publication approved by the owner; production/browser CI, portal deployment and a matching data release are underway. |
 | D7 | Focused modern palette and layout that supports the catalogue and SQL experience | **Done** | Focused Home/navigation, slate/teal light and dark palettes, and the clearer Browser workspace label are deployed. |
 
 Items marked **In progress** or **Not started** are technical work. Only rows marked **Waiting for your input** need an owner decision.
@@ -45,6 +48,8 @@ These are the only open owner questions. Reply in chat with an ID and your answe
 | Q-S1 | What source or topic should be considered next: Eurostat, World Bank WDI, or another source? State the intended business use. | [Candidate-source research](source-candidates.md) |
 
 ## Evidence and current limits
+
+For local commit `77590e6`, the production frontend compiled and bundled, but local Workbox service-worker generation hit the same terser early-exit failure recorded in earlier local builds. Chromium is not installed in this environment. The added browser tests therefore remain unexecuted; GitHub production builds and browser checks are mandatory before merge. No deployment claim is made from local unit tests.
 
 The v2 Drive release is `5f356b1b-97cd-470d-9d5e-b46ebb37a7d1`, produced by [`f071669`](https://github.com/rutkala/zohelo-data/commit/f071669937829a3d0775a13146b3170e1b283b4e). The [dated release evidence](releases/2026-09-07-nbp-platform.md) records the 15 published tables, all-four-source coverage checked through 6 September, fresh reads, and exact raw rebuild. It is evidence for a Drive data snapshot, not a published GitHub Release or a completed semantic layer.
 

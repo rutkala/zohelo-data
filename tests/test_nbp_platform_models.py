@@ -121,39 +121,39 @@ class NbpPlatformModelTests(unittest.TestCase):
         with self.connection() as con:
             # EUR is absent from the changed and later observations but remains current from its unchanged replay.
             self.assertEqual(con.execute(
-                "select code, mid, ingestion_sequence from stg_nbp_table_a order by code"
+                'select code, mid, ingestion_sequence from "03_silver"."nbp_exchange_rates_table_a" order by code'
             ).fetchall(), [("EUR", 4.2, 2), ("USD", 3.8, 5)])
             self.assertEqual(con.execute(
-                "select count(*) from br_nbp_table_a where code = 'USD'"
+                'select count(*) from "02_bronze"."nbp_exchange_rates_table_a" where code = \'USD\''
             ).fetchone()[0], 5)
             # NBP can repeat one code for multiple countries in a single publication.
             # Bronze retains both source rows; current silver collapses identical values deterministically.
             self.assertEqual(con.execute(
-                "select count(*) from br_nbp_table_a where code = 'EUR'"
+                'select count(*) from "02_bronze"."nbp_exchange_rates_table_a" where code = \'EUR\''
             ).fetchone()[0], 4)
             self.assertEqual(con.execute(
-                "select currency from stg_nbp_table_a where code = 'EUR'"
+                'select currency from "03_silver"."nbp_exchange_rates_table_a" where code = \'EUR\''
             ).fetchone()[0], "Euro")
             self.assertEqual(con.execute(
-                "select count(*) from nbp_change_events where code = 'EUR'"
+                'select count(*) from "03_silver"."nbp_change_events" where code = \'EUR\''
             ).fetchone()[0], 0)
             # Raw response bytes remain immutable landing objects addressed by hash/file id;
             # they are not repeated once per flattened currency observation.
-            bronze_columns = {row[0] for row in con.execute("describe br_nbp_table_a").fetchall()}
+            bronze_columns = {row[0] for row in con.execute('describe "02_bronze"."nbp_exchange_rates_table_a"').fetchall()}
             self.assertNotIn("body_json", bronze_columns)
             self.assertTrue({"raw_file_id", "response_sha256"}.issubset(bronze_columns))
             self.assertEqual(con.execute(
-                "select mid from br_nbp_table_b where code = 'ZWR'"
+                'select mid from "02_bronze"."nbp_exchange_rates_table_b" where code = \'ZWR\''
             ).fetchone()[0], 0.0)
             self.assertEqual(con.execute(
-                "select code, mid, has_zero_source_quote from stg_nbp_table_b order by code"
+                'select code, mid, has_zero_source_quote from "03_silver"."nbp_exchange_rates_table_b" order by code'
             ).fetchall(), [("USD", 3.81, False), ("ZWR", 0.0, True)])
             self.assertEqual(con.execute(
-                "select currency_key, mid, has_zero_source_quote from fact_fx_quotes "
+                'select currency_key, mid, has_zero_source_quote from "04_gold"."fact_fx_quotes" '
                 "where source_table_key = 'B' order by currency_key"
             ).fetchall(), [("USD", 3.81, False), ("ZWR", 0.0, True)])
             self.assertEqual(con.execute(
-                "select event_type, ingestion_sequence from nbp_change_events "
+                'select event_type, ingestion_sequence from "03_silver"."nbp_change_events" '
                 "where source_id = 'nbp_exchange_rates_table_a' order by ingestion_sequence"
             ).fetchall(), [
                 ("source_value_changed", 3),
@@ -164,7 +164,7 @@ class NbpPlatformModelTests(unittest.TestCase):
     def test_gold_replay_emits_no_change_event_and_zero_event_relation_is_valid(self):
         with self.connection() as con:
             self.assertEqual(con.execute(
-                "select count(*) from nbp_change_events where source_id = 'nbp_gold_prices'"
+                'select count(*) from "03_silver"."nbp_change_events" where source_id = \'nbp_gold_prices\''
             ).fetchone()[0], 0)
 
         zero_batches = self.workspace / "zero-events.jsonl"
@@ -188,12 +188,12 @@ class NbpPlatformModelTests(unittest.TestCase):
         result = self.run_dbt(zero_batches, zero_database, self.workspace / "zero-target")
         self.assertEqual(result.returncode, 0, result.stdout)
         with duckdb.connect(str(zero_database), read_only=True) as con:
-            self.assertEqual(con.execute("select count(*) from nbp_change_events").fetchone()[0], 0)
+            self.assertEqual(con.execute('select count(*) from "03_silver"."nbp_change_events"').fetchone()[0], 0)
 
     def test_gold_grains_dimensions_and_unmodified_api_numbers(self):
         with self.connection() as con:
             self.assertEqual(con.execute(
-                "select source_table_key, currency_key, mid, bid, ask, has_zero_source_quote from fact_fx_quotes "
+                'select source_table_key, currency_key, mid, bid, ask, has_zero_source_quote from "04_gold"."fact_fx_quotes" '
                 "order by source_table_key, currency_key"
             ).fetchall(), [
                 ("A", "EUR", 4.2, None, None, False),
@@ -204,29 +204,29 @@ class NbpPlatformModelTests(unittest.TestCase):
             ])
             self.assertEqual(con.execute(
                 "select cast(effective_date as varchar), commodity_key, price_pln_per_gram_1000, raw_cena "
-                "from fact_gold_prices"
+                'from "04_gold"."fact_gold_prices"'
             ).fetchall(), [("2020-01-01", "nbp_gold_1000_gram", Decimal("200.11"), Decimal("200.11"))])
             self.assertEqual(con.execute("""
-                select count(*) from fact_fx_quotes f
-                left join dim_date d on f.effective_date = d.date_key
-                left join dim_currency c on f.currency_key = c.currency_key
-                left join dim_source_table s on f.source_table_key = s.source_table_key
+                select count(*) from "04_gold"."fact_fx_quotes" f
+                left join "04_gold"."dim_date" d on f.effective_date = d.date_key
+                left join "04_gold"."dim_currency" c on f.currency_key = c.currency_key
+                left join "04_gold"."dim_source_table" s on f.source_table_key = s.source_table_key
                 where d.date_key is null or c.currency_key is null or s.source_table_key is null
             """).fetchone()[0], 0)
             date_keys = {row[0] for row in con.execute(
-                "select cast(date_key as varchar) from dim_date"
+                'select cast(date_key as varchar) from "04_gold"."dim_date"'
             ).fetchall()}
             self.assertTrue({"2009-02-11", "2019-12-31", "2020-01-01"}.issubset(date_keys))
             self.assertEqual((min(date_keys), max(date_keys)), ("2009-02-11", "2020-01-01"))
             self.assertEqual(len(date_keys), (date(2020, 1, 1) - date(2009, 2, 11)).days + 1)
             self.assertEqual(con.execute(
                 "select calendar_year, calendar_month, calendar_day, iso_weekday "
-                "from dim_date where date_key = date '2019-12-31'"
+                'from "04_gold"."dim_date" where date_key = date \'2019-12-31\''
             ).fetchone(), (2019, 12, 31, 2))
             self.assertEqual(con.execute("""
-                select count(*) from fact_gold_prices f
-                left join dim_date d on f.effective_date = d.date_key
-                left join dim_commodity c on f.commodity_key = c.commodity_key
+                select count(*) from "04_gold"."fact_gold_prices" f
+                left join "04_gold"."dim_date" d on f.effective_date = d.date_key
+                left join "04_gold"."dim_commodity" c on f.commodity_key = c.commodity_key
                 where d.date_key is null or c.commodity_key is null
             """).fetchone()[0], 0)
 
@@ -237,7 +237,15 @@ class NbpPlatformModelTests(unittest.TestCase):
         bronze = manifest["nodes"]["model.zohelo_data.br_nbp_table_a"]
         self.assertIn("model.zohelo_data.stg_nbp_table_a", fact["depends_on"]["nodes"])
         self.assertIn("model.zohelo_data.br_nbp_table_a", staging["depends_on"]["nodes"])
-        self.assertIn("source.zohelo_data.nbp_verified_raw.nbp_batches", bronze["depends_on"]["nodes"])
+        self.assertIn("source.zohelo_data.landing.nbp_batches", bronze["depends_on"]["nodes"])
+        self.assertNotIn("source.zohelo_data.bronze.nbp_exchange_rates_table_a", manifest["sources"])
+        self.assertEqual(bronze["schema"], "02_bronze")
+        self.assertEqual(staging["schema"], "03_silver")
+        self.assertEqual(fact["schema"], "04_gold")
+        self.assertEqual(
+            manifest["sources"]["source.zohelo_data.landing.nbp_batches"]["schema"],
+            "01_landing",
+        )
 
 
 if __name__ == "__main__":

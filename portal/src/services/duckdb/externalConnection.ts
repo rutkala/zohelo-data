@@ -180,7 +180,7 @@ export const fetchExternalDatabases = async (
           // Enumerate (schema, table) pairs — external DuckDB databases can
           // carry non-"main" schemas too (#3).
           const tablesResult = await executeExternalQuery(
-            `SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = '${sqlEscapeString(dbName)}' ORDER BY table_schema, table_name`,
+            `SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_catalog = '${sqlEscapeString(dbName)}' ORDER BY table_schema, table_name`,
             connection
           );
 
@@ -188,6 +188,8 @@ export const fetchExternalDatabases = async (
           for (const tableRow of tablesResult.data) {
             const schemaName = (tableRow.table_schema as string) || "main";
             const tableName = tableRow.table_name as string;
+            const relationType =
+              String(tableRow.table_type).toUpperCase() === "VIEW" ? "view" : "table";
             try {
               // Try to get columns info
               const columnsResult = await executeExternalQuery(
@@ -206,6 +208,7 @@ export const fetchExternalDatabases = async (
               tables.push({
                 name: tableName,
                 schema: schemaName,
+                relationType,
                 columns,
                 rowCount: 0, // External connections don't provide row count easily
                 createdAt: new Date().toISOString(),
@@ -215,6 +218,7 @@ export const fetchExternalDatabases = async (
               tables.push({
                 name: tableName,
                 schema: schemaName,
+                relationType,
                 columns: [],
                 rowCount: 0,
                 createdAt: new Date().toISOString(),
