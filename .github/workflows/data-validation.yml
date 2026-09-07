@@ -11,6 +11,7 @@ on:
       - 'scripts/**'
       - 'requirements.*'
       - 'dbt_project.yml'
+      - '.dbtignore'
       - 'profiles.yml'
       - '.python-version'
       - '.github/workflows/**'

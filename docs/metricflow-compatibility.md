@@ -46,7 +46,9 @@ semantic definitions. `dbt parse`, config validation or `--explain` alone would
 not establish query execution.
 
 The sum metric is deliberately named `fixture_value_total` and belongs only
-to the synthetic test project. It does not approve summing exchange rates or
+to the synthetic test project. The root dbt project excludes `tests/fixtures/`
+through `.dbtignore`; a regression checks that those resources never enter its
+production manifest. It does not approve summing exchange rates or
 gold prices and is not published in the production NBP catalogue.
 
 ## Offline verification
