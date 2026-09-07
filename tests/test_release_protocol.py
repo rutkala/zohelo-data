@@ -138,6 +138,82 @@ class ReleaseProtocolTests(unittest.TestCase):
             "release_id": self.release_id,
         }
 
+    def test_legacy_candidate_cannot_downgrade_a_platform_publication(self):
+        store = MemoryStore()
+        published = publish_release(store, "root", **self._platform_candidate())
+        writes_before = store.writes
+        with self.assertRaisesRegex(ReleaseProtocolError, "legacy silver candidate"):
+            publish_release(store, "root", **self._candidate())
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(restore_current_release(store, "root")["release_id"], published["release_id"])
+
+    def _platform_candidate(self):
+        specifications = {
+            "bronze_nbp_exchange_rates_table_a": ("02_bronze", "br_nbp_table_a"),
+            "bronze_nbp_exchange_rates_table_b": ("02_bronze", "br_nbp_table_b"),
+            "bronze_nbp_exchange_rates_table_c": ("02_bronze", "br_nbp_table_c"),
+            "bronze_nbp_gold_prices": ("02_bronze", "br_nbp_gold_prices"),
+            "nbp_exchange_rates_table_a": ("03_silver", "stg_nbp_table_a"),
+            "nbp_exchange_rates_table_b": ("03_silver", "stg_nbp_table_b"),
+            "nbp_exchange_rates_table_c": ("03_silver", "stg_nbp_table_c"),
+            "nbp_gold_prices": ("03_silver", "stg_nbp_gold_prices"),
+            "nbp_change_events": ("03_silver", "nbp_change_events"),
+            "fact_fx_quotes": ("04_gold", "fact_fx_quotes"),
+            "fact_gold_prices": ("04_gold", "fact_gold_prices"),
+            "dim_date": ("04_gold", "dim_date"),
+            "dim_currency": ("04_gold", "dim_currency"),
+            "dim_source_table": ("04_gold", "dim_source_table"),
+            "dim_commodity": ("04_gold", "dim_commodity"),
+        }
+        datasets = []
+        results = []
+        for dataset_id, (layer, model) in specifications.items():
+            is_nondate_dimension = dataset_id in {"dim_currency", "dim_source_table", "dim_commodity"}
+            is_empty_changes = dataset_id == "nbp_change_events"
+            date_column = None if is_nondate_dimension else (
+                "date_key" if dataset_id == "dim_date" else
+                "effectiveDate" if layer == "03_silver" and dataset_id != "nbp_change_events" else
+                "effective_date"
+            )
+            table_name = dataset_id.removeprefix("bronze_")
+            datasets.append({
+                "dataset_id": dataset_id, "layer": layer,
+                "model_name": model, "model_id": f"model.zohelo_data.{model}", "table_name": table_name,
+                "path": self._file(f"platform-{dataset_id}.parquet", dataset_id.encode()),
+                "row_count": 0 if is_empty_changes else 1,
+                "date_column": date_column,
+                "min_date": None if is_nondate_dimension or is_empty_changes else "2020-01-01",
+                "max_date": None if is_nondate_dimension or is_empty_changes else "2020-01-01",
+                "columns": [{"name": date_column or "value", "type": "date" if date_column else "text"}],
+            })
+            results.extend([
+                {"unique_id": f"model.zohelo_data.{model}", "status": "success"},
+                {"unique_id": f"test.zohelo_data.not_null_{model}_value", "status": "pass"},
+            ])
+        sources = [{
+            "source_id": source_id, "name": source_id, "description": "NBP fixture",
+            "status": "published_snapshot", "checked_through": None,
+            "latest_observation_date": None, "last_successful_ingestion_at": None,
+            "last_attempt_at": None, "raw_response_count": 0,
+        } for source_id in ("nbp_exchange_rates_table_a", "nbp_exchange_rates_table_b", "nbp_exchange_rates_table_c", "nbp_gold_prices")]
+        business_catalog = {
+            "format_version": 1, "code_sha": "a" * 40, "sources": sources,
+            "lineage": {"nodes": [], "edges": []}, "metrics": [],
+            "metrics_status": "awaiting_business_approval",
+        }
+        return {
+            "datasets": datasets,
+            "artifacts": [
+                {"name": "manifest.json", "path": self._file("platform-manifest.json", b'{"metadata":{},"nodes":{}}')},
+                {"name": "catalog.json", "path": self._file("platform-catalog.json", b'{"nodes":{}}')},
+                {"name": "run_results.json", "path": self._file("platform-run-results.json", json.dumps({"metadata": {"dbt_schema_version": "v6"}, "results": results}).encode())},
+                {"name": "business-catalog.json", "path": self._file("business-catalog.json", json.dumps(business_catalog).encode())},
+                {"name": "ingestion-state.json", "path": self._file("ingestion-state.json", b'{"format_version":1,"sources":{}}')},
+            ],
+            "inputs": [], "code_sha": "a" * 40, "measurements": {},
+            "release_id": self.release_id, "release_scope": "nbp_platform",
+        }
+
     def _install_old_pointer(self, store):
         old_release_id = "a557f6b7-689f-49f3-9bca-01fc8de8d767"
         old_datasets = []
@@ -324,6 +400,42 @@ class ReleaseProtocolTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ReleaseProtocolError, "root_id is invalid"):
             publish_release(MemoryStore(), "../root", **self._candidate())
+
+    def test_platform_release_restores_v2_and_keeps_v1_pointer_contract(self):
+        store = MemoryStore()
+        _old_pointer_id, old_pointer, _old_file_id, _old_data = self._install_old_pointer(store)
+        report = publish_release(store, "root", **self._platform_candidate())
+
+        self.assertEqual(report["manifest"]["format_version"], 2)
+        self.assertEqual(report["manifest"]["release_scope"], "nbp_platform")
+        pointer = json.loads(store.files[report["pointer_file_id"]]["data"])
+        self.assertEqual(pointer["format_version"], 1)
+        self.assertEqual(restore_current_release(store, "root")["release_scope"], "nbp_platform")
+        self.assertEqual(restore_release(store, json.loads(old_pointer))["release_scope"], "nbp_silver")
+
+        business_catalog = next(item for item in report["manifest"]["artifacts"] if item["name"] == "business-catalog.json")
+        store.files[business_catalog["id"]]["data"] = b"{}"
+        with self.assertRaisesRegex(ReleaseProtocolError, "checksum mismatch"):
+            restore_current_release(store, "root")
+
+    def test_platform_catalogue_code_tampering_and_missing_model_test_are_rejected_before_writes(self):
+        store = MemoryStore()
+        candidate = self._platform_candidate()
+        business = next(item for item in candidate["artifacts"] if item["name"] == "business-catalog.json")
+        Path(business["path"]).write_text(json.dumps({"format_version": 1, "code_sha": "b" * 40, "sources": [], "lineage": {"nodes": [], "edges": []}, "metrics": [], "metrics_status": "proposed"}))
+        with self.assertRaisesRegex(ReleaseProtocolError, "candidate code_sha"):
+            publish_release(store, "root", **candidate)
+        self.assertEqual(store.writes, 0)
+
+        store = MemoryStore()
+        candidate = self._platform_candidate()
+        run_results = next(item for item in candidate["artifacts"] if item["name"] == "run_results.json")
+        document = json.loads(Path(run_results["path"]).read_text())
+        document["results"] = [result for result in document["results"] if result["unique_id"] != "model.zohelo_data.dim_date"]
+        Path(run_results["path"]).write_text(json.dumps(document))
+        with self.assertRaisesRegex(ReleaseProtocolError, "missing successful platform models"):
+            publish_release(store, "root", **candidate)
+        self.assertEqual(store.writes, 0)
 
 
 if __name__ == "__main__":

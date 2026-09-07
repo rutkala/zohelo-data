@@ -40,20 +40,24 @@ def check_current():
                     local_files.append(str(destination))
                 started_query = time.monotonic()
                 connection.read_parquet(local_files).create_view("verified_dataset", replace=True)
+                date_column = dataset.get("date_column", "effectiveDate")
+                date_sql = f'min("{date_column}"), max("{date_column}")' if date_column else "NULL, NULL"
                 count, first, last = connection.execute(
-                    "SELECT count(*), min(effectiveDate), max(effectiveDate) FROM verified_dataset"
+                    f"SELECT count(*), {date_sql} FROM verified_dataset"
                 ).fetchone()
+                first = first.isoformat() if first is not None else None
+                last = last.isoformat() if last is not None else None
                 columns = [{"name": row[0], "type": row[1]}
                            for row in connection.execute("DESCRIBE verified_dataset").fetchall()]
-                if (count != dataset["row_count"] or first.isoformat() != dataset["min_date"]
-                        or last.isoformat() != dataset["max_date"] or columns != dataset["columns"]):
+                if (count != dataset["row_count"] or first != dataset["min_date"]
+                        or last != dataset["max_date"] or columns != dataset["columns"]):
                     raise ValueError("Restored SQL results differ from release metadata")
                 results.append({"dataset_id": dataset["dataset_id"], "rows": count,
-                                "min_date": first.isoformat(), "max_date": last.isoformat(),
+                                "min_date": first, "max_date": last,
                                 "query_seconds": round(time.monotonic() - started_query, 4)})
         finally:
             connection.close()
-    report = {"status": "fresh_silver_consumer_verified", "release_scope": "nbp_silver",
+    report = {"status": "fresh_consumer_verified", "release_scope": manifest["release_scope"],
               "release_id": manifest["release_id"], "code_sha": manifest["code_sha"],
               "read_only": True, "datasets": results,
               "restore_and_check_seconds": round(time.monotonic() - started, 3)}

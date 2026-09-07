@@ -15,12 +15,14 @@ import duckdb
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "nbp"
+TEST_TMP_ROOT = REPO_ROOT / ".local" / "test-tmp"
 
 
 class NbpDbtFixtureTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temp = tempfile.TemporaryDirectory(prefix="zohelo-fixture-")
+        TEST_TMP_ROOT.mkdir(parents=True, exist_ok=True)
+        cls.temp = tempfile.TemporaryDirectory(prefix="zohelo-fixture-", dir=TEST_TMP_ROOT)
         cls.addClassCleanup(cls.temp.cleanup)
         cls.workspace = Path(cls.temp.name)
         cls.data_root = cls.workspace / "data"
@@ -70,7 +72,7 @@ class NbpDbtFixtureTests(unittest.TestCase):
         return subprocess.run(
             [str(cls.dbt), *arguments, "--profiles-dir", str(REPO_ROOT),
              "--target-path", str(target or cls.target), "--log-path", str(cls.workspace / "logs"),
-             "--no-partial-parse"],
+             "--threads", "1", "--no-partial-parse"],
             cwd=REPO_ROOT,
             env=env,
             text=True,

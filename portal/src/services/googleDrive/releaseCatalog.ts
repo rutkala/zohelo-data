@@ -1,4 +1,4 @@
-/** Immutable NBP silver release resolution for browser readers. */
+/** Immutable NBP release resolution for browser readers. */
 import { DRIVE_ROOT } from "./auth";
 import {
   fetchDriveFileBuffer,
@@ -7,22 +7,56 @@ import {
   findNamedFilesInFolderById,
 } from "./driveApi";
 import type {
+  BusinessCatalogue,
+  BusinessCatalogueLineageNode,
+  BusinessCatalogueSource,
   LakehouseFile,
+  PlatformReleaseManifest,
+  ReleaseArtifact,
   ReleaseCatalogResolution,
   ReleaseDataset,
+  ReleaseLayer,
   ReleaseManifest,
   ReleasePointer,
+  SilverReleaseManifest,
 } from "./types";
 
 export const DRIVE_DOWNLOAD_LIMIT_BYTES = 64 * 1024 * 1024;
 export const POINTER_MAX_BYTES = 64 * 1024;
 export const MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
-const REQUIRED_DATASET_IDS = [
+export const BUSINESS_CATALOGUE_MAX_BYTES = 4 * 1024 * 1024;
+
+const V1_DATASETS = [
   "nbp_exchange_rates_table_a",
   "nbp_exchange_rates_table_b",
   "nbp_exchange_rates_table_c",
   "nbp_gold_prices",
 ] as const;
+const V2_DATASETS: Record<string, ReleaseLayer> = {
+  bronze_nbp_exchange_rates_table_a: "02_bronze",
+  bronze_nbp_exchange_rates_table_b: "02_bronze",
+  bronze_nbp_exchange_rates_table_c: "02_bronze",
+  bronze_nbp_gold_prices: "02_bronze",
+  nbp_exchange_rates_table_a: "03_silver",
+  nbp_exchange_rates_table_b: "03_silver",
+  nbp_exchange_rates_table_c: "03_silver",
+  nbp_gold_prices: "03_silver",
+  nbp_change_events: "03_silver",
+  fact_fx_quotes: "04_gold",
+  fact_gold_prices: "04_gold",
+  dim_date: "04_gold",
+  dim_currency: "04_gold",
+  dim_source_table: "04_gold",
+  dim_commodity: "04_gold",
+};
+const V2_NULL_DATE_DATASETS = new Set(["dim_currency", "dim_source_table", "dim_commodity"]);
+const V2_REQUIRED_ARTIFACTS = new Set([
+  "manifest.json",
+  "catalog.json",
+  "run_results.json",
+  "ingestion-state.json",
+  "business-catalog.json",
+]);
 
 export class DriveDownloadBudget {
   private planned = 0;
@@ -80,9 +114,16 @@ const asPositiveInteger = (value: unknown, field: string) => {
   }
   return value as number;
 };
+const asNonNegativeInteger = (value: unknown, field: string) => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`Release manifest has invalid ${field}.`);
+  }
+  return value as number;
+};
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DRIVE_ID_RE = /^[A-Za-z0-9_-]{1,255}$/;
 const CODE_SHA_RE = /^[0-9a-f]{40}$/;
+const TABLE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,199}$/;
 const asCanonicalUuid = (value: unknown, field: string) => {
   const id = asNonEmptyString(value, field);
   if (!UUID_RE.test(id)) throw new Error(`Release metadata has invalid ${field}.`);
@@ -102,6 +143,16 @@ const asIsoDate = (value: unknown, field: string) => {
     throw new Error(`Release manifest has invalid ${field}.`);
   }
   return date;
+};
+const asNullableDate = (value: unknown, field: string) =>
+  value === null ? null : asIsoDate(value, field);
+const asNullableTimestamp = (value: unknown, field: string) => {
+  if (value === null) return null;
+  const timestamp = asNonEmptyString(value, field);
+  if (Number.isNaN(Date.parse(timestamp))) {
+    throw new Error(`Business catalogue has invalid ${field}.`);
+  }
+  return timestamp;
 };
 
 export const sha256Hex = async (bytes: Uint8Array): Promise<string> => {
@@ -141,7 +192,7 @@ function parsePointer(bytes: Uint8Array): ReleasePointer {
   return pointer;
 }
 
-function parseFile(raw: unknown, datasetId: string): LakehouseFile {
+function parseFile(raw: unknown, datasetId: string, layer: ReleaseLayer): LakehouseFile {
   if (!isRecord(raw)) throw new Error(`Release manifest has invalid file for '${datasetId}'.`);
   return {
     id: asDriveId(raw.id, "file.id"),
@@ -149,15 +200,16 @@ function parseFile(raw: unknown, datasetId: string): LakehouseFile {
     size: asPositiveInteger(raw.size, "file.size"),
     sha256: asSha256(raw.sha256, "file.sha256"),
     tableName: datasetId,
-    layer: "03_silver",
+    layer,
   };
 }
 
-function parseDataset(raw: unknown): ReleaseDataset {
+function parseDataset(raw: unknown, formatVersion: 1 | 2): ReleaseDataset {
   if (!isRecord(raw)) throw new Error("Release manifest has an invalid dataset.");
   const dataset_id = asNonEmptyString(raw.dataset_id, "dataset_id");
-  if (raw.layer !== "03_silver") {
-    throw new Error(`Release dataset '${dataset_id}' is not in layer 03_silver.`);
+  const expectedLayer = formatVersion === 1 ? "03_silver" : V2_DATASETS[dataset_id];
+  if (!expectedLayer || raw.layer !== expectedLayer) {
+    throw new Error(`Release dataset '${dataset_id}' has an invalid layer.`);
   }
   if (!Array.isArray(raw.columns) || raw.columns.length === 0) {
     throw new Error(`Release dataset '${dataset_id}' has invalid columns.`);
@@ -179,19 +231,80 @@ function parseDataset(raw: unknown): ReleaseDataset {
   if (!Array.isArray(raw.files) || raw.files.length === 0) {
     throw new Error(`Release dataset '${dataset_id}' has no files.`);
   }
+  const row_count =
+    formatVersion === 1
+      ? asPositiveInteger(raw.row_count, "row_count")
+      : asNonNegativeInteger(raw.row_count, "row_count");
+  if (formatVersion === 2 && row_count === 0 && dataset_id !== "nbp_change_events") {
+    throw new Error(`Release dataset '${dataset_id}' may not have zero rows.`);
+  }
+  const min_date =
+    formatVersion === 1
+      ? asIsoDate(raw.min_date, "min_date")
+      : asNullableDate(raw.min_date, "min_date");
+  const max_date =
+    formatVersion === 1
+      ? asIsoDate(raw.max_date, "max_date")
+      : asNullableDate(raw.max_date, "max_date");
+  if ((min_date === null) !== (max_date === null)) {
+    throw new Error(`Release dataset '${dataset_id}' must provide both date bounds or neither.`);
+  }
+  if (
+    min_date === null &&
+    formatVersion === 2 &&
+    !V2_NULL_DATE_DATASETS.has(dataset_id) &&
+    row_count !== 0
+  ) {
+    throw new Error(`Release dataset '${dataset_id}' may not omit date bounds.`);
+  }
+  if (min_date !== null && max_date !== null && min_date > max_date) {
+    throw new Error(`Release dataset '${dataset_id}' has inverted date bounds.`);
+  }
+  const table_name = asNonEmptyString(raw.table_name, "table_name");
+  if (!TABLE_NAME_RE.test(table_name)) {
+    throw new Error(`Release dataset '${dataset_id}' has an invalid table_name.`);
+  }
   return {
     dataset_id,
-    layer: "03_silver",
-    table_name: asNonEmptyString(raw.table_name, "table_name"),
-    row_count: asPositiveInteger(raw.row_count, "row_count"),
-    min_date: asIsoDate(raw.min_date, "min_date"),
-    max_date: asIsoDate(raw.max_date, "max_date"),
+    layer: expectedLayer,
+    table_name,
+    row_count,
+    min_date,
+    max_date,
     columns: raw.columns.map((column) => ({
       name: column.name as string,
       type: column.type as string,
     })),
-    files: raw.files.map((file) => parseFile(file, dataset_id)),
+    files: raw.files.map((file) => parseFile(file, dataset_id, expectedLayer)),
   };
+}
+
+function parseArtifact(raw: unknown): ReleaseArtifact {
+  if (!isRecord(raw)) throw new Error("The selected release manifest has an invalid artifact.");
+  return {
+    id: asDriveId(raw.id, "artifact.id"),
+    name: asNonEmptyString(raw.name, "artifact.name"),
+    size: asPositiveInteger(raw.size, "artifact.size"),
+    sha256: asSha256(raw.sha256, "artifact.sha256"),
+  };
+}
+
+function parseArtifacts(raw: unknown, formatVersion: 1 | 2) {
+  if (!Array.isArray(raw)) {
+    throw new Error("The selected release manifest has invalid artifacts.");
+  }
+  const artifacts = raw.map(parseArtifact);
+  const names = new Set<string>();
+  for (const artifact of artifacts) {
+    if (names.has(artifact.name)) {
+      throw new Error("The selected release manifest has duplicate artifact names.");
+    }
+    names.add(artifact.name);
+  }
+  if (formatVersion === 2 && [...V2_REQUIRED_ARTIFACTS].some((name) => !names.has(name))) {
+    throw new Error("The selected platform release is missing required artifacts.");
+  }
+  return artifacts;
 }
 
 function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManifest {
@@ -201,25 +314,35 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
   } catch {
     throw new Error("The selected release manifest is not valid JSON.");
   }
-  if (!isRecord(raw) || raw.format_version !== 1) {
+  if (!isRecord(raw) || (raw.format_version !== 1 && raw.format_version !== 2)) {
     throw new Error("The selected release manifest has an unsupported format_version.");
   }
   if (asCanonicalUuid(raw.release_id, "release_id") !== pointer.release_id) {
     throw new Error("The selected release manifest does not match current-release.json.");
   }
-  if (raw.release_scope !== "nbp_silver" || raw.status !== "validated") {
-    throw new Error("The selected release is not a validated NBP silver release.");
+  const format_version = raw.format_version;
+  const expectedScope = format_version === 1 ? "nbp_silver" : "nbp_platform";
+  if (raw.release_scope !== expectedScope || raw.status !== "validated") {
+    throw new Error(`The selected release is not a validated ${expectedScope} release.`);
   }
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
     throw new Error("The selected release does not have passing tests.");
   }
   if (!Array.isArray(raw.datasets))
     throw new Error("The selected release manifest has no datasets.");
-  const datasets = raw.datasets.map(parseDataset);
-  for (const dataset of datasets) {
-    if (dataset.min_date > dataset.max_date) {
-      throw new Error(`Release dataset '${dataset.dataset_id}' has inverted date bounds.`);
-    }
+  const datasets = raw.datasets.map((dataset) => parseDataset(dataset, format_version));
+  const ids = new Set(datasets.map((dataset) => dataset.dataset_id));
+  const requiredIds = format_version === 1 ? V1_DATASETS : Object.keys(V2_DATASETS);
+  if (
+    ids.size !== datasets.length ||
+    ids.size !== requiredIds.length ||
+    requiredIds.some((id) => !ids.has(id))
+  ) {
+    throw new Error(
+      format_version === 1
+        ? "The selected release must contain exactly the four required NBP silver datasets."
+        : "The selected platform release must contain exactly the 15 required NBP datasets."
+    );
   }
   const fileIds = new Set<string>();
   for (const dataset of datasets) {
@@ -230,34 +353,128 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
       fileIds.add(file.id);
     }
   }
-  const ids = new Set(datasets.map((dataset) => dataset.dataset_id));
-  if (
-    ids.size !== datasets.length ||
-    ids.size !== REQUIRED_DATASET_IDS.length ||
-    REQUIRED_DATASET_IDS.some((id) => !ids.has(id))
-  ) {
-    throw new Error(
-      "The selected release must contain exactly the four required NBP silver datasets."
-    );
+  const artifacts = parseArtifacts(raw.artifacts, format_version);
+  for (const artifact of artifacts) {
+    if (fileIds.has(artifact.id)) {
+      throw new Error("The selected release reuses a file ID across data and artifacts.");
+    }
+    fileIds.add(artifact.id);
   }
-  if (!Array.isArray(raw.artifacts) || !Array.isArray(raw.inputs)) {
-    throw new Error("The selected release manifest has invalid artifacts or inputs.");
+  if (!Array.isArray(raw.inputs)) {
+    throw new Error("The selected release manifest has invalid inputs.");
   }
-  return {
-    format_version: 1,
+  const code_sha = asNonEmptyString(raw.code_sha, "code_sha");
+  if (!CODE_SHA_RE.test(code_sha)) throw new Error("Release metadata has invalid code_sha.");
+  const base = {
     release_id: pointer.release_id,
-    release_scope: "nbp_silver",
-    status: "validated",
-    code_sha: (() => {
-      const codeSha = asNonEmptyString(raw.code_sha, "code_sha");
-      if (!CODE_SHA_RE.test(codeSha)) throw new Error("Release metadata has invalid code_sha.");
-      return codeSha;
-    })(),
+    status: "validated" as const,
+    code_sha,
     created_at_utc: asNonEmptyString(raw.created_at_utc, "created_at_utc"),
     datasets,
-    artifacts: raw.artifacts,
+    artifacts,
     inputs: raw.inputs,
-    tests: { passed: true },
+    tests: { passed: true } as const,
+  };
+  if (format_version === 1) {
+    return {
+      ...base,
+      format_version: 1,
+      release_scope: "nbp_silver",
+    } satisfies SilverReleaseManifest;
+  }
+  return {
+    ...base,
+    format_version: 2,
+    release_scope: "nbp_platform",
+  } satisfies PlatformReleaseManifest;
+}
+
+function parseBusinessSource(raw: unknown): BusinessCatalogueSource {
+  if (!isRecord(raw)) throw new Error("Business catalogue has an invalid source.");
+  return {
+    source_id: asNonEmptyString(raw.source_id, "source_id"),
+    name: asNonEmptyString(raw.name, "source.name"),
+    description: asNonEmptyString(raw.description, "source.description"),
+    status: asNonEmptyString(raw.status, "source.status"),
+    checked_through: asNullableDate(raw.checked_through, "source.checked_through"),
+    latest_observation_date: asNullableDate(
+      raw.latest_observation_date,
+      "source.latest_observation_date"
+    ),
+    last_successful_ingestion_at: asNullableTimestamp(
+      raw.last_successful_ingestion_at,
+      "source.last_successful_ingestion_at"
+    ),
+    last_attempt_at: asNullableTimestamp(raw.last_attempt_at, "source.last_attempt_at"),
+    raw_response_count: asNonNegativeInteger(raw.raw_response_count, "source.raw_response_count"),
+  };
+}
+
+function parseLineageNode(raw: unknown): BusinessCatalogueLineageNode {
+  if (!isRecord(raw)) throw new Error("Business catalogue has an invalid lineage node.");
+  return {
+    id: asNonEmptyString(raw.id, "lineage.node.id"),
+    label: asNonEmptyString(raw.label, "lineage.node.label"),
+    kind: asNonEmptyString(raw.kind, "lineage.node.kind"),
+    layer: asNonEmptyString(raw.layer, "lineage.node.layer"),
+    description: asNonEmptyString(raw.description, "lineage.node.description"),
+  };
+}
+
+function parseBusinessCatalogue(
+  bytes: Uint8Array,
+  manifest: PlatformReleaseManifest
+): BusinessCatalogue {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new Error("business-catalog.json is not valid JSON.");
+  }
+  if (!isRecord(raw) || raw.format_version !== 1) {
+    throw new Error("business-catalog.json has an unsupported format_version.");
+  }
+  if (asNonEmptyString(raw.code_sha, "business catalogue code_sha") !== manifest.code_sha) {
+    throw new Error("business-catalog.json does not match the selected release code SHA.");
+  }
+  if (!Array.isArray(raw.sources) || !isRecord(raw.lineage) || !Array.isArray(raw.metrics)) {
+    throw new Error("business-catalog.json has invalid sources, lineage, or metrics.");
+  }
+  const sources = raw.sources.map(parseBusinessSource);
+  const sourceIds = new Set<string>();
+  for (const source of sources) {
+    if (sourceIds.has(source.source_id))
+      throw new Error("business-catalog.json has duplicate source IDs.");
+    sourceIds.add(source.source_id);
+  }
+  if (!Array.isArray(raw.lineage.nodes) || !Array.isArray(raw.lineage.edges)) {
+    throw new Error("business-catalog.json has invalid lineage.");
+  }
+  const nodes = raw.lineage.nodes.map(parseLineageNode);
+  const nodeIds = new Set<string>();
+  for (const node of nodes) {
+    if (nodeIds.has(node.id))
+      throw new Error("business-catalog.json has duplicate lineage node IDs.");
+    nodeIds.add(node.id);
+  }
+  const edges = raw.lineage.edges.map((edge) => {
+    if (!isRecord(edge)) throw new Error("business-catalog.json has an invalid lineage edge.");
+    const from = asNonEmptyString(edge.from, "lineage.edge.from");
+    const to = asNonEmptyString(edge.to, "lineage.edge.to");
+    if (!nodeIds.has(from) || !nodeIds.has(to)) {
+      throw new Error("business-catalog.json has an edge that does not reference a lineage node.");
+    }
+    return { from, to };
+  });
+  return {
+    format_version: 1,
+    code_sha: manifest.code_sha,
+    sources,
+    lineage: { nodes, edges },
+    metrics: raw.metrics.map((metric) => {
+      if (!isRecord(metric)) throw new Error("business-catalog.json has an invalid metric.");
+      return metric;
+    }),
   };
 }
 
@@ -325,11 +542,31 @@ export async function resolveReleaseCatalog(
     throw new Error("The selected release manifest does not match the pointer SHA-256.");
   }
   const manifest = parseManifest(manifestBytes, pointer);
-  return {
-    kind: "release",
+  const resolved = {
+    kind: "release" as const,
     pointer,
     manifest,
     manifestFileId: pointer.manifest_file_id,
     fingerprint: `${pointer.release_id}:${pointer.manifest_file_id}:${pointer.manifest_sha256}`,
   };
+  if (manifest.format_version !== 2) return resolved;
+
+  const catalogueArtifact = manifest.artifacts.find(
+    (artifact) => artifact.name === "business-catalog.json"
+  );
+  if (!catalogueArtifact) {
+    throw new Error("The selected platform release is missing business-catalog.json.");
+  }
+  const catalogueBytes = await downloadExact(
+    catalogueArtifact.id,
+    catalogueArtifact.size,
+    BUSINESS_CATALOGUE_MAX_BYTES,
+    "business-catalog.json",
+    token,
+    budget
+  );
+  if ((await sha256Hex(catalogueBytes)) !== catalogueArtifact.sha256) {
+    throw new Error("business-catalog.json does not match its release SHA-256.");
+  }
+  return { ...resolved, businessCatalogue: parseBusinessCatalogue(catalogueBytes, manifest) };
 }

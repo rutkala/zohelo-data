@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import BusinessCatalogue from "./BusinessCatalogue";
 
 export default function LakehouseExplorer() {
   const googleAuth = useDuckStore((s) => s.googleAuth);
@@ -254,6 +255,8 @@ export default function LakehouseExplorer() {
           <span className="break-words min-w-0">{lakehouseStatusMessage}</span>
         </div>
       )}
+
+      <BusinessCatalogue release={lakehouseRelease} />
 
       {/* Lakehouse Medallion Layers Tree */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 text-xs">

@@ -73,3 +73,19 @@ Until NBP's applicable terms or a written permission are reviewed for the intend
 - [NBP Table C page and quote quantities](https://nbp.pl/en/statistic-and-financial-reporting/rates/table-c/)
 - [NBP gold price page (PLN; 1 g at 1000 fineness)](https://nbp.pl/en/statistic-and-financial-reporting/rates/gold-price/)
 - [NBP website Terms of Use](https://nbp.pl/en/about-nbp/contact/nbps-regulations/)
+# Historical response check, 7 September 2026
+
+Read-only requests using the new configured transport returned HTTP 200 and
+passed source validation for A, B and C over 2–4 January 2002, and gold over
+2–4 January 2013. The A/C archive omits some currency names. A repeats EUR for
+RFN and UGW with the same published value; B repeats common currency codes for
+several countries. These are valid historical source rows, not correction
+events. Bronze preserves country/symbol and raw links; silver collapses equal
+same-request prices deterministically at the currency/date grain. Conflicting
+same-request prices fail. This targeted check is not proof of every historical
+interval or a new commercial-use licence.
+
+Primary endpoints: [Table A](https://api.nbp.pl/api/exchangerates/tables/A/2002-01-02/2002-01-04/?format=json),
+[Table B](https://api.nbp.pl/api/exchangerates/tables/B/2002-01-02/2002-01-04/?format=json),
+[Table C](https://api.nbp.pl/api/exchangerates/tables/C/2002-01-02/2002-01-04/?format=json),
+[gold](https://api.nbp.pl/api/cenyzlota/2013-01-02/2013-01-04/?format=json).

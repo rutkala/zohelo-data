@@ -1,3 +1,7 @@
+{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view') }}
+{% if var('nbp_verified_batches', false) %}
+{{ nbp_current_exchange_rates('br_nbp_table_b', 'B') }}
+{% else %}
 with bronze_data as (
     {{ nbp_exchange_rate_bronze("nbp_exchange_rates_table_b") }}
 ),
@@ -55,3 +59,5 @@ from deduplicated_rates as rates
 cross join validation
 where rates.row_number = 1
   and validation.validation_result = 1
+
+{% endif %}

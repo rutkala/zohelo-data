@@ -77,28 +77,81 @@ export interface ReleasePointer {
   previous_manifest_file_id?: string;
 }
 
+export type ReleaseLayer = "02_bronze" | "03_silver" | "04_gold";
+
 export interface ReleaseDataset {
   dataset_id: string;
-  layer: "03_silver";
+  layer: ReleaseLayer;
   table_name: string;
   row_count: number;
-  min_date: string;
-  max_date: string;
+  min_date: string | null;
+  max_date: string | null;
   columns: Array<{ name: string; type: string }>;
   files: LakehouseFile[];
 }
 
-export interface ReleaseManifest {
-  format_version: 1;
+export interface ReleaseArtifact {
+  id: string;
+  name: string;
+  size: number;
+  sha256: string;
+}
+
+export interface ReleaseManifestBase {
   release_id: string;
-  release_scope: "nbp_silver";
   status: "validated";
   code_sha: string;
   created_at_utc: string;
   datasets: ReleaseDataset[];
-  artifacts: unknown;
+  artifacts: ReleaseArtifact[];
   inputs: unknown;
   tests: { passed: true };
+}
+
+/** The historic four-dataset immutable silver release. */
+export interface SilverReleaseManifest extends ReleaseManifestBase {
+  format_version: 1;
+  release_scope: "nbp_silver";
+}
+
+/** The complete NBP platform release, including bronze, silver, and gold. */
+export interface PlatformReleaseManifest extends ReleaseManifestBase {
+  format_version: 2;
+  release_scope: "nbp_platform";
+}
+
+export type ReleaseManifest = SilverReleaseManifest | PlatformReleaseManifest;
+
+export interface BusinessCatalogueSource {
+  source_id: string;
+  name: string;
+  description: string;
+  status: string;
+  checked_through: string | null;
+  latest_observation_date: string | null;
+  last_successful_ingestion_at: string | null;
+  last_attempt_at: string | null;
+  raw_response_count: number;
+}
+
+export interface BusinessCatalogueLineageNode {
+  id: string;
+  label: string;
+  kind: string;
+  layer: string;
+  description: string;
+}
+
+export interface BusinessCatalogue {
+  format_version: 1;
+  code_sha: string;
+  sources: BusinessCatalogueSource[];
+  lineage: {
+    nodes: BusinessCatalogueLineageNode[];
+    edges: Array<{ from: string; to: string }>;
+  };
+  /** Metric definitions are governed separately and may initially be empty. */
+  metrics: Array<Record<string, unknown>>;
 }
 
 export type ReleaseCatalogResolution =
@@ -109,4 +162,6 @@ export type ReleaseCatalogResolution =
       manifest: ReleaseManifest;
       manifestFileId: string;
       fingerprint: string;
+      /** Present only for a validated v2 platform release. */
+      businessCatalogue?: BusinessCatalogue;
     };

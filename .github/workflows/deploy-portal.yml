@@ -82,7 +82,7 @@ jobs:
           import os
           from pathlib import Path
           Path('portal/dist/portal-build.json').write_text(
-              json.dumps({'git_commit': os.environ['GITHUB_SHA']}) + '\n'
+              json.dumps({'git_commit': os.environ['GITHUB_SHA'], 'supported_release_formats': [1, 2]}) + '\n'
           )
           PY
 

@@ -1,14 +1,13 @@
-# Planned NBP ingestion and recovery design
+# NBP ingestion and recovery design
 
-**Status: Planned; implementation is not complete.** This plan covers the four
-configured NBP sources and fits the existing immutable silver-release protocol.
-It sets technical recovery behavior without promising an owner-facing update
-cadence, SLA, or metric definition.
+**Status: Implemented on the feature branch; end-to-end proof and the current live release are pending.** This design covers the four configured NBP sources and the immutable platform-release protocol. It sets technical recovery behavior without promising an owner-facing update cadence, SLA, or metric definition.
+
+The operational entrypoint is `python src/nbp_platform.py --mode incremental` (or `full` or `rebuild`). The consolidated workflow is [`daily-ingestion.yml`](../.github/workflows/daily-ingestion.yml), named **NBP data platform**. Its scheduled run is at 02:00 UTC; manual runs choose the mode. A push publishes only when the commit message contains `[run-nbp-platform]` on `main`. The existing live consumer remains on the validated v1 silver release until a v2 platform publication is explicitly confirmed.
+
 
 ## Durable state
 
-Drive remains the durable authority. Add a root-level control area separate
-from the four data zones, for example `ingestion-control/`:
+Drive remains the durable authority. The implemented runner uses a root-level control area separate from the four data zones, `ingestion-control/`:
 
 | Object | Purpose |
 | --- | --- |
@@ -28,7 +27,7 @@ final_http_status, outcome, response_sha256, raw_file_id
 observation_min_date, observation_max_date, code_sha
 ```
 
-The state snapshot should contain, per source, `last_attempt_at_utc`,
+The implemented state snapshot contains, per source, `last_attempt_at_utc`,
 `last_checked_through_date`, `last_successful_ingestion_at_utc`,
 `latest_observation_date`, `historical_cursor`, successful/no-observation
 intervals, and `last_validated_release_id`.
@@ -57,23 +56,14 @@ pointer, or leave the prior state usable when the update outcome is uncertain.
 
 ## Request planning and outcomes
 
+The implemented runner bounds one run to 2,048 observation batches, 512 requests, 256 MiB of raw working data, 12 MB per response, and 45 minutes of intake. These are engineering limits, not availability promises. It persists each attempt and successful raw response before advancing state. A failed or capped run reports failure while retaining the verified progress for the next run.
+
+
 The configured NBP API limit is 93 calendar days per dated request
-([NBP API documentation](https://api.nbp.pl/en.html)). Full mode should use
-inclusive intervals of at most 93 days, persist the next cursor only after the
-interval and its attempt record are durable, and resume the failed interval
-after interruption. Use UTC dates rather than the current local/naive clock.
+([NBP API documentation](https://api.nbp.pl/en.html)). Full mode uses inclusive intervals of at most 93 days, persists the next cursor only after the interval and its attempt record are durable, and resumes a failed interval after interruption. Use UTC dates rather than the current local/naive clock.
 
-For normal invocations, a latest-93-day recheck is a **proposed configurable
-technical default**, not an agreed owner cadence or SLA. If the state is older
-than that overlap, first request resumable catch-up intervals from the next
-unchecked date, then request the latest overlap. The overlap catches recent
-changes; it cannot discover corrections older than the overlap by itself.
+Incremental mode fills missing intervals, rechecks the latest 93 days, and processes one historical recheck chunk per source per run. Full mode uses the same resumable planner while bootstrapping any missing historical coverage. The 93-day overlap and one-chunk budget are technical settings, not an agreed owner cadence or SLA. The rotating historical pass does not force a complete historical refresh in one run.
 
-A resumable rotating full-history sweep from each source's configured
-historical start date is therefore required for older corrections. Its cadence,
-chunking limits beyond the API maximum, and runner budget must be explicit
-configuration measured against actual costs and runtime; they are not a
-business promise or an assumption about how often NBP revises history.
 
 Use these logical outcomes:
 
@@ -86,7 +76,7 @@ Use these logical outcomes:
 | 200 with invalid schema/JSON | Do not advance checkpoint | Retain bytes in quarantine for replay; mark `parse_error`. |
 | Raw upload/state-pointer failure | Do not advance checkpoint | Keep the prior state and release; retry the same interval. |
 
-The implementation must use an HTTP timeout. A successful raw upload may be
+The implementation uses bounded HTTP timeouts and retries. A rebuild performs a native cold replay from retained raw responses only; it requires complete verified coverage through the selected cutoff and never calls the NBP API. A successful raw upload may be
 replayed safely by response hash; unchanged rechecks must not create duplicate
 business rows or duplicate change events.
 
@@ -123,7 +113,7 @@ automatically recoverable.
 
 ## Stage and release handoff
 
-Raw ingestion writes immutable responses under the existing canonical
+The implemented runner writes immutable responses under the existing canonical
 `01_landing/{source_id}` layout; this matches the current bronze inventory's
 dataset-folder contract. The current ingestor computes `source_system` and
 `landing_subpath` for a displayed path but actually writes only the source ID,
@@ -138,27 +128,20 @@ ID or hash and change-ledger summary. A failed candidate leaves the previous
 release pointer and validated state usable; ingestion can already have retained
 new raw bytes, so the next build must be able to replay them.
 
-## Current defects to repair
+## Current implementation boundaries
 
-`src/ingestion/base_ingestor.py` currently has no durable request ledger,
-checkpoint, coverage inventory, correction index, timeout, or HTTP retry. Its
-incremental mode calls `/last/1`, which cannot catch up an outage or provide
-the proposed overlap. Full mode has no persisted cursor, uses a naive local
-clock, silently discards 404s, and can fall back to 90-day chunks despite the
-configured 93-day limit. Timestamp-only filenames do not deduplicate unchanged
-responses or carry request/hash provenance. `BaseIngestor` also initializes and
-creates the Drive infrastructure on every run, and a multi-source run can
-retain partial successes without a durable run state.
+The runner retains immutable raw response bytes with their Drive file ID and SHA-256, append-only attempts, immutable state snapshots, and a current-state pointer. Pointer replacement has readback and drift detection but no compare-and-swap guarantee. There is no garbage collection of raw or state history. The state and release remain usable when a write outcome is uncertain.
 
-`src/transformation/bronze_builder.py` can create a duplicate Parquet object if
-upload succeeds but moving the source file to archive fails. The silver and
-release code already validates an all-four candidate and protects the prior
-release, but its manifest currently lacks ingestion checkpoint/change-ledger
-state and legacy bronze links remain explicitly unverified.
+The platform build currently produces 15 datasets: four bronze, four silver, the change-event table, two facts, and four dimensions. The business catalogue includes four source records, release-specific dbt lineage, and an empty metrics list with `metrics_status=awaiting_business_approval`. It does not publish unapproved metric definitions.
+
+
+The older `src/ingestion/base_ingestor.py` path remains as historical baseline: it has no durable request ledger, resumable checkpoint, coverage inventory, correction index, timeout, or HTTP retry. The feature branch platform path is `src/nbp_platform.py`; its remaining end-to-end proof is tracked above and in [NBP platform operations](nbp-platform-operations.md).
+
+The current platform release still needs evidence that all retained legacy inputs are represented. History before the first retained raw observation cannot be reconstructed automatically. Any remaining bronze/archive migration work must preserve immutable raw bytes and leave the prior validated release usable.
 
 ## Acceptance tests
 
-Add fixture and mocked-Drive tests for:
+The feature branch has focused state, model, and publication tests. New end-to-end proof, including a fresh-process v2 restore and raw replay, remains pending. The intended acceptance checks are:
 
 - inclusive 93-day planning, UTC boundaries, resumable full cursor, and
   catch-up followed by the configurable recent overlap;
@@ -174,5 +157,4 @@ Add fixture and mocked-Drive tests for:
 - fresh-process restoration of the published all-four release and its
   ingestion evidence.
 
-No implementation, schedule activation, SLA, provider-correction claim, or
-business metric approval is implied by this plan.
+No provider-correction claim or business metric approval is implied. Long-term growth, historical recheck latency, and missing original legacy history before the retained raw migration remain explicit limitations.
