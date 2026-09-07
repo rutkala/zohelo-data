@@ -459,18 +459,28 @@ test("keeps native catalogue navigation and details usable on mobile", async ({ 
   await expect(navigation).toContainText("zohelo_data");
   await navigation.getByRole("button", { name: "Database", exact: true }).click();
   await expect(navigation).toContainText("Tables and Views");
-  await expect(navigation).toContainText("catalogue_fixture");
-  await navigation.getByText("catalogue_fixture", { exact: true }).click();
-  await navigation.getByText("02_bronze", { exact: true }).click();
-  await navigation.locator('[data-nav-unique-id="model.zohelo_data.br_nbp_table_a"]').click();
+  // Native dbt splits long labels into ellipsis/normal spans, with whitespace
+  // between them, and retains hidden Project/Database/Group trees in the DOM.
+  const database = navigation
+    .locator('a[ng-click="onFolderClick(item)"]')
+    .filter({ hasText: /ca\s*talogue_fixture/ })
+    .filter({ visible: true });
+  await expect(database).toBeVisible();
+  await database.click();
+  await navigation.getByText("02_bronze", { exact: true }).filter({ visible: true }).click();
+  await navigation
+    .locator('[data-nav-unique-id="model.zohelo_data.br_nbp_table_a"]')
+    .filter({ visible: true })
+    .click();
   await expect(navigation).toHaveAttribute("aria-hidden", "true");
 
-  await expect(docs.locator("body")).toContainText("br_nbp_table_a");
-  await expect(docs.locator("body")).toContainText("catalogue_fixture");
-  await expect(docs.locator("body")).toContainText("02_bronze");
-  await expect(docs.locator("body")).toContainText("published_snapshot");
-  await expect(docs.locator("body")).toContainText("currency_code");
-  await expect(docs.locator("body")).toContainText("sl_nbp_table_a");
+  const details = docs.locator(".app-content");
+  await expect(details).toContainText("br_nbp_table_a");
+  await expect(details).toContainText("catalogue_fixture");
+  await expect(details).toContainText("02_bronze");
+  await expect(details).toContainText("published_snapshot");
+  await expect(details).toContainText("currency_code");
+  await expect(details).toContainText("sl_nbp_table_a");
   await page.screenshot({ path: test.info().outputPath("catalogue-mobile.png") });
 });
 
