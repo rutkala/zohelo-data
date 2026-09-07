@@ -257,6 +257,7 @@ test("v2 business catalogue remains bounded while gold tables stay queryable", a
   await profile.getByPlaceholder("Profile name").fill("Platform catalogue regression");
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
+  await page.getByRole("button", { name: "Tables", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "nbp_platform" })).toBeVisible({
     timeout: 60000,
   });
@@ -275,6 +276,10 @@ test("v2 business catalogue remains bounded while gold tables stay queryable", a
 
   await page.getByText("04_gold", { exact: true }).click();
   await page.getByText("fact_fx_quotes", { exact: true }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Loaded 'fact_fx_quotes'" })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(
     page.getByRole("tab", { name: "04_gold/fact_fx_quotes", exact: true })
   ).toHaveAttribute("aria-selected", "true");

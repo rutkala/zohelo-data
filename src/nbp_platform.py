@@ -100,6 +100,10 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
                     retry_count=retries, code_sha=code_sha,
                 )
                 if not result.advanced:
+                    print(json.dumps({"status": "nbp_request_rejected", "source_id": plan.source_id,
+                                      "start_date": plan.requested_start_date.isoformat(),
+                                      "end_date": plan.requested_end_date.isoformat(), "http_status": status,
+                                      "outcome": result.outcome, "attempt_file_id": result.attempt_file_id}), flush=True)
                     raise ValueError("NBP response failed validation; attempt retained and coverage unchanged")
                 loaded = load_state(store, control, specs)
                 totals["requests"] += 1
