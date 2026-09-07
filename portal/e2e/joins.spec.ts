@@ -208,18 +208,25 @@ test("a generated catalogue query lazily loads its referenced gold tables when r
   await expect(editor).toContainText('"04_gold"."fact_fx_quotes"');
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
-  await page.keyboard.insertText(`WITH rates AS (
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(
+    (sql) => navigator.clipboard.writeText(sql),
+    `WITH rates AS (
   SELECT effective_date, currency_key, mid
   FROM "04_gold"."fact_fx_quotes"
 )
 SELECT rates.effective_date, rates.mid, currency.source_currency_name, dates.calendar_year
 FROM rates
 JOIN "04_gold"."dim_currency" AS currency ON currency.currency_key = rates.currency_key
-JOIN "04_gold"."dim_date" AS dates ON dates.date_key = rates.effective_date;`);
+JOIN "04_gold"."dim_date" AS dates ON dates.date_key = rates.effective_date;`
+  );
+  // A real paste avoids Monaco treating a multiline insertion as typed text
+  // and adding an extra auto-closing parenthesis after the CTE.
+  await page.keyboard.press("ControlOrMeta+V");
   await expect(editor).toContainText('JOIN "04_gold"."dim_currency"');
   expect(downloadedDataFileIds).toEqual(["fact-fx-file"]);
   await expect(page.getByText("US dollar", { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: "Run Query", exact: true }).click();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByRole("cell", { name: "US dollar", exact: true })).toBeVisible();
   expect(new Set(downloadedDataFileIds)).toEqual(
     new Set(["fact-fx-file", "dim-currency-file", "dim-date-file"])
