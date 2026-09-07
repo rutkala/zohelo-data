@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Layers, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDuckStore } from "@/store";
-import { createDbtDocsDocument, dbtDocsUrl, populateDbtDocs } from "@/lib/dbtDocs";
+import { dbtDocsUrl, populateDbtDocs } from "@/lib/dbtDocs";
 import { loadReleaseDbtArtifacts, prepareDbtManifest } from "@/services/googleDrive/dbtCatalog";
 import type { ReleaseCatalogResolution } from "@/services/googleDrive/types";
 
@@ -42,12 +42,66 @@ function loadDocument(release: ReleaseCatalogResolution, token: string): Promise
   return html;
 }
 
+function NativeDbtViewer({ html }: { html: string }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const hostUrl = new URL(
+    "catalogue-viewer.html",
+    new URL(import.meta.env.BASE_URL, window.location.origin)
+  ).toString();
+  useEffect(() => {
+    let nonce: string | null = null;
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow || event.origin !== "null") return;
+      const message = event.data;
+      if (!message || typeof message !== "object") return;
+      if (
+        message.type === "zohelo-catalogue-viewer-ready" &&
+        typeof message.nonce === "string" &&
+        !nonce
+      ) {
+        nonce = message.nonce;
+        frame.current?.contentWindow?.postMessage(
+          { type: "zohelo-catalogue-viewer-document", nonce, html },
+          "*"
+        );
+      } else if (message.type === "zohelo-catalogue-viewer-error" && nonce === message.nonce) {
+        setError(
+          typeof message.message === "string"
+            ? message.message
+            : "The catalogue viewer could not start."
+        );
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, [html]);
+  if (error)
+    return (
+      <p role="alert" className="p-6 text-sm">
+        Data catalogue unavailable: {error}
+      </p>
+    );
+  return (
+    <iframe
+      ref={frame}
+      src={hostUrl}
+      onLoad={() =>
+        frame.current?.contentWindow?.postMessage({ type: "zohelo-catalogue-viewer-request" }, "*")
+      }
+      title="Data catalogue — dbt Docs"
+      sandbox="allow-scripts"
+      className="min-h-0 flex-1 w-full border-0 bg-white"
+    />
+  );
+}
+
 export default function CatalogDocsTab() {
   const release = useDuckStore((state) => state.lakehouseRelease);
   const token = useDuckStore((state) => state.googleAuth.token);
   const [attempt, setAttempt] = useState(0);
   const [document, setDocument] = useState<{
-    url: string;
+    html: string;
     release: ReleaseCatalogResolution;
     token: string;
     attempt: number;
@@ -60,14 +114,11 @@ export default function CatalogDocsTab() {
   } | null>(null);
   useEffect(() => {
     let cancelled = false;
-    let dispose: (() => void) | undefined;
     if (!token || release?.kind !== "release") return;
     loadDocument(release, token)
       .then((html) => {
         if (cancelled) return;
-        const prepared = createDbtDocsDocument(html);
-        dispose = prepared.dispose;
-        setDocument({ url: prepared.url, release, token, attempt });
+        setDocument({ html, release, token, attempt });
       })
       .catch((cause: unknown) => {
         if (!cancelled)
@@ -80,7 +131,6 @@ export default function CatalogDocsTab() {
       });
     return () => {
       cancelled = true;
-      dispose?.();
     };
   }, [release, token, attempt]);
 
@@ -130,12 +180,7 @@ export default function CatalogDocsTab() {
           <p className="text-sm text-muted-foreground">You can continue using the SQL workspace.</p>
         </div>
       ) : ready ? (
-        <iframe
-          src={document.url}
-          title="Data catalogue — dbt Docs"
-          sandbox="allow-scripts"
-          className="min-h-0 flex-1 w-full border-0 bg-white"
-        />
+        <NativeDbtViewer html={document.html} />
       ) : (
         <p className="p-6 text-sm text-muted-foreground" role="status">
           Loading verified release documentation…

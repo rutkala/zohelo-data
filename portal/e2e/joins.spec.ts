@@ -185,6 +185,7 @@ test("a generated catalogue query lazily loads its referenced gold tables when r
     await route.fulfill({ headers, json: { files: response } });
   });
 
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("./");
   const profile = page.getByRole("dialog", { name: "Create Profile" });
   await profile.getByPlaceholder("Profile name").fill("Join example regression");

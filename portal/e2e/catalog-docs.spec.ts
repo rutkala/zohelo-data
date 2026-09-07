@@ -285,9 +285,11 @@ function releaseFixture(options: { catalogHash?: string } = {}) {
 
 async function installReleaseFixture(page: Page, options: { catalogHash?: string } = {}) {
   const fixture = releaseFixture(options);
-  await page.addInitScript(() =>
-    sessionStorage.setItem("zohelo_gdrive_access_token", "synthetic-catalogue-token")
-  );
+  await page.addInitScript(() => {
+    if (window.top === window.self) {
+      sessionStorage.setItem("zohelo_gdrive_access_token", "synthetic-catalogue-token");
+    }
+  });
   await page.route("https://www.googleapis.com/drive/v3/files**", async (route) => {
     const url = new URL(route.request().url());
     const headers = { "access-control-allow-origin": "*" };
@@ -418,6 +420,11 @@ test("reports a release artifact hash mismatch without embedding docs", async ({
 
 test("reports a missing generic viewer template", async ({ page }) => {
   await installReleaseFixture(page);
+  // Keep the request in Playwright's routing path: a PWA worker may otherwise
+  // satisfy the generated template from its precache before this 404 route.
+  await page.route("**/registerSW.js", (route) =>
+    route.fulfill({ status: 200, contentType: "text/javascript", body: "" })
+  );
   await page.route("**/docs/viewer-template.html", (route) =>
     route.fulfill({ status: 404, contentType: "text/html", body: "Not found" })
   );

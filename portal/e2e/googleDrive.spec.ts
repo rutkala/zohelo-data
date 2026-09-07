@@ -58,7 +58,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
   await expect(
-    page.getByRole("status").filter({ hasText: "Legacy/unversioned catalog loaded" })
+    page.getByRole("status").filter({ hasText: "Legacy/unversioned catalog loaded" }).first()
   ).toBeVisible({
     timeout: 60000,
   });

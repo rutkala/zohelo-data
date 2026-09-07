@@ -18,7 +18,7 @@ const CSP = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https: http: data: blob: https://accounts.google.com https://www.googleapis.com",
-  "frame-src 'self' blob: https://accounts.google.com",
+  "frame-src 'self' https://accounts.google.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -94,7 +94,7 @@ export default defineConfig(({ mode }) => {
           navigateFallback: 'index.html',
           // Public OAuth information must stay accessible without booting the
           // workspace, including when a previous visit installed the worker.
-          navigateFallbackDenylist: [/\/(about|privacy|terms)\.html$/, /\/docs(?:\/|$)/],
+          navigateFallbackDenylist: [/\/(about|privacy|terms|catalogue-viewer)\.html$/, /\/docs(?:\/|$)/],
           runtimeCaching: [
             {
               // Hashed build chunks (immutable filenames) — cached as the
