@@ -7,7 +7,7 @@ storage:
   
   zones:
     landing: "01_landing"
-    archive: "01_landing/archive"
+    archive: "05_archive"
     bronze: "02_bronze"
     silver: "03_silver"
     gold: "04_gold"

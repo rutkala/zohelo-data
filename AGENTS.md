@@ -39,7 +39,7 @@ Shared instructions for coding work in this repository. Run commands from the re
 - Document dataset grain, keys, units and correction/deduplication behavior when changing models. Use dbt `source()` and `ref()` for real dependencies where supported by the implemented source boundary. Add relevant data tests with model behavior changes.
 - MetricFlow and immutable release publication are planned work. Do not describe a dbt parse, portal deployment or ordinary commit as a complete data-platform release. When implementing release publication, validate candidates before switching consumers and preserve the previous complete release.
 - Keep browser DuckDB work bounded. Dynamic MetricFlow execution requires a native runtime; a static portal build does not provide it. Keep failures and demo data distinguishable.
-- Inspect effective runtime configuration before integration work. Changing `config/storage.yaml` alone does not redirect the current `StorageManager`, which hardcodes the root folder name `zohelo-data`.
+- Inspect effective runtime configuration before integration work. `StorageManager` reads `config/storage.yaml`; explicit constructor arguments and `ZOHELO_DRIVE_ROOT_NAME` / `ZOHELO_DRIVE_ROOT_ID` can select another root. Resolve zones through the storage manager. Outside Actions, writes to `zohelo-data` require an explicit production-write opt-in; read-only diagnostics remain available. See the development guide.
 
 **Setup and checks.**
 
@@ -62,7 +62,7 @@ Choose checks for the affected component:
 | Portal logic or UI | `npm --prefix portal run lint`, `npm --prefix portal test`, and `npm --prefix portal run build` |
 | Documentation/instructions only | Check referenced paths, commands, links and the diff; application test suites are not required |
 
-`bash scripts/check-data.sh` prepares temporary bronze Parquet for A/B/C, executes the existing models, checks expected rows and duplicate replay, verifies dbt docs artifacts and missing-input failure, and runs the mocked auth tests. Gold prices, ingestion catch-up, publication recovery and executable MetricFlow remain uncovered until implemented. Do not claim full platform coverage from this command.
+`bash scripts/check-data.sh` exercises all-four NBP dbt fixtures, expected rows, identical replay, conflicting legacy values, docs artifacts and missing-input failures. It also checks mocked authorization/storage boundaries and immutable silver publication/failure recovery, including a fresh Parquet consumer. Ingestion catch-up, historical revision reconciliation, modeled gold and executable MetricFlow remain separate unfinished work. Do not claim full platform coverage from this command.
 
 For ad hoc dbt execution, set `ZOHELO_DATA_ROOT` to local fixtures and `ZOHELO_DUCKDB_PATH` to a disposable database. Models currently expect nested NBP Parquet under `02_bronze/nbp_exchange_rates_table_{a,b,c}/*.parquet`. Parsing alone does not validate data results.
 
@@ -70,7 +70,7 @@ The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use
 
 **Keep routine validation local.**
 
-- Use mocks or fixtures for Drive interactions. Direct execution of `src/storage_manager.py` creates Drive folders; the ingestion and transformation entrypoints write remote data. The silver uploader currently deletes matching remote files before replacing them. These entrypoints are not smoke tests.
+- Use mocks or fixtures for Drive interactions. Direct execution of `src/storage_manager.py` creates Drive folders; ingestion and transformation entrypoints write remote data. The silver builder now publishes a verified immutable `nbp_silver` snapshot and changes only a current-release pointer; it retains legacy files and prior releases. These entrypoints are not smoke tests. See [silver publication](docs/nbp-silver-publication.md).
 - For an explicitly requested live authorization check, use `python scripts/check_google_access.py` in the relevant runtime. It performs only authentication and metadata reads, prints fixed status codes/presence booleans and never starts interactive consent. A pass does not prove uploads or another runtime's access. See [Google authorization](docs/google-authorization.md); never retrieve secret values into chat to debug them.
 - For an explicitly requested live upload test, use `python scripts/check_google_upload.py --allow-write-test`. It uploads one small marked file under the existing platform root, checks the bytes and cleans up only its own file. Inspect all three verification flags and any cleanup failure; this does not validate the production publisher. The upload workflow is manual or explicitly opted in through a reviewed merge as described in the authorization guide. Routine CI uses its in-memory fixtures only.
 - Run remote ingestion, backfills, publication or deployment only when that operation is part of the authorized task. A development Drive root must be demonstrably enforced by the invoked code; a folder convention alone is insufficient.

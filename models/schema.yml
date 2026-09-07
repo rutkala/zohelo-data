@@ -10,6 +10,8 @@ sources:
         description: "NBP exchange rates table B data in bronze format."
       - name: nbp_exchange_rates_table_c
         description: "NBP exchange rates table C data in bronze format."
+      - name: nbp_gold_prices
+        description: "NBP gold-price data in bronze format, using the API's data and cena fields."
 
 models:
   - name: stg_nbp_table_a
@@ -17,38 +19,70 @@ models:
     columns:
       - name: effectiveDate
         description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
       - name: currency
         description: "Currency name from the NBP rates array."
       - name: code
         description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
       - name: mid
         description: "Average exchange rate for the currency."
+        tests:
+          - not_null
 
   - name: stg_nbp_table_b
     description: "03_silver staging model for NBP exchange rates table B with flattened and deduplicated average rates."
     columns:
       - name: effectiveDate
         description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
       - name: currency
         description: "Currency name from the NBP rates array."
       - name: code
         description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
       - name: mid
         description: "Average exchange rate for the currency."
+        tests:
+          - not_null
 
   - name: stg_nbp_table_c
     description: "03_silver staging model for NBP exchange rates table C with flattened and deduplicated bid/ask rates."
     columns:
       - name: effectiveDate
         description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
       - name: currency
         description: "Currency name from the NBP rates array."
       - name: code
         description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
       - name: bid
         description: "Buy rate for the currency."
+        tests:
+          - not_null
       - name: ask
         description: "Sell rate for the currency."
+        tests:
+          - not_null
+
+  - name: stg_nbp_gold_prices
+    description: "03_silver staging model for NBP gold prices, with one row per publication date. The price is the NBP-calculated PLN price for one gram of gold at 1000 millesimal fineness. Identical replay rows are collapsed; conflicting same-date values fail validation when legacy provenance cannot establish a reliable revision."
+    columns:
+      - name: effectiveDate
+        description: "NBP gold-price publication date, sourced from the API data field."
+        tests:
+          - not_null
+      - name: price_pln_per_gram
+        description: "NBP-calculated price in PLN per gram for gold of 1000 millesimal fineness, sourced from the API cena field; represented as DECIMAL(18,2)."
+        tests:
+          - not_null
 
   - name: mart_exchange_rates_daily
     description: "04_gold baseline mart model built from silver staging exchange rates table A."

@@ -23,6 +23,10 @@ on:
           - full
           - incremental
 
+concurrency:
+  group: zohelo-production-data
+  cancel-in-progress: false
+
 jobs:
   backfill:
     name: Run Historical Backfill

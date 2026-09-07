@@ -7,6 +7,10 @@ on:
     types:
       - completed
 
+concurrency:
+  group: zohelo-production-data
+  cancel-in-progress: false
+
 jobs:
   transform:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}

@@ -45,9 +45,9 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
         { id: "bad-folder", name: "unavailable_rates" },
       ];
     else if (q.includes("'good-folder' in parents"))
-      files = [{ id: "good-file", name: "data.csv", mimeType: "text/csv", size: "38" }];
+      files = [{ id: "good-file", name: "data.csv", mimeType: "text/csv", size: "33" }];
     else if (q.includes("'bad-folder' in parents"))
-      files = [{ id: "bad-file", name: "data.csv", mimeType: "text/csv", size: "38" }];
+      files = [{ id: "bad-file", name: "data.csv", mimeType: "text/csv", size: "33" }];
     await route.fulfill({ headers, json: { files } });
   });
 
@@ -56,7 +56,9 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await profile.getByPlaceholder("Profile name").fill("Drive regression");
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
-  await expect(page.getByRole("status").filter({ hasText: "Catalog loaded" })).toBeVisible({
+  await expect(
+    page.getByRole("status").filter({ hasText: "Legacy/unversioned catalog loaded" })
+  ).toBeVisible({
     timeout: 60000,
   });
 

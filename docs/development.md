@@ -2,6 +2,12 @@
 
 The assistant handles technical setup and delivery. This page is a runbook for maintainers and coding agents; the owner does not need to operate these commands.
 
+## Selected Drive root
+
+Storage reads `config/storage.yaml`, including the existing `05_archive` zone. For a development Drive area, select a different root using `ZOHELO_DRIVE_ROOT_NAME` or an explicit `ZOHELO_DRIVE_ROOT_ID`; a supplied ID is verified and is never silently replaced with a name lookup. Python callers can supply `root_name`, `root_id` and `config_path` explicitly. Constructor settings take precedence over environment settings, then repository configuration.
+
+Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. Production mutators call `authorize_writes()`. Outside GitHub Actions, writing to the production root `zohelo-data` requires `ZOHELO_ALLOW_PRODUCTION_WRITES=true` for an already-authorized operation. An ordinary Codespace opening does not set that opt-in. This is a guard for repository entrypoints, not a security boundary against arbitrary direct API calls. See [silver publication](nbp-silver-publication.md) for the serialized publisher and recovery limits.
+
 ## Supported environment
 
 | Component | Configuration |

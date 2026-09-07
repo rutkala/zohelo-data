@@ -6,6 +6,7 @@ import type { Table } from "apache-arrow";
 import type * as duckdb from "@duckdb/duckdb-wasm";
 import { resultToJSON } from "@/services/duckdb/resultParser";
 import { loadFileIntoDuckDB, loadTableIntoDuckDB } from "../lakehouseBridge";
+import { sha256Hex } from "../releaseCatalog";
 import { fetchDriveFileBuffer, listDataFilesInFolder } from "../driveApi";
 import type { LakehouseFile } from "../types";
 
@@ -133,6 +134,26 @@ describe("Drive data in the real DuckDB engine", () => {
     ).rejects.toThrow(/real Drive file/);
     expect(() => rows('"02_bronze"."absent"')).toThrow();
     expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a release file whose downloaded digest differs before registering it", async () => {
+    const input = file("SELECT 14 AS id");
+    const releaseFile = {
+      ...input,
+      sha256: "0".repeat(64),
+      size: downloads.get(input.id)!.byteLength,
+    };
+    await expect(load([releaseFile])).rejects.toThrow(/SHA-256/);
+    expect(db.registerFileBuffer).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse a registered path when a release changes the declared digest", async () => {
+    const input = file("SELECT 15 AS id");
+    const size = downloads.get(input.id)!.byteLength;
+    const correct = { ...input, size, sha256: await sha256Hex(downloads.get(input.id)!) };
+    await load([correct]);
+    await expect(load([{ ...correct, sha256: "0".repeat(64) }])).rejects.toThrow(/SHA-256/);
+    expect(fetchDriveFileBuffer).toHaveBeenCalledTimes(2);
   });
 
   it("preserves the last loaded dataset when a later download fails", async () => {

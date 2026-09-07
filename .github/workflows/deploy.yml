@@ -3,6 +3,10 @@ name: Reconcile Drive folders
 on:
   workflow_dispatch:
 
+concurrency:
+  group: zohelo-production-data
+  cancel-in-progress: false
+
 jobs:
   reconcile-drive:
     name: Reconcile Drive folders

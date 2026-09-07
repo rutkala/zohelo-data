@@ -27,6 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 export default function LakehouseExplorer() {
   const googleAuth = useDuckStore((s) => s.googleAuth);
   const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
+  const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
   const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
   const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
@@ -215,15 +216,32 @@ export default function LakehouseExplorer() {
           )}
         </div>
 
-        {activeLakehouseDataset && (
-          <Badge
-            variant="secondary"
-            className="text-[10px] h-4 font-mono px-1.5 shrink-0"
-            title="Active Layer Dataset"
-          >
-            {activeLakehouseDataset}
-          </Badge>
-        )}
+        <div className="flex items-center gap-1 min-w-0">
+          {lakehouseRelease?.kind === "release" && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
+              title={`${lakehouseRelease.manifest.release_id} / ${lakehouseRelease.manifest.release_scope} / ${lakehouseRelease.manifest.status}`}
+            >
+              {lakehouseRelease.manifest.release_id} / {lakehouseRelease.manifest.release_scope} /{" "}
+              {lakehouseRelease.manifest.status}
+            </Badge>
+          )}
+          {lakehouseRelease?.kind === "legacy" && (
+            <Badge variant="secondary" className="text-[10px] h-4 font-mono px-1.5 shrink-0">
+              legacy / unversioned
+            </Badge>
+          )}
+          {activeLakehouseDataset && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
+              title="Active Layer Dataset"
+            >
+              {activeLakehouseDataset}
+            </Badge>
+          )}
+        </div>
       </div>
 
       {/* Status or Progress Feedback */}

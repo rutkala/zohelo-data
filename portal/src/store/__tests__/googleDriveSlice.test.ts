@@ -8,6 +8,7 @@ import {
   loadFileIntoDuckDB,
   resolveLayerFolderId,
   listSubfolders,
+  resolveReleaseCatalog,
   GoogleDriveAuthError,
 } from "@/services/googleDrive";
 
@@ -21,6 +22,7 @@ vi.mock("@/services/googleDrive", async (original) => ({
   loadFileIntoDuckDB: vi.fn(),
   resolveLayerFolderId: vi.fn(),
   listSubfolders: vi.fn(),
+  resolveReleaseCatalog: vi.fn(),
 }));
 
 const target = '"02_bronze"."rates"';
@@ -76,6 +78,7 @@ beforeEach(() => {
     filePath: "file",
     queryTarget: target + "__file",
   });
+  vi.mocked(resolveReleaseCatalog).mockResolvedValue({ kind: "legacy" });
 });
 
 describe("Drive selection state", () => {
@@ -219,5 +222,118 @@ describe("Drive selection state", () => {
     expect(loadTableIntoDuckDB).not.toHaveBeenCalled();
     expect(store.getState().activeLakehouseDataset).toBeNull();
     expect(store.getState().lakehouseStatusMessage).toContain("Select a dataset");
+  });
+});
+
+describe("immutable release selection", () => {
+  const release = (id: string) => ({
+    kind: "release" as const,
+    pointer: {
+      format_version: 1 as const,
+      release_id: id,
+      manifest_file_id: `${id}-manifest`,
+      manifest_sha256: "a".repeat(64),
+      updated_at_utc: "2026-09-06T00:00:00Z",
+    },
+    manifestFileId: `${id}-manifest`,
+    fingerprint: `${id}:${id}-manifest:${"a".repeat(64)}`,
+    manifest: {
+      format_version: 1 as const,
+      release_id: id,
+      release_scope: "nbp_silver" as const,
+      status: "validated" as const,
+      code_sha: "code",
+      created_at_utc: "2026-09-06T00:00:00Z",
+      artifacts: [],
+      inputs: [],
+      tests: { passed: true as const },
+      datasets: [
+        "nbp_exchange_rates_table_a",
+        "nbp_exchange_rates_table_b",
+        "nbp_exchange_rates_table_c",
+        "nbp_gold_prices",
+      ].map((dataset_id) => ({
+        dataset_id,
+        layer: "03_silver" as const,
+        table_name: dataset_id,
+        row_count: 1,
+        min_date: "2024-01-01",
+        max_date: "2024-01-01",
+        columns: [{ name: "id", type: "INTEGER" }],
+        files: [
+          {
+            id: `${id}-${dataset_id}`,
+            name: `${dataset_id}.parquet`,
+            size: 1,
+            sha256: "a".repeat(64),
+            tableName: dataset_id,
+            layer: "03_silver",
+          },
+        ],
+      })),
+    },
+  });
+
+  it("pins the loaded release and refuses an explicit refresh to a different release", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    await store.getState().refreshLakehouseCatalog();
+    expect(store.getState().lakehouseRelease).toMatchObject({ kind: "release" });
+    await store.getState().selectLakehouseDataset("03_silver", "nbp_exchange_rates_table_a");
+
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-2"));
+    await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(
+      /fresh DuckDB session/
+    );
+    expect(store.getState().lakehouseRelease).toMatchObject({
+      kind: "release",
+      manifest: { release_id: "release-1" },
+    });
+  });
+
+  it("allows a different release after the current DuckDB engine is replaced", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().selectLakehouseDataset("03_silver", "nbp_exchange_rates_table_a");
+
+    store.setState({
+      currentSession: { local: { db: {}, connection: {} } },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-2"));
+    await expect(store.getState().refreshLakehouseCatalog()).resolves.toBeUndefined();
+    expect(store.getState().lakehouseRelease).toMatchObject({
+      kind: "release",
+      manifest: { release_id: "release-2" },
+    });
+  });
+
+  it("pins an engine even when its load completes after the session changes", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    await store.getState().refreshLakehouseCatalog();
+    let complete!: (value: { loadedFiles: string[]; queryTarget: string }) => void;
+    vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
+      new Promise((resolve) => (complete = resolve))
+    );
+    const pending = store
+      .getState()
+      .selectLakehouseDataset("03_silver", "nbp_exchange_rates_table_a");
+    const originalEngine = (store.getState().currentSession as unknown as { local: { db: object } })
+      .local.db;
+    store.setState({
+      currentSession: { local: { db: {}, connection: {} } },
+    } as unknown as Partial<DuckStoreState>);
+    complete({ loadedFiles: ["file"], queryTarget: target });
+    await expect(pending).resolves.toBeNull();
+
+    // Switching back to the engine where the request published its view remains blocked.
+    store.setState({
+      currentSession: { local: { db: originalEngine, connection: {} } },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-2"));
+    await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(
+      /fresh DuckDB session/
+    );
   });
 });
