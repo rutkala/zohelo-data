@@ -19,7 +19,7 @@ Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. P
 | Editor | Python, Pylance, dbt and TOML extensions declared in `.devcontainer/devcontainer.json` |
 | GitHub CLI | Official devcontainer feature; authentication remains a separate operation |
 
-The Python dependency set starts from the packages recorded in the [successful deployment on 6 September](https://github.com/rutkala/zohelo-data/actions/runs/34023732492). CI validates it with Python 3.12 and the current models. This establishes compatibility with the present project, not a tested MetricFlow service. Node 24 is an LTS line; the previous Node 20 line is now EOL ([Node release status](https://nodejs.org/en/about/previous-releases)).
+The Python dependency set starts from the packages recorded in the [successful deployment on 6 September](https://github.com/rutkala/zohelo-data/actions/runs/34023732492). CI validates it with Python 3.12 and the current models. The native MetricFlow CLI uses a separate distribution/version from its engine; see [runtime verification](metricflow-compatibility.md). A synthetic fixture is not a production metrics service. Node 24 is an LTS line; the previous Node 20 line is now EOL ([Node release status](https://nodejs.org/en/about/previous-releases)).
 
 Python patch releases, the base image, devcontainer features and Actions tags can advance. This is a shared, version-pinned application setup, not a bit-for-bit immutable image. Further image/action pinning and dependency update automation remain audit follow-ups. The inherited portal Dockerfile uses Bun and is not the supported Pages/Codespaces deployment path; do not claim it is covered by the npm checks.
 
@@ -41,7 +41,7 @@ From an environment with the pinned dependencies installed:
 bash scripts/check-data.sh
 ```
 
-This checks dependency consistency, mocked storage authentication and real dbt execution against [synthetic NBP fixtures](../tests/fixtures/nbp/README.md). It covers A/B/C flattening, identical-input replay, the existing Table A mart projection, reopened SQL reads, missing-input failure, and the dbt docs artifacts used by the portal. No credentials or Drive writes are required.
+This checks dependency consistency, mocked storage authentication and real dbt execution against [synthetic NBP fixtures](../tests/fixtures/nbp/README.md). It covers A/B/C and gold prices, identical-input replay, mixed historical schemas, the existing Table A mart projection, immutable publication and fresh SQL reads, missing-input failure, and matching dbt artifacts. The standalone MetricFlow fixture checks exact synthetic results in fresh native processes with network calls blocked by Linux/libseccomp. No credentials or Drive writes are required.
 
 It does not yet test gold prices, ingestion catch-up, revised observations, immutable publication or executable business metrics. Those remain explicit work in [the delivery plan](deliverables.md). Synthetic tests are not proof of historical coverage or actual NBP correctness.
 
