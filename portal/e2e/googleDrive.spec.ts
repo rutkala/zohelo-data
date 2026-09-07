@@ -66,13 +66,13 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await page.getByText("fixture_rates", { exact: true }).click();
   const tab = page.getByRole("tab", { name: "02_bronze/fixture_rates", exact: true });
   await expect(tab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("TEST", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
   await expect(page.getByText("1.23", { exact: true }).first()).toBeVisible();
-  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+  await expect(page.locator(".monaco-editor .view-lines:visible").first()).toContainText(
     '"02_bronze"."fixture_rates"'
   );
   // Exercise the owner's requested interaction: write SQL and inspect its result.
-  const editor = page.locator(".monaco-editor .view-lines").first();
+  const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.insertText(
@@ -89,7 +89,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   ).toBeVisible();
   await expect(page.getByRole("tab")).toHaveCount(tabCount);
   await expect(tab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByText("TEST", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
   await expect(page.getByText("2.46", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Drive Demo Mode", { exact: true })).toHaveCount(0);
 });
@@ -258,33 +258,35 @@ test("v2 business catalogue remains bounded while gold tables stay queryable", a
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
   await page.getByRole("button", { name: "Tables", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "nbp_platform" })).toBeVisible({
+  const dataExplorer = page.getByLabel("Data Explorer");
+  await expect(dataExplorer).toBeVisible();
+  await expect(dataExplorer.getByRole("status").filter({ hasText: "nbp_platform" })).toBeVisible({
     timeout: 60000,
   });
 
-  await page.getByRole("button", { name: "Business catalogue" }).click();
-  await expect(page.getByText("Published Snapshot", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Checked through", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("2026-09-01", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Latest observation", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("2026-08-30", { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "metrics" }).click();
+  await dataExplorer.getByRole("button", { name: "Business catalogue" }).click();
+  await expect(dataExplorer.getByText("Published Snapshot", { exact: true }).first()).toBeVisible();
+  await expect(dataExplorer.getByText("Checked through", { exact: true }).first()).toBeVisible();
+  await expect(dataExplorer.getByText("2026-09-01", { exact: true }).first()).toBeVisible();
+  await expect(dataExplorer.getByText("Latest observation", { exact: true }).first()).toBeVisible();
+  await expect(dataExplorer.getByText("2026-08-30", { exact: true }).first()).toBeVisible();
+  await dataExplorer.getByRole("tab", { name: "metrics" }).click();
   await expect(
-    page.getByText("Governed metric definitions are awaiting business approval.")
+    dataExplorer.getByText("Governed metric definitions are awaiting business approval.")
   ).toBeVisible();
-  await page.getByRole("button", { name: "Business catalogue" }).click();
+  await dataExplorer.getByRole("button", { name: "Business catalogue" }).click();
 
-  await page.getByText("04_gold", { exact: true }).click();
-  await page.getByText("fact_fx_quotes", { exact: true }).click();
+  await dataExplorer.getByText("04_gold", { exact: true }).click();
+  await dataExplorer.getByText("fact_fx_quotes", { exact: true }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Loaded 'fact_fx_quotes'" })
+    dataExplorer.getByRole("status").filter({ hasText: "Loaded 'fact_fx_quotes'" })
   ).toBeVisible();
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await dataExplorer.getByRole("button", { name: "Close", exact: true }).click();
   await expect(
     page.getByRole("tab", { name: "04_gold/fact_fx_quotes", exact: true })
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".monaco-editor .view-lines").first()).toContainText(
+  await expect(page.locator(".monaco-editor .view-lines:visible").first()).toContainText(
     '"04_gold"."fact_fx_quotes"'
   );
-  await expect(page.getByText("TEST", { exact: true }).first()).toBeVisible();
+  await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
 });
