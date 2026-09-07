@@ -2,7 +2,7 @@
 
 Use the [delivery record](deliverables.md) for current release identities and verified results. This guide describes supported operations; dated results live under `docs/releases/`.
 
-**Publication approval:** the owner explicitly approved the live audit release, its verification and resuming daily ingestion on 7 September 2026. The temporary H-LIVE hold is cleared and the 02:00 UTC schedule is restored. See the delivery record for actual run results; approval alone is not verification.
+**Publication approval:** the owner explicitly approved the live audit release, its verification and resuming daily ingestion on 7 September 2026. The temporary H-LIVE hold is cleared and the 02:00 UTC schedule is restored. The approved publication, fresh SQL/MetricFlow queries, raw replay and health inventory passed. See the delivery record for release identity and measurements.
 
 ## Normal operation in GitHub
 

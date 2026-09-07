@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 7 September 2026. **The owner explicitly approved live publication, verification and resuming daily ingestion.** H-LIVE is cleared; the reviewed production run is the active acceptance step. The normal 02:00 UTC schedule is restored. New live semantic/replay/capacity results are still pending; no methodology question blocks the five daily metrics.
+Updated 7 September 2026. **The audit and live NBP acceptance are complete.** Release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC**. We are ready to define the next sources; longer-term exclusions are explicit below.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -12,12 +12,12 @@ This is the single project-status and owner-question record. Research, architect
 
 | Deliverable | Status | What this means |
 | --- | --- | --- |
-| D1. Repository, architecture and all Actions audit | **Done** | All nine original workflows and the repository/data architecture were audited. Repairs are merged and tested; live acceptance is the active D4 verification. [Audit](audits/2026-09-07-readiness.md), [all workflow decisions](audits/2026-09-07-workflows.md). |
+| D1. Repository, architecture and all Actions audit | **Done** | All nine original workflows and the repository/data architecture were audited. Repairs are merged and tested; live acceptance passed. [Audit](audits/2026-09-07-readiness.md), [all workflow decisions](audits/2026-09-07-workflows.md). |
 | D2. Reproducible environment and shared instructions | **Done** | Pinned Python/Node dependencies, fresh-container checks and standard human/agent instructions exist. Audit updates preserve the supported npm/Python path. |
-| D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. First production application of the new detection rules is covered by the active D4 verification. |
-| D4. NBP end-to-end including semantic queries | **In progress** | Five daily MetricFlow metrics, local restore and native queries are implemented and pass real-engine tests. The production write, fresh live queries, raw replay and capacity inventory remain to be run. |
-| D5. One data catalogue with source and metric lineage | **In progress** | The existing native viewer passes metric discovery, provider metadata and physical-lineage browser tests. Those new definitions still need a matching live data publication. |
-| D6. Define and onboard additional sources | **Waiting for input** | Candidate research exists. Selection is the next topic after this audit's verification; no new source is being ingested. Onboarding is **Not started**. |
+| D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. The new detection rules ran successfully in the verified live release. |
+| D4. NBP end-to-end including semantic queries | **Done** | All 15 tables and five daily metrics are published. Fresh native queries matched gold; raw replay matched 1,329,363 rows exactly. The complete capacity inventory is below current warning thresholds. |
+| D5. One data catalogue with source and metric lineage | **Done** | Five real metric definitions and source methodology/frequency/reuse metadata are in the matching release artifacts. The native viewer passes discovery and semantic-to-physical-lineage browser checks. |
+| D6. Define and onboard additional sources | **Waiting for input** | Candidate research exists. Selection is now the next topic; no new source is being ingested. Onboarding is **Not started**. |
 | D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
 | Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
@@ -40,19 +40,19 @@ These are visible limits, not claims of completed functionality. None requires i
 
 ## Owner decisions
 
-**Q-LIVE / H-LIVE are resolved:** after the explicit production scope was presented, the owner replied **“Yes, I approve”** on 7 September 2026. This authorizes publishing and verifying the new NBP release in Google Drive, retaining previous releases and resuming daily ingestion. Complete that work without asking again.
+**Q-LIVE / H-LIVE are resolved:** after the explicit production scope was presented, the owner replied **“Yes, I approve”** on 7 September 2026. This authorizes publishing and verifying the new NBP release in Google Drive, retaining previous releases and resuming daily ingestion. The approved live run passed and the daily schedule is restored; no further approval is pending for this delivery.
 
 **Q-M1 is resolved for the baseline:** the 7 September instruction authorizes researching and implementing source-defined daily NBP observations. Five definitions are documented in [NBP methodology](nbp-business-definitions.md). It is no longer a blocker. Optional derived metrics are H-DERIVED.
 
 | ID | Next decision | Preparation |
 | --- | --- | --- |
-| Q-S1 | Which source/topic should be evaluated next, and what decision or analysis should it support? | [Eurostat and World Bank WDI research](source-candidates.md), plus any other source the owner proposes. Ask after the current verification is complete. |
+| Q-S1 | Which source/topic should be evaluated next, and what decision or analysis should it support? | [Eurostat and World Bank WDI research](source-candidates.md), plus any other source the owner proposes. Ready for the owner's priorities now. |
 
 ## Evidence
 
-Previous verified release: `84784104-e014-4550-bb0c-095d967230b5`, producer [`71f79fc`](https://github.com/rutkala/zohelo-data/commit/71f79fc4fbaa7f8c1f2b2133b4f62106f13fcf02). It contains 15 tables and 429,795 cleaned observations, with fresh SQL and exact raw replay. [Prior portal/data evidence](releases/2026-09-07-medallion-portal.md).
+Current verified release: `96b14b78-dc36-4422-952c-5fb3af726ac8`, producer [`8f29a0b`](https://github.com/rutkala/zohelo-data/commit/8f29a0b98876f6ae6b161aae3ec5be5cbeb247cb). [Successful publication, fresh metrics, raw replay and health run](https://github.com/rutkala/zohelo-data/actions/runs/34167068188). It contains 15 tables and 429,795 cleaned observations. Previous releases remain retained.
 
-[Audit delivery evidence](releases/2026-09-07-platform-readiness.md) records merged code, 138 data tests, 678 portal unit tests and 14 browser flows for each deployment configuration. It separates completed deployment from the now-approved production-data run. New live metric/replay/capacity results must be recorded before D4 and D5 can be closed.
+[Audit delivery evidence](releases/2026-09-07-platform-readiness.md) records the live results plus 138 data tests, 678 portal unit tests and 14 browser flows for each deployment configuration. The full project inventory is 156,260,745 bytes; the highest used build/state bound is 17.92%, below the 70% review threshold. These are measured observations, not future capacity guarantees.
 
 [Current architecture](architecture.md) explains tool choices and commercial/service boundaries. [Operations](nbp-platform-operations.md) gives the Actions and command-line path without AI. [Working agreement](collaboration.md) explains how to start a focused new chat and resume from this record.
 

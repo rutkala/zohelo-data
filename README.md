@@ -12,7 +12,7 @@ Data Platform for zohelo.com
 
 [NBP platform operations](docs/nbp-platform-operations.md) · [Foundation audit](docs/audits/2026-09-06-foundation.md) · [Verified v2 release evidence](docs/releases/2026-09-07-nbp-platform.md) · [Development setup](docs/development.md) · [Google authorization](docs/google-authorization.md) · [Current architecture](docs/architecture.md) · [Agent instructions](AGENTS.md)
 
-The NBP v2 data release is live as of 7 September 2026 with 15 physical tables, source and lineage metadata, and gold tables. The audit implementation adds source-defined daily MetricFlow queries; see the delivery record for current verification status. The portal provides one release-bound dbt Data catalogue and automatically loads published tables referenced by schema-qualified SELECT queries, subject to the browser download limit. [Project status and open questions](docs/deliverables.md) are maintained in one place outside the portal.
+The NBP v2 data release is live as of 7 September 2026 with 15 physical tables, source and lineage metadata, and gold tables. Five source-defined daily MetricFlow metrics are also published and verified against restored gold data. See the delivery record for release identity, recovery proof and measured capacity. The portal provides one release-bound dbt Data catalogue and automatically loads published tables referenced by schema-qualified SELECT queries, subject to the browser download limit. [Project status and open questions](docs/deliverables.md) are maintained in one place outside the portal.
 
 ## Operate without AI
 
