@@ -10,6 +10,8 @@ Open [Data catalogue](https://data.zohelo.com/?view=catalog) from Home or the le
 - **Model pages** provide descriptions and columns. Released ingestion details are added to the existing bronze models' metadata.
 - The native **lineage graph** follows the published dbt dependencies through gold. Source and model identifiers reflect the real graph.
 
+On a phone, use **Browse** inside the catalogue to open its Project or Database tree. Select a model to return to its details. The portal's **Tables** button opens the SQL data explorer.
+
 No governed metric definitions are published for the current release. Full provider licence/reuse, frequency and coverage metadata remains a catalogue follow-up in [the delivery plan](deliverables.md).
 
 Project status and owner questions are kept in [the delivery plan](deliverables.md). Send a question ID and your answer in chat; the assistant maintains that record.
