@@ -1,9 +1,8 @@
 name: NBP data platform
 
 on:
-  # H-LIVE: scheduled publication is temporarily paused after automatic approval
-  # review rejected the audit's production-data write. Restore the 02:00 UTC
-  # schedule together with the explicitly authorized live verification run.
+  schedule:
+    - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       operation:
