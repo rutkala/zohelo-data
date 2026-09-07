@@ -30,7 +30,10 @@ from transformation.silver_builder import _code_sha
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MAX_RAW_BYTES = 256 * 1024 * 1024
 MAX_OBSERVATION_BATCHES = 2048
-MAX_RUN_SECONDS = 45 * 60
+# Measured Drive checkpoint latency makes the remaining bootstrap about 50
+# minutes. Keep intake bounded and reserve 30 minutes of the 90-minute job for
+# publication, fresh reads and cold replay.
+MAX_RUN_SECONDS = 60 * 60
 DATASET_MODELS = {}
 for suffix in ("a", "b", "c"):
     source = f"nbp_exchange_rates_table_{suffix}"
@@ -83,6 +86,10 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
                 break
             for plan in pending:
                 if totals["requests"] >= max_requests or time.monotonic() - started >= MAX_RUN_SECONDS:
+                    print(json.dumps({"status": "nbp_ingestion_checkpointed", "reason": "run_budget_reached",
+                                      **totals, "elapsed_seconds": round(time.monotonic() - started, 3),
+                                      "checked_through": {key: value.get("last_checked_through_date")
+                                                          for key, value in loaded.state["sources"].items()}}), flush=True)
                     raise RuntimeError("Run budget reached; verified raw progress is saved for the next run")
                 requested_at = datetime.now(timezone.utc)
                 try:
@@ -103,7 +110,8 @@ def ingest(storage, *, specs, cutoff, mode, code_sha, max_requests=512):
                     print(json.dumps({"status": "nbp_request_rejected", "source_id": plan.source_id,
                                       "start_date": plan.requested_start_date.isoformat(),
                                       "end_date": plan.requested_end_date.isoformat(), "http_status": status,
-                                      "outcome": result.outcome, "attempt_file_id": result.attempt_file_id}), flush=True)
+                                      "outcome": result.outcome, "attempt_file_id": result.attempt_file_id,
+                                      "validation_error": result.validation_error}), flush=True)
                     raise ValueError("NBP response failed validation; attempt retained and coverage unchanged")
                 # The commit already read back and verified both immutable state
                 # snapshot and mutable pointer. Keep those exact pointer bytes
@@ -219,13 +227,17 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
     specs = source_specs_from_config(config)
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     storage.authorize_writes()
+    print(json.dumps({"stage": "ingestion", "status": "started", "cutoff": cutoff.isoformat(), "code_sha": sha}), flush=True)
     store, loaded, ingestion_totals = ingest(storage, specs=specs, cutoff=cutoff, mode=mode,
                                             code_sha=sha, max_requests=max_requests)
     ingested = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="zohelo-platform-") as temporary:
         workspace = Path(temporary)
+        print(json.dumps({"stage": "raw_download", "status": "started"}), flush=True)
         envelopes, inputs, transferred = download_envelopes(store, loaded.state, workspace)
         downloaded = time.monotonic()
+        print(json.dumps({"stage": "dbt_build", "status": "started", "raw_bytes": transferred,
+                          "input_batches": len(inputs)}), flush=True)
         datasets, artifacts = build_platform(workspace, envelopes)
         built = time.monotonic()
         catalogue_state = {"sources": {
@@ -252,6 +264,7 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
                         "dbt_and_export_seconds": round(built - downloaded, 3),
                         "working_directory_bytes": sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file())}
         check_portal_compatibility()
+        print(json.dumps({"stage": "publication", "status": "started", "datasets": len(datasets)}), flush=True)
         result = publish_release(DriveReleaseStore(storage, store.root_id), store.root_id, datasets=datasets,
                                  artifacts=artifacts, inputs=inputs, code_sha=sha, measurements=measurements,
                                  release_scope="nbp_platform")

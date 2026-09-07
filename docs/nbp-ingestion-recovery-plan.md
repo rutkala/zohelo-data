@@ -56,7 +56,7 @@ pointer, or leave the prior state usable when the update outcome is uncertain.
 
 ## Request planning and outcomes
 
-The implemented runner bounds one run to 2,048 observation batches, 512 requests, 256 MiB of raw working data, 12 MB per response, and 45 minutes of intake. These are engineering limits, not availability promises. It persists each attempt and successful raw response before advancing state. A failed or capped run reports failure while retaining the verified progress for the next run.
+The implemented runner bounds one run to 2,048 observation batches, 512 requests, 256 MiB of raw working data, 12 MB per response, and 60 minutes of intake. These are engineering limits, not availability promises. It persists each attempt and successful raw response before advancing state. A failed or capped run reports failure while retaining the verified progress for the next run.
 
 
 The configured NBP API limit is 93 calendar days per dated request

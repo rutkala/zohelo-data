@@ -1,6 +1,6 @@
 # NBP platform operations
 
-**Status: PR57 is merged on `main`; live v2 proof remains pending.** Data/portal checks passed, while live bootstrap [run 34089760722](https://github.com/rutkala/zohelo-data/actions/runs/34089760722) is still running. The current live consumer remains on the validated v1 silver release; a v2 platform release is not claimed until final coverage, restore, query, and raw-replay checks pass.
+**Status: PR57 is merged on `main`; live v2 proof remains pending.** Data/portal checks passed, while the initial live bootstrap retained progress before the [published-zero-quote rejection](nbp-data-contracts.md#published-zero-fx-quotes-7-september-2026). The repair and resumed live proof remain to be verified. The current live consumer remains on the validated v1 silver release; a v2 platform release is not claimed until final coverage, restore, query, and raw-replay checks pass.
 
 ## Entry point and workflow
 
@@ -30,7 +30,7 @@ Catalogue dataset metadata contains business fields only: `dataset_id`, `table_n
 
 ## Safety bounds and limitations
 
-The current runner bounds one invocation to 2,048 observation batches total across the four sources plus catch-up, 512 requests, 256 MiB of raw working data, 12 MB per response, and 45 minutes of intake. These are engineering bounds rather than service-level promises. A capped or failed run leaves verified ingestion progress and the previous validated release available for the next attempt. GitHub documents standard Actions runner minutes as free for public repositories in its [product billing guidance](https://docs.github.com/en/billing/concepts/product-billing/github-actions); Drive service limits are documented in the [Drive API quota policy](https://developers.google.com/workspace/drive/api/guides/limits). Account-specific quotas and billing were not inspected, and no free-unlimited promise is made.
+The current runner bounds one invocation to 2,048 observation batches total across the four sources plus catch-up, 512 requests, 256 MiB of raw working data, 12 MB per response, and 60 minutes of intake. These are engineering bounds rather than service-level promises. A capped or failed run leaves verified ingestion progress and the previous validated release available for the next attempt. GitHub documents standard Actions runner minutes as free for public repositories in its [product billing guidance](https://docs.github.com/en/billing/concepts/product-billing/github-actions); Drive service limits are documented in the [Drive API quota policy](https://developers.google.com/workspace/drive/api/guides/limits). Account-specific quotas and billing were not inspected, and no free-unlimited promise is made.
 
 Long-term growth of raw/state history, latency of the rotating historical recheck, and missing original legacy history that was never retained before migration remain explicit limitations. A latest-date observation does not prove complete historical coverage. Provider change events are observations of different returned values; they are not claims of an officially announced NBP correction.
 

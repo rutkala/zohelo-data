@@ -95,6 +95,7 @@ class CommitResult:
     raw_file_id: str | None
     outcome: str
     advanced: bool
+    validation_error: str | None = None
 
 
 def source_specs_from_config(config: str | Path | Mapping[str, Any], source_ids: list[str] | None = None) -> dict[str, SourceSpec]:
@@ -312,7 +313,7 @@ def commit_response(
         if failed_raw_id is not None:
             failed_raw_id = _require_id(failed_raw_id, "raw file id")
         attempt_id = _write_attempt(store, control_root_id, _attempt_record(plan, "parse_or_http_error", http_status, None, failed_raw_id, run_id, retry_count, started, finished, code_sha, response_size_bytes=len(body) if isinstance(body, bytes) else None, error=str(exc)))
-        return _advance_failed_attempt(store, control_root_id, loaded, specs, plan.source_id, attempt_id, failed_raw_id, finished)
+        return _advance_failed_attempt(store, control_root_id, loaded, specs, plan.source_id, attempt_id, failed_raw_id, finished, str(exc))
     resolved_raw_id: str | None = None
     raw_reference_file_id: str | None = None
     # A 404 is a completed interval too. Preserve any returned bytes as request
@@ -430,7 +431,7 @@ list_successful_response_descriptors = successful_response_observation_descripto
 
 def _advance_failed_attempt(
     store: NBPStateStore, root: str, loaded: LoadedState, specs: Mapping[str, SourceSpec],
-    source_id: str, attempt_id: str, raw_file_id: str | None, finished: str,
+    source_id: str, attempt_id: str, raw_file_id: str | None, finished: str, validation_error: str,
 ) -> CommitResult:
     """Publish attempt metadata only; coverage and successful sequence are unchanged."""
     candidate = json.loads(json.dumps(loaded.state))
@@ -442,7 +443,7 @@ def _advance_failed_attempt(
     _validate_state(candidate, specs)
     snapshot_id = _write_snapshot(store, root, candidate)
     pointer_id, pointer_raw = _advance_pointer(store, root, loaded, snapshot_id, candidate)
-    return CommitResult(candidate, snapshot_id, pointer_id, pointer_raw, attempt_id, raw_file_id, "parse_or_http_error", False)
+    return CommitResult(candidate, snapshot_id, pointer_id, pointer_raw, attempt_id, raw_file_id, "parse_or_http_error", False, validation_error)
 
 
 def _ensure_raw_reference(store: NBPStateStore, root: str, source_id: str, digest: str, raw_file_id: str, size_bytes: int) -> tuple[str, str]:
@@ -613,13 +614,13 @@ def _validate_payload(source_id: str, payload: Any) -> list[date]:
             if not isinstance(code, str) or not code.strip():
                 raise NBPStateError("rate code is required")
             if table == "C":
-                bid, ask = _positive_number(rate.get("bid"), "bid"), _positive_number(rate.get("ask"), "ask")
+                bid, ask = _nonnegative_number(rate.get("bid"), "bid"), _nonnegative_number(rate.get("ask"), "ask")
                 if bid > ask:
                     raise NBPStateError("bid must be less than or equal to ask")
                 measures = (bid, ask)
                 trading_date = publication.get("tradingDate")
             else:
-                measures = (_positive_number(rate.get("mid"), "mid"),)
+                measures = (_nonnegative_number(rate.get("mid"), "mid"),)
                 trading_date = None
             identity = (effective, code)
             evidence = (measures, publication_no, trading_date)
@@ -629,6 +630,15 @@ def _validate_payload(source_id: str, payload: Any) -> list[date]:
             observations[identity] = evidence
         dates.append(effective)
     return dates
+
+def _nonnegative_number(value: Any, label: str) -> float:
+    if (
+        isinstance(value, bool) or not isinstance(value, (int, float))
+        or not math.isfinite(float(value)) or float(value) < 0
+    ):
+        raise NBPStateError(f"{label} must be a finite nonnegative number")
+    return float(value)
+
 
 def _positive_number(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) <= 0:

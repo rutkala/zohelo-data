@@ -16,6 +16,7 @@ select
     mid,
     bid,
     ask,
+    has_zero_source_quote,
     no as source_no,
     source_id,
     batch_id,
