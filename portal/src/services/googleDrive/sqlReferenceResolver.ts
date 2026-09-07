@@ -1,4 +1,5 @@
 /** Resolve published release relations using DuckDB's own SQL parser AST. */
+import { selectQueryForReferenceResolution } from "@/lib/createViewSql";
 import { sqlEscapeString } from "@/lib/sqlSanitize";
 import type { ReleaseDataset } from "./types";
 
@@ -41,18 +42,22 @@ const ctesFor = (node: JsonRecord): Set<string> => {
 /**
  * Resolves every BASE_TABLE node emitted by DuckDB's `json_serialize_sql`.
  * The packaged WASM `getTableNames(query)` wrapper has no qualified flag and
- * omits views it expands. This parser-only operation neither binds nor runs
- * the submitted SQL, and application code does not parse SQL text itself.
+ * omits views it expands. A narrow lexical gate isolates a normal CREATE VIEW
+ * SELECT/WITH body; DuckDB still parses the query AST. Discovery never binds or
+ * runs the submitted SQL.
  */
 export const resolvePublishedTableReferences = async (
   parser: DuckDbSqlParser,
   sql: string,
   datasets: readonly ReleaseDataset[]
 ): Promise<PublishedTableReference[]> => {
+  const query = selectQueryForReferenceResolution(sql);
+  if (!query) return [];
+
   let serialized: Awaited<ReturnType<DuckDbSqlParser["query"]>>;
   try {
     serialized = await parser.query(
-      `SELECT json_serialize_sql('${sqlEscapeString(sql)}') AS parsed_sql`
+      `SELECT json_serialize_sql('${sqlEscapeString(query)}') AS parsed_sql`
     );
   } catch {
     // json_serialize_sql is deliberately SELECT-only in this WASM build.

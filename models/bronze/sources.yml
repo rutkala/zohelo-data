@@ -1,0 +1,29 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: 02_bronze
+    description: "Legacy NBP Parquet inputs in the 02_bronze storage layer. This source remains available for the historical Silver-only compatibility build."
+    config:
+      enabled: "{{ not var('nbp_verified_batches', false) }}"
+    tables:
+      - name: nbp_exchange_rates_table_a
+        description: "Legacy NBP exchange rates table A Parquet batches."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/nbp_exchange_rates_table_a/*.parquet', union_by_name = true, filename = true)"
+      - name: nbp_exchange_rates_table_b
+        description: "Legacy NBP exchange rates table B Parquet batches."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/nbp_exchange_rates_table_b/*.parquet', union_by_name = true, filename = true)"
+      - name: nbp_exchange_rates_table_c
+        description: "Legacy NBP exchange rates table C Parquet batches."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/nbp_exchange_rates_table_c/*.parquet', union_by_name = true, filename = true)"
+      - name: nbp_gold_prices
+        description: "Legacy NBP gold-price Parquet batches using the API data and cena fields."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/nbp_gold_prices/*.parquet', union_by_name = true, filename = true)"

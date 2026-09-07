@@ -20,7 +20,7 @@ export const fetchWasmDatabases = async (
     dbListResult.toArray().map(async (db: any) => {
       const dbName = db.name.toString();
       const tablesResult = await connection.query(
-        `SELECT table_schema, table_name
+        `SELECT table_schema, table_name, table_type
          FROM information_schema.tables
          WHERE table_catalog = '${sqlEscapeString(dbName)}'
          ORDER BY table_schema, table_name`
@@ -30,6 +30,7 @@ export const fetchWasmDatabases = async (
         tablesResult.toArray().map(async (tbl: any) => {
           const schemaName = tbl.table_schema.toString();
           const tableName = tbl.table_name.toString();
+          const relationType = String(tbl.table_type).toUpperCase() === "VIEW" ? "view" : "table";
           const qualified = qualifyTable(dbName, schemaName, tableName);
           try {
             const columnsResult = await connection.query(`DESCRIBE ${qualified}`);
@@ -48,6 +49,7 @@ export const fetchWasmDatabases = async (
             return {
               name: tableName,
               schema: schemaName,
+              relationType,
               columns,
               rowCount: countValue,
               createdAt: new Date().toISOString(),
@@ -57,6 +59,7 @@ export const fetchWasmDatabases = async (
             return {
               name: tableName,
               schema: schemaName,
+              relationType,
               columns: [],
               rowCount: 0,
               createdAt: new Date().toISOString(),

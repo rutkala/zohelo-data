@@ -4,31 +4,32 @@ import {
   ChevronRight,
   ChevronDown,
   Database,
+  Eye,
   Table,
+  Copy,
+  FileInput,
   FileSpreadsheet,
   Trash,
   TerminalIcon,
-  MoreVertical,
   Loader2,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useDuckStore, type ColumnStats } from "@/store";
 import { getUiConfig } from "@/lib/appConfig";
 import { qualifyTable } from "@/lib/sqlSanitize";
+import {
+  queueSqlInsert,
+  selectAllFromRelation,
+  setSqlRelationDragData,
+} from "@/lib/sqlTableActions";
 import { ColumnNode } from "./ColumnNode";
+import { TableActions, type AdditionalTableAction } from "./TableActions";
 
 export interface TreeNodeData {
   /** Display-only label. Actions always use `name`, the real catalog identifier. */
@@ -49,10 +50,11 @@ interface TreeNodeProps {
   searchTerm: string;
   parentDatabaseName?: string;
   refreshData: () => void;
+  onSqlAction?: () => void;
 }
 
 const TreeNode: React.FC<TreeNodeProps> = React.memo(
-  ({ node, level, searchTerm, parentDatabaseName, refreshData }) => {
+  ({ node, level, searchTerm, parentDatabaseName, refreshData, onSqlAction }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [columnStats, setColumnStats] = useState<ColumnStats[]>([]);
     const [isLoadingStats, setIsLoadingStats] = useState(false);
@@ -60,6 +62,8 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
 
     const createTab = useDuckStore((s) => s.createTab);
     const executeQuery = useDuckStore((s) => s.executeQuery);
+    const activeTabId = useDuckStore((s) => s.activeTabId);
+    const activeTabType = useDuckStore((s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.type);
     const deleteTable = useDuckStore((s) => s.deleteTable);
     const fetchDatabasesAndTablesInfo = useDuckStore((s) => s.fetchDatabasesAndTablesInfo);
     const fetchTableColumnStats = useDuckStore((s) => s.fetchTableColumnStats);
@@ -94,29 +98,52 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
     const getIcon = useMemo(() => {
       switch (node.type) {
         case "database":
-          return <Database className="w-4 h-4 mr-2" />;
+          return <Database className="mr-2 h-4 w-4 shrink-0" />;
         case "table":
+          return <Table className="mr-2 h-4 w-4 shrink-0" />;
         case "view":
-          return <Table className="w-4 h-4 mr-2" />;
+          return <Eye className="mr-2 h-4 w-4 shrink-0" />;
         default:
           return null;
       }
     }, [node.type]);
 
-    const handleQueryData = useCallback(
-      (databaseName: string, tableName: string, schema?: string) => async () => {
-        const query = `SELECT * FROM ${qualifyTable(databaseName, schema, tableName)} LIMIT 100`;
-
-        createTab("sql", query, tableName);
-
-        const tabId = useDuckStore.getState().activeTabId;
-        if (tabId) {
-          await executeQuery(query, tabId);
-        }
-        toast.success(`Querying table "${tableName}"`);
-      },
-      [createTab, executeQuery, toast]
+    const relation = useMemo(
+      () =>
+        node.type !== "database" && parentDatabaseName
+          ? qualifyTable(parentDatabaseName, node.schema, node.name)
+          : null,
+      [node.type, node.name, node.schema, parentDatabaseName]
     );
+
+    const handleQueryData = useCallback(
+      (databaseName: string, tableName: string, schema?: string) => () => {
+        const query = selectAllFromRelation(qualifyTable(databaseName, schema, tableName));
+        createTab("sql", query, tableName);
+        onSqlAction?.();
+      },
+      [createTab, onSqlAction]
+    );
+
+    const handleInsert = useCallback(() => {
+      if (!relation) return;
+      if (!activeTabId || activeTabType !== "sql") {
+        toast.info("Open a SQL tab first, then insert the table name.");
+        return;
+      }
+      onSqlAction?.();
+      queueSqlInsert({ sql: relation, tabId: activeTabId });
+    }, [relation, activeTabId, activeTabType, onSqlAction]);
+
+    const handleCopy = useCallback(async () => {
+      if (!relation) return;
+      try {
+        await navigator.clipboard.writeText(relation);
+        toast.success("Copied quoted relation name");
+      } catch {
+        toast.error("Could not copy the relation name");
+      }
+    }, [relation]);
 
     const handleDeleteTable = useCallback(
       (databaseName: string, tableName: string, schema?: string) => async () => {
@@ -133,71 +160,107 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
           );
         }
       },
-      [deleteTable, toast, fetchDatabasesAndTablesInfo, refreshData]
+      [deleteTable, fetchDatabasesAndTablesInfo, refreshData]
     );
 
     const handleShowSchema = useCallback(
       (databaseName: string, tableName: string, schema?: string) => async () => {
         const query = `DESCRIBE ${qualifyTable(databaseName, schema, tableName)}`;
 
-        createTab("sql", query, `${tableName} Schema`);
-
-        const tabId = useDuckStore.getState().activeTabId;
+        const tabId = createTab("sql", query, `${tableName} Schema`);
         if (tabId) {
           await executeQuery(query, tabId);
         }
         toast.success(`Showing schema for table "${tableName}"`);
       },
-      [createTab, executeQuery, toast]
+      [createTab, executeQuery]
     );
 
-    const contextMenuOptions = useMemo(
-      () => ({
-        database: [],
-        table: [
-          {
-            label: "Query Table",
-            icon: <TerminalIcon className="w-4 h-4 mr-2" />,
-            action: parentDatabaseName
-              ? handleQueryData(parentDatabaseName, node.name, node.schema)
-              : () => {
-                  toast.error("Parent database name is undefined.");
-                },
-          },
-          {
-            label: "Show Schema",
-            icon: <FileSpreadsheet className="w-4 h-4 mr-2" />,
-            action: parentDatabaseName
-              ? handleShowSchema(parentDatabaseName, node.name, node.schema)
-              : () => {
-                  toast.error("Parent database name is undefined.");
-                },
-          },
-          // Destructive action is hidden in read-only / kiosk mode.
-          ...(getUiConfig().readOnly
-            ? []
-            : [
-                {
-                  label: "Delete Table",
-                  icon: <Trash className="w-4 h-4 mr-2" />,
-                  action: parentDatabaseName
-                    ? handleDeleteTable(parentDatabaseName, node.name, node.schema)
-                    : () => {
-                        toast.error("Parent database name is undefined.");
-                      },
-                },
-              ]),
-        ],
-      }),
-      [
-        parentDatabaseName,
-        node.name,
-        node.schema,
-        handleQueryData,
-        handleDeleteTable,
-        handleShowSchema,
-      ]
-    );
+    const contextMenuOptions = useMemo(() => {
+      if (node.type === "database") return [];
+      const actions = [
+        {
+          label: "Query as SELECT",
+          icon: <TerminalIcon className="w-4 h-4 mr-2" />,
+          action: parentDatabaseName
+            ? handleQueryData(parentDatabaseName, node.name, node.schema)
+            : () => {
+                toast.error("Parent database name is undefined.");
+              },
+        },
+        {
+          label: "Insert in SQL editor",
+          icon: <FileInput className="w-4 h-4 mr-2" />,
+          action: handleInsert,
+        },
+        {
+          label: "Copy quoted name",
+          icon: <Copy className="w-4 h-4 mr-2" />,
+          action: () => void handleCopy(),
+        },
+        {
+          label: "Show Schema",
+          icon: <FileSpreadsheet className="w-4 h-4 mr-2" />,
+          action: parentDatabaseName
+            ? handleShowSchema(parentDatabaseName, node.name, node.schema)
+            : () => {
+                toast.error("Parent database name is undefined.");
+              },
+        },
+      ];
+      if (node.type === "table" && !getUiConfig().readOnly) {
+        actions.push({
+          label: "Delete Table",
+          icon: <Trash className="w-4 h-4 mr-2" />,
+          action: parentDatabaseName
+            ? handleDeleteTable(parentDatabaseName, node.name, node.schema)
+            : () => {
+                toast.error("Parent database name is undefined.");
+              },
+        });
+      }
+      return actions;
+    }, [
+      parentDatabaseName,
+      node.type,
+      node.name,
+      node.schema,
+      handleQueryData,
+      handleDeleteTable,
+      handleShowSchema,
+      handleInsert,
+      handleCopy,
+    ]);
+
+    const additionalActions = useMemo<AdditionalTableAction[]>(() => {
+      if (!parentDatabaseName || node.type === "database") return [];
+      const actions: AdditionalTableAction[] = [
+        {
+          key: "schema",
+          label: "Show Schema",
+          icon: <FileSpreadsheet className="h-4 w-4" />,
+          action: handleShowSchema(parentDatabaseName, node.name, node.schema),
+        },
+      ];
+      if (node.type === "table" && !getUiConfig().readOnly) {
+        actions.push({
+          key: "delete",
+          label: "Delete Table",
+          icon: <Trash className="h-4 w-4" />,
+          action: handleDeleteTable(parentDatabaseName, node.name, node.schema),
+          destructive: true,
+          separated: true,
+        });
+      }
+      return actions;
+    }, [
+      parentDatabaseName,
+      node.type,
+      node.name,
+      node.schema,
+      handleShowSchema,
+      handleDeleteTable,
+    ]);
 
     const matchesSearch = node.name.toLowerCase().includes(searchTerm.toLowerCase());
     const childrenMatchSearch = node.children?.some(
@@ -219,7 +282,11 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
               aria-expanded={node.children ? isOpen : undefined}
               aria-level={level + 1}
               tabIndex={0}
-              className={`flex items-center py-1 px-2 hover:bg-secondary hover:rounded-md cursor-pointer truncate
+              draggable={relation !== null}
+              onDragStart={(event) => {
+                if (relation) setSqlRelationDragData(event.dataTransfer, relation);
+              }}
+              className={`group flex items-center py-1 px-2 hover:bg-secondary hover:rounded-md cursor-pointer truncate
               ${level > 0 ? "ml-4" : ""}`}
               onClick={toggleOpen}
               onKeyDown={(e) => {
@@ -229,7 +296,7 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
                 }
               }}
             >
-              <div className="flex-grow flex items-center">
+              <div className="flex min-w-0 flex-1 items-center">
                 {node.children ? (
                   isOpen ? (
                     <ChevronDown className="w-4 h-4 mr-1" />
@@ -240,8 +307,8 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
                   <div className="w-6 mr-1" />
                 )}
                 {getIcon}
-                <div className="text-xs">
-                  <p className="truncate" title={node.description}>
+                <div className="min-w-0 flex-1 text-xs">
+                  <p className="truncate" title={node.description ?? node.name}>
                     {" "}
                     {node.type === "database" ? (
                       (node.label ?? node.name)
@@ -256,38 +323,23 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
                   </p>
                 </div>
               </div>
-              <div className="flex items-center">
-                {contextMenuOptions[node.type as keyof typeof contextMenuOptions].length > 0 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="icon" variant="ghost" className="h-6 w-6">
-                        <MoreVertical className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent>
-                      {contextMenuOptions[node.type as keyof typeof contextMenuOptions].map(
-                        (option, index) => (
-                          <DropdownMenuItem key={index} onSelect={option.action}>
-                            {option.icon}
-                            {option.label}
-                          </DropdownMenuItem>
-                        )
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
+              {relation && (
+                <TableActions
+                  relation={relation}
+                  displayName={node.name}
+                  additionalActions={additionalActions}
+                  onSqlAction={onSqlAction}
+                />
+              )}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            {contextMenuOptions[node.type as keyof typeof contextMenuOptions].map(
-              (option, index) => (
-                <ContextMenuItem key={index} onSelect={option.action}>
-                  {option.icon}
-                  {option.label}
-                </ContextMenuItem>
-              )
-            )}
+            {contextMenuOptions.map((option) => (
+              <ContextMenuItem key={option.label} onSelect={option.action}>
+                {option.icon}
+                {option.label}
+              </ContextMenuItem>
+            ))}
           </ContextMenuContent>
           {(isOpen || searchTerm) && node.children && (
             <div>
@@ -300,6 +352,7 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
                     searchTerm={searchTerm}
                     parentDatabaseName={node.type === "database" ? node.name : parentDatabaseName}
                     refreshData={refreshData}
+                    onSqlAction={onSqlAction}
                   />
                 ))
               ) : (

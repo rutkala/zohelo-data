@@ -1,8 +1,8 @@
-{{ config(materialized='table') }}
+{{ config(materialized='table', alias='nbp_exchange_rates_table_b') }}
 
 with batches as (
     select *
-    from {{ source('nbp_verified_raw', 'nbp_batches') }}
+    from {{ source('landing', 'nbp_batches') }}
     where source_id = 'nbp_exchange_rates_table_b'
 ),
 pages as (

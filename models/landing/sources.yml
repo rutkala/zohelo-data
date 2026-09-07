@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: landing
+    schema: 01_landing
+    description: "Immutable verified NBP request envelopes in the 01_landing storage layer. Landing data is an input boundary, not a dbt-produced model."
+    tables:
+      - name: nbp_batches
+        description: "Recorded NBP API responses with batch and request provenance; supplied locally through ZOHELO_NBP_BATCHES_PATH. body_json retains the exact API response bytes as a string."
+        meta:
+          formatter: template
+          external_location: "read_json('{{ env_var('ZOHELO_NBP_BATCHES_PATH', '/tmp/zohelo_data/01_landing/nbp_batches/*.jsonl') }}', format = 'newline_delimited', columns = {'source_id': 'VARCHAR', 'batch_id': 'VARCHAR', 'ingestion_sequence': 'BIGINT', 'requested_start_date': 'VARCHAR', 'requested_end_date': 'VARCHAR', 'retrieved_at_utc': 'VARCHAR', 'response_sha256': 'VARCHAR', 'raw_file_id': 'VARCHAR', 'body_json': 'VARCHAR'})"

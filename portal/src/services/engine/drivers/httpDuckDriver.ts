@@ -114,6 +114,7 @@ class DuckHttpSession implements DataSession {
         tables: database.tables.map((table) => ({
           name: table.name,
           schema: table.schema,
+          relationType: table.relationType,
           columns: table.columns,
           // The endpoint has no cheap row count. Zero is what the consumers
           // (schema autocomplete, the AI schema formatter) treat as "unknown"

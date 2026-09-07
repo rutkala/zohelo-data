@@ -9,11 +9,19 @@ import {
   Brain,
   Bookmark,
   ListTree,
+  TableProperties,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDuckStore } from "@/store";
 import { useTheme } from "../theme/theme-provider";
 import { cn } from "@/lib/utils";
+import {
+  SQL_INSERT_EVENT,
+  SQL_RELATION_DRAG_MIME,
+  type SqlInsertEventDetail,
+} from "@/lib/sqlTableActions";
+import CreateViewDialog from "./CreateViewDialog";
+import { asLocalDuckSession } from "@/services/engine";
 import { createEditor, useMonacoConfig, type EditorInstance } from "./monacoConfig";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
@@ -46,6 +54,7 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
   const toggleBrainPanel = useDuckStore((s) => s.toggleBrainPanel);
   const duckBrain = useDuckStore((s) => s.duckBrain);
   const currentProfileId = useDuckStore((s) => s.currentProfileId);
+  const currentSession = useDuckStore((s) => s.currentSession);
   const sessionStatus = useDuckStore((s) => s.session.status);
   const monacoConfig = useMonacoConfig(theme);
 
@@ -60,6 +69,39 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
   const [explainText, setExplainText] = useState("");
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [shareTab, setShareTab] = useState<EditorTab | null>(null);
+  const [createViewOpen, setCreateViewOpen] = useState(false);
+  const [createViewSql, setCreateViewSql] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+
+  const insertRelation = useCallback((sql: string, drop?: { x: number; y: number }) => {
+    const editor = editorInstanceRef.current?.editor;
+    if (!editor || !sql) return;
+    const target = drop ? editor.getTargetAtClientPoint(drop.x, drop.y)?.position : null;
+    if (target) editor.setPosition(target);
+    const selection = editor.getSelection();
+    if (!selection) return;
+    const text = editor.getValue().trim() ? sql : `SELECT * FROM ${sql} LIMIT 100;`;
+    editor.pushUndoStop();
+    editor.executeEdits("insert-table", [{ range: selection, text, forceMoveMarkers: true }]);
+    editor.pushUndoStop();
+    editor.focus();
+  }, []);
+
+  useEffect(() => {
+    const insert = (event: Event) => {
+      const detail = (event as CustomEvent<SqlInsertEventDetail>).detail;
+      if (
+        detail?.tabId !== tabId ||
+        typeof detail.sql !== "string" ||
+        useDuckStore.getState().activeTabId !== tabId ||
+        !editorRef.current?.offsetParent
+      )
+        return;
+      insertRelation(detail.sql);
+    };
+    document.addEventListener(SQL_INSERT_EVENT, insert);
+    return () => document.removeEventListener(SQL_INSERT_EVENT, insert);
+  }, [tabId, insertRelation]);
 
   // Stable callback for query execution
   const stableExecuteCallback = useCallback(
@@ -233,7 +275,7 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
   return (
     <div className={cn("flex flex-col h-full relative", className)}>
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
         {/* Title (always visible) */}
         <div className="flex items-center gap-2 flex-1 min-w-0">
           {isEditingTitle ? (
@@ -253,8 +295,8 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
               autoFocus
             />
           ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-medium truncate text-sm">{currentTitle}</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="font-medium truncate text-sm">{currentTitle}</span>
               <Button
                 variant="ghost"
                 size="icon"
@@ -268,8 +310,22 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
           )}
         </div>
 
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          disabled={!currentContent.trim() || isExecuting || !asLocalDuckSession(currentSession)}
+          onClick={() => {
+            setCreateViewSql(editorInstanceRef.current?.editor.getValue() ?? currentContent);
+            setCreateViewOpen(true);
+          }}
+        >
+          <TableProperties className="mr-1.5 h-4 w-4" />
+          Create view
+        </Button>
+
         {/* Desktop Actions */}
-        <div className="hidden md:flex items-center gap-4">
+        <div className="hidden md:flex items-center gap-1">
           <div className="flex gap-2 text-sm text-muted-foreground">
             <TooltipProvider>
               <Tooltip delayDuration={200}>
@@ -378,8 +434,36 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 relative">
+      <div
+        className="flex-1 min-h-0 relative"
+        data-testid="sql-drop-target"
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(SQL_RELATION_DRAG_MIME)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "copy";
+          setDragOver(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+        }}
+        onDropCapture={(event) => {
+          const relation = event.dataTransfer.getData(SQL_RELATION_DRAG_MIME);
+          if (!relation) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setDragOver(false);
+          insertRelation(relation, { x: event.clientX, y: event.clientY });
+        }}
+      >
         <div ref={editorRef} className="h-full w-full absolute inset-0" />
+        {dragOver && (
+          <div className="pointer-events-none absolute inset-0 z-10 border-2 border-primary bg-primary/5">
+            <span className="absolute right-3 top-3 rounded bg-background px-3 py-2 text-sm shadow">
+              Drop to insert table
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Mobile FAB */}
@@ -395,6 +479,11 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
         onOpenChange={setSaveDialogOpen}
         defaultName={currentTitle}
         sqlText={currentContent}
+      />
+      <CreateViewDialog
+        open={createViewOpen}
+        onOpenChange={setCreateViewOpen}
+        sql={createViewSql}
       />
 
       <ExplainPlanViewer

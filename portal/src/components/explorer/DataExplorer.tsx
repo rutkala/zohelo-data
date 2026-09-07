@@ -28,7 +28,11 @@ function databaseDisplayName(name: string): string {
   return browserWorkspaceNames.has(name) ? "Browser workspace" : name;
 }
 
-export default function DataExplorer() {
+interface DataExplorerProps {
+  onSqlAction?: () => void;
+}
+
+export default function DataExplorer({ onSqlAction }: DataExplorerProps) {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const databases = useDuckStore((s) => s.databases);
@@ -95,7 +99,7 @@ export default function DataExplorer() {
       type: "database",
       children: db.tables.map((table) => ({
         name: table.name,
-        type: "table",
+        type: table.relationType ?? "table",
         schema: table.schema,
       })),
     }));
@@ -222,7 +226,7 @@ export default function DataExplorer() {
       <CardContent className="p-2 h-[calc(100%-60px)] overflow-y-auto">
         <div className="space-y-4">
           {/* Google Drive Lakehouse Section */}
-          <LakehouseExplorer />
+          <LakehouseExplorer onSqlAction={onSqlAction} />
 
           {/* Databases Section */}
           {databases.length > 0 ? (
@@ -247,6 +251,7 @@ export default function DataExplorer() {
                     level={0}
                     searchTerm={searchTerm}
                     refreshData={() => {}}
+                    onSqlAction={onSqlAction}
                   />
                 ))}
               </ul>

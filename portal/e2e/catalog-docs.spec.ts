@@ -37,23 +37,26 @@ const datasets = [
 
 function model(name: string, description: string, dependencies: string[] = []) {
   const unique_id = `model.zohelo_data.${name}`;
+  const directory = name.startsWith("br_") ? "bronze" : "silver";
+  const schema = name.startsWith("br_") ? "02_bronze" : "03_silver";
   return [
     unique_id,
     {
       database: "catalogue_fixture",
-      schema: "main",
+      schema,
       name,
       resource_type: "model",
       package_name: "zohelo_data",
-      path: `${name}.sql`,
-      original_file_path: `models/${name}.sql`,
+      path: `${directory}/${name}.sql`,
+      original_file_path: `models/${directory}/${name}.sql`,
       unique_id,
-      fqn: ["zohelo_data", name],
+      fqn: ["zohelo_data", directory, name],
       alias: name,
       config: {
         enabled: true,
         materialized: "view",
-        meta: { layer: "02_bronze" },
+        schema,
+        meta: { layer: schema },
         tags: [],
         docs: { show: true, node_color: null },
       },
@@ -81,10 +84,10 @@ function model(name: string, description: string, dependencies: string[] = []) {
       group: null,
       docs: { show: true, node_color: null },
       patch_path: "zohelo_data://models/schema.yml",
-      relation_name: `"catalogue_fixture"."main"."${name}"`,
+      relation_name: `"catalogue_fixture"."${schema}"."${name}"`,
       raw_code: `select currency_code, mid_rate from ${name}`,
       compiled: true,
-      compiled_code: `select currency_code, mid_rate from "catalogue_fixture"."main"."${name}"`,
+      compiled_code: `select currency_code, mid_rate from "catalogue_fixture"."${schema}"."${name}"`,
       language: "sql",
       refs: [],
       sources: [],
@@ -143,7 +146,7 @@ function dbtArtifacts() {
     metadata: {
       name,
       type: "VIEW",
-      schema: "main",
+      schema: name.startsWith("br_") ? "02_bronze" : "03_silver",
       database: "catalogue_fixture",
       comment: `Native dbt catalog metadata for ${name}.`,
       owner: null,
@@ -247,7 +250,7 @@ function releaseFixture(options: { catalogHash?: string } = {}) {
     datasets: datasets.map((dataset_id) => ({
       dataset_id,
       layer: layer(dataset_id),
-      table_name: dataset_id,
+      table_name: dataset_id.replace(/^bronze_/, ""),
       row_count: dataset_id === "nbp_change_events" ? 0 : 1,
       min_date: noDates.has(dataset_id) ? null : "2026-09-05",
       max_date: noDates.has(dataset_id) ? null : "2026-09-05",
@@ -345,8 +348,9 @@ async function ensureProfile(page: Page) {
 
 async function openCatalogue(page: Page) {
   await page
-    .getByRole("navigation", { name: "Main navigation" })
-    .getByRole("button", { name: "Data catalogue" })
+    .getByRole("button", { name: "Data catalogue", exact: true })
+    .filter({ visible: true })
+    .first()
     .click();
 }
 
@@ -404,6 +408,80 @@ test("renders a verified release in native dbt Docs", async ({ page }) => {
   await expect(docs.locator("body")).toContainText("mid_rate");
   await expect(docs.locator("body")).toContainText("sl_nbp_table_a");
   await page.screenshot({ path: "test-results/catalogue.png", fullPage: true });
+});
+
+test("keeps native catalogue navigation and details usable on mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 921 });
+  await installReleaseFixture(page);
+  await page.goto("./");
+  await ensureProfile(page);
+  await openCatalogue(page);
+
+  const heading = page.getByRole("heading", { name: "Data catalogue", exact: true });
+  const refresh = page.getByRole("button", { name: "Refresh catalogue" });
+  const tables = page.getByRole("button", { name: "Tables" });
+  await expect(heading).toBeVisible();
+  await expect(refresh).toBeVisible();
+  await expect(tables).toBeVisible();
+  const [headingBox, refreshBox, tablesBox] = await Promise.all([
+    heading.boundingBox(),
+    refresh.boundingBox(),
+    tables.boundingBox(),
+  ]);
+  expect(headingBox).not.toBeNull();
+  expect(refreshBox).not.toBeNull();
+  expect(tablesBox).not.toBeNull();
+  expect(tablesBox!.y + tablesBox!.height).toBeLessThanOrEqual(headingBox!.y);
+  expect(headingBox!.x + headingBox!.width).toBeLessThanOrEqual(refreshBox!.x);
+
+  const docs = page.frameLocator('iframe[title="Data catalogue — dbt Docs"]:visible');
+  await expect(docs.locator("body")).toContainText("Native dbt Docs overview");
+  const viewport = await docs.locator("html").evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(viewport.scrollWidth).toBeLessThanOrEqual(viewport.clientWidth + 1);
+  const contentBounds = await docs.locator(".app-content").evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return { left: bounds.left, right: bounds.right, width: bounds.width, viewport: innerWidth };
+  });
+  expect(contentBounds.left).toBeGreaterThanOrEqual(-1);
+  expect(contentBounds.right).toBeLessThanOrEqual(contentBounds.viewport + 1);
+  expect(contentBounds.width).toBeGreaterThanOrEqual(contentBounds.viewport - 1);
+
+  await docs.getByRole("button", { name: "Browse catalogue" }).click();
+  const navigation = docs.locator(".app-menu");
+  await expect(navigation).toHaveAttribute("aria-hidden", "false");
+  const projectNavigation = navigation.getByRole("button", { name: "Project", exact: true });
+  await expect(projectNavigation).toBeVisible();
+  await projectNavigation.click();
+  await expect(navigation).toContainText("Projects");
+  await expect(navigation).toContainText("zohelo_data");
+  await navigation.getByRole("button", { name: "Database", exact: true }).click();
+  await expect(navigation).toContainText("Tables and Views");
+  // Native dbt splits long labels into ellipsis/normal spans, with whitespace
+  // between them, and retains hidden Project/Database/Group trees in the DOM.
+  const database = navigation
+    .locator('a[ng-click="onFolderClick(item)"]')
+    .filter({ hasText: /ca\s*talogue_fixture/ })
+    .filter({ visible: true });
+  await expect(database).toBeVisible();
+  await database.click();
+  await navigation.getByText("02_bronze", { exact: true }).filter({ visible: true }).click();
+  await navigation
+    .locator('[data-nav-unique-id="model.zohelo_data.br_nbp_table_a"]')
+    .filter({ visible: true })
+    .click();
+  await expect(navigation).toHaveAttribute("aria-hidden", "true");
+
+  const details = docs.locator(".app-content");
+  await expect(details).toContainText("br_nbp_table_a");
+  await expect(details).toContainText("catalogue_fixture");
+  await expect(details).toContainText("02_bronze");
+  await expect(details).toContainText("published_snapshot");
+  await expect(details).toContainText("currency_code");
+  await expect(details).toContainText("sl_nbp_table_a");
+  await page.screenshot({ path: test.info().outputPath("catalogue-mobile.png") });
 });
 
 test("reports a release artifact hash mismatch without embedding docs", async ({ page }) => {

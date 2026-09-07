@@ -328,12 +328,23 @@ def _layer_for_record(kind: str, record: Mapping[str, Any]) -> str:
     direct_meta = record.get("meta")
     if isinstance(direct_meta, Mapping) and isinstance(direct_meta.get("layer"), str) and direct_meta["layer"].strip():
         return direct_meta["layer"]
-    if kind == "source":
-        return "bronze"
     if kind in {"semantic_model", "semantic"}:
         return "semantic"
     if kind == "metric":
         return "metrics"
+    schema = record.get("schema")
+    schema_layers = {
+        "01_landing": "landing",
+        "02_bronze": "bronze",
+        "03_silver": "silver",
+        "04_gold": "gold",
+    }
+    if isinstance(schema, str) and schema.strip().lower() in schema_layers:
+        return schema_layers[schema.strip().lower()]
+    if kind == "source":
+        # Older manifests did not record the physical source schema. Their
+        # configured source boundary was Bronze, so preserve that interpretation.
+        return "bronze"
     searchable = " ".join(str(record.get(key, "")) for key in ("name", "path", "original_file_path")).lower()
     if "staging" in searchable or ".stg_" in searchable or "stg_" in searchable:
         return "silver"

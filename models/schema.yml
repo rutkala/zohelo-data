@@ -1,27 +1,5 @@
 version: 2
 
-sources:
-  - name: bronze
-    description: "02_bronze layer datasets prepared from landing ingestion outputs."
-    tables:
-      - name: nbp_exchange_rates_table_a
-        description: "NBP exchange rates table A data in bronze format."
-      - name: nbp_exchange_rates_table_b
-        description: "NBP exchange rates table B data in bronze format."
-      - name: nbp_exchange_rates_table_c
-        description: "NBP exchange rates table C data in bronze format."
-      - name: nbp_gold_prices
-        description: "NBP gold-price data in bronze format, using the API's data and cena fields."
-
-  - name: nbp_verified_raw
-    description: "Immutable, newline-delimited verified NBP request envelopes. The body_json column retains the exact API response bytes as a string."
-    tables:
-      - name: nbp_batches
-        description: "Recorded NBP API responses with batch and request provenance; supplied locally through ZOHELO_NBP_BATCHES_PATH."
-        meta:
-          formatter: template
-          external_location: "read_json('{{ env_var('ZOHELO_NBP_BATCHES_PATH', '/tmp/zohelo_data/01_landing/nbp_batches/*.jsonl') }}', format = 'newline_delimited', columns = {'source_id': 'VARCHAR', 'batch_id': 'VARCHAR', 'ingestion_sequence': 'BIGINT', 'requested_start_date': 'VARCHAR', 'requested_end_date': 'VARCHAR', 'retrieved_at_utc': 'VARCHAR', 'response_sha256': 'VARCHAR', 'raw_file_id': 'VARCHAR', 'body_json': 'VARCHAR'})"
-
 models:
   - name: stg_nbp_table_a
     description: "03_silver staging model for NBP exchange rates table A with flattened and deduplicated average rates."

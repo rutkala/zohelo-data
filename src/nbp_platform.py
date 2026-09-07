@@ -52,6 +52,11 @@ DATASET_MODELS.update({
 })
 
 
+def _dbt_relation(layer, model):
+    """Return the exact dbt relation published for a medallion layer."""
+    return f'"{layer}"."{model}"'
+
+
 def coverage_complete(state, cutoff):
     return all(source.get("last_checked_through_date") is not None
                and source["last_checked_through_date"] >= cutoff.isoformat()
@@ -184,12 +189,13 @@ def build_platform(workspace, envelopes):
     datasets = []
     with duckdb.connect(str(database), read_only=True) as connection:
         for dataset_id, (layer, table, model, date_column) in DATASET_MODELS.items():
+            relation = _dbt_relation(layer, table)
             output = workspace / layer / f"{dataset_id}.parquet"
             output.parent.mkdir(exist_ok=True)
             escaped = str(output).replace("'", "''")
-            connection.execute(f"COPY (SELECT * FROM {model}) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            connection.execute(f"COPY (SELECT * FROM {relation}) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)")
             date_sql = f'min("{date_column}"), max("{date_column}")' if date_column else "NULL, NULL"
-            count, first, last = connection.execute(f"SELECT count(*), {date_sql} FROM {model}").fetchone()
+            count, first, last = connection.execute(f"SELECT count(*), {date_sql} FROM {relation}").fetchone()
             if count == 0 and dataset_id != "nbp_change_events":
                 raise ValueError(f"Required platform dataset is empty: {dataset_id}")
             datasets.append({"dataset_id": dataset_id, "table_name": table, "model_name": model,
@@ -198,7 +204,7 @@ def build_platform(workspace, envelopes):
                              "min_date": first.isoformat() if first is not None else None,
                              "max_date": last.isoformat() if last is not None else None,
                              "columns": [{"name": row[0], "type": row[1]} for row in
-                                         connection.execute(f"DESCRIBE {model}").fetchall()]})
+                                         connection.execute(f"DESCRIBE {relation}").fetchall()]})
     return datasets, [{"name": name, "path": str(target / name)}
                       for name in ("manifest.json", "catalog.json", "run_results.json")]
 

@@ -121,6 +121,7 @@ export const catalogToDatabaseInfo = (snapshot: CatalogSnapshot): DatabaseInfo[]
     tables: database.tables.map((table): TableInfo => ({
       name: table.name,
       schema: table.schema,
+      relationType: table.relationType,
       columns: table.columns,
       rowCount: table.rowCount,
       createdAt: snapshot.capturedAt,

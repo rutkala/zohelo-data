@@ -18,7 +18,7 @@ Project status and owner questions are kept in [the delivery plan](deliverables.
 
 **Browser workspace** (previously labeled `memory`) is the temporary DuckDB database running in your browser. It holds tables loaded for your queries; Google Drive keeps the durable data. You do not need to manage this workspace or preload tables to join them.
 
-Write SQL against quoted physical names such as `"04_gold"."fact_gold_prices"`. On **Run**, the portal finds referenced published tables and loads their verified data automatically before SELECT execution. This applies to ordinary queries, joins, unions, and common table expressions (CTEs); selecting tables in the Explorer or using a special join action is not required.
+Write SQL against quoted physical names such as `"04_gold"."fact_gold_prices"`. On **Run**, the portal finds referenced published tables and loads their verified data automatically before SELECT or CREATE VIEW execution. This applies to ordinary queries, joins, unions, and common table expressions (CTEs); selecting tables in the Explorer or using a special join action is not required.
 
 Automatic loading is limited to a combined 64 MiB Google Drive download budget per browser DuckDB session. If the referenced released tables exceed that budget, the portal should explain the limit before running the query. This behavior is deployed in [PR 63](https://github.com/rutkala/zohelo-data/pull/63). Catalogue metadata has a separate 16 MiB download limit; query memory usage is not bounded by these download limits.
 
@@ -45,4 +45,24 @@ LIMIT 10;
 
 See [joining NBP v2 tables](sql-joins.md) for the released-table names and join keys.
 
-Use the generated `"layer"."table"` names when referring to published data. Automatic loading applies to SELECT queries, including joins, unions, nested queries and CTEs. Bare table names follow DuckDB’s local schema rules. Local DDL/DML stays on the normal engine path; load any required published relation with a SELECT first.
+Use the generated `"layer"."table"` names when referring to published data. Automatic loading applies to SELECT queries, including joins, unions, nested queries and CTEs. Bare table names follow DuckDB’s local schema rules. CREATE VIEW also loads the published relations used in its SELECT or WITH query. Other local DDL/DML stays on the normal engine path.
+
+
+## Table actions and views
+
+Use the **⋮** next to a published table or workspace relation. It is available on hover or keyboard focus and remains visible on touch screens.
+
+- **Query as SELECT** opens generated SQL in a new tab and keeps your existing draft. Press Run when ready.
+- **Insert in SQL editor** inserts the quoted relation at the current selection in the active SQL tab.
+- **Copy quoted name** copies a name ready for SQL.
+- On desktop, drag a table into the SQL canvas to insert its quoted name at the drop point. An empty canvas receives a SELECT query. Insertion can be undone normally.
+
+To name a SELECT or WITH query, choose **Create view**, enter a view name and create it. The definition opens in its own SQL tab, runs, and the new view appears in **Browser workspace**. An existing relation with that name is not replaced. You can also write the definition directly:
+
+```sql
+CREATE VIEW "main"."my_gold_prices" AS
+SELECT effective_date, price_pln_per_gram_1000
+FROM "04_gold"."fact_gold_prices";
+```
+
+Then query `"main"."my_gold_prices"` from another SQL tab. These are views in the current browser database session, not shared platform publications. Save the creation SQL if you want to recreate one after restarting that session.

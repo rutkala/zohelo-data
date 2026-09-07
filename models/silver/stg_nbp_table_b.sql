@@ -1,9 +1,9 @@
-{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view') }}
+{{ config(materialized='table' if var('nbp_verified_batches', false) else 'view', alias='nbp_exchange_rates_table_b') }}
 {% if var('nbp_verified_batches', false) %}
-{{ nbp_current_exchange_rates('br_nbp_table_a', 'A') }}
+{{ nbp_current_exchange_rates('br_nbp_table_b', 'B') }}
 {% else %}
 with bronze_data as (
-    {{ nbp_exchange_rate_bronze("nbp_exchange_rates_table_a") }}
+    {{ nbp_exchange_rate_bronze("nbp_exchange_rates_table_b") }}
 ),
 flattened_rates as (
     select
@@ -26,7 +26,7 @@ conflicting_keys as (
 validation as (
     select case
         when count(*) > 0 then error(
-            'Conflicting NBP table A rates found for the same code and effective date; '
+            'Conflicting NBP table B rates found for the same code and effective date; '
             || cast(min(effectiveDate) as varchar)
         )
         else 1
