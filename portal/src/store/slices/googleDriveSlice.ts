@@ -5,6 +5,7 @@ import {
   clearStoredToken,
   clearStoredTokenIfCurrent,
   createDefaultLakehouseTree,
+  createDriveDownloadBudget,
   getStoredToken,
   listDataFilesInFolder,
   listSubfolders,
@@ -12,14 +13,20 @@ import {
   loadTableIntoDuckDB,
   requestGoogleAccessToken,
   resolveLayerFolderId,
+  resolveReleaseCatalog,
   isGoogleDriveAuthError,
   setStoredToken,
   type LakehouseLayer,
   type LakehouseTable,
+  type ReleaseCatalogResolution,
 } from "@/services/googleDrive";
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
+const releaseMessage = (release: Extract<ReleaseCatalogResolution, { kind: "release" }>) =>
+  `Release ${release.manifest.release_id} · ${release.manifest.release_scope} · ${release.manifest.status}.`;
+const releaseFingerprint = (release: ReleaseCatalogResolution | null) =>
+  release?.kind === "release" ? release.fingerprint : release?.kind === "legacy" ? "legacy" : null;
 
 const handleDriveAuthFailure = (
   set: (state: Partial<DuckStoreState>) => void,
@@ -42,11 +49,7 @@ async function loadTableFiles(table: LakehouseTable, token: string): Promise<Lak
   return {
     ...table,
     loaded: true,
-    children: files.map((file) => ({
-      ...file,
-      tableName: table.name,
-      layer: table.layer,
-    })),
+    children: files.map((file) => ({ ...file, tableName: table.name, layer: table.layer })),
   };
 }
 
@@ -73,14 +76,49 @@ async function loadLayer(layer: LakehouseLayer, token: string): Promise<Lakehous
   return { ...layer, id, loaded: true, children };
 }
 
+function treeFromRelease(
+  release: Extract<ReleaseCatalogResolution, { kind: "release" }>
+): LakehouseLayer[] {
+  return createDefaultLakehouseTree().map((layer) => {
+    if (layer.name !== "03_silver") return { ...layer, expanded: false, loaded: true };
+    return {
+      ...layer,
+      id: null,
+      expanded: true,
+      loaded: true,
+      children: release.manifest.datasets.map((dataset) => ({
+        type: "table" as const,
+        name: dataset.dataset_id,
+        id: null,
+        layer: "03_silver",
+        expanded: false,
+        loaded: true,
+        children: dataset.files.map((file) => ({ ...file, tableName: dataset.dataset_id })),
+      })),
+    };
+  });
+}
+
 export const createGoogleDriveSlice: StateCreator<
   DuckStoreState,
   [["zustand/devtools", never]],
   [],
   GoogleDriveSlice
 > = (set, get) => {
-  // Serialize catalog/load operations, including rapid clicks before React renders.
   let busy = false;
+  // DuckDB views survive disconnect; record their release per engine, not globally.
+  const loadedCatalogFingerprints = new WeakMap<object, string>();
+  const downloadBudgets = new WeakMap<object, ReturnType<typeof createDriveDownloadBudget>>();
+  const noEngineBudget = createDriveDownloadBudget();
+  const budgetForEngine = (db: object) => {
+    let budget = downloadBudgets.get(db);
+    if (!budget) {
+      budget = createDriveDownloadBudget();
+      downloadBudgets.set(db, budget);
+    }
+    return budget;
+  };
+
   const select = async (
     layerName: string,
     tableName: string,
@@ -90,13 +128,17 @@ export const createGoogleDriveSlice: StateCreator<
     const session = get().currentSession;
     const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
+    const source = get().lakehouseRelease;
     const table = get()
       .lakehouseCatalog.find((layer) => layer.name === layerName)
       ?.children.find((item) => item.name === tableName);
     const file =
       fileId === undefined ? undefined : table?.children.find((item) => item.id === fileId);
     const label = file?.name ?? tableName;
-    const current = () => get().currentSession === session && get().googleAuth.token === token;
+    const current = () =>
+      get().currentSession === session &&
+      get().googleAuth.token === token &&
+      get().lakehouseRelease === source;
     if (!local) {
       set({
         lakehouseStatusMessage:
@@ -119,7 +161,8 @@ export const createGoogleDriveSlice: StateCreator<
           local.connection,
           tableName,
           file,
-          token ?? ""
+          token ?? "",
+          budgetForEngine(local.db)
         ));
       } else {
         ({ queryTarget } = await loadTableIntoDuckDB(
@@ -129,9 +172,14 @@ export const createGoogleDriveSlice: StateCreator<
           table.id,
           table.children,
           token ?? "",
-          layerName
+          layerName,
+          budgetForEngine(local.db)
         ));
       }
+      // publishViews has completed at this point. Keep this engine pinned even if the
+      // caller changed token/session while the request was in flight.
+      const fingerprint = releaseFingerprint(source);
+      if (fingerprint) loadedCatalogFingerprints.set(local.db, fingerprint);
       if (!current()) return null;
       let schemaWarning = "";
       try {
@@ -172,6 +220,7 @@ export const createGoogleDriveSlice: StateCreator<
       error: null,
     },
     lakehouseCatalog: createDefaultLakehouseTree(),
+    lakehouseRelease: null,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
     activeLakehouseDataset: null,
@@ -183,9 +232,14 @@ export const createGoogleDriveSlice: StateCreator<
           isLakehouseLoading: true,
           lakehouseStatusMessage: "Requesting Google Sign-In authorization...",
         });
-        const token = await requestGoogleAccessToken({ promptConsent });
+        const nextToken = await requestGoogleAccessToken({ promptConsent });
         set({
-          googleAuth: { token, isAuthenticated: true, authSource: "google_identity", error: null },
+          googleAuth: {
+            token: nextToken,
+            isAuthenticated: true,
+            authSource: "google_identity",
+            error: null,
+          },
         });
         await get().refreshLakehouseCatalog();
         return true;
@@ -199,8 +253,8 @@ export const createGoogleDriveSlice: StateCreator<
       }
     },
 
-    setManualGoogleToken: async (token) => {
-      const trimmed = token.trim();
+    setManualGoogleToken: async (nextToken) => {
+      const trimmed = nextToken.trim();
       if (!trimmed) {
         toast.error("Please enter a valid Google OAuth token");
         return false;
@@ -222,6 +276,7 @@ export const createGoogleDriveSlice: StateCreator<
       set({
         googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: null },
         lakehouseCatalog: createDefaultLakehouseTree(),
+        lakehouseRelease: null,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
         isLakehouseLoading: false,
@@ -231,30 +286,56 @@ export const createGoogleDriveSlice: StateCreator<
 
     refreshLakehouseCatalog: async () => {
       if (busy) return;
-      const token = get().googleAuth.token;
-      if (!token) {
+      const activeToken = get().googleAuth.token;
+      if (!activeToken) {
         set({ lakehouseStatusMessage: "Sign in to browse Google Drive datasets." });
         return;
       }
       busy = true;
-      set({ isLakehouseLoading: true, lakehouseStatusMessage: "Loading Google Drive catalog..." });
+      set({
+        isLakehouseLoading: true,
+        lakehouseStatusMessage: "Resolving the Google Drive release...",
+      });
       try {
+        // This is the only pointer resolution path. Layer toggles use the pinned result.
+        const local = asLocalDuckSession(get().currentSession)?.local;
+        const budget = local ? budgetForEngine(local.db) : noEngineBudget;
+        const release = await resolveReleaseCatalog(activeToken, budget);
+        if (get().googleAuth.token !== activeToken) return;
+        const candidateFingerprint = releaseFingerprint(release);
+        const loadedCatalogFingerprint = local
+          ? loadedCatalogFingerprints.get(local.db)
+          : undefined;
+        if (loadedCatalogFingerprint && loadedCatalogFingerprint !== candidateFingerprint) {
+          throw new Error(
+            "A different release is available, but this DuckDB session still has loaded views. Start a fresh DuckDB session before switching releases."
+          );
+        }
+        if (release.kind === "release") {
+          set({
+            lakehouseCatalog: treeFromRelease(release),
+            lakehouseRelease: release,
+            lakehouseStatusMessage: `${releaseMessage(release)} Select a dataset to query.`,
+          });
+          return;
+        }
         const tree: LakehouseLayer[] = [];
         for (const layer of get().lakehouseCatalog) {
           tree.push(
             layer.expanded
-              ? await loadLayer(layer, token)
+              ? await loadLayer(layer, activeToken)
               : { ...layer, id: null, loaded: false, children: [] }
           );
         }
-        if (get().googleAuth.token !== token) return;
+        if (get().googleAuth.token !== activeToken) return;
         set({
           lakehouseCatalog: tree,
-          lakehouseStatusMessage: "Catalog loaded. Select a dataset to query.",
+          lakehouseRelease: release,
+          lakehouseStatusMessage: "Legacy/unversioned catalog loaded. Select a dataset to query.",
         });
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, token, error);
-        if (get().googleAuth.token === token) {
+        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        if (get().googleAuth.token === activeToken) {
           const message = authFailure
             ? "Google Drive authorization expired or was revoked. Sign in again."
             : `Catalog refresh error: ${messageOf(error)}`;
@@ -280,20 +361,26 @@ export const createGoogleDriveSlice: StateCreator<
           ),
         });
       replace();
-      const token = get().googleAuth.token;
-      if (!updated.expanded || updated.loaded || !token) return;
+      const activeToken = get().googleAuth.token;
+      if (
+        get().lakehouseRelease?.kind === "release" ||
+        !updated.expanded ||
+        updated.loaded ||
+        !activeToken
+      )
+        return;
       busy = true;
       set({ isLakehouseLoading: true, lakehouseStatusMessage: `Loading '${layerName}'...` });
       try {
-        updated = await loadLayer(updated, token);
-        if (get().googleAuth.token !== token) return;
+        updated = await loadLayer(updated, activeToken);
+        if (get().googleAuth.token !== activeToken) return;
         replace();
         set({
-          lakehouseStatusMessage: `Loaded ${updated.children.length} dataset(s) in '${layerName}'.`,
+          lakehouseStatusMessage: `Found ${updated.children.length} legacy/unversioned dataset(s) in '${layerName}'.`,
         });
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, token, error);
-        if (get().googleAuth.token === token) {
+        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure
               ? "Google Drive authorization expired or was revoked. Sign in again."
@@ -327,23 +414,29 @@ export const createGoogleDriveSlice: StateCreator<
           ),
         });
       replace();
-      const token = get().googleAuth.token;
-      if (!updated.expanded || updated.loaded || !token) return;
+      const activeToken = get().googleAuth.token;
+      if (
+        get().lakehouseRelease?.kind === "release" ||
+        !updated.expanded ||
+        updated.loaded ||
+        !activeToken
+      )
+        return;
       busy = true;
       set({
         isLakehouseLoading: true,
         lakehouseStatusMessage: `Loading files for '${tableName}'...`,
       });
       try {
-        updated = await loadTableFiles(updated, token);
-        if (get().googleAuth.token !== token) return;
+        updated = await loadTableFiles(updated, activeToken);
+        if (get().googleAuth.token !== activeToken) return;
         replace();
         set({
-          lakehouseStatusMessage: `Found ${updated.children.length} file(s) in '${tableName}'.`,
+          lakehouseStatusMessage: `Found ${updated.children.length} legacy/unversioned file(s) in '${tableName}'.`,
         });
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, token, error);
-        if (get().googleAuth.token === token) {
+        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure
               ? "Google Drive authorization expired or was revoked. Sign in again."

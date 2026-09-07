@@ -11,6 +11,7 @@ import type { Dashboard } from "@/services/dashboard/types";
 import type {
   GoogleDriveAuthState,
   LakehouseLayer,
+  ReleaseCatalogResolution,
 } from "@/services/googleDrive/types";
 
 //
@@ -212,13 +213,7 @@ export interface MountedFolderInfo {
 //
 
 export type EditorTabType =
-  | "sql"
-  | "notebook"
-  | "dashboard"
-  | "home"
-  | "connections"
-  | "settings"
-  | "catalog";
+  "sql" | "notebook" | "dashboard" | "home" | "connections" | "settings" | "catalog";
 
 export interface NotebookCell {
   id: string;
@@ -630,6 +625,8 @@ export interface SessionSlice {
 export interface GoogleDriveSlice {
   googleAuth: GoogleDriveAuthState;
   lakehouseCatalog: LakehouseLayer[];
+  /** Pinned immutable release, or legacy when no pointer exists. */
+  lakehouseRelease: ReleaseCatalogResolution | null;
   isLakehouseLoading: boolean;
   lakehouseStatusMessage: string;
   activeLakehouseDataset: string | null;
@@ -642,7 +639,11 @@ export interface GoogleDriveSlice {
   toggleLakehouseLayer: (layerName: string) => Promise<void>;
   toggleLakehouseTable: (layerName: string, tableName: string) => Promise<void>;
   selectLakehouseDataset: (layerName: string, tableName: string) => Promise<string | null>;
-  selectLakehouseFile: (layerName: string, tableName: string, fileId: string) => Promise<string | null>;
+  selectLakehouseFile: (
+    layerName: string,
+    tableName: string,
+    fileId: string
+  ) => Promise<string | null>;
 }
 
 //

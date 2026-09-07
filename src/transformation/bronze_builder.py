@@ -12,8 +12,7 @@ from storage_manager import StorageManager
 
 def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
     """Resolves the Google Drive folder ID for a given zone."""
-    master_id = storage._get_or_create_folder(storage.master_folder_name)
-    return storage._get_or_create_folder(zone_name, parent_id=master_id)
+    return storage.resolve_zone(zone_name, create=True)
 
 
 def _list_files_recursively(drive_service, folder_id: str, subfolder_name: str = "") -> list:
@@ -40,6 +39,7 @@ def _list_files_recursively(drive_service, folder_id: str, subfolder_name: str =
                 child_subfolder = item["name"] if not subfolder_name else subfolder_name
                 results.extend(_list_files_recursively(drive_service, item["id"], child_subfolder))
             else:
+                item["source_parent_id"] = folder_id
                 results.append((item, subfolder_name))
         page_token = response.get("nextPageToken")
         if not page_token:
@@ -76,7 +76,8 @@ def _move_file(drive_service, file_id: str, source_parent_id: str, dest_parent_i
 
 def process_bronze():
     print("🥉 Starting Bronze Layer transformation...")
-    storage = StorageManager(backend="gdrive")
+    storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
+    storage.authorize_writes()
     drive = storage.drive_service
     con = duckdb.connect(":memory:")
 
@@ -138,7 +139,7 @@ def process_bronze():
             archive_segments = [today, subfolder_name] if subfolder_name else [today]
             dest_archive_id = storage.get_or_create_nested_folder(archive_segments, root_id=archive_id)
             print(f"  📦 Archiving {file_name} to 05_archive/{'/'.join(archive_segments)}/...")
-            _move_file(drive, file_id, landing_id, dest_archive_id)
+            _move_file(drive, file_id, file_item["source_parent_id"], dest_archive_id)
 
             success_count += 1
             print(f"  ✅ {file_name} processed successfully.")

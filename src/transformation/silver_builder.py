@@ -1,254 +1,225 @@
+"""Build all four NBP silver tables, then publish a verified immutable snapshot."""
+import hashlib
+import json
+import logging
 import os
-import site
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import duckdb
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload
 
-# Ensure Python locates storage_manager from src
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from drive_release_store import DriveReleaseStore
+from release_protocol import publish_release
 from storage_manager import StorageManager
 
-
-LOCAL_ROOT = Path("/tmp/zohelo_data")
-LOCAL_BRONZE_DIR = LOCAL_ROOT / "02_bronze"
-LOCAL_SILVER_DIR = LOCAL_ROOT / "03_silver"
-LOCAL_DUCKDB_PATH = LOCAL_ROOT / "silver_builder.duckdb"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-STAGING_DIR = REPO_ROOT / "models" / "staging"
-BRONZE_DATASET_PREFIX = "nbp_exchange_rates_"
-STAGING_MODEL_PREFIX = "stg_nbp_"
-STAGING_MODEL_GLOB = f"{STAGING_MODEL_PREFIX}table_*.sql"
+DATASET_MODELS = {
+    "nbp_exchange_rates_table_a": "stg_nbp_table_a",
+    "nbp_exchange_rates_table_b": "stg_nbp_table_b",
+    "nbp_exchange_rates_table_c": "stg_nbp_table_c",
+    "nbp_gold_prices": "stg_nbp_gold_prices",
+}
+MAX_INPUT_BYTES = 256 * 1024 * 1024
+MAX_INPUT_FILES = 2048
 
 
-def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
-    master_id = storage._get_or_create_folder(storage.master_folder_name)
-    return storage._get_or_create_folder(zone_name, parent_id=master_id)
+def _dataset_to_model_name(dataset_name):
+    return DATASET_MODELS.get(dataset_name)
 
 
-def _list_files_recursively(drive_service, folder_id: str, relative_path: str = "") -> List[Tuple[dict, str]]:
-    results = []
-    page_token = None
+def _model_to_dataset_name(model_name):
+    return next((key for key, value in DATASET_MODELS.items() if value == model_name), None)
 
+
+def _discover_staging_models(dataset_names):
+    missing = set(DATASET_MODELS) - set(dataset_names)
+    if missing:
+        raise ValueError("Missing NBP bronze datasets: " + ", ".join(sorted(missing)))
+    return list(DATASET_MODELS.values())
+
+
+def _children(drive, parent_id, *, folders_only=False):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", parent_id):
+        raise ValueError("Invalid Drive folder identity")
+    query = f"'{parent_id}' in parents and trashed=false"
+    if folders_only:
+        query += " and mimeType='application/vnd.google-apps.folder'"
+    token = None
     while True:
-        response = drive_service.files().list(
-            q=f"'{folder_id}' in parents and trashed=false",
-            spaces="drive",
-            fields="nextPageToken, files(id, name, mimeType)",
-            pageToken=page_token,
-        ).execute()
-
-        for item in response.get("files", []):
-            item_path = f"{relative_path}/{item['name']}" if relative_path else item["name"]
-            if item["mimeType"] == "application/vnd.google-apps.folder":
-                results.extend(_list_files_recursively(drive_service, item["id"], item_path))
-            else:
-                results.append((item, item_path))
-
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            return results
+        response = drive.files().list(
+            q=query, spaces="drive", pageSize=1000, pageToken=token,
+            fields="nextPageToken,files(id,name,mimeType,size,modifiedTime)",
+        ).execute(num_retries=2)
+        yield from response.get("files", [])
+        token = response.get("nextPageToken")
+        if not token:
+            break
 
 
-def _list_child_folders(drive_service, folder_id: str) -> List[dict]:
-    folders = []
-    page_token = None
-
-    while True:
-        response = drive_service.files().list(
-            q=(
-                f"'{folder_id}' in parents and "
-                "mimeType='application/vnd.google-apps.folder' and trashed=false"
-            ),
-            spaces="drive",
-            fields="nextPageToken, files(id, name)",
-            pageToken=page_token,
-        ).execute()
-
-        folders.extend(response.get("files", []))
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            return sorted(folders, key=lambda item: item["name"])
+def _parquet_files(drive, parent_id, seen=None):
+    seen = set() if seen is None else seen
+    if parent_id in seen:
+        raise ValueError("Repeated folder in bronze input inventory")
+    seen.add(parent_id)
+    for item in _children(drive, parent_id):
+        if item.get("mimeType") == "application/vnd.google-apps.folder":
+            yield from _parquet_files(drive, item["id"], seen)
+        elif item.get("name", "").lower().endswith(".parquet"):
+            yield item
 
 
-def _download_file(drive_service, file_id: str, local_path: Path):
-    request = drive_service.files().get_media(fileId=file_id)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(local_path, "wb") as handle:
-        downloader = MediaIoBaseDownload(handle, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-
-
-def _delete_matching_files(drive_service, folder_id: str, filename: str):
-    query = (
-        f"'{folder_id}' in parents and "
-        f"name='{filename}' and trashed=false"
-    )
-    response = drive_service.files().list(
-        q=query,
-        spaces="drive",
-        fields="files(id)",
-    ).execute()
-
-    for item in response.get("files", []):
-        drive_service.files().delete(fileId=item["id"]).execute()
-
-
-def _upload_file(drive_service, local_path: Path, filename: str, parent_id: str):
-    _delete_matching_files(drive_service, parent_id, filename)
-    media = MediaFileUpload(str(local_path), mimetype="application/octet-stream", resumable=True)
-    drive_service.files().create(
-        body={"name": filename, "parents": [parent_id]},
-        media_body=media,
-        fields="id",
-    ).execute()
-
-
-def _reset_local_workspace():
-    shutil.rmtree(LOCAL_BRONZE_DIR, ignore_errors=True)
-    shutil.rmtree(LOCAL_SILVER_DIR, ignore_errors=True)
-    LOCAL_BRONZE_DIR.mkdir(parents=True, exist_ok=True)
-    LOCAL_SILVER_DIR.mkdir(parents=True, exist_ok=True)
-    LOCAL_DUCKDB_PATH.unlink(missing_ok=True)
-
-
-def _download_bronze_files(storage: StorageManager) -> Dict[str, int]:
-    bronze_zone_id = _get_zone_id(storage, "02_bronze")
-    downloaded_by_dataset: Dict[str, int] = {}
-
-    for folder in _list_child_folders(storage.drive_service, bronze_zone_id):
-        dataset_name = folder["name"]
-        files = _list_files_recursively(storage.drive_service, folder["id"])
-
-        for file_item, relative_path in files:
-            if not file_item["name"].endswith(".parquet"):
-                continue
-
-            local_path = LOCAL_BRONZE_DIR / dataset_name / relative_path
-            print(f"⬇️  Downloading 02_bronze/{dataset_name}/{relative_path}...")
-            _download_file(storage.drive_service, file_item["id"], local_path)
-            downloaded_by_dataset[dataset_name] = downloaded_by_dataset.get(dataset_name, 0) + 1
-
-    return downloaded_by_dataset
-
-
-def _dataset_to_model_name(dataset_name: str) -> str | None:
-    if not dataset_name.startswith(BRONZE_DATASET_PREFIX):
-        return None
-    return f"{STAGING_MODEL_PREFIX}{dataset_name.removeprefix(BRONZE_DATASET_PREFIX)}"
-
-
-def _model_to_dataset_name(model_name: str) -> str | None:
-    if not model_name.startswith(STAGING_MODEL_PREFIX):
-        return None
-    return f"{BRONZE_DATASET_PREFIX}{model_name.removeprefix(STAGING_MODEL_PREFIX)}"
-
-
-def _discover_staging_models(dataset_names: List[str]) -> List[str]:
-    available_models = {path.stem for path in STAGING_DIR.glob(STAGING_MODEL_GLOB)}
-    selected_models = []
-
-    for dataset_name in sorted(dataset_names):
-        model_name = _dataset_to_model_name(dataset_name)
-        if not model_name:
-            print(f"ℹ️  Dataset 02_bronze/{dataset_name} does not match the NBP exchange-rate pattern; skipping.")
-        elif model_name in available_models:
-            selected_models.append(model_name)
-        else:
-            print(f"ℹ️  No staging model found for 02_bronze/{dataset_name}; skipping.")
-
-    return selected_models
-
-
-def _run_dbt(model_names: List[str]):
-    if not model_names:
-        print("ℹ️  No dbt models selected. Skipping dbt run.")
-        return
-
-    env = os.environ.copy()
-    env["ZOHELO_DUCKDB_PATH"] = str(LOCAL_DUCKDB_PATH)
-    env["ZOHELO_DATA_ROOT"] = str(LOCAL_ROOT)
-    dbt_executable = shutil.which("dbt")
-    if not dbt_executable:
-        user_dbt = Path(site.USER_BASE) / "bin" / "dbt"
-        if user_dbt.exists():
-            dbt_executable = str(user_dbt)
-        else:
-            dbt_executable = "dbt"
-
-    print(f"🔄 Running dbt models: {', '.join(model_names)}...")
-    subprocess.run(
-        [
-            dbt_executable,
-            "run",
-            "--profiles-dir",
-            ".",
-            "--select",
-            *model_names,
-        ],
-        cwd=REPO_ROOT,
-        check=True,
-        env=env,
-    )
-
-    con = duckdb.connect(str(LOCAL_DUCKDB_PATH))
-    try:
-        for model_name in model_names:
-            dataset_name = _model_to_dataset_name(model_name)
-            if not dataset_name:
-                print(f"ℹ️  Model {model_name} does not map to an NBP silver dataset; skipping export.")
-                continue
-            output_path = LOCAL_SILVER_DIR / dataset_name / f"{dataset_name}.parquet"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            print(f"📦 Exporting {model_name} to {output_path}...")
-            con.execute(
-                f"COPY {model_name} TO '{output_path}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+def download_bronze(storage, workspace):
+    """Inventory before transfer; use fixed local names, not remote paths."""
+    bronze_id = storage.resolve_zone("02_bronze", create=False)
+    folders = list(_children(storage.drive_service, bronze_id, folders_only=True))
+    inventory = []
+    for dataset_id in DATASET_MODELS:
+        matches = [folder for folder in folders if folder["name"] == dataset_id]
+        if len(matches) != 1:
+            raise ValueError(f"Expected exactly one bronze folder for {dataset_id}")
+        files = list(_parquet_files(storage.drive_service, matches[0]["id"]))
+        if not files:
+            raise ValueError(f"No bronze Parquet inputs for {dataset_id}")
+        for item in sorted(files, key=lambda value: value["id"]):
+            size = int(item.get("size", -1))
+            if size <= 0:
+                raise ValueError(f"Missing or invalid input size for {dataset_id}")
+            inventory.append({**item, "dataset_id": dataset_id, "size": size})
+    expected_bytes = sum(item["size"] for item in inventory)
+    if expected_bytes > MAX_INPUT_BYTES or len(inventory) > MAX_INPUT_FILES:
+        raise ValueError("NBP bronze working set exceeds the configured build limit")
+    inputs = []
+    for index, item in enumerate(inventory):
+        destination = workspace / "02_bronze" / item["dataset_id"] / f"input-{index:06d}.parquet"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("wb") as handle:
+            downloader = MediaIoBaseDownload(
+                handle, storage.drive_service.files().get_media(fileId=item["id"]),
+                chunksize=1024 * 1024,
             )
+            done = False
+            while not done:
+                _, done = downloader.next_chunk(num_retries=2)
+                if handle.tell() > item["size"]:
+                    raise ValueError("Bronze input grew during transfer")
+        data = destination.read_bytes()
+        if len(data) != item["size"]:
+            raise ValueError("Bronze input size changed during transfer")
+        inputs.append({
+            "dataset_id": item["dataset_id"], "id": item["id"], "name": item["name"],
+            "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+            "modified_at_utc": item.get("modifiedTime"),
+            "provenance": "legacy_bronze_raw_batch_link_unverified",
+        })
+    return inputs
+
+
+def build_silver(workspace):
+    database = workspace / "build.duckdb"
+    target = workspace / "target"
+    env = dict(os.environ, ZOHELO_DATA_ROOT=str(workspace), ZOHELO_DUCKDB_PATH=str(database),
+               DBT_SEND_ANONYMOUS_USAGE_STATS="false", DO_NOT_TRACK="1")
+    executable = shutil.which("dbt")
+    if not executable:
+        raise RuntimeError("Install the pinned repository dependencies before building silver")
+    common = ["--profiles-dir", str(REPO_ROOT), "--target-path", str(target),
+              "--log-path", str(workspace / "logs"), "--no-partial-parse"]
+    subprocess.run([executable, "build", "--select", *DATASET_MODELS.values(), *common],
+                   cwd=REPO_ROOT, env=env, check=True, timeout=600)
+    # Preserve build/test evidence across the later documentation invocation.
+    build_results = (target / "run_results.json").read_bytes()
+    subprocess.run([executable, "docs", "generate", "--no-compile", *common],
+                   cwd=REPO_ROOT, env=env, check=True, timeout=300)
+    (target / "run_results.json").write_bytes(build_results)
+    datasets = []
+    con = duckdb.connect(str(database), read_only=True)
+    try:
+        for dataset_id, model in DATASET_MODELS.items():
+            output = workspace / "03_silver" / f"{dataset_id}.parquet"
+            output.parent.mkdir(exist_ok=True)
+            escaped = str(output).replace("'", "''")
+            con.execute(f"COPY (SELECT * FROM {model}) TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            count, start, end = con.execute(
+                f"SELECT count(*), min(effectiveDate), max(effectiveDate) FROM {model}"
+            ).fetchone()
+            if not count or start is None or end is None:
+                raise ValueError(f"Silver dataset is empty: {dataset_id}")
+            datasets.append({
+                "dataset_id": dataset_id, "layer": "03_silver", "table_name": dataset_id,
+                "path": str(output), "row_count": count, "min_date": start.isoformat(),
+                "max_date": end.isoformat(),
+                "columns": [{"name": row[0], "type": row[1]}
+                            for row in con.execute(f"DESCRIBE {model}").fetchall()],
+            })
     finally:
         con.close()
+    return datasets, [{"name": name, "path": str(target / name)}
+                      for name in ("manifest.json", "catalog.json", "run_results.json")]
 
 
-def _upload_silver_outputs(storage: StorageManager):
-    silver_zone_id = _get_zone_id(storage, "03_silver")
-    for output_path in sorted(LOCAL_SILVER_DIR.rglob("*.parquet")):
-        relative_path = output_path.relative_to(LOCAL_SILVER_DIR)
-        folder_segments = list(relative_path.parts[:-1])
-        if not folder_segments:
-            continue
-
-        silver_source_id = storage.get_or_create_nested_folder(folder_segments, root_id=silver_zone_id)
-        print(f"⬆️  Uploading 03_silver/{relative_path}...")
-        _upload_file(storage.drive_service, output_path, output_path.name, silver_source_id)
+def _code_sha():
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True).strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("Build code must identify a Git commit")
+    if subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO_ROOT, text=True).strip():
+        raise ValueError("Commit the working tree before publishing a data release")
+    if os.environ.get("GITHUB_SHA", sha) != sha:
+        raise ValueError("Build checkout does not match the workflow commit")
+    return sha
 
 
 def process_silver():
-    print("🥈 Starting Silver Layer transformation...")
-    _reset_local_workspace()
-
-    storage = StorageManager(backend="gdrive")
-    bronze_files_by_dataset = _download_bronze_files(storage)
-    bronze_file_count = sum(bronze_files_by_dataset.values())
-    if bronze_file_count == 0:
-        print("ℹ️  No Bronze Parquet files found in 02_bronze. Nothing to process.")
-        return
-
-    print(f"📂 Downloaded {bronze_file_count} Bronze Parquet file(s).")
-    model_names = _discover_staging_models(list(bronze_files_by_dataset))
-    if not model_names:
-        print("ℹ️  No matching staging models found for downloaded Bronze datasets. Nothing to process.")
-        return
-
-    _run_dbt(model_names)
-    _upload_silver_outputs(storage)
-    print("✅ Silver Layer complete.")
+    started = time.monotonic()
+    sha = _code_sha()
+    storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
+    root_id = storage.resolve_root(create=False)
+    storage.authorize_writes()
+    with tempfile.TemporaryDirectory(prefix="zohelo-silver-") as temporary:
+        workspace = Path(temporary)
+        inputs = download_bronze(storage, workspace)
+        downloaded = time.monotonic()
+        datasets, artifacts = build_silver(workspace)
+        built = time.monotonic()
+        measurements = {
+            "input_files": len(inputs), "input_bytes": sum(item["size"] for item in inputs),
+            "output_bytes": sum(Path(item["path"]).stat().st_size for item in datasets),
+            "download_seconds": round(downloaded - started, 3),
+            "dbt_and_export_seconds": round(built - downloaded, 3),
+            "working_directory_bytes": sum(path.stat().st_size for path in workspace.rglob("*") if path.is_file()),
+        }
+        result = publish_release(DriveReleaseStore(storage, root_id), root_id,
+                                 datasets=datasets, artifacts=artifacts, inputs=inputs,
+                                 code_sha=sha, measurements=measurements)
+        report = {
+            "status": "silver_release_published", "release_scope": "nbp_silver",
+            "release_id": result["release_id"], "code_sha": sha,
+            "measurements": {**measurements, "publish_seconds": round(time.monotonic() - built, 3)},
+            "datasets": [{key: item[key] for key in ("dataset_id", "row_count", "min_date", "max_date")}
+                         for item in datasets],
+            "limitations": ["Gold and MetricFlow remain pending", "Legacy raw batch links are unverified"],
+        }
+        rendered = json.dumps(report, indent=2, sort_keys=True)
+        print(rendered)
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text("## NBP silver release\n\n" + rendered + "\n")
+        if os.environ.get("GITHUB_OUTPUT"):
+            with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:
+                handle.write(f"release_id={result['release_id']}\n")
+        return report
 
 
 if __name__ == "__main__":
-    process_silver()
+    logging.disable(logging.CRITICAL)
+    try:
+        process_silver()
+    except Exception as exc:
+        print(json.dumps({"status": "silver_release_failed", "error_type": type(exc).__name__,
+                          "message": "The candidate was not confirmed. Inspect build checks; prior releases are retained."}))
+        raise SystemExit(1)

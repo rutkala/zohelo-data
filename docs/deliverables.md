@@ -6,6 +6,24 @@ The sole initial user is the owner. Scope includes all already-ingested NBP hist
 
 The architecture remains proposed. Drive is durable authority for data and release metadata; Git stores code and definitions; Python handles transport/publication; dbt owns transformations; native DuckDB and MetricFlow are disposable compute; and the existing React/DuckDB WASM portal is the consumer. Respect the free-cost boundary and existing subscriptions, verify actual allowances, and do not promise free unlimited or always-on compute. The assistant owns technical work; the owner supplies business decisions one at a time.
 
+## Delivery status
+
+Updated during the NBP silver-release work, 6 September 2026. **The complete data-platform release is not finished.** Implemented code, fixture verification and live-data verification are distinct; the associated pull request and Actions run record the latter two.
+
+| Deliverable | Status | Completed / implemented | Remaining for acceptance |
+| --- | --- | --- | --- |
+| D1. Repository, architecture and Actions audit | In progress | Foundation audit; consistent runtimes/CI; credential repair; shared production-writer concurrency; replacement of silver delete-before-upload with versioned publication | One orchestrated ingestion/build run, durable handoff/checkpoints, complete recovery and measured free-allowance evidence |
+| D2. Development environment and AI instructions | Foundation delivered | Declared Python/Node, pinned dependencies, tested container definition, fixture command and shared AGENTS entrypoints | Keep owner Codespace checkout current; validate any newly required native MetricFlow runtime |
+| D3. Contracts, ingestion rules and gold design | In progress | Accepted correction policy; [NBP source-contract research](nbp-data-contracts.md); conflicting legacy numeric observations fail instead of selecting by filename | Durable correction ledger, historical FX unit validation, dimensional design and bus matrix |
+| D4. Complete NBP flow | In progress | SQL portal; OAuth read checks in Actions/Codespaces and real Actions upload/readback/cleanup; all-four silver build/publication implementation | Live all-four coverage and recovery evidence; catch-up/reconciliation; gold facts/dimensions; approved and executed metrics |
+| D5. Business catalogue | Foundation only | Release-specific dataset identity, file checksums, schema, row/date coverage and dbt artifacts; portal release selection | Business source descriptions/status, complete source-to-metric lineage and metric definitions/approval state |
+| D6. Additional sources | Not started | Source selection requirements recorded | Owner priorities, research and commercial reuse evidence before onboarding |
+| D7. Tailored UI | Deferred | Existing SQL portal retained | Evaluate after the essential NBP/catalogue work; redesign scope requires an owner decision |
+
+Verified authorization evidence: [OAuth preference and read check, PR 53](https://github.com/rutkala/zohelo-data/pull/53); [56-byte upload, matching download and confirmed removal](https://github.com/rutkala/zohelo-data/actions/runs/34067541199). These checks did not publish NBP data or finish D4.
+
+The current implementation step is described in [NBP silver publication](nbp-silver-publication.md). Its `nbp_silver` scope explicitly excludes the complete gold/MetricFlow platform release. No published GitHub Release should be created for this intermediate step.
+
 ## D1. Platform, repository and GitHub Actions audit
 
 **Outcome:** A bounded audit and repair plan assesses business goals, architecture, code quality, security, workflows and cost feasibility. Findings at commit `32f875c1` are source-inspection evidence, not new test results. The current configuration covers four NBP sources ([sources.yaml](https://github.com/rutkala/zohelo-data/blob/32f875c1cb3e0191582487a18d7fe8879697d66f/config/sources.yaml)); the gold mart is only a Table A projection ([mart](https://github.com/rutkala/zohelo-data/blob/32f875c1cb3e0191582487a18d7fe8879697d66f/models/marts/mart_exchange_rates_daily.sql)).
