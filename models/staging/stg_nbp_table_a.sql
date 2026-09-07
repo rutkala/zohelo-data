@@ -1,20 +1,15 @@
 with bronze_data as (
-    select *
-    from read_parquet(
-        '{{ env_var("ZOHELO_DATA_ROOT", "/tmp/zohelo_data") }}/02_bronze/nbp_exchange_rates_table_a/*.parquet',
-        union_by_name = true,
-        filename = true
-    )
+    {{ nbp_exchange_rate_bronze("nbp_exchange_rates_table_a") }}
 ),
 flattened_rates as (
     select
-        cast(effectiveDate as date) as effectiveDate,
-        rate_item.currency as currency,
-        rate_item.code as code,
-        rate_item.mid as mid,
-        filename as source_file
+        effectiveDate,
+        json_extract_string(rate.value, '$.currency') as currency,
+        json_extract_string(rate.value, '$.code') as code,
+        cast(json_extract_string(rate.value, '$.mid') as double) as mid,
+        source_file
     from bronze_data
-    cross join unnest(rates) as rate(rate_item)
+    cross join json_each(bronze_data.rates_json) as rate
 ),
 conflicting_keys as (
     select code, effectiveDate

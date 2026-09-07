@@ -126,7 +126,10 @@ class NbpDbtFixtureTests(unittest.TestCase):
     def test_gold_price_identical_replay_is_one_row_per_publication_date(self):
         con = duckdb.connect(str(self.database), read_only=True)
         try:
-            columns = dict(con.execute("DESCRIBE stg_nbp_gold_prices").fetchall())
+            columns = {
+                row[0]: row[1]
+                for row in con.execute("DESCRIBE stg_nbp_gold_prices").fetchall()
+            }
             self.assertEqual(columns["effectiveDate"], "DATE")
             self.assertEqual(columns["price_pln_per_gram"], "DECIMAL(18,2)")
             actual = con.execute(
@@ -265,42 +268,47 @@ class NbpDbtFixtureTests(unittest.TestCase):
             con.close()
 
     def test_metadata_only_exchange_rate_replay_prefers_non_null_currency(self):
-        data_root = self.workspace / "metadata-only-replay"
-        destination = data_root / "02_bronze" / "nbp_exchange_rates_table_a"
-        destination.mkdir(parents=True)
         records = [
             {"table": "A", "no": "001/A/NBP/2002", "effectiveDate": "2002-01-02",
              "rates": [{"currency": None, "code": "USD", "mid": 4.0}]},
             {"table": "A", "no": "002/A/NBP/2002", "effectiveDate": "2002-01-02",
              "rates": [{"currency": "synthetic US dollar", "code": "USD", "mid": 4.0}]},
         ]
-        con = duckdb.connect()
-        try:
-            for record, filename in zip(records, ("z.parquet", "a.parquet")):
-                source_json = self.workspace / f"metadata-only-{filename}.json"
-                source_json.write_text(json.dumps([record]))
-                con.read_json(str(source_json)).write_parquet(str(destination / filename))
-        finally:
-            con.close()
+        for order, filenames in enumerate((("z.parquet", "a.parquet"), ("a.parquet", "z.parquet"))):
+            data_root = self.workspace / f"metadata-only-replay-{order}"
+            destination = data_root / "02_bronze" / "nbp_exchange_rates_table_a"
+            destination.mkdir(parents=True)
+            con = duckdb.connect()
+            try:
+                for record, filename in zip(records, filenames):
+                    source_json = self.workspace / f"metadata-only-{order}-{filename}.json"
+                    source_json.write_text(json.dumps([record]))
+                    con.read_json(str(source_json)).write_parquet(str(destination / filename))
+            finally:
+                con.close()
 
-        result = self.run_dbt(
-            "build", "--select", "stg_nbp_table_a",
-            data_root=data_root,
-            database=self.workspace / "metadata-only-replay.duckdb",
-            target=self.workspace / "metadata-only-replay-target",
-        )
-        self.assertEqual(result.returncode, 0, result.stdout)
-        con = duckdb.connect(str(self.workspace / "metadata-only-replay.duckdb"), read_only=True)
-        try:
-            self.assertEqual(
-                con.execute(
-                    "SELECT currency, mid FROM stg_nbp_table_a "
-                    "WHERE effectiveDate = DATE '2002-01-02' AND code = 'USD'"
-                ).fetchall(),
-                [("synthetic US dollar", 4.0)],
+            result = self.run_dbt(
+                "build", "--select", "stg_nbp_table_a",
+                data_root=data_root,
+                database=self.workspace / f"metadata-only-replay-{order}.duckdb",
+                target=self.workspace / f"metadata-only-replay-{order}-target",
             )
-        finally:
-            con.close()
+            with self.subTest(order=order):
+                self.assertEqual(result.returncode, 0, result.stdout)
+            con = duckdb.connect(
+                str(self.workspace / f"metadata-only-replay-{order}.duckdb"),
+                read_only=True,
+            )
+            try:
+                self.assertEqual(
+                    con.execute(
+                        "SELECT currency, mid FROM stg_nbp_table_a "
+                        "WHERE effectiveDate = DATE '2002-01-02' AND code = 'USD'"
+                    ).fetchall(),
+                    [("synthetic US dollar", 4.0)],
+                )
+            finally:
+                con.close()
 
 
 if __name__ == "__main__":

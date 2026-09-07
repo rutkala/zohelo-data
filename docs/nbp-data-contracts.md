@@ -35,6 +35,21 @@ Current API JSON is normalized-looking for such currencies: the current Table A 
 
 ## Corrections, retries and 404 handling
 
+### Targeted unit evidence, 7 September 2026
+
+Actual official API responses were compared with search-index excerpts of NBP's matching archive pages. Direct archive-page access was blocked, so this is a limited cross-check, not a complete historical archive validation.
+
+| Publication date | Currency | API `mid` | NBP archive excerpt | Relationship |
+| --- | --- | --- | --- | --- |
+| 2002-01-02 | HUF | 0.014511 | 100 HUF = 1.4511 PLN | Archive value / 100 = API value |
+| 2002-01-02 | JPY | 0.029991 | 100 JPY = 2.9991 PLN | Archive value / 100 = API value |
+| 2026-09-04 | HUF | 0.011876 | 100 HUF = 1.1876 PLN | Archive value / 100 = API value |
+| 2026-09-04 | JPY | 0.023746 | 100 JPY = 2.3746 PLN | Archive value / 100 = API value |
+
+Sources: official API responses for [2002-01-02](https://api.nbp.pl/api/exchangerates/tables/a/2002-01-02/?format=json) and [2026-09-04](https://api.nbp.pl/api/exchangerates/tables/a/2026-09-04/?format=json); indexed excerpts from [Table 1/A/NBP/2002](https://nbp.pl/archiwum-kursow/tabela-nr-1-a-nbp-2002-z-dnia-2002-01-02/) and [Table 172/A/NBP/2026](https://nbp.pl/archiwum-kursow/tabela-nr-172-a-nbp-2026-z-dnia-2026-09-04/). The evidence supports the inference of PLN per one currency unit for these API observations and reinforces retaining API values without applying website multipliers. It does not certify every historical currency or input representation.
+
+### Loading behavior
+
 A source batch should retain request URL/range, retrieval time, response bytes and content hash. A successful re-fetch of the same interval is comparable only after canonical typing, including the quote unit/multiplier. If the returned value differs, record the prior/new record hashes, changed fields, detection time, source interval and affected keys, then validate a candidate release before replacing current silver/gold values. Detection time is the platform's observation time, not an NBP revision time.
 
 Treat a 404 as “no source observation for this valid request” and record the interval/status. It may represent a weekend, holiday, not-yet-published `today` value, or a range with no observations. It must not silently clear retained history. Treat 400 responses as request/configuration or response-limit failures requiring correction or chunking. Retry policy for transient transport/rate-limit failures is an implementation concern; never advance a checkpoint or publish a replacement on a partial/failed response.
