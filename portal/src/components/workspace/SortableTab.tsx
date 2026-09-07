@@ -2,7 +2,17 @@ import React from "react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import { TabsTrigger } from "@/components/ui/tabs";
-import { X, Home, Terminal, GripVertical, Cable, Settings, BookOpen, Layers } from "lucide-react";
+import {
+  X,
+  Home,
+  Terminal,
+  GripVertical,
+  Cable,
+  Settings,
+  BookOpen,
+  Layers,
+  ClipboardList,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDuckStore, type EditorTabType } from "@/store";
 
@@ -97,6 +107,8 @@ const SortableTab = React.memo(function SortableTab({ tab, isActive }: SortableT
               <Settings className="h-4 w-4" />
             ) : tab.type === "catalog" ? (
               <Layers className="h-4 w-4" />
+            ) : tab.type === "review" ? (
+              <ClipboardList className="h-4 w-4" />
             ) : null}
           </div>
           <span className="truncate text-xs">{tab.title}</span>

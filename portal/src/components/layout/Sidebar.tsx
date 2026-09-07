@@ -21,6 +21,7 @@ import {
   Bookmark,
   ChevronRight,
   Layers,
+  ClipboardList,
 } from "lucide-react";
 import { useDuckStore, type EditorTabType } from "@/store";
 import { getUiConfig } from "@/lib/appConfig";
@@ -229,7 +230,7 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
 
           <Separator className="my-2 mx-2" />
 
-          {/* Catalog & Lineage (dbt docs) */}
+          {/* Business catalogue */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -237,13 +238,30 @@ export default function Sidebar({ isExplorerOpen, onToggleExplorer }: SidebarPro
                   variant={isTabActive("catalog") ? "secondary" : "ghost"}
                   size="icon"
                   className="mx-auto h-9 w-9"
-                  onClick={() => openOrFocusTab("catalog", "Catalog & Lineage")}
-                  aria-label="Catalog & Lineage"
+                  onClick={() => openOrFocusTab("catalog", "Business catalogue")}
+                  aria-label="Business catalogue"
                 >
                   <Layers className="h-4 w-4 text-amber-500" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent side="right">dbt Catalog &amp; Lineage</TooltipContent>
+              <TooltipContent side="right">Business catalogue</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={isTabActive("review") ? "secondary" : "ghost"}
+                  size="icon"
+                  className="mx-auto h-9 w-9"
+                  aria-label="Review and decisions"
+                  onClick={() => openOrFocusTab("review", "Review & decisions")}
+                >
+                  <ClipboardList className="h-4 w-4 text-amber-500" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Review &amp; decisions · 2 open items</TooltipContent>
             </Tooltip>
           </TooltipProvider>
 

@@ -1,4 +1,6 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Maximize2 } from "lucide-react";
+import { useDuckStore } from "@/store";
 import { Badge } from "@/components/ui/badge";
 import type { ReleaseCatalogResolution } from "@/services/googleDrive";
 
@@ -14,11 +16,20 @@ const statusLabel = (value: string) =>
 
 export default function BusinessCatalogue({
   release,
+  fullPage = false,
 }: {
   release: ReleaseCatalogResolution | null;
+  fullPage?: boolean;
 }) {
   const [tab, setTab] = useState<CatalogueTab>("sources");
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(fullPage);
+  const contentId = useId();
+  const openFullCatalogue = () => {
+    const state = useDuckStore.getState();
+    const existing = state.tabs.find((item) => item.type === "catalog");
+    if (existing) state.setActiveTab(existing.id);
+    else state.createTab("catalog", "", "Business catalogue");
+  };
   const catalogue = release?.kind === "release" ? release.businessCatalogue : undefined;
   const nodeLabels = useMemo(
     () => new Map(catalogue?.lineage.nodes.map((node) => [node.id, node.label]) ?? []),
@@ -34,31 +45,49 @@ export default function BusinessCatalogue({
           : "Connect Google Drive to view the release business catalogue.";
     return (
       <section className="border-b px-3 py-2 text-xs" aria-label="Business catalogue">
-        <h2 className="font-semibold">Business catalogue</h2>
+        <h2 className="font-semibold">{fullPage ? "Connect your data" : "Business catalogue"}</h2>
         <p className="mt-1 text-muted-foreground leading-relaxed">{message}</p>
       </section>
     );
   }
 
   return (
-    <section className="border-b px-3 py-2 text-xs" aria-label="Business catalogue">
+    <section
+      className={`border-b px-3 py-2 ${fullPage ? "text-sm" : "text-xs"}`}
+      aria-label="Business catalogue"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <button
-          type="button"
-          className="font-semibold hover:underline"
-          aria-expanded={open}
-          aria-controls="business-catalogue-content"
-          onClick={() => setOpen((current) => !current)}
-        >
-          Business catalogue
-        </button>
+        {fullPage ? (
+          <h2 className="font-semibold">Published sources and lineage</h2>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 font-semibold hover:underline"
+            aria-expanded={open}
+            aria-controls={contentId}
+            onClick={() => setOpen((current) => !current)}
+          >
+            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Business catalogue
+          </button>
+        )}
         <Badge variant="secondary" className="text-[10px]">
           {catalogue.sources.length} source{catalogue.sources.length === 1 ? "" : "s"}
         </Badge>
       </div>
+      {!fullPage && (
+        <button
+          type="button"
+          className="mt-2 inline-flex items-center gap-1 text-[11px] underline"
+          onClick={openFullCatalogue}
+        >
+          <Maximize2 className="h-3 w-3" />
+          Open full catalogue
+        </button>
+      )}
 
       {open && (
-        <div id="business-catalogue-content" className="mt-2 max-h-80 overflow-y-auto pr-1">
+        <div id={contentId} className={fullPage ? "mt-4" : "mt-2 max-h-80 overflow-y-auto pr-1"}>
           <div className="flex gap-1" role="tablist" aria-label="Business catalogue views">
             {(["sources", "lineage", "metrics"] as const).map((item) => (
               <button
@@ -94,7 +123,9 @@ export default function BusinessCatalogue({
                       </Badge>
                     </div>
                     <p className="mt-1 text-muted-foreground">{source.description}</p>
-                    <dl className="mt-2 grid grid-cols-1 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-2">
+                    <dl
+                      className={`mt-2 grid grid-cols-1 gap-x-3 gap-y-1 sm:grid-cols-2 ${fullPage ? "text-sm" : "text-[11px]"}`}
+                    >
                       <div>
                         <dt className="text-muted-foreground">Checked through</dt>
                         <dd>{valueOrUnavailable(source.checked_through)}</dd>

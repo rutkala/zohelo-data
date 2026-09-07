@@ -11,6 +11,7 @@ import {
   listSubfolders,
   loadFileIntoDuckDB,
   loadTableIntoDuckDB,
+  loadTablesIntoDuckDB,
   requestGoogleAccessToken,
   resolveLayerFolderId,
   resolveReleaseCatalog,
@@ -202,6 +203,132 @@ export const createGoogleDriveSlice: StateCreator<
         const message = authFailure
           ? "Google Drive authorization expired or was revoked. Sign in again."
           : `Error loading '${label}': ${messageOf(error)}`;
+        set({ lakehouseStatusMessage: message });
+        toast.error(message);
+      }
+      return null;
+    } finally {
+      busy = false;
+      set({ isLakehouseLoading: false });
+    }
+  };
+
+  const prepareLakehouseQuery = async (
+    requestedTables: ReadonlyArray<{ layerName: string; tableName: string }>,
+    sql: string,
+    title: string
+  ): Promise<string | null> => {
+    if (busy) return null;
+    const session = get().currentSession;
+    const local = asLocalDuckSession(session)?.local;
+    const token = get().googleAuth.token;
+    const source = get().lakehouseRelease;
+    const current = () =>
+      get().currentSession === session &&
+      get().googleAuth.token === token &&
+      get().lakehouseRelease === source;
+    if (!local) {
+      set({
+        lakehouseStatusMessage:
+          "DuckDB is still initializing. Please wait, then open the join example again.",
+      });
+      return null;
+    }
+    if (!token) {
+      set({ lakehouseStatusMessage: "Sign in to Google Drive before preparing a SQL query." });
+      return null;
+    }
+    if (source?.kind !== "release") {
+      set({
+        lakehouseStatusMessage:
+          "Refresh the Google Drive lakehouse to pin a release before preparing a multi-table query.",
+      });
+      return null;
+    }
+    if (!sql.trim() || !title.trim() || requestedTables.length === 0) {
+      set({
+        lakehouseStatusMessage:
+          "The join example must include SQL, a title, and at least one dataset.",
+      });
+      return null;
+    }
+
+    let selections: Array<{
+      datasetName: string;
+      tableFolderId: string | null;
+      files: LakehouseTable["children"];
+      layerName: string;
+    }>;
+    try {
+      selections = requestedTables.map(({ layerName, tableName }) => {
+        const table = get()
+          .lakehouseCatalog.find((layer) => layer.name === layerName)
+          ?.children.find((item) => item.name === tableName);
+        if (!table) {
+          throw new Error(
+            `Dataset '${layerName}.${tableName}' was not found in the pinned release.`
+          );
+        }
+        return {
+          datasetName: table.name,
+          tableFolderId: table.id,
+          files: table.children,
+          layerName: table.layer,
+        };
+      });
+    } catch (error) {
+      set({ lakehouseStatusMessage: `Error preparing SQL query: ${messageOf(error)}` });
+      return null;
+    }
+    const label = selections.map((table) => table.datasetName).join(", ");
+    busy = true;
+    set({
+      isLakehouseLoading: true,
+      lakehouseStatusMessage: `Loading ${selections.length} selected dataset(s) from Google Drive...`,
+    });
+    try {
+      await loadTablesIntoDuckDB(
+        local.db,
+        local.connection,
+        selections,
+        token,
+        budgetForEngine(local.db),
+        () => {
+          if (!current()) {
+            throw new Error(
+              "Google Drive session changed before the selected tables could be prepared."
+            );
+          }
+        }
+      );
+      // Views may exist on the old engine if a session or token changed while a
+      // download was pending, but never open a tab whose SQL was not prepared
+      // against the still-current pinned release.
+      const fingerprint = releaseFingerprint(source);
+      if (fingerprint) loadedCatalogFingerprints.set(local.db, fingerprint);
+      if (!current()) return null;
+      let schemaWarning = "";
+      try {
+        await get().fetchDatabasesAndTablesInfo();
+      } catch (error) {
+        schemaWarning = ` Schema refresh failed: ${messageOf(error)}`;
+      }
+      if (!current()) return null;
+      const tabId = get().createTab("sql", sql, title);
+      const lastSelection = selections[selections.length - 1];
+      set({
+        activeLakehouseDataset: lastSelection?.datasetName ?? null,
+        activeLakehouseLayer: lastSelection?.layerName ?? null,
+        lakehouseStatusMessage: `Loaded ${selections.length} dataset(s): ${label}. SQL is ready to run.${schemaWarning}`,
+      });
+      toast.success("Join SQL is ready to run");
+      return tabId;
+    } catch (error) {
+      const authFailure = handleDriveAuthFailure(set, get, token, error);
+      if (current()) {
+        const message = authFailure
+          ? "Google Drive authorization expired or was revoked. Sign in again."
+          : `Error preparing SQL query: ${messageOf(error)}`;
         set({ lakehouseStatusMessage: message });
         toast.error(message);
       }
@@ -451,5 +578,6 @@ export const createGoogleDriveSlice: StateCreator<
     },
     selectLakehouseDataset: (layerName, tableName) => select(layerName, tableName),
     selectLakehouseFile: (layerName, tableName, fileId) => select(layerName, tableName, fileId),
+    prepareLakehouseQuery,
   };
 };

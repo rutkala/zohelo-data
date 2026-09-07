@@ -213,7 +213,7 @@ export interface MountedFolderInfo {
 //
 
 export type EditorTabType =
-  "sql" | "notebook" | "dashboard" | "home" | "connections" | "settings" | "catalog";
+  "sql" | "notebook" | "dashboard" | "home" | "connections" | "settings" | "catalog" | "review";
 
 export interface NotebookCell {
   id: string;
@@ -643,6 +643,12 @@ export interface GoogleDriveSlice {
     layerName: string,
     tableName: string,
     fileId: string
+  ) => Promise<string | null>;
+  /** Loads only the named tables from the pinned release and opens an unexecuted SQL tab. */
+  prepareLakehouseQuery: (
+    tables: ReadonlyArray<{ layerName: string; tableName: string }>,
+    sql: string,
+    title: string
   ) => Promise<string | null>;
 }
 

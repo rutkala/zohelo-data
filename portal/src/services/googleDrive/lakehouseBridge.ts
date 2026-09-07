@@ -10,6 +10,13 @@ import {
 } from "./releaseCatalog";
 import type { LakehouseFile } from "./types";
 
+export interface LakehouseTableLoad {
+  datasetName: string;
+  tableFolderId: string | null;
+  files: LakehouseFile[];
+  layerName: string;
+}
+
 // File registrations belong to an engine, never to the application globally.
 const registeredFiles = new WeakMap<duckdb.AsyncDuckDB, Set<string>>();
 const defaultDownloadBudgets = new WeakMap<duckdb.AsyncDuckDB, DriveDownloadBudget>();
@@ -87,6 +94,53 @@ async function publishViews(
   }
 }
 
+async function publishTableViews(
+  conn: duckdb.AsyncDuckDBConnection,
+  tables: Array<{ datasetName: string; layerName: string; files: string[] }>
+) {
+  const targets = tables.map(
+    ({ datasetName, layerName }) =>
+      `${sqlEscapeIdentifier(layerName)}.${sqlEscapeIdentifier(datasetName)}`
+  );
+  await conn.query("BEGIN TRANSACTION;");
+  try {
+    for (let index = 0; index < tables.length; index += 1) {
+      const table = tables[index];
+      const target = targets[index];
+      const source = table.files
+        .map((file) => `SELECT * FROM '${sqlEscapeString(file)}'`)
+        .join(" UNION ALL BY NAME ");
+      await conn.query(`CREATE SCHEMA IF NOT EXISTS ${sqlEscapeIdentifier(table.layerName)};`);
+      await conn.query(`CREATE OR REPLACE VIEW ${target} AS ${source};`);
+    }
+    // Keep the explorer's existing active-layer affordance useful after a grouped load.
+    await conn.query(
+      `CREATE OR REPLACE VIEW active_layer AS SELECT * FROM ${targets[targets.length - 1]};`
+    );
+    await conn.query("COMMIT;");
+    return targets;
+  } catch (error) {
+    await conn.query("ROLLBACK;").catch(() => undefined);
+    throw error;
+  }
+}
+
+async function filesForTable(
+  { datasetName, tableFolderId, files, layerName }: LakehouseTableLoad,
+  token: string
+): Promise<LakehouseFile[]> {
+  let selected = files;
+  if (selected.length === 0 && tableFolderId) {
+    selected = (await listDataFilesInFolder(tableFolderId, token)).map((file) => ({
+      ...file,
+      tableName: datasetName,
+      layer: layerName,
+    }));
+  }
+  if (selected.length === 0) throw new Error(`No data files found for '${datasetName}'.`);
+  return selected;
+}
+
 export const loadTableIntoDuckDB = async (
   db: duckdb.AsyncDuckDB,
   conn: duckdb.AsyncDuckDBConnection,
@@ -98,20 +152,55 @@ export const loadTableIntoDuckDB = async (
   downloadBudget?: DriveDownloadBudget
 ): Promise<{ loadedFiles: string[]; queryTarget: string }> => {
   if (!token) throw new Error("Sign in to Google Drive before loading data.");
-  let files = existingFiles;
-  if (files.length === 0 && tableFolderId) {
-    files = (await listDataFilesInFolder(tableFolderId, token)).map((file) => ({
-      ...file,
-      tableName: datasetName,
-      layer: layerName,
-    }));
-  }
-  if (files.length === 0) throw new Error(`No data files found for '${datasetName}'.`);
+  const files = await filesForTable(
+    { datasetName, tableFolderId, files: existingFiles, layerName },
+    token
+  );
   const activeBudget = downloadBudget ?? budgetFor(db);
   const loadedFiles: string[] = [];
   for (const file of files) loadedFiles.push(await registerFile(db, file, token, activeBudget));
   const queryTarget = await publishViews(conn, layerName, datasetName, loadedFiles);
   return { loadedFiles, queryTarget };
+};
+
+/**
+ * Loads an explicit set of tables, then publishes every resulting view together.
+ * Callers supply table membership; this intentionally does not inspect or parse SQL.
+ */
+export const loadTablesIntoDuckDB = async (
+  db: duckdb.AsyncDuckDB,
+  conn: duckdb.AsyncDuckDBConnection,
+  tables: readonly LakehouseTableLoad[],
+  token: string,
+  downloadBudget?: DriveDownloadBudget,
+  beforePublish?: () => void | Promise<void>
+): Promise<{ loadedFiles: string[]; queryTargets: string[] }> => {
+  if (!token) throw new Error("Sign in to Google Drive before loading data.");
+  if (tables.length === 0) throw new Error("Choose at least one dataset to prepare a SQL query.");
+  const targets = new Set<string>();
+  for (const table of tables) {
+    const target = `${table.layerName}\u0000${table.datasetName}`;
+    if (targets.has(target))
+      throw new Error(`Dataset '${table.datasetName}' was selected more than once.`);
+    targets.add(target);
+  }
+
+  const activeBudget = downloadBudget ?? budgetFor(db);
+  const loadedFiles: string[] = [];
+  const loadedTables: Array<{ datasetName: string; layerName: string; files: string[] }> = [];
+  for (const table of tables) {
+    const files = await filesForTable(table, token);
+    const paths: string[] = [];
+    for (const file of files) {
+      const path = await registerFile(db, file, token, activeBudget);
+      paths.push(path);
+      loadedFiles.push(path);
+    }
+    loadedTables.push({ datasetName: table.datasetName, layerName: table.layerName, files: paths });
+  }
+  await beforePublish?.();
+  const queryTargets = await publishTableViews(conn, loadedTables);
+  return { loadedFiles, queryTargets };
 };
 
 export const loadFileIntoDuckDB = async (
