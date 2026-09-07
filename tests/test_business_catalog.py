@@ -165,6 +165,69 @@ class BusinessCatalogTests(unittest.TestCase):
         self.assertEqual(result["metrics_status"], "awaiting_business_approval")
         self.assertTrue(result["metrics_explanation"])
 
+    def test_lineage_layers_follow_physical_landing_bronze_silver_and_gold_schemas(self):
+        metadata = [{"dataset_id": "fact", "model_name": "fact_fx_quotes"}]
+        manifest = {
+            "sources": {
+                "source.p.landing.nbp_batches": {
+                    "unique_id": "source.p.landing.nbp_batches",
+                    "resource_type": "source",
+                    "name": "nbp_batches",
+                    "schema": "01_landing",
+                }
+            },
+            "nodes": {
+                "model.p.br_nbp_table_a": {
+                    "unique_id": "model.p.br_nbp_table_a",
+                    "resource_type": "model",
+                    "name": "br_nbp_table_a",
+                    "schema": "02_bronze",
+                    "depends_on": {"nodes": ["source.p.landing.nbp_batches"]},
+                },
+                "model.p.stg_nbp_table_a": {
+                    "unique_id": "model.p.stg_nbp_table_a",
+                    "resource_type": "model",
+                    "name": "stg_nbp_table_a",
+                    "schema": "03_silver",
+                    "depends_on": {"nodes": ["model.p.br_nbp_table_a"]},
+                },
+                "model.p.fact_fx_quotes": {
+                    "unique_id": "model.p.fact_fx_quotes",
+                    "resource_type": "model",
+                    "name": "fact_fx_quotes",
+                    "schema": "04_gold",
+                    "depends_on": {"nodes": ["model.p.stg_nbp_table_a"]},
+                },
+            },
+        }
+
+        result = build_business_catalog(
+            code_sha="d" * 40,
+            source_config=SOURCE_CONFIG,
+            ingestion_state={"sources": {source_id: {"raw_response_count": 0} for source_id in SOURCE_IDS}},
+            dbt_manifest=manifest,
+            dataset_metadata=metadata,
+        )
+
+        nodes = {node["id"]: node for node in result["lineage"]["nodes"]}
+        self.assertEqual(
+            {node_id: node["layer"] for node_id, node in nodes.items()},
+            {
+                "source.p.landing.nbp_batches": "landing",
+                "model.p.br_nbp_table_a": "bronze",
+                "model.p.stg_nbp_table_a": "silver",
+                "model.p.fact_fx_quotes": "gold",
+            },
+        )
+        self.assertEqual(
+            {(edge["from"], edge["to"]) for edge in result["lineage"]["edges"]},
+            {
+                ("source.p.landing.nbp_batches", "model.p.br_nbp_table_a"),
+                ("model.p.br_nbp_table_a", "model.p.stg_nbp_table_a"),
+                ("model.p.stg_nbp_table_a", "model.p.fact_fx_quotes"),
+            },
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
