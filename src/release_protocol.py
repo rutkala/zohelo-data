@@ -261,7 +261,9 @@ def promote_retained_release(
         raise ReleaseProtocolError("current release does not match expected-current release ID")
     if target_release_id == expected_current_release_id:
         raise ReleaseProtocolError("target release is already current")
-    current_manifest = restore_release(store, current["value"])
+    # Recovery must remain possible when a current dataset or artifact is lost.
+    # Pin and verify the current manifest itself, then fully validate the target.
+    current_manifest = _read_release_manifest(store, current["value"])
 
     releases_ids = store.find("releases", root_id)
     if len(releases_ids) != 1:
@@ -346,6 +348,16 @@ def restore_release(store: ReleaseStore, pointer: str | dict[str, Any]) -> dict[
     release manifest only after all listed data and dbt artifact checksums have
     been read and verified.
     """
+    manifest = _read_release_manifest(store, pointer)
+    if manifest["format_version"] == 1:
+        _verify_manifest_files(store, manifest)
+    else:
+        _verify_platform_manifest_files(store, manifest)
+    return manifest
+
+
+def _read_release_manifest(store: ReleaseStore, pointer: str | dict[str, Any]) -> dict[str, Any]:
+    """Verify pinned manifest identity without requiring its data files intact."""
     if isinstance(pointer, str):
         value = _parse_json_object(_read_bytes(store, _require_id(pointer, "pointer id"), "current-release pointer"), "current-release pointer")
     elif isinstance(pointer, dict):
@@ -369,10 +381,6 @@ def restore_release(store: ReleaseStore, pointer: str | dict[str, Any]) -> dict[
         raise ReleaseProtocolError("release manifest does not record passed tests")
     if manifest.get("release_id") != value["release_id"]:
         raise ReleaseProtocolError("release ID does not match current pointer")
-    if format_version == 1:
-        _verify_manifest_files(store, manifest)
-    else:
-        _verify_platform_manifest_files(store, manifest)
     return manifest
 
 

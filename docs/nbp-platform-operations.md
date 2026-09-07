@@ -67,7 +67,7 @@ A failed ingestion retains its verified progress. A failed candidate validation 
 
 For a bad current release after publication, use **NBP data platform → Run workflow → promote_retained_release**. Enter the retained target UUID and the current UUID you actually observed. The operation:
 
-1. Verifies the expected current release has not changed.
+1. Verifies the expected current release has not changed and its manifest identity/checksum is intact. Damaged current datasets or catalogue artifacts do not prevent recovery; a missing or damaged current manifest requires separate investigation.
 2. Locates exactly one retained target, reads/verifies its files and SQL-visible content/provenance.
 3. Writes an append-only promotion record and checks pointer drift again.
 4. Changes only the current release reference, retaining both releases.

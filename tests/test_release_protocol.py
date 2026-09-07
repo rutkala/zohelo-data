@@ -501,6 +501,73 @@ class ReleaseProtocolTests(unittest.TestCase):
         self.assertEqual(store.writes, writes_before)
         self.assertEqual(restore_current_release(store, "root")["release_id"], first["release_id"])
 
+    def test_retained_release_promotion_recovers_damaged_current_files(self):
+        for damaged_kind in ("dataset", "artifact"):
+            with self.subTest(damaged_kind=damaged_kind):
+                store = MemoryStore()
+                target = publish_release(store, "root", **self._candidate())
+                current_candidate = self._candidate()
+                current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+                current = publish_release(store, "root", **current_candidate)
+                damaged_entry = (
+                    current["manifest"]["datasets"][0]["files"][0]
+                    if damaged_kind == "dataset" else current["manifest"]["artifacts"][0]
+                )
+                store.files[damaged_entry["id"]]["data"] = b"damaged current file"
+
+                result = promote_retained_release(
+                    store, "root", target_release_id=target["release_id"],
+                    expected_current_release_id=current["release_id"],
+                    pre_promote_validator=restore_release,
+                )
+
+                self.assertEqual(result["status"], "retained_release_promoted")
+                self.assertEqual(restore_current_release(store, "root")["release_id"], target["release_id"])
+                pointer = json.loads(store.read(result["pointer_file_id"]))
+                self.assertEqual(pointer["promotion_audit_file_id"], result["audit_file_id"])
+
+    def test_retained_release_promotion_rejects_damaged_target_files(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        pointer_before = store.read(current["pointer_file_id"])
+        damaged_entry = target["manifest"]["datasets"][0]["files"][0]
+        store.files[damaged_entry["id"]]["data"] = b"damaged target file"
+        writes_before = store.writes
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "target retained release failed validation"):
+            promote_retained_release(
+                store, "root", target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=restore_release,
+            )
+
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(store.read(current["pointer_file_id"]), pointer_before)
+        self.assertEqual(restore_current_release(store, "root")["release_id"], current["release_id"])
+
+    def test_retained_release_promotion_rejects_damaged_current_manifest(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        pointer_before = store.read(current["pointer_file_id"])
+        store.files[current["manifest_file_id"]]["data"] = b"damaged current manifest"
+        writes_before = store.writes
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "manifest checksum"):
+            promote_retained_release(
+                store, "root", target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=restore_release,
+            )
+
+        self.assertEqual(store.writes, writes_before)
+        self.assertEqual(store.read(current["pointer_file_id"]), pointer_before)
+
     def test_retained_release_promotion_rejects_protocol_downgrade(self):
         store = MemoryStore()
         legacy = publish_release(store, "root", **self._candidate())

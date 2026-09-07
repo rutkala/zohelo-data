@@ -253,6 +253,13 @@ test("keeps the light and dark layout palettes consistent across desktop and mob
   await expect(page.getByRole("status").filter({ hasText: "nbp_platform" }).first()).toBeVisible();
   await page.getByRole("button", { name: "New SQL query", exact: true }).click();
 
+  // This test compares final palette values, not animation frames. Disable
+  // transitions only in this isolated page so a theme switch cannot capture
+  // an interpolated desktop colour before the mobile comparison.
+  await page.addStyleTag({
+    content: "*, *::before, *::after { transition: none !important; animation: none !important; }",
+  });
+
   const palette = (locator: Locator) =>
     locator.evaluate((element) => {
       const style = getComputedStyle(element);
