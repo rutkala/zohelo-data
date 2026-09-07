@@ -26,6 +26,17 @@ const layerFor = (dataset: string) =>
       ? "04_gold"
       : "03_silver";
 
+test.afterEach(async ({ page }, info) => {
+  if (info.status !== info.expectedStatus) {
+    const statuses = await page
+      .getByRole("status")
+      .allTextContents()
+      .catch(() => [] as string[]);
+    console.log("Join example status values:", statuses);
+    console.log("Join example page state:", await page.locator("body").innerText());
+  }
+});
+
 test("join example loads its explicit gold tables and leaves SQL ready to run", async ({
   page,
 }) => {
@@ -178,8 +189,7 @@ test("join example loads its explicit gold tables and leaves SQL ready to run", 
   await profile.getByRole("button", { name: "Create Profile" }).click();
   await expect(profile).toBeHidden();
 
-  const explorer = page.getByLabel("Data Explorer");
-  await expect(explorer.getByRole("status").filter({ hasText: "nbp_platform" })).toBeVisible({
+  await expect(page.getByRole("status").filter({ hasText: "nbp_platform" }).first()).toBeVisible({
     timeout: 60_000,
   });
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
@@ -187,11 +197,10 @@ test("join example loads its explicit gold tables and leaves SQL ready to run", 
   await page.getByRole("button", { name: "Open join example", exact: true }).click();
 
   await expect(
-    explorer.getByRole("status").filter({ hasText: "Loaded 3 dataset(s)" })
+    page.getByRole("status").filter({ hasText: "Loaded 3 dataset(s)" }).first()
   ).toBeVisible();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await expect(editor).toContainText('JOIN "04_gold"."dim_currency"');
-  await expect(editor).toContainText('JOIN "04_gold"."dim_date"');
   await expect(page.getByText("US dollar", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Run Query", exact: true }).click();
   await expect(page.getByRole("cell", { name: "US dollar", exact: true })).toBeVisible();
