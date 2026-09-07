@@ -18,7 +18,7 @@ const CSP = [
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
   "connect-src 'self' https: http: data: blob: https://accounts.google.com https://www.googleapis.com",
-  "frame-src 'self' https://accounts.google.com",
+  "frame-src 'self' blob: https://accounts.google.com",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",

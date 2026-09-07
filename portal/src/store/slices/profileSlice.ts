@@ -119,10 +119,20 @@ export const createProfileSlice: StateCreator<
           "home",
           "connections",
           "settings",
+          "catalog",
+          "review",
         ]);
-        const tabs = (JSON.parse(workspace.tabs) as EditorTab[]).filter((tab) =>
-          validTypes.has(tab.type)
-        );
+        const tabs = (JSON.parse(workspace.tabs) as EditorTab[])
+          .filter((tab) => validTypes.has(tab.type))
+          .map((tab) => ({
+            ...tab,
+            title:
+              tab.type === "catalog"
+                ? "Data catalogue"
+                : tab.type === "review"
+                  ? "Saved project input"
+                  : tab.title,
+          }));
         set({
           tabs: tabs.length > 0 ? tabs : [{ id: "home", title: "Home", type: "home", content: "" }],
           activeTabId: workspace.active_tab_id ?? tabs[0]?.id ?? "home",

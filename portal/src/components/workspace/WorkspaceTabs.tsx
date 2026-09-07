@@ -64,7 +64,7 @@ const NotebookTab = lazy(() => import("@/components/notebook/NotebookTab"));
 const DashboardTab = lazy(() => import("@/components/dashboard/DashboardTab"));
 const ConnectionsTab = lazy(() => import("@/components/workspace/ConnectionsTab"));
 const SettingsTab = lazy(() => import("@/components/workspace/SettingsTab"));
-const BusinessCatalogueTab = lazy(() => import("@/components/workspace/BusinessCatalogueTab"));
+const CatalogDocsTab = lazy(() => import("@/components/workspace/CatalogDocsTab"));
 const ReviewDecisionsTab = lazy(() => import("@/components/workspace/ReviewDecisionsTab"));
 
 const TabFallback = () => (
@@ -219,7 +219,7 @@ export default function WorkspaceTabs() {
                   ) : tab.type === "settings" ? (
                     <SettingsTab />
                   ) : tab.type === "catalog" ? (
-                    <BusinessCatalogueTab />
+                    <CatalogDocsTab />
                   ) : tab.type === "review" ? (
                     <ReviewDecisionsTab />
                   ) : null}

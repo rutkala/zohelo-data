@@ -13,7 +13,7 @@ export function useWorkspaceViewFromURL() {
     const state = useDuckStore.getState();
     const existing = state.tabs.find((tab) => tab.type === view);
     if (existing) state.setActiveTab(existing.id);
-    else state.createTab(view, "", view === "review" ? "Review & decisions" : "Business catalogue");
+    else state.createTab(view, "", view === "review" ? "Saved project input" : "Data catalogue");
     const remaining = new URLSearchParams(params);
     remaining.delete("view");
     setParams(remaining, { replace: true });

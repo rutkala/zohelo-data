@@ -650,6 +650,8 @@ export interface GoogleDriveSlice {
     sql: string,
     title: string
   ) => Promise<string | null>;
+  /** Loads only pinned-release tables referenced by SQL, before the normal engine run. */
+  preparePublishedTablesForQuery: (sql: string) => Promise<void>;
 }
 
 //

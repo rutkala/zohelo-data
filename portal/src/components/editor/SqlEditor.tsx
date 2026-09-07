@@ -274,7 +274,7 @@ const SqlEditor: React.FC<SqlEditorProps> = ({ tabId, title, className }) => {
             <TooltipProvider>
               <Tooltip delayDuration={200}>
                 <TooltipTrigger className="hover:bg-muted/50 p-2 rounded-md transition-colors">
-                  <Lightbulb className="h-5 w-5 text-yellow-500/70 hover:text-yellow-500 transition-colors" />
+                  <Lightbulb className="h-5 w-5 text-primary/70 hover:text-primary transition-colors" />
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="w-72 p-0" sideOffset={5}>
                   <div className="bg-card px-3 py-2 rounded-t-sm border-b">

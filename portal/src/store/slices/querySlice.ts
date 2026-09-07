@@ -79,6 +79,16 @@ export const createQuerySlice: StateCreator<
       const session = get().currentSession;
       if (!session) throw new Error("No active connection");
 
+      // A pinned Drive release is a lazy local source. Resolve its SQL
+      // dependencies before constructing the execution so the statement below
+      // remains the single query submission for every engine type.
+      await get().preparePublishedTablesForQuery(query);
+      if (get().currentSession !== session) {
+        throw new Error(
+          "The active connection changed while SQL dependencies were loading. Run the query again."
+        );
+      }
+
       // Registered synchronously: Stop is reachable from the instant the
       // statement exists, including while it waits behind another one.
       const execution = session.execute({

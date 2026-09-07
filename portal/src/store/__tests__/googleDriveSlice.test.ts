@@ -7,6 +7,7 @@ import {
   loadTableIntoDuckDB,
   loadFileIntoDuckDB,
   loadTablesIntoDuckDB,
+  resolvePublishedTableReferences,
   resolveLayerFolderId,
   listSubfolders,
   resolveReleaseCatalog,
@@ -22,6 +23,7 @@ vi.mock("@/services/googleDrive", async (original) => ({
   loadTableIntoDuckDB: vi.fn(),
   loadFileIntoDuckDB: vi.fn(),
   loadTablesIntoDuckDB: vi.fn(),
+  resolvePublishedTableReferences: vi.fn(),
   resolveLayerFolderId: vi.fn(),
   listSubfolders: vi.fn(),
   resolveReleaseCatalog: vi.fn(),
@@ -33,7 +35,12 @@ function makeStore() {
     devtools(
       (set, get, api) =>
         ({
-          currentSession: { local: { db: {}, connection: {} } },
+          currentSession: {
+            local: {
+              db: {},
+              connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) },
+            },
+          },
           fetchDatabasesAndTablesInfo: vi.fn().mockResolvedValue(undefined),
           createTab: vi.fn(() => "prepared-join-tab"),
           ...createGoogleDriveSlice(set, get, api),
@@ -85,6 +92,7 @@ beforeEach(() => {
     loadedFiles: ["file"],
     queryTargets: [target],
   });
+  vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
   vi.mocked(resolveReleaseCatalog).mockResolvedValue({ kind: "legacy" });
 });
 
@@ -305,7 +313,9 @@ describe("immutable release selection", () => {
     await store.getState().selectLakehouseDataset("03_silver", "nbp_exchange_rates_table_a");
 
     store.setState({
-      currentSession: { local: { db: {}, connection: {} } },
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
     } as unknown as Partial<DuckStoreState>);
     vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-2"));
     await expect(store.getState().refreshLakehouseCatalog()).resolves.toBeUndefined();
@@ -329,7 +339,9 @@ describe("immutable release selection", () => {
     const originalEngine = (store.getState().currentSession as unknown as { local: { db: object } })
       .local.db;
     store.setState({
-      currentSession: { local: { db: {}, connection: {} } },
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
     } as unknown as Partial<DuckStoreState>);
     complete({ loadedFiles: ["file"], queryTarget: target });
     await expect(pending).resolves.toBeNull();
@@ -354,7 +366,25 @@ describe("preparing a multi-table SQL query", () => {
         fingerprint: "pinned-release",
         pointer: {},
         manifestFileId: "manifest",
-        manifest: {},
+        manifest: {
+          datasets: joinedTables.map((tableName) => ({
+            dataset_id: tableName,
+            layer: "04_gold",
+            table_name: tableName,
+            row_count: 1,
+            min_date: null,
+            max_date: null,
+            columns: [],
+            files: [
+              {
+                id: `${tableName}-file`,
+                name: `${tableName}.parquet`,
+                tableName,
+                layer: "04_gold",
+              },
+            ],
+          })),
+        },
       } as unknown as DuckStoreState["lakehouseRelease"],
       lakehouseCatalog: [
         {
@@ -426,5 +456,128 @@ describe("preparing a multi-table SQL query", () => {
 
     await expect(pending).resolves.toBeNull();
     expect(store.getState().createTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("lazy published-query loading", () => {
+  const referencedTables = ["fact_fx_quotes", "dim_currency", "dim_date"];
+
+  const configurePinnedGoldRelease = (store: ReturnType<typeof makeStore>) => {
+    store.setState({
+      lakehouseRelease: {
+        kind: "release",
+        fingerprint: "pinned-release",
+        pointer: {},
+        manifestFileId: "manifest",
+        manifest: {
+          datasets: referencedTables.map((tableName) => ({
+            dataset_id: tableName,
+            layer: "04_gold",
+            table_name: tableName,
+            row_count: 1,
+            min_date: null,
+            max_date: null,
+            columns: [],
+            files: [
+              {
+                id: `${tableName}-file`,
+                name: `${tableName}.parquet`,
+                tableName,
+                layer: "04_gold",
+              },
+            ],
+          })),
+        },
+      } as unknown as DuckStoreState["lakehouseRelease"],
+    });
+  };
+
+  it("loads only parser-referenced pinned tables without opening a tab or executing SQL", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    const getTableNames = vi
+      .fn()
+      .mockResolvedValue([
+        '"04_gold"."fact_fx_quotes"',
+        '"04_gold"."dim_currency"',
+        '"04_gold"."dim_date"',
+        "local_cte",
+      ]);
+    store.setState({
+      currentSession: {
+        local: {
+          db: {},
+          connection: { getTableNames, query: vi.fn().mockResolvedValue({ toArray: () => [] }) },
+        },
+      },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue(
+      referencedTables.map((datasetName) => ({
+        datasetName,
+        layerName: "04_gold" as const,
+        files: [],
+      }))
+    );
+
+    await store.getState().preparePublishedTablesForQuery("WITH local_cte AS (SELECT 1) SELECT 1");
+
+    expect(resolvePublishedTableReferences).toHaveBeenCalledWith(
+      expect.objectContaining({ getTableNames }),
+      "WITH local_cte AS (SELECT 1) SELECT 1",
+      expect.any(Array)
+    );
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      referencedTables.map((datasetName) =>
+        expect.objectContaining({ datasetName, layerName: "04_gold" })
+      ),
+      "fixture-token",
+      expect.anything(),
+      expect.any(Function)
+    );
+    expect(store.getState().createTab).not.toHaveBeenCalled();
+  });
+
+  it("does not replace an existing selection when referenced-table loading fails", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({
+      activeLakehouseDataset: "previous",
+      activeLakehouseLayer: "03_silver",
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      { datasetName: "dim_currency", layerName: "04_gold", files: [] },
+    ]);
+    vi.mocked(loadTablesIntoDuckDB).mockRejectedValueOnce(new Error("Download unavailable"));
+
+    await expect(
+      store.getState().preparePublishedTablesForQuery("SELECT * FROM dim_currency")
+    ).rejects.toThrow("Download unavailable");
+    expect(store.getState().activeLakehouseDataset).toBe("previous");
+    expect(store.getState().activeLakehouseLayer).toBe("03_silver");
+  });
+  it("keeps existing local relations and reloads a release relation after it is dropped", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({
+        toArray: () => [{ table_schema: "04_gold", table_name: "dim_currency" }],
+      })
+      .mockResolvedValueOnce({ toArray: () => [] });
+    store.setState({
+      currentSession: { local: { db: {}, connection: { query } } },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      { datasetName: "dim_currency", layerName: "04_gold", files: [] },
+    ]);
+    await store.getState().preparePublishedTablesForQuery('SELECT * FROM "04_gold".dim_currency');
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+    await store.getState().preparePublishedTablesForQuery('SELECT * FROM "04_gold".dim_currency');
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledTimes(1);
   });
 });

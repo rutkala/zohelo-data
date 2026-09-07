@@ -40,14 +40,14 @@ const getTypeColor = (type: string) => {
   } else if (upperType.includes("DATE") || upperType.includes("TIME")) {
     return "text-green-500 bg-green-500/10";
   } else if (upperType.includes("BOOL")) {
-    return "text-yellow-500 bg-yellow-500/10";
+    return "text-teal-600 dark:text-teal-300 bg-teal-500/10";
   }
   return "text-blue-500 bg-blue-500/10";
 };
 
 const getFillColor = (percentage: number) => {
   if (percentage >= 90) return "bg-green-500";
-  if (percentage >= 50) return "bg-yellow-500";
+  if (percentage >= 50) return "bg-primary";
   return "bg-red-500";
 };
 

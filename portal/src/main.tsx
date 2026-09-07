@@ -34,7 +34,7 @@ interface AppInitializerProps {
 }
 
 const LoadingScreen = ({ message }: LoadingScreenProps) => (
-  <div className="h-screen flex items-center justify-center bg-black/90 text-white">
+  <div className="h-screen flex items-center justify-center bg-background text-foreground">
     <div className="text-center">
       <Loader2 className="animate-spin m-auto mb-12" size={64} />
       <p className="text-lg">{message}</p>
@@ -122,7 +122,7 @@ const ProfileBootstrap = ({ children }: { children: React.ReactNode }) => {
 
   if (showPicker && !ready) {
     return (
-      <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+      <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
         <ProfilePicker
           profiles={bootProfiles}
           onSelectProfile={async (id, password) => {
@@ -341,7 +341,7 @@ const EmbedRoot = () => (
   <StrictMode>
     <ErrorBoundary FallbackComponent={ErrorFallback}>
       <AppInitializer>
-        <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+        <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
           <Suspense fallback={<LoadingScreen message="Loading analysis" />}>
             <EmbedView />
           </Suspense>
@@ -361,7 +361,7 @@ const FullApp = () => (
       <ProfileBootstrap>
         <AppInitializer>
           <BrowserRouter basename={routerBasename}>
-            <ThemeProvider defaultTheme="dark" storageKey="vite-ui-theme">
+            <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
               <Suspense fallback={<LoadingScreen message="Loading application" />}>
                 <App />
               </Suspense>

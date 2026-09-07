@@ -31,6 +31,10 @@ import { qualifyTable } from "@/lib/sqlSanitize";
 import { ColumnNode } from "./ColumnNode";
 
 export interface TreeNodeData {
+  /** Display-only label. Actions always use `name`, the real catalog identifier. */
+  label?: string;
+  /** Brief display-only context for a catalog, table, or view. */
+  description?: string;
   name: string;
   type: "database" | "table" | "view";
   /** Schema the table lives in. Anything but "main" is shown as a prefix. */
@@ -237,9 +241,11 @@ const TreeNode: React.FC<TreeNodeProps> = React.memo(
                 )}
                 {getIcon}
                 <div className="text-xs">
-                  <p className="truncate">
+                  <p className="truncate" title={node.description}>
                     {" "}
-                    {node.schema && node.schema !== "main" ? (
+                    {node.type === "database" ? (
+                      (node.label ?? node.name)
+                    ) : node.schema && node.schema !== "main" ? (
                       <>
                         <span className="text-muted-foreground">{node.schema}.</span>
                         {node.name}
