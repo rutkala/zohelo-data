@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Plus, XSquareIcon, Loader2, Terminal, BookOpen } from "lucide-react";
 import { useQueryFromURL } from "@/hooks/useQueryFromURL";
+import { useWorkspaceViewFromURL } from "@/hooks/useWorkspaceViewFromURL";
 import {
   DndContext,
   closestCenter,
@@ -63,7 +64,8 @@ const NotebookTab = lazy(() => import("@/components/notebook/NotebookTab"));
 const DashboardTab = lazy(() => import("@/components/dashboard/DashboardTab"));
 const ConnectionsTab = lazy(() => import("@/components/workspace/ConnectionsTab"));
 const SettingsTab = lazy(() => import("@/components/workspace/SettingsTab"));
-const CatalogDocsTab = lazy(() => import("@/components/workspace/CatalogDocsTab"));
+const BusinessCatalogueTab = lazy(() => import("@/components/workspace/BusinessCatalogueTab"));
+const ReviewDecisionsTab = lazy(() => import("@/components/workspace/ReviewDecisionsTab"));
 
 const TabFallback = () => (
   <div className="h-full flex items-center justify-center">
@@ -90,6 +92,7 @@ export default function WorkspaceTabs() {
 
   // Handle loading query from URL parameters
   useQueryFromURL();
+  useWorkspaceViewFromURL();
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -216,7 +219,9 @@ export default function WorkspaceTabs() {
                   ) : tab.type === "settings" ? (
                     <SettingsTab />
                   ) : tab.type === "catalog" ? (
-                    <CatalogDocsTab />
+                    <BusinessCatalogueTab />
+                  ) : tab.type === "review" ? (
+                    <ReviewDecisionsTab />
                   ) : null}
                 </Suspense>
               </ErrorBoundary>

@@ -289,6 +289,39 @@ SELECT * FROM 'https://blobs.duckdb.org/stations.parquet' LIMIT 1000;
           </h1>
         </motion.div>
 
+        <section
+          className="flex flex-wrap items-center gap-3 rounded-lg border p-4"
+          aria-label="Zohelo-data workspace"
+        >
+          <div className="mr-auto">
+            <h2 className="font-semibold">Your Zohelo-data workspace</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Explore the catalogue or review the two items needing your input.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const state = useDuckStore.getState();
+              const tab = state.tabs.find((item) => item.type === "catalog");
+              if (tab) state.setActiveTab(tab.id);
+              else state.createTab("catalog", "", "Business catalogue");
+            }}
+          >
+            Business catalogue
+          </Button>
+          <Button
+            onClick={() => {
+              const state = useDuckStore.getState();
+              const tab = state.tabs.find((item) => item.type === "review");
+              if (tab) state.setActiveTab(tab.id);
+              else state.createTab("review", "", "Review & decisions");
+            }}
+          >
+            Review &amp; decisions · 2 open items
+          </Button>
+        </section>
+
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

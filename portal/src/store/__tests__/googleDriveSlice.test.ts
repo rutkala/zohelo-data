@@ -6,6 +6,7 @@ import { createGoogleDriveSlice } from "../slices/googleDriveSlice";
 import {
   loadTableIntoDuckDB,
   loadFileIntoDuckDB,
+  loadTablesIntoDuckDB,
   resolveLayerFolderId,
   listSubfolders,
   resolveReleaseCatalog,
@@ -20,6 +21,7 @@ vi.mock("@/services/googleDrive", async (original) => ({
   clearStoredToken: vi.fn(),
   loadTableIntoDuckDB: vi.fn(),
   loadFileIntoDuckDB: vi.fn(),
+  loadTablesIntoDuckDB: vi.fn(),
   resolveLayerFolderId: vi.fn(),
   listSubfolders: vi.fn(),
   resolveReleaseCatalog: vi.fn(),
@@ -33,6 +35,7 @@ function makeStore() {
         ({
           currentSession: { local: { db: {}, connection: {} } },
           fetchDatabasesAndTablesInfo: vi.fn().mockResolvedValue(undefined),
+          createTab: vi.fn(() => "prepared-join-tab"),
           ...createGoogleDriveSlice(set, get, api),
         }) as unknown as DuckStoreState,
       { enabled: false }
@@ -77,6 +80,10 @@ beforeEach(() => {
   vi.mocked(loadFileIntoDuckDB).mockResolvedValue({
     filePath: "file",
     queryTarget: target + "__file",
+  });
+  vi.mocked(loadTablesIntoDuckDB).mockResolvedValue({
+    loadedFiles: ["file"],
+    queryTargets: [target],
   });
   vi.mocked(resolveReleaseCatalog).mockResolvedValue({ kind: "legacy" });
 });
@@ -335,5 +342,89 @@ describe("immutable release selection", () => {
     await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(
       /fresh DuckDB session/
     );
+  });
+});
+
+describe("preparing a multi-table SQL query", () => {
+  const joinedTables = ["fact_fx_quotes", "dim_currency", "dim_date"];
+  const configurePinnedGoldRelease = (store: ReturnType<typeof makeStore>) => {
+    store.setState({
+      lakehouseRelease: {
+        kind: "release",
+        fingerprint: "pinned-release",
+        pointer: {},
+        manifestFileId: "manifest",
+        manifest: {},
+      } as unknown as DuckStoreState["lakehouseRelease"],
+      lakehouseCatalog: [
+        {
+          type: "layer",
+          name: "04_gold",
+          id: null,
+          expanded: true,
+          loaded: true,
+          children: joinedTables.map((name) => ({
+            type: "table" as const,
+            name,
+            id: null,
+            layer: "04_gold",
+            expanded: false,
+            loaded: true,
+            children: [
+              { id: `${name}-file`, name: `${name}.parquet`, tableName: name, layer: "04_gold" },
+            ],
+          })),
+        },
+      ],
+    });
+  };
+
+  it("loads only explicit tables from the pinned release and opens unexecuted SQL", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    const sql = 'SELECT * FROM "04_gold"."fact_fx_quotes"';
+
+    await expect(
+      store.getState().prepareLakehouseQuery(
+        joinedTables.map((tableName) => ({ layerName: "04_gold", tableName })),
+        sql,
+        "FX join"
+      )
+    ).resolves.toBe("prepared-join-tab");
+
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      joinedTables.map((datasetName) =>
+        expect.objectContaining({ datasetName, layerName: "04_gold" })
+      ),
+      "fixture-token",
+      expect.anything(),
+      expect.any(Function)
+    );
+    expect(store.getState().createTab).toHaveBeenCalledWith("sql", sql, "FX join");
+    expect(store.getState().lakehouseStatusMessage).toContain("SQL is ready to run");
+  });
+
+  it("does not open SQL when Drive authorization changes during the grouped load", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    let complete!: (result: { loadedFiles: string[]; queryTargets: string[] }) => void;
+    vi.mocked(loadTablesIntoDuckDB).mockReturnValueOnce(
+      new Promise((resolve) => (complete = resolve))
+    );
+
+    const pending = store.getState().prepareLakehouseQuery(
+      joinedTables.map((tableName) => ({ layerName: "04_gold", tableName })),
+      "SELECT 1",
+      "FX join"
+    );
+    store.setState({
+      googleAuth: { token: "new-token", isAuthenticated: true, authSource: "manual", error: null },
+    });
+    complete({ loadedFiles: ["file"], queryTargets: [target] });
+
+    await expect(pending).resolves.toBeNull();
+    expect(store.getState().createTab).not.toHaveBeenCalled();
   });
 });

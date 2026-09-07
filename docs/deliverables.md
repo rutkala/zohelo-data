@@ -16,7 +16,7 @@ Updated 7 September 2026 after the successful 08:45–08:46 UTC checks. **The NB
 | D2. Development environment and AI instructions | Delivered | Declared Python/Node, pinned dependencies, tested actual container, fixture command, shared AGENTS entrypoints and executable synthetic MetricFlow proof | Ongoing maintenance as dependencies and implementation change |
 | D3. Contracts, ingestion rules and gold design | Implemented; unit follow-up open | Accepted correction policy; [source contracts](nbp-data-contracts.md); resumable full/incremental rules; exact raw replay; [facts, dimensions and bus matrix](nbp-gold-design.md) | Historical FX unit normalization requires provider evidence; values remain as published. Cross-source mappings and business aggregation rules remain open |
 | D4. Complete NBP flow | Data through gold live; semantics open | All four sources; 429,795 silver observations; every prior key preserved; 15 published tables; fresh SQL and exact raw recovery; matching portal deployed | Approve and execute NBP business metrics on the same release; decide the native metric-serving experience |
-| D5. Business catalogue | Sources and lineage live; metrics open | Release-bound four-source catalogue, coverage/status distinctions, dbt lineage and portal views | Business metric definitions, approval and executable semantic lineage; owner usability feedback on the new catalogue |
+| D5. Business catalogue | Sources and lineage live; metrics open | Release-bound four-source catalogue, coverage/status distinctions, dbt lineage and portal views. Full-page catalogue, a prepared SQL join example, and a Review & decisions hub linked from Home and navigation. | Business metric definitions, approval and executable semantic lineage; owner usability feedback on the new catalogue |
 | D6. Additional sources | Candidate research prepared | [Eurostat and WDI access/reuse inventory](source-candidates.md), with dataset-specific exceptions | Owner priorities and selected-dataset commercial reuse evidence before onboarding |
 | D7. Tailored UI | Deferred | Existing SQL portal retained | Evaluate after the essential NBP/catalogue work; redesign scope requires an owner decision |
 
@@ -79,6 +79,8 @@ The current live implementation and limits are described in [NBP platform operat
 3. **Metrics:** definition, formula, unit, dimensions, time aggregation, approval state, and version.
 
 Status distinguishes last attempt, last successful ingestion, latest observation, and latest validated publication. Editing descriptions or approving definitions inside the UI is a separate business decision, not a silently assumed feature.
+
+The portal includes [Review & decisions](business-review.md): an owner-facing path from the catalogue to two narrow choices, **BR-001** first NBP metrics and **BR-002** next-source priority. It presents researched NBP definitions and candidate-source evidence as proposals. Responses are local browser/profile drafts that the owner copies or downloads to chat; they do not send a message, approve a metric, alter a release, or onboard a source.
 
 **Completion criteria:**
 

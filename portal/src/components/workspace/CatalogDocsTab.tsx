@@ -2,15 +2,48 @@
  * Catalog & Lineage Tab
  * Displays the generated dbt documentation and lineage graph in an embedded iframe.
  */
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, RefreshCw, Layers } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { dbtDocsUrl, isDbtDocsHtml } from "@/lib/dbtDocs";
+
+type DocsStatus = "checking" | "ready" | "error";
 
 export default function CatalogDocsTab() {
   const [iframeKey, setIframeKey] = useState(0);
-  const docsUrl = "./docs/index.html";
+  const [docsStatus, setDocsStatus] = useState<DocsStatus>("checking");
+  const [error, setError] = useState<string | null>(null);
+  const docsUrl = useMemo(() => dbtDocsUrl(import.meta.env.BASE_URL, window.location.origin), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    fetch(docsUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`The docs server returned ${response.status}.`);
+        }
+
+        const html = await response.text();
+        if (!isDbtDocsHtml(html)) {
+          throw new Error("The deployed file was not a dbt Docs document.");
+        }
+      })
+      .then(() => {
+        if (!controller.signal.aborted) setDocsStatus("ready");
+      })
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return;
+        setDocsStatus("error");
+        setError(cause instanceof Error ? cause.message : "The docs could not be loaded.");
+      });
+
+    return () => controller.abort();
+  }, [docsUrl, iframeKey]);
 
   const handleRefresh = () => {
+    setDocsStatus("checking");
+    setError(null);
     setIframeKey((prev) => prev + 1);
   };
 
@@ -41,6 +74,7 @@ export default function CatalogDocsTab() {
             size="sm"
             className="h-8 gap-1.5 text-xs"
             onClick={handleOpenExternal}
+            disabled={docsStatus !== "ready"}
           >
             <ExternalLink className="h-3.5 w-3.5" />
             Open in New Window
@@ -50,12 +84,30 @@ export default function CatalogDocsTab() {
 
       {/* Embedded dbt Docs Frame */}
       <div className="flex-1 w-full h-full relative">
-        <iframe
-          key={iframeKey}
-          src={docsUrl}
-          title="dbt Catalog & Lineage"
-          className="w-full h-full border-none"
-        />
+        {docsStatus === "checking" ? (
+          <div
+            className="flex h-full items-center justify-center text-sm text-muted-foreground"
+            role="status"
+          >
+            Checking generated dbt documentation…
+          </div>
+        ) : docsStatus === "ready" ? (
+          <iframe
+            key={iframeKey}
+            src={docsUrl}
+            title="dbt Catalog & Lineage"
+            className="w-full h-full border-none"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="max-w-lg space-y-2 text-center" role="alert">
+              <p className="font-medium">Generated dbt documentation is unavailable.</p>
+              <p className="text-sm text-muted-foreground">
+                {error} Redeploy the portal after generating dbt docs, then reload this tab.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -68,6 +68,12 @@ jobs:
         working-directory: portal
         run: npm ci --ignore-scripts --no-audit --no-fund
 
+      - name: Stage generated dbt docs as portal static assets
+        run: |
+          mkdir -p portal/public/docs
+          cp target/index.html portal/public/docs/index.html
+          cp target/*.json portal/public/docs/
+
       - name: Build Duck-UI portal
         working-directory: portal
         env:
@@ -86,11 +92,15 @@ jobs:
           )
           PY
 
-      - name: Copy dbt docs into portal build output
+      - name: Verify generated dbt docs are deployed with the portal
         run: |
-          mkdir -p portal/dist/docs
-          cp target/index.html portal/dist/docs/index.html
-          cp target/*.json portal/dist/docs/
+          test -s portal/dist/docs/index.html
+          test -s portal/dist/docs/manifest.json
+          test -s portal/dist/docs/catalog.json
+
+      - name: Remove staged generated dbt docs
+        if: always()
+        run: rm -rf portal/public/docs
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

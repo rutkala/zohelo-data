@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Table } from "apache-arrow";
 import type * as duckdb from "@duckdb/duckdb-wasm";
 import { resultToJSON } from "@/services/duckdb/resultParser";
-import { loadFileIntoDuckDB, loadTableIntoDuckDB } from "../lakehouseBridge";
+import { loadFileIntoDuckDB, loadTableIntoDuckDB, loadTablesIntoDuckDB } from "../lakehouseBridge";
 import { sha256Hex } from "../releaseCatalog";
 import { fetchDriveFileBuffer, listDataFilesInFolder } from "../driveApi";
 import type { LakehouseFile } from "../types";
@@ -113,12 +113,148 @@ describe("Drive data in the real DuckDB engine", () => {
     expect(rows(silver.queryTarget)).toEqual([{ id: 20 }]);
   });
 
+  it("loads a fact and its dimensions together so the explicit NBP join returns one row per fact", async () => {
+    const quotes = file(
+      `SELECT * FROM (
+      VALUES
+        ('A', DATE '2026-09-01', 'USD', 'PLN', 3.91::DOUBLE, NULL::DOUBLE, NULL::DOUBLE),
+        ('A', DATE '2026-09-02', 'USD', 'PLN', 3.92::DOUBLE, NULL::DOUBLE, NULL::DOUBLE)
+    ) AS source(source_table_key, effective_date, currency_key, quote_currency_key, mid, bid, ask)`,
+      "fact_fx_quotes.parquet",
+      "04_gold"
+    );
+    const currencies = file(
+      "SELECT 'USD' AS currency_key, 'US dollar' AS source_currency_name UNION ALL SELECT 'PLN', NULL",
+      "dim_currency.parquet",
+      "04_gold"
+    );
+    const dates = file(
+      "SELECT DATE '2026-09-01' AS date_key, 2026 AS calendar_year UNION ALL SELECT DATE '2026-09-02', 2026",
+      "dim_date.parquet",
+      "04_gold"
+    );
+
+    const result = await loadTablesIntoDuckDB(
+      db,
+      conn,
+      [
+        {
+          datasetName: "fact_fx_quotes",
+          tableFolderId: null,
+          files: [quotes],
+          layerName: "04_gold",
+        },
+        {
+          datasetName: "dim_currency",
+          tableFolderId: null,
+          files: [currencies],
+          layerName: "04_gold",
+        },
+        { datasetName: "dim_date", tableFolderId: null, files: [dates], layerName: "04_gold" },
+      ],
+      "fixture-token"
+    );
+
+    expect(result.queryTargets).toEqual([
+      '"04_gold"."fact_fx_quotes"',
+      '"04_gold"."dim_currency"',
+      '"04_gold"."dim_date"',
+    ]);
+    expect(
+      resultToJSON(
+        connection.query(`SELECT
+          quotes.effective_date,
+          quotes.currency_key,
+          currencies.source_currency_name,
+          dates.calendar_year,
+          quotes.mid
+        FROM "04_gold"."fact_fx_quotes" AS quotes
+        JOIN "04_gold"."dim_currency" AS currencies
+          ON quotes.currency_key = currencies.currency_key
+        JOIN "04_gold"."dim_date" AS dates
+          ON quotes.effective_date = dates.date_key
+        ORDER BY quotes.effective_date`)
+      ).data
+    ).toEqual([
+      {
+        effective_date: "2026-09-01",
+        currency_key: "USD",
+        source_currency_name: "US dollar",
+        calendar_year: 2026,
+        mid: 3.91,
+      },
+      {
+        effective_date: "2026-09-02",
+        currency_key: "USD",
+        source_currency_name: "US dollar",
+        calendar_year: 2026,
+        mid: 3.92,
+      },
+    ]);
+  }, 30000);
+
   it("reloads exactly the requested membership without sweeping in previously loaded files", async () => {
     const one = file("SELECT 1 AS id"),
       two = file("SELECT 2 AS id");
     await load([one, two]);
     const current = await load([two]);
     expect(rows(current.queryTarget)).toEqual([{ id: 2 }]);
+  });
+
+  it("does not replace existing views when a grouped load cannot download every selected table", async () => {
+    const existing = await load([file("SELECT 71 AS id")]);
+    const unavailable = { ...file("SELECT 72 AS id"), id: "unavailable" };
+
+    await expect(
+      loadTablesIntoDuckDB(
+        db,
+        conn,
+        [
+          {
+            datasetName: "fact_fx_quotes",
+            tableFolderId: null,
+            files: [file("SELECT 73 AS id")],
+            layerName: "04_gold",
+          },
+          {
+            datasetName: "dim_currency",
+            tableFolderId: null,
+            files: [unavailable],
+            layerName: "04_gold",
+          },
+        ],
+        "fixture-token"
+      )
+    ).rejects.toThrow(/unavailable/);
+
+    expect(rows(existing.queryTarget)).toEqual([{ id: 71 }]);
+    expect(rows("active_layer")).toEqual([{ id: 71 }]);
+  });
+
+  it("does not publish grouped views when the caller's pinned session changes before publication", async () => {
+    const existing = await load([file("SELECT 81 AS id")]);
+    await expect(
+      loadTablesIntoDuckDB(
+        db,
+        conn,
+        [
+          {
+            datasetName: "fact_fx_quotes",
+            tableFolderId: null,
+            files: [file("SELECT 82 AS id")],
+            layerName: "04_gold",
+          },
+        ],
+        "fixture-token",
+        undefined,
+        () => {
+          throw new Error("Pinned session changed");
+        }
+      )
+    ).rejects.toThrow("Pinned session changed");
+
+    expect(rows(existing.queryTarget)).toEqual([{ id: 81 }]);
+    expect(rows("active_layer")).toEqual([{ id: 81 }]);
   });
 
   it("rejects unauthenticated, empty and fake entries without fabricating data", async () => {

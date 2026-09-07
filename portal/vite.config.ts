@@ -72,7 +72,7 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
-          // Precache ONLY the app shell — precaching every chunk pushed ~29MB
+          // Precache the app shell and matching dbt docs. Precaching every chunk pushed ~29MB
           // to first-time visitors (Monaco language chunks, exceljs, both
           // DuckDB workers). Hashed /assets/* chunks, the WASM binaries, and
           // AI models are all cached at runtime on first use instead — after
@@ -86,6 +86,7 @@ export default defineConfig(({ mode }) => {
             'registerSW.js',
             'manifest.webmanifest',
             '*.{svg,png,ico}',
+            'docs/**/*.{html,json}',
             'assets/index-*.{js,css}',
           ],
           globIgnores: ['**/env.js'],
@@ -93,7 +94,7 @@ export default defineConfig(({ mode }) => {
           navigateFallback: 'index.html',
           // Public OAuth information must stay accessible without booting the
           // workspace, including when a previous visit installed the worker.
-          navigateFallbackDenylist: [/\/(about|privacy|terms)\.html$/],
+          navigateFallbackDenylist: [/\/(about|privacy|terms)\.html$/, /\/docs(?:\/|$)/],
           runtimeCaching: [
             {
               // Hashed build chunks (immutable filenames) — cached as the
