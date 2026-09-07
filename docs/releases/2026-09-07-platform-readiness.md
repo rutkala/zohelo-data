@@ -29,19 +29,20 @@ files no longer prevents promotion of a healthy retained release. Current
 manifest integrity and full target verification remain mandatory. Recovery
 failure tests use isolated stores; no live rollback drill was performed.
 
-## Production acceptance is on hold
+## Production acceptance: approval received, verification pending
 
-Automatic approval review rejected merging with an explicit live-publication
+The owner subsequently replied **“Yes, I approve”** to the precise publication, verification and schedule-restoration request. H-LIVE is now cleared and the scheduled trigger is restored. Live acceptance results will be added after the reviewed run finishes.
+
+Earlier, automatic approval review rejected merging with an explicit live-publication
 trigger. Its stated reason was that the audit/implementation instruction did
 not explicitly authorize that production-data write. A subsequent merge without
-the publication trigger was accepted. This is an approval hold, not a failing
-data test or an unanswered source-methodology question.
+the publication trigger was accepted. That approval hold is now resolved; source-methodology questions and data-test failures did not cause it.
 
-The normal 02:00 UTC schedule is temporarily paused under **H-LIVE** so that it
-cannot perform the rejected operation automatically before approval. Existing
+The normal 02:00 UTC schedule was temporarily paused under **H-LIVE** to prevent
+automatic publication before approval; that pause is now cleared. Existing
 published files are retained. No production data was deleted or rolled back.
 
-The concrete remaining action is to restore the schedule and run the reviewed
+The concrete remaining action is to run and verify the reviewed
 NBP workflow: ingest/recheck source responses, build and validate a new release,
 publish it to Drive, switch the current release reference after candidate
 validation, then run fresh SQL and native MetricFlow checks, exact raw replay,
@@ -50,7 +51,7 @@ and the read-only capacity/storage inventory. Prior releases remain retained.
 The five definitions are `nbp_table_a_mid`, `nbp_table_b_mid`, `nbp_table_c_bid`,
 `nbp_table_c_ask`, and `nbp_gold_price_pln_per_gram_1000`. They are implemented and
 tested at their daily source grain. Their first live release and the fresh
-consumer's actual query results remain unverified until H-LIVE is cleared.
+consumer's actual query results remain unverified until the approved acceptance run succeeds.
 
 Previous verified live release evidence remains
 [`84784104-e014-4550-bb0c-095d967230b5`](2026-09-07-medallion-portal.md):
@@ -62,13 +63,13 @@ last modified at **16:29:49 UTC** and the ingestion-state pointer at **16:24:45
 UTC**, both on 7 September. Their contents could not be retrieved through this
 session's connector file-delivery route (HTTP 403). Therefore this check does
 not independently establish pointer contents or current capacity/headroom.
-Those measurements remain for the native read-only health report in H-LIVE;
+Those measurements remain for the native read-only health report in the approved run;
 old volume figures are not presented as current measurements.
 
 ## Current project record
 
 [Deliverables and owner decisions](../deliverables.md) distinguish completed
-audit/code/portal work from H-LIVE and the longer-term scope holds. The
+audit/code/portal work from pending live verification and the longer-term scope holds. The
 [architecture](../architecture.md), [workflow audit](../audits/2026-09-07-workflows.md),
 [source definitions](../nbp-business-definitions.md),
 [operating guide](../nbp-platform-operations.md) and

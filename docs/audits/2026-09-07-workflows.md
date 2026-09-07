@@ -1,6 +1,6 @@
 # GitHub Actions audit, 7 September 2026
 
-**Current exception:** the normal 02:00 UTC NBP schedule is temporarily paused under [H-LIVE](../deliverables.md). Automatic approval review rejected the first audit production publication. Restore the schedule with explicit owner approval for that live run; the inventory below records the intended normal workflow roles.
+**Approval update:** the owner explicitly approved the first audit production publication, verification and resumed ingestion on 7 September 2026. The temporary H-LIVE pause is cleared; the 02:00 UTC schedule below is restored. Actual outcomes are recorded in [the delivery record](../deliverables.md).
 
 **Scope.** This audit covers every repository-owned workflow present on remote
 `main` at `a6b4f0fa45dc7dc9eee33ca7a8aca1dab9aa4ffe`. GitHub's public Actions API

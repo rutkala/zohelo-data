@@ -2,7 +2,7 @@
 
 Use the [delivery record](deliverables.md) for current release identities and verified results. This guide describes supported operations; dated results live under `docs/releases/`.
 
-**Temporary publication hold (H-LIVE):** automatic approval review rejected the audit's live production-data write pending explicit owner approval. The 02:00 UTC schedule is paused to prevent an automatic run from performing that action first. Existing published data remains available. Restore the schedule and perform the first live audit verification together after approval; no rollback or data deletion is required.
+**Publication approval:** the owner explicitly approved the live audit release, its verification and resuming daily ingestion on 7 September 2026. The temporary H-LIVE hold is cleared and the 02:00 UTC schedule is restored. See the delivery record for actual run results; approval alone is not verification.
 
 ## Normal operation in GitHub
 
@@ -10,7 +10,7 @@ Open [Actions](https://github.com/rutkala/zohelo-data/actions). The [workflow in
 
 | Need | Workflow / choice | Effect |
 | --- | --- | --- |
-| Daily ingestion/publication | **NBP data platform**, operation `publish`, mode `incremental` | Normally scheduled at 02:00 UTC; temporarily paused under H-LIVE. Fills gaps, rechecks recent dates and rotates through history, validates and publishes. |
+| Daily ingestion/publication | **NBP data platform**, operation `publish`, mode `incremental` | Scheduled at 02:00 UTC; Fills gaps, rechecks recent dates and rotates through history, validates and publishes. |
 | Resume a historical bootstrap | Same, mode `full` | Compatibility name for the same resumable planner. It does not erase checkpoints or force a redownload. |
 | Rebuild from retained raw | Same, mode `rebuild` | No NBP request. Build and publish from saved verified responses. |
 | Prove raw recovery as well | Enable `verify_raw_replay` | A separate process rebuilds exact released inputs and compares all tables. |
