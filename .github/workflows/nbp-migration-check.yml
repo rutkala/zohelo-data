@@ -1,0 +1,46 @@
+name: Verify existing NBP history
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/check_nbp_migration.py'
+      - '.github/workflows/nbp-migration-check.yml'
+
+permissions:
+  contents: read
+
+# Wait for the publisher and its recovery checks; never interrupt a data job.
+concurrency:
+  group: zohelo-production-data
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       contains(github.event.head_commit.message, '[verify-nbp-migration]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Verify all previously published NBP keys are retained
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: >-
+          python scripts/check_nbp_migration.py
+          --baseline-release-id 1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea
+          --baseline-code-sha 474bbb61a2bb9d88266808e872f8a7613aca23d6

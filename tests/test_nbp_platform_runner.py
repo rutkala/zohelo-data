@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from business_catalog import build_business_catalog
 from ingestion.nbp_http import fetch_response
-from ingestion.nbp_state import SourceSpec, source_specs_from_config
+from ingestion.nbp_state import SourceSpec, load_state, source_specs_from_config
 from nbp_platform import build_platform, coverage_complete, ingest
 from release_protocol import publish_release, restore_current_release
 import test_nbp_platform_models as model_fixtures
@@ -43,13 +43,15 @@ class PlatformRunnerTests(unittest.TestCase):
                          "rates": [{"code": "USD", "currency": "dollar", **values}]}]
             return 200, json.dumps(body).encode(), 0
 
-        with patch("nbp_platform.DriveStateStore", return_value=store), patch("nbp_platform.fetch_response", side_effect=fetch):
+        with patch("nbp_platform.DriveStateStore", return_value=store), patch("nbp_platform.fetch_response", side_effect=fetch), patch("nbp_platform.load_state", wraps=load_state) as load:
             _, loaded, first = ingest(storage, specs=specs, cutoff=date(2020, 9, 30), mode="full", code_sha="a" * 40)
             self.assertTrue(coverage_complete(loaded.state, date(2020, 9, 30)))
             self.assertLess(first["requests"], 25)
+            self.assertEqual(load.call_count, 1)
             _, loaded, daily = ingest(storage, specs=specs, cutoff=date(2020, 10, 1), mode="incremental", code_sha="a" * 40)
             self.assertEqual(daily["requests"], 8)
             self.assertTrue(coverage_complete(loaded.state, date(2020, 10, 1)))
+            self.assertEqual(load.call_count, 2)
 
     def test_http_retry_budget_and_size_and_origin_boundary(self):
         spec = next(iter(source_specs_from_config(ROOT / "config/sources.yaml").values()))
