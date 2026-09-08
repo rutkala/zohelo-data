@@ -5,3 +5,4 @@ export * from "./lakehouseBridge";
 export * from "./sqlReferenceResolver";
 
 export * from "./releaseCatalog";
+export * from "./landingCatalog";

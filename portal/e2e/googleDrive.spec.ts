@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 test.afterEach(async ({ page }, info) => {
   if (info.status !== info.expectedStatus) {
@@ -120,7 +121,7 @@ const platformLayer = (id: string) =>
       ? "04_gold"
       : "03_silver";
 
-test("v2 release keeps gold tables queryable without a duplicate catalogue", async ({ page }) => {
+test("v2 NBP and source Landing snapshots are queryable together", async ({ page }) => {
   const releaseId = "123e4567-e89b-42d3-a456-426614174000";
   const codeSha = "a".repeat(40);
   const goldCsv = "currency_code,mid_rate\nTEST,1.23\n";
@@ -207,6 +208,60 @@ test("v2 release keeps gold tables queryable without a duplicate catalogue", asy
     manifest_sha256: sha256(manifest),
     updated_at_utc: "2026-09-06T00:01:00Z",
   });
+  const landingSnapshotId = "223e4567-e89b-42d3-a456-426614174000";
+  const landingFragmentName = "fragment-323e4567-e89b-42d3-a456-426614174000.parquet";
+  const landingParquet = readFileSync(
+    new URL("./fixtures/landing-response.parquet", import.meta.url)
+  );
+  const landingManifest = JSON.stringify({
+    format_version: 1,
+    kind: "landing_snapshot",
+    source_id: "world_bank_wdi",
+    snapshot_id: landingSnapshotId,
+    created_at_utc: "2026-09-08T12:00:00+00:00",
+    code_sha: codeSha,
+    status: "validated",
+    layer: "01_landing",
+    table_name: "world_bank_wdi_responses",
+    row_count: 1,
+    coverage_status: "incomplete",
+    files: [
+      {
+        id: "landing-parquet-id",
+        name: landingFragmentName,
+        size: landingParquet.byteLength,
+        sha256: sha256(landingParquet),
+      },
+    ],
+    columns: [
+      ["source_id", "VARCHAR"],
+      ["task_id", "VARCHAR"],
+      ["lane", "VARCHAR"],
+      ["task_kind", "VARCHAR"],
+      ["retrieved_at_utc", "TIMESTAMP"],
+      ["record_count", "BIGINT"],
+      ["raw_sha256", "VARCHAR"],
+      ["raw_size_bytes", "BIGINT"],
+      ["request_json", "VARCHAR"],
+      ["metadata_json", "VARCHAR"],
+      ["payload_utf8", "VARCHAR"],
+      ["content_type", "VARCHAR"],
+    ].map(([name, type]) => ({ name, type })),
+    accepted_response_count: 1,
+    published_response_count: 1,
+    pending_publication_count: 0,
+    receipt_checkpoint_sha256: "d".repeat(64),
+    tests: { passed: true },
+  });
+  const landingPointer = JSON.stringify({
+    format_version: 1,
+    source_id: "world_bank_wdi",
+    snapshot_id: landingSnapshotId,
+    manifest_file_id: "landing-manifest-id",
+    manifest_file_name: `manifest-${landingSnapshotId}.json`,
+    manifest_sha256: sha256(landingManifest),
+    manifest_size_bytes: Buffer.byteLength(landingManifest),
+  });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(() => {
@@ -216,14 +271,37 @@ test("v2 release keeps gold tables queryable without a duplicate catalogue", asy
     const url = new URL(route.request().url());
     const headers = { "access-control-allow-origin": "*" };
     if (url.searchParams.get("alt") === "media") {
+      if (url.pathname.endsWith("/landing-parquet-id")) {
+        await route.fulfill({
+          headers,
+          contentType: "application/octet-stream",
+          body: landingParquet,
+        });
+        return;
+      }
       const body = url.pathname.endsWith("/pointer-id")
         ? pointer
-        : url.pathname.endsWith("/business-catalogue-id")
-          ? catalogue
-          : url.pathname.endsWith("/gold-file")
-            ? goldCsv
-            : manifest;
+        : url.pathname.endsWith("/landing-pointer-id")
+          ? landingPointer
+          : url.pathname.endsWith("/landing-manifest-id")
+            ? landingManifest
+            : url.pathname.endsWith("/business-catalogue-id")
+              ? catalogue
+              : url.pathname.endsWith("/gold-file")
+                ? goldCsv
+                : manifest;
       await route.fulfill({ headers, contentType: "application/json", body });
+      return;
+    }
+    if (url.pathname.endsWith("/landing-manifest-id")) {
+      await route.fulfill({
+        headers,
+        json: {
+          id: "landing-manifest-id",
+          name: `manifest-${landingSnapshotId}.json`,
+          size: String(Buffer.byteLength(landingManifest)),
+        },
+      });
       return;
     }
     if (url.pathname.endsWith("/manifest-id")) {
@@ -240,15 +318,29 @@ test("v2 release keeps gold tables queryable without a duplicate catalogue", asy
     const query = url.searchParams.get("q") ?? "";
     const files = query.includes("name='zohelo-data'")
       ? [{ id: "fixture-root", name: "zohelo-data" }]
-      : query.includes("name='current-release.json'")
-        ? [
-            {
-              id: "pointer-id",
-              name: "current-release.json",
-              size: String(Buffer.byteLength(pointer)),
-            },
-          ]
-        : [];
+      : query.includes("name='06_control'")
+        ? [{ id: "fixture-control", name: "06_control" }]
+        : query.includes("name='source_campaigns'")
+          ? [{ id: "fixture-campaigns", name: "source_campaigns" }]
+          : query.includes("name='world_bank_wdi'")
+            ? [{ id: "fixture-wdi", name: "world_bank_wdi" }]
+            : query.includes("name='current-landing.json'")
+              ? [
+                  {
+                    id: "landing-pointer-id",
+                    name: "current-landing.json",
+                    size: String(Buffer.byteLength(landingPointer)),
+                  },
+                ]
+              : query.includes("name='current-release.json'")
+                ? [
+                    {
+                      id: "pointer-id",
+                      name: "current-release.json",
+                      size: String(Buffer.byteLength(pointer)),
+                    },
+                  ]
+                : [];
     await route.fulfill({ headers, json: { files } });
   });
 
@@ -263,20 +355,35 @@ test("v2 release keeps gold tables queryable without a duplicate catalogue", asy
   await expect(dataExplorer.getByRole("status").filter({ hasText: "nbp_platform" })).toBeVisible({
     timeout: 60000,
   });
+  await expect(dataExplorer.getByRole("link", { name: "setup guide" })).toHaveAttribute(
+    "href",
+    /docs\/source-accounts\.md$/
+  );
+  await expect(
+    dataExplorer.getByRole("link", { name: "GitHub encrypted secrets" })
+  ).toHaveAttribute("href", "https://github.com/rutkala/zohelo-data/settings/secrets/actions");
+  await expect(dataExplorer.getByText(/one accepted source response per row/i)).toBeVisible();
 
   await expect(dataExplorer.getByRole("button", { name: "Business catalogue" })).toHaveCount(0);
 
-  await dataExplorer.getByText("04_gold", { exact: true }).click();
-  await dataExplorer.getByText("fact_fx_quotes", { exact: true }).click();
-  await expect(
-    dataExplorer.getByRole("status").filter({ hasText: "Loaded 'fact_fx_quotes'" })
-  ).toBeVisible();
-  await dataExplorer.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(
-    page.getByRole("tab", { name: "04_gold/fact_fx_quotes", exact: true })
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(".monaco-editor .view-lines:visible").first()).toContainText(
-    '"04_gold"."fact_fx_quotes"'
+  const landingActions = dataExplorer.getByRole("button", {
+    name: "Actions for world_bank_wdi_responses",
+  });
+  await expect(landingActions).toBeVisible();
+  await landingActions.click();
+  await page.getByRole("menuitem", { name: "Query as SELECT" }).click();
+  const editor = page.locator(".monaco-editor .view-lines:visible").first();
+  await expect(editor).toContainText('"01_landing"."world_bank_wdi_responses"');
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText(
+    'SELECT n.currency_code, l.task_id, l.payload_utf8 FROM "04_gold"."fact_fx_quotes" n CROSS JOIN "01_landing"."world_bank_wdi_responses" l;'
   );
+  await page.getByRole("button", { name: "Run Query", exact: true }).click();
   await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
+  await expect(page.locator(":text-is('wdi-country-metadata'):visible").first()).toBeVisible();
+  await expect(page.getByText(/Poland/).first()).toBeVisible();
+  await expect(
+    page.getByRole("tab", { name: "world_bank_wdi_responses", exact: true })
+  ).toHaveAttribute("aria-selected", "true");
 });

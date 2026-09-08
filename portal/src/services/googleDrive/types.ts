@@ -79,6 +79,8 @@ export interface ReleasePointer {
 
 export type ReleaseLayer = "02_bronze" | "03_silver" | "04_gold";
 
+export type PublishedLayer = "01_landing" | ReleaseLayer;
+
 export interface ReleaseDataset {
   dataset_id: string;
   layer: ReleaseLayer;
@@ -121,6 +123,65 @@ export interface PlatformReleaseManifest extends ReleaseManifestBase {
 }
 
 export type ReleaseManifest = SilverReleaseManifest | PlatformReleaseManifest;
+
+export type LandingSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
+
+export interface LandingSnapshotPointer {
+  format_version: 1;
+  source_id: LandingSourceId;
+  snapshot_id: string;
+  manifest_file_id: string;
+  manifest_file_name: string;
+  manifest_sha256: string;
+  manifest_size_bytes: number;
+}
+
+export interface LandingSnapshotManifest {
+  format_version: 1;
+  kind: "landing_snapshot";
+  source_id: LandingSourceId;
+  snapshot_id: string;
+  created_at_utc: string;
+  code_sha: string;
+  status: "validated";
+  layer: "01_landing";
+  table_name: string;
+  row_count: number;
+  coverage_status: "incomplete";
+  files: LakehouseFile[];
+  columns: Array<{ name: string; type: string }>;
+  accepted_response_count: number;
+  published_response_count: number;
+  pending_publication_count: number;
+  receipt_checkpoint_sha256: string;
+  tests: { passed: true };
+}
+
+export interface LandingSnapshotResolution {
+  pointer: LandingSnapshotPointer;
+  manifest: LandingSnapshotManifest;
+  fingerprint: string;
+}
+
+export interface LandingCatalogIssue {
+  source_id: LandingSourceId;
+  message: string;
+}
+
+export interface LandingCatalogResolution {
+  snapshots: LandingSnapshotResolution[];
+  issues: LandingCatalogIssue[];
+  fingerprint: string;
+}
+
+/** The relation details shared by NBP releases and independent Landing snapshots. */
+export interface PublishedDataset {
+  dataset_id: string;
+  layer: PublishedLayer;
+  table_name: string;
+  columns: Array<{ name: string; type: string }>;
+  files: LakehouseFile[];
+}
 
 export interface BusinessCatalogueSource {
   provider_metadata?: Record<string, string>;

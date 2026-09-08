@@ -1,7 +1,7 @@
 /** Resolve published release relations using DuckDB's own SQL parser AST. */
 import { selectQueryForReferenceResolution } from "@/lib/createViewSql";
 import { sqlEscapeString } from "@/lib/sqlSanitize";
-import type { ReleaseDataset } from "./types";
+import type { PublishedDataset } from "./types";
 
 export interface DuckDbSqlParser {
   query(
@@ -11,8 +11,8 @@ export interface DuckDbSqlParser {
 
 export interface PublishedTableReference {
   datasetName: string;
-  layerName: ReleaseDataset["layer"];
-  files: ReleaseDataset["files"];
+  layerName: PublishedDataset["layer"];
+  files: PublishedDataset["files"];
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -49,7 +49,7 @@ const ctesFor = (node: JsonRecord): Set<string> => {
 export const resolvePublishedTableReferences = async (
   parser: DuckDbSqlParser,
   sql: string,
-  datasets: readonly ReleaseDataset[]
+  datasets: readonly PublishedDataset[]
 ): Promise<PublishedTableReference[]> => {
   const query = selectQueryForReferenceResolution(sql);
   if (!query) return [];

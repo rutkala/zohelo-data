@@ -13,6 +13,7 @@ import {
   loadTableIntoDuckDB,
   loadTablesIntoDuckDB,
   requestGoogleAccessToken,
+  resolveLandingCatalog,
   resolvePublishedTableReferences,
   resolveLayerFolderId,
   resolveReleaseCatalog,
@@ -20,6 +21,9 @@ import {
   setStoredToken,
   type LakehouseLayer,
   type LakehouseTable,
+  type LandingCatalogResolution,
+  type LandingSourceId,
+  type PublishedDataset,
   type ReleaseCatalogResolution,
 } from "@/services/googleDrive";
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
@@ -29,6 +33,30 @@ const releaseMessage = (release: Extract<ReleaseCatalogResolution, { kind: "rele
   `Release ${release.manifest.release_id} · ${release.manifest.release_scope} · ${release.manifest.status}.`;
 const releaseFingerprint = (release: ReleaseCatalogResolution | null) =>
   release?.kind === "release" ? release.fingerprint : release?.kind === "legacy" ? "legacy" : null;
+
+const landingDatasets = (landing: LandingCatalogResolution | null): PublishedDataset[] =>
+  (landing?.snapshots ?? []).map(({ manifest }) => ({
+    dataset_id: manifest.table_name,
+    layer: manifest.layer,
+    table_name: manifest.table_name,
+    columns: manifest.columns,
+    files: manifest.files,
+  }));
+
+const publishedDatasets = (
+  release: ReleaseCatalogResolution | null,
+  landing: LandingCatalogResolution | null
+): PublishedDataset[] => [
+  ...(release?.kind === "release" ? release.manifest.datasets : []),
+  ...landingDatasets(landing),
+];
+
+const landingStatus = (landing: LandingCatalogResolution) => {
+  const available = `${landing.snapshots.length} Landing source snapshot(s)`;
+  if (landing.issues.length === 0) return available;
+  const errors = landing.issues.map((issue) => `${issue.source_id}: ${issue.message}`).join("; ");
+  return `${available}. Landing metadata error — ${errors}`;
+};
 
 const handleDriveAuthFailure = (
   set: (state: Partial<DuckStoreState>) => void,
@@ -78,16 +106,19 @@ async function loadLayer(layer: LakehouseLayer, token: string): Promise<Lakehous
   return { ...layer, id, loaded: true, children };
 }
 
-function treeFromRelease(
-  release: Extract<ReleaseCatalogResolution, { kind: "release" }>
+function treeFromPublished(
+  release: Extract<ReleaseCatalogResolution, { kind: "release" }>,
+  landing: LandingCatalogResolution
 ): LakehouseLayer[] {
+  const datasets = publishedDatasets(release, landing);
   return createDefaultLakehouseTree().map((layer) => {
     return {
       ...layer,
       id: null,
-      expanded: layer.name === "03_silver",
+      expanded:
+        layer.name === "01_landing" ? landing.snapshots.length > 0 : layer.name === "03_silver",
       loaded: true,
-      children: release.manifest.datasets
+      children: datasets
         .filter((dataset) => dataset.layer === layer.name)
         .map((dataset) => ({
           type: "table" as const,
@@ -102,6 +133,32 @@ function treeFromRelease(
   });
 }
 
+function mergeLandingIntoTree(
+  tree: LakehouseLayer[],
+  landing: LandingCatalogResolution
+): LakehouseLayer[] {
+  const landingTables = landingDatasets(landing).map((dataset) => ({
+    type: "table" as const,
+    name: dataset.table_name,
+    id: null,
+    layer: dataset.layer,
+    expanded: false,
+    loaded: true,
+    children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
+  }));
+  return tree.map((layer) =>
+    layer.name === "01_landing"
+      ? {
+          ...layer,
+          id: null,
+          expanded: landingTables.length > 0 || layer.expanded,
+          loaded: true,
+          children: landingTables,
+        }
+      : layer
+  );
+}
+
 export const createGoogleDriveSlice: StateCreator<
   DuckStoreState,
   [["zustand/devtools", never]],
@@ -110,9 +167,9 @@ export const createGoogleDriveSlice: StateCreator<
 > = (set, get) => {
   let busy = false;
   // DuckDB views survive disconnect; record their release per engine, not globally.
-  const loadedCatalogFingerprints = new WeakMap<object, string>();
+  const loadedReleaseFingerprints = new WeakMap<object, string>();
+  const loadedLandingFingerprints = new WeakMap<object, Map<LandingSourceId, string>>();
   const downloadBudgets = new WeakMap<object, ReturnType<typeof createDriveDownloadBudget>>();
-  const noEngineBudget = createDriveDownloadBudget();
   const budgetForEngine = (db: object) => {
     let budget = downloadBudgets.get(db);
     if (!budget) {
@@ -122,6 +179,27 @@ export const createGoogleDriveSlice: StateCreator<
     return budget;
   };
   const tableKey = (layerName: string, tableName: string) => `${layerName}\u0000${tableName}`;
+  const markLoadedTable = (
+    db: object,
+    layerName: string,
+    tableName: string,
+    release: ReleaseCatalogResolution | null,
+    landing: LandingCatalogResolution | null
+  ) => {
+    if (layerName === "01_landing") {
+      const snapshot = landing?.snapshots.find(({ manifest }) => manifest.table_name === tableName);
+      if (!snapshot) return;
+      let fingerprints = loadedLandingFingerprints.get(db);
+      if (!fingerprints) {
+        fingerprints = new Map();
+        loadedLandingFingerprints.set(db, fingerprints);
+      }
+      fingerprints.set(snapshot.manifest.source_id, snapshot.fingerprint);
+      return;
+    }
+    const fingerprint = releaseFingerprint(release);
+    if (fingerprint) loadedReleaseFingerprints.set(db, fingerprint);
+  };
 
   const select = async (
     layerName: string,
@@ -133,6 +211,7 @@ export const createGoogleDriveSlice: StateCreator<
     const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
     const source = get().lakehouseRelease;
+    const landing = get().lakehouseLanding;
     const table = get()
       .lakehouseCatalog.find((layer) => layer.name === layerName)
       ?.children.find((item) => item.name === tableName);
@@ -142,7 +221,8 @@ export const createGoogleDriveSlice: StateCreator<
     const current = () =>
       get().currentSession === session &&
       get().googleAuth.token === token &&
-      get().lakehouseRelease === source;
+      get().lakehouseRelease === source &&
+      get().lakehouseLanding === landing;
     if (!local) {
       set({
         lakehouseStatusMessage:
@@ -182,10 +262,7 @@ export const createGoogleDriveSlice: StateCreator<
       }
       // publishViews has completed at this point. Keep this engine pinned even if the
       // caller changed token/session while the request was in flight.
-      const fingerprint = releaseFingerprint(source);
-      if (fingerprint) {
-        loadedCatalogFingerprints.set(local.db, fingerprint);
-      }
+      markLoadedTable(local.db, layerName, tableName, source, landing);
       if (!current()) return null;
       let schemaWarning = "";
       try {
@@ -227,10 +304,12 @@ export const createGoogleDriveSlice: StateCreator<
     const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
     const source = get().lakehouseRelease;
+    const landing = get().lakehouseLanding;
     const current = () =>
       get().currentSession === session &&
       get().googleAuth.token === token &&
-      get().lakehouseRelease === source;
+      get().lakehouseRelease === source &&
+      get().lakehouseLanding === landing;
     if (!local) {
       set({
         lakehouseStatusMessage:
@@ -242,7 +321,7 @@ export const createGoogleDriveSlice: StateCreator<
       set({ lakehouseStatusMessage: "Sign in to Google Drive before preparing a SQL query." });
       return null;
     }
-    if (source?.kind !== "release") {
+    if (source?.kind !== "release" && (landing?.snapshots.length ?? 0) === 0) {
       set({
         lakehouseStatusMessage:
           "Refresh the Google Drive lakehouse to pin a release before preparing a multi-table query.",
@@ -308,9 +387,8 @@ export const createGoogleDriveSlice: StateCreator<
       // Views may exist on the old engine if a session or token changed while a
       // download was pending, but never open a tab whose SQL was not prepared
       // against the still-current pinned release.
-      const fingerprint = releaseFingerprint(source);
-      if (fingerprint) {
-        loadedCatalogFingerprints.set(local.db, fingerprint);
+      for (const table of selections) {
+        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing);
       }
       if (!current()) return null;
       let schemaWarning = "";
@@ -355,13 +433,16 @@ export const createGoogleDriveSlice: StateCreator<
     const local = asLocalDuckSession(session)?.local;
     const token = get().googleAuth.token;
     const source = get().lakehouseRelease;
+    const landing = get().lakehouseLanding;
     // Remote engines, ordinary local SQL, and legacy catalogs keep their
     // existing execution path. Only a resolved immutable release participates.
-    if (!local || source?.kind !== "release") return;
+    const datasets = publishedDatasets(source, landing);
+    if (!local || datasets.length === 0) return;
     const current = () =>
       get().currentSession === session &&
       get().googleAuth.token === token &&
-      get().lakehouseRelease === source;
+      get().lakehouseRelease === source &&
+      get().lakehouseLanding === landing;
     if (busy) {
       throw new Error(
         "Google Drive is already loading data. Wait for it to finish, then run the query again."
@@ -370,17 +451,18 @@ export const createGoogleDriveSlice: StateCreator<
 
     busy = true;
     try {
-      const referenced = await resolvePublishedTableReferences(
-        local.connection,
-        sql,
-        source.manifest.datasets
-      );
+      const referenced = await resolvePublishedTableReferences(local.connection, sql, datasets);
       if (!current()) {
         throw new Error("Google Drive session changed before SQL dependencies could be resolved.");
       }
       if (referenced.length === 0) return;
-      const loadedFingerprint = loadedCatalogFingerprints.get(local.db);
-      if (loadedFingerprint && loadedFingerprint !== source.fingerprint) {
+      const loadedFingerprint = loadedReleaseFingerprints.get(local.db);
+      const selectedReleaseFingerprint = releaseFingerprint(source);
+      if (
+        loadedFingerprint &&
+        selectedReleaseFingerprint &&
+        loadedFingerprint !== selectedReleaseFingerprint
+      ) {
         throw new Error(
           "This DuckDB session has views from a different release. Start a fresh DuckDB session before querying this release."
         );
@@ -435,7 +517,9 @@ export const createGoogleDriveSlice: StateCreator<
       if (!current()) {
         throw new Error("Google Drive session changed before the query could run.");
       }
-      loadedCatalogFingerprints.set(local.db, source.fingerprint);
+      for (const table of pending) {
+        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing);
+      }
       // Refresh visible workspace relations after lazy loading; a metadata
       // refresh failure must not discard verified data already available.
       await get()
@@ -472,6 +556,7 @@ export const createGoogleDriveSlice: StateCreator<
     },
     lakehouseCatalog: createDefaultLakehouseTree(),
     lakehouseRelease: null,
+    lakehouseLanding: null,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
     activeLakehouseDataset: null,
@@ -528,6 +613,7 @@ export const createGoogleDriveSlice: StateCreator<
         googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: null },
         lakehouseCatalog: createDefaultLakehouseTree(),
         lakehouseRelease: null,
+        lakehouseLanding: null,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
         isLakehouseLoading: false,
@@ -538,6 +624,7 @@ export const createGoogleDriveSlice: StateCreator<
     refreshLakehouseCatalog: async () => {
       if (busy) return;
       const activeToken = get().googleAuth.token;
+      const activeSession = get().currentSession;
       if (!activeToken) {
         set({ lakehouseStatusMessage: "Sign in to browse Google Drive datasets." });
         return;
@@ -549,24 +636,53 @@ export const createGoogleDriveSlice: StateCreator<
       });
       try {
         // This is the only pointer resolution path. Layer toggles use the pinned result.
-        const local = asLocalDuckSession(get().currentSession)?.local;
-        const budget = local ? budgetForEngine(local.db) : noEngineBudget;
+        const local = asLocalDuckSession(activeSession)?.local;
+        const budget = local ? budgetForEngine(local.db) : createDriveDownloadBudget();
         const release = await resolveReleaseCatalog(activeToken, budget);
-        if (get().googleAuth.token !== activeToken) return;
+        const landing = await resolveLandingCatalog(activeToken, budget);
+        if (get().googleAuth.token !== activeToken || get().currentSession !== activeSession)
+          return;
         const candidateFingerprint = releaseFingerprint(release);
-        const loadedCatalogFingerprint = local
-          ? loadedCatalogFingerprints.get(local.db)
+        const loadedReleaseFingerprint = local
+          ? loadedReleaseFingerprints.get(local.db)
           : undefined;
-        if (loadedCatalogFingerprint && loadedCatalogFingerprint !== candidateFingerprint) {
+        if (loadedReleaseFingerprint && loadedReleaseFingerprint !== candidateFingerprint) {
           throw new Error(
             "A different release is available, but this DuckDB session still has loaded views. Start a fresh DuckDB session before switching releases."
           );
         }
+        // Landing sources are pinned independently of NBP. On explicit refresh,
+        // invalidate only a changed source view; its next preview/query downloads
+        // and verifies the newly selected fragments. Unchanged NBP views and
+        // registered files remain available in this engine.
+        if (local) {
+          const loadedLanding = loadedLandingFingerprints.get(local.db);
+          if (loadedLanding) {
+            for (const [sourceId, loadedFingerprint] of loadedLanding) {
+              const selected = landing.snapshots.find(
+                ({ manifest }) => manifest.source_id === sourceId
+              );
+              if (selected?.fingerprint === loadedFingerprint) continue;
+              const tableName = `${sourceId}_responses`;
+              await local.connection.query(`DROP VIEW IF EXISTS "01_landing"."${tableName}";`);
+              loadedLanding.delete(sourceId);
+              if (
+                get().activeLakehouseLayer === "01_landing" &&
+                get().activeLakehouseDataset === tableName
+              ) {
+                set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
+              }
+            }
+          }
+        }
+        if (get().googleAuth.token !== activeToken || get().currentSession !== activeSession)
+          return;
         if (release.kind === "release") {
           set({
-            lakehouseCatalog: treeFromRelease(release),
+            lakehouseCatalog: treeFromPublished(release, landing),
             lakehouseRelease: release,
-            lakehouseStatusMessage: `${releaseMessage(release)} Select a dataset to query.`,
+            lakehouseLanding: landing,
+            lakehouseStatusMessage: `${releaseMessage(release)} ${landingStatus(landing)}. Select a dataset to query.`,
           });
           return;
         }
@@ -580,13 +696,14 @@ export const createGoogleDriveSlice: StateCreator<
         }
         if (get().googleAuth.token !== activeToken) return;
         set({
-          lakehouseCatalog: tree,
+          lakehouseCatalog: mergeLandingIntoTree(tree, landing),
           lakehouseRelease: release,
-          lakehouseStatusMessage: "Legacy/unversioned catalog loaded. Select a dataset to query.",
+          lakehouseLanding: landing,
+          lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
         });
       } catch (error) {
         const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
-        if (get().googleAuth.token === activeToken) {
+        if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure
             ? "Google Drive authorization expired or was revoked. Sign in again."
             : `Catalog refresh error: ${messageOf(error)}`;
