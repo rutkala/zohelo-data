@@ -333,14 +333,22 @@ def _interpret_page(
                 f"GUS BDL response pageSize {page_size} differs from requested "
                 f"{cursor['page_size']}"
             )
-    if len(results) > page_size:
+    if len(results) > total:
+        raise ValueError("GUS BDL response contains more results than totalRecords")
+    complete_child_listing = (
+        task["kind"] == "subjects"
+        and "parent_id" in cursor
+        and len(results) == total
+        and len(results) > page_size
+    )
+    if len(results) > page_size and not complete_child_listing:
         raise ValueError("GUS BDL response contains more results than pageSize")
     links = payload.get("links")
     if links is not None and not isinstance(links, dict):
         raise ValueError("GUS BDL links must be an object when present")
 
     next_tasks: list[dict[str, Any]] = []
-    if (page + 1) * page_size < total:
+    if not complete_child_listing and (page + 1) * page_size < total:
         next_cursor = dict(cursor)
         next_cursor["page"] = page + 1
         if task["kind"] == "data_by_variable":
@@ -373,7 +381,15 @@ def _interpret_page(
             raise ValueError(f"GUS BDL {kind} results must contain objects")
         entity_id = item.get("id")
         _validate_catalog_item(kind, item)
+        if (
+            kind == "subjects"
+            and "parent_id" in cursor
+            and item.get("parentId") != cursor["parent_id"]
+        ):
+            raise ValueError("GUS BDL subject result escaped the requested parent")
         ids.append(entity_id)
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"GUS BDL {kind} page contains duplicate result identifiers")
 
     # The Polish pass owns expansion so bilingual pages do not emit duplicate
     # data campaigns. English pages still paginate and retain source labels.
@@ -455,6 +471,11 @@ def _interpret_page(
             "api_total_records": total,
             "api_page": page,
             "api_page_size": page_size,
+            "api_pagination_mode": (
+                "complete_child_list"
+                if complete_child_listing
+                else "paged"
+            ),
             "language": cursor["lang"],
             "result_ids": ids,
         },

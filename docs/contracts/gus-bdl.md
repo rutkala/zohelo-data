@@ -220,3 +220,21 @@ municipality-scoped locality tasks, so their live acceptance remains unproven. C
 metadata, missing observations and repeated representations, not unique analytical facts.
 See the [dated acceptance record](../releases/2026-09-08-source-campaigns.md) for code
 revisions, earlier rejection evidence, bounds and the separate downstream modeling gates.
+
+## Complete parent-scoped subject lists
+
+Live official response evidence on 8 September 2026 showed that
+`GET /api/v1/subjects?format=json&lang=pl&page=0&page-size=20&sort=Id&parent-id=K9`
+returned `page=0`, `pageSize=20`, `totalRecords=21` and all 21 unique children.
+Pages 1 and 2 echoed their requested page but returned the same complete child list.
+The response's declared page size therefore does not describe a sliced result for
+this parent-scoped subject route.
+
+The adapter accepts an over-page-size subject response only when it is parent-scoped,
+its result count exactly equals `totalRecords`, all identifiers are unique, and every
+result belongs to the requested parent. It records `api_pagination_mode=complete_child_list`
+and emits no redundant continuation. Returned page/pageSize checks remain strict;
+partial overfilled pages, duplicates, results beyond the total and foreign-parent
+subjects are rejected. Other catalogue and data routes retain ordinary pagination.
+
+Official request: [K9 subject children](https://bdl.stat.gov.pl/api/v1/subjects?format=json&lang=pl&page=0&page-size=20&sort=Id&parent-id=K9).
