@@ -80,7 +80,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
     'SELECT currency_code, mid_rate * 2 AS doubled_rate FROM "02_bronze"."fixture_rates";'
   );
   await expect(editor).toContainText("doubled_rate");
-  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await page.getByRole("button", { name: "Run Query", exact: true }).click();
   await expect(page.getByText("2.46", { exact: true }).first()).toBeVisible();
   const tabCount = await page.getByRole("tab").count();
 
@@ -379,7 +379,7 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
   await page.keyboard.insertText(
     'SELECT n.currency_code, l.task_id, l.payload_utf8 FROM "04_gold"."fact_fx_quotes" n CROSS JOIN "01_landing"."world_bank_wdi_responses" l;'
   );
-  await page.getByRole("button", { name: "Run Query", exact: true }).click();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
   await expect(page.locator(":text-is('wdi-country-metadata'):visible").first()).toBeVisible();
   await expect(page.getByText(/Poland/).first()).toBeVisible();
