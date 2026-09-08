@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; the first WDI/BDL/Eurostat Landing campaigns passed production collection and fresh-process replay in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540). Bounded collection is scheduled every four hours; all three histories remain incomplete. New-source Silver/Gold/semantic publication remains to be implemented.
+Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; the first WDI/BDL/Eurostat Landing campaigns passed production collection and fresh-process replay in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540). The owner subsequently required faster collection and immediate data access: [ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds consecutive collect/publish batches, thirty-minute triggers and secure free-account/key setup. Queryable Landing and portal integration are undergoing deployment and live acceptance; all three histories remain incomplete. New-source Silver/Gold/semantic publication remains separate implementation work.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -17,7 +17,7 @@ This is the single project-status and owner-question record. Research, architect
 | D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. The new detection rules ran successfully in the verified live release. |
 | D4. NBP end-to-end including semantic queries | **Done** | All 15 tables and five daily metrics are published. Fresh native queries matched gold; raw replay matched 1,329,363 rows exactly. The complete capacity inventory is below current warning thresholds. |
 | D5. One data catalogue with source and metric lineage | **Done** | Five real metric definitions and source methodology/frequency/reuse metadata are in the matching release artifacts. The native viewer passes discovery and semantic-to-physical-lineage browser checks. |
-| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat Landing collection is live on a four-hour schedule with successful recent/history intake and cold replay. Broad source expansion and new-source Silver/Gold/semantic delivery remain open. [Initial live evidence](releases/2026-09-08-source-campaigns.md). |
+| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat recent/history intake and cold replay passed. Consecutive batches, queryable Landing snapshots and BDL API-key support are undergoing deployment/acceptance under ADR 0005. Broad expansion and new-source modeled delivery remain open. [Initial live evidence](releases/2026-09-08-source-campaigns.md). |
 | D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
 | Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
@@ -49,7 +49,7 @@ connection tests and production intake, targeting all feasible scope and recover
 The owner requested stable domain/category coverage, granular FMCG/markets, media and sport,
 and discovery of additional sources for gaps. [ADR 0004](decisions/0004-autonomous-source-onboarding.md)
 records this authorization. There is no source-by-source review gate. New paid services,
-account access and unresolved consequential business definitions remain concrete future prerequisites.
+paid-account access and unresolved consequential business definitions remain concrete future prerequisites. [ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds free-account onboarding and a secure key setup path; free opportunities must be researched rather than deferred without action.
 
 ## Evidence
 
@@ -123,11 +123,19 @@ The corrected implementation passed [222 full-suite tests](https://github.com/ru
 [The dated evidence record](releases/2026-09-08-source-campaigns.md) preserves initial failures,
 repairs, run measurements and the bounded replay samples.
 
-**Next implementation sequence:** scalable sharded state and physical retained-byte accounting;
-shared geography and classification editions; dbt Bronze/Silver; domain Gold, independent source
-releases, semantics and catalogue publication; then broader source waves and whole-scope convergence.
-These remain implementation work. The scheduled collectors continue independently; no background
-AI development or full-source completion is implied by this record.
+**Agile delivery correction:** the owner rejected inaccessible Landing and four-hour gaps between
+small batches. A new immediate run of the existing workflow completed successfully, advancing
+cumulative accepted responses to WDI 21, BDL 31 and Eurostat 45.
+[ADR 0005](decisions/0005-agile-landing-and-source-access.md) implements consecutive collection
+and publication, independently verified/queryable Landing snapshots, and the
+[free-account and secure-key setup](source-accounts.md). Deployment and live portal acceptance
+are still being verified; fixture tests alone do not close this increment.
+
+**Following increments:** source-specific dbt Bronze/Silver and then Gold/semantics using only
+the references needed for each slice. Broader source waves can progress alongside those models.
+Scalable state, physical retained-byte accounting and reference editions are implemented when
+needed for the next admitted scope, with measured limits preserved. Full-scope completion
+remains open; only configured ingestion jobs continue automatically after a delivery turn.
 
 ### D7. Data-first portal and SQL experience
 

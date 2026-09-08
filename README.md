@@ -20,4 +20,4 @@ Start with [development setup](docs/development.md), then [platform operations](
 
 [Current architecture](docs/architecture.md) explains tool choices and change conditions. [Working agreement](docs/collaboration.md) explains focused chats, GitHub records and handoffs.
 
-[Source expansion plan](docs/source-expansion-plan.md) · [Domain/category taxonomy](config/domain-taxonomy.yaml) · [Source campaign operations](docs/source-campaign-operations.md) — autonomous full feasible scope, with first WDI/BDL/Eurostat Landing campaigns and explicit later modeling/publication gates.
+[Source expansion plan](docs/source-expansion-plan.md) · [Domain/category taxonomy](config/domain-taxonomy.yaml) · [Source campaign operations](docs/source-campaign-operations.md) · [Source accounts and API keys](docs/source-accounts.md) — consecutive WDI/BDL/Eurostat collection with independently queryable Landing increments; source-specific modeling follows without blocking raw data access. See the delivery record for deployment and live acceptance.

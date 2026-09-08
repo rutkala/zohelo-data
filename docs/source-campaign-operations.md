@@ -1,14 +1,23 @@
 # Source campaign operations
 
 The `Source ingestion campaigns` workflow collects exact public WDI, GUS BDL and Eurostat
-responses into Drive Landing. It does not publish new portal tables or modify NBP releases.
+responses into Drive Landing and publishes verified response tables for portal preview and SQL.
+Each source has its own Landing snapshot; the NBP release pointer remains separate.
 See the canonical [delivery record](deliverables.md) for live evidence and
 [implementation plan](source-expansion-plan.md) for the remaining programme.
 
 ## Run and pause
 
-The schedule is `17 */4 * * *` UTC: six bounded runs daily, independent of NBP's daily schedule.
-From Actions, run the workflow on `main`, choose all or one source, and optionally pause history.
+The schedule is `7,37 * * * *` UTC: a recovery/catch-up trigger every thirty minutes, independent
+of NBP's daily schedule. Each job immediately runs up to three collection/publication batches
+within a 900-second between-operation session budget. A batch remains bounded to twelve source
+requests and 240 seconds between attempts. Source calls and durable publication already in flight
+finish safely; the workflow has a 35-minute outer timeout. Quota, capacity, no-due-work and source
+failures stop consecutive collection without spinning or resetting provider history.
+
+From Actions, run the workflow on `main`, choose all or one source, choose the batch count
+(default three), and optionally pause history. `publish_only` exposes already-collected accepted
+responses without making source API requests.
 The history input also pauses reconciliation. Recent and discovery tasks remain eligible.
 Set a source's `enabled: false` in `config/source-campaigns.yaml` through a checked PR to pause it
 persistently. Disabling the workflow stops all new campaigns and retains existing evidence.
@@ -23,7 +32,7 @@ prompts or logging secret values.
 For a selected provider the job calls:
 
 ```bash
-python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --summary campaign-summary.json
+python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --cycles 3 --session-seconds 900 --summary campaign-summary.json
 ```
 
 A developer can collect a bounded public batch to an explicitly selected disposable local root:
@@ -68,8 +77,10 @@ Initial admission caps: 2,048 pending tasks, 1,000 recurring roots, 5,000 comple
 pending/root limits. Reaching a state/raw bound pauses new collection; it does not mark completion.
 Do not raise caps blindly: source-specific bulk/change discovery, a sharded completion ledger,
 reference-safe compaction and physical retained-byte accounting are required scaling milestones.
-At six runs/day the maximum is 72 source HTTP attempts/day before runtime/quota limits. This is
-an initial measured batch size, not a promise to refresh all BDL variables or Eurostat slices daily.
+The trigger frequency and consecutive batches use available provider budgets sooner. They do
+not remove anonymous/registered quotas, state/byte bounds or source latency, and do not promise
+a daily refresh for every discovered series. When a bound is reached the run reports the specific
+reason and keeps previous data available. Adding a key does not bypass storage or compute limits.
 
 Each job prints a JSON summary and writes the Actions step summary. Inspect per-lane successes,
 failed requests, pending retries, next retry, last attempt/success and cumulative bytes. Received
@@ -89,8 +100,8 @@ integration, mocked Drive recovery, quota persistence, source schemas and existi
 After collection, a fresh process restores the current state, samples at most the newest 12
 accepted receipts and revalidates one exact response per represented lane. This verifies bounded
 cold replay, not full-history replay. Live Actions evidence is separate. Further source families need concrete distribution contracts;
-new models need dbt grain/unit/status tests, raw replay, release restore and catalogue/semantic
-acceptance before they are described as published.
+new business models need dbt grain/unit/status tests, raw replay, release restore and catalogue/semantic
+acceptance. Transport-envelope Landing publication is an earlier, independently validated boundary.
 
 The WDI timeout is 90 seconds following a measured 45-second production timeout. Task IDs and
 request parameters remain unchanged; time budgets are checked between attempts and do not
@@ -111,3 +122,39 @@ The BDL contract migration retires only the two obsolete root-locality requests,
 their original tasks and reason in `plan_dispositions`. Municipality-scoped discovery replaces
 them. Superseded requests are not counted as ingested or completed. The generic migration
 guard rejects changes to quota, provider cooldowns, accepted evidence or other protected state.
+
+## Queryable Landing publication
+
+After each batch with accepted state, the publisher appends verified accepted responses to
+immutable Parquet fragments and promotes a source-specific `current-landing.json` pointer under
+`06_control/source_campaigns/<source>`. Its immutable manifest records exact accepted-receipt
+checkpoint membership, files, row counts, hashes and remaining publication backlog. Old raw
+objects, receipts and published fragments remain retained. New publication is bounded to 24
+responses and 16 MiB of raw bytes per call, with an 8 MiB limit per Parquet file and a 1 MiB
+manifest limit. A failed candidate leaves the previous validated snapshot available.
+
+The portal exposes `01_landing.world_bank_wdi_responses`, `01_landing.gus_bdl_responses`
+and `01_landing.eurostat_responses` when their published snapshots exist. One SQL row is one
+accepted HTTP response. `payload_utf8` contains the source JSON or text; `record_count` is a
+reported transport count that may include metadata, missing values and overlap. This is usable
+Landing data, with source-specific modeled observations still developed through dbt.
+
+A fresh process can verify and query published Landing without calling a source API:
+
+```bash
+python src/source_campaign.py --source gus_bdl --backend drive --allow-production-write --verify-landing
+```
+
+Run this through the serialized production workflow. Local development uses `--backend local`
+and an explicit `--local-root`. The portal still applies its 64 MiB per-engine data download
+budget; it does not silently load an unlimited archive.
+
+## API keys and free accounts
+
+Use [the source-account setup guide](source-accounts.md). Save the BDL key as the encrypted
+repository secret `GUS_BDL_API_KEY`; the next BDL collection uses `X-ClientId` only at the
+contracted BDL HTTPS origin. An absent/empty secret leaves anonymous collection enabled.
+The registered profile uses 400 requests/15 minutes, 4,000/12 hours and 40,000/7 days, below
+BDL's documented 500/5,000/50,000 registered limits. Existing quota attempts and cooldowns are
+retained when the profile changes. Credentials are not added to saved requests or receipts.
+Other registry entries distinguish prepared account setup from connected runtime adapters.

@@ -100,3 +100,17 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
   distinct from runtime receipts and new-source Landing distinct from published NBP medallion data.
 - Validate taxonomy/coverage with `python scripts/check-source-coverage.py`. Preserve independent
   provider quotas, resumability and NBP pointer boundaries; do not raise capacity caps blindly.
+
+## Agile data access and source credentials
+
+- Apply ADR 0005: start authorized collection during delivery, publish verified Landing increments
+  between consecutive batches, and make them available in the portal without waiting for the
+  entire Silver/Gold/semantic programme. One response-envelope row is not one business fact.
+- Preserve per-source Landing snapshot identity/hash checks alongside the pinned NBP release.
+  Keep published dbt business catalogue/semantic claims separate from raw response tables.
+- Research free-account benefits during onboarding and provide exact secret names/setup steps.
+  Use encrypted Actions repository secrets; never put API keys in browser configuration, Git,
+  logs or durable request descriptors. BDL authentication is a transport-only header.
+- Free account identity/email verification remains a concrete owner step when not supplied;
+  do not invent personal details or claim a key/account exists before it does. Paid service
+  subscriptions and card-backed trials require the concrete business decision.

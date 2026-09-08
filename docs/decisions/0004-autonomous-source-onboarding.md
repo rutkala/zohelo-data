@@ -1,6 +1,8 @@
 # Domain-led autonomous source onboarding
 
-Status: Accepted owner requirements and implementation decision, 8 September 2026.
+Status: Accepted owner requirements and initial implementation decision, 8 September 2026.
+The intake-only delivery boundary and account setup approach are superseded by
+[ADR 0005](0005-agile-landing-and-source-access.md).
 
 ## Decision
 

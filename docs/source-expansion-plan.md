@@ -1,6 +1,8 @@
 # Source expansion implementation plan
 
 Status: implementation sequence for the accepted worldwide and detailed-Poland scope, 8 September 2026.
+[ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds immediate consecutive collection,
+queryable Landing increments and secure free-account/key onboarding; these no longer wait for complete medallion modeling.
 
 This plan turns the 182-product research inventory into a resumable onboarding programme. It does not say that an
 inventory product covers every category assigned to it, that an untested source is connected, or that unavailable history
@@ -11,7 +13,7 @@ stable English subject IDs, analytical dimensions and classification systems liv
 The completion target is explicit disposition of every inventory ID, ingestion of every feasible admitted dataset and all
 history the selected distribution actually makes recoverable, and measured continuing collection. A restricted or paid
 source reaches `deferred-prerequisite` with a concrete access, rights, budget or credential prerequisite. Discovery never
-authorizes a purchase or account signup.
+authorizes a purchase. Free-account onboarding includes concrete identity/verification steps and secure key setup.
 
 ## Delivery rules
 
@@ -28,26 +30,30 @@ authorizes a purchase or account signup.
 6. Keep source labels and codes; add English descriptions. Store classification scheme, edition, validity and mapping
    provenance. A correspondence table does not make two codes or time series equivalent.
 7. Admit freely accessible sources autonomously when the contract, reuse evidence, connection test and operational budget
-   pass. There is no source-by-source owner review gate. Hold paid, key-gated or restricted sources until their recorded
-   prerequisites are satisfied; never sign up for or buy a service autonomously.
+   pass. There is no source-by-source owner review gate. Prepare free-account and key-gated access as part of onboarding; use the secure source-access registry
+   and request only missing identity/verification steps. Hold paid or restricted sources until their
+   concrete prerequisites are satisfied.
 
 ## Current implementation boundary
 
-The first delivered framework ends at **Landing intake and durable collection checkpoints**. It provides bounded WDI, BDL
+The initial intake-only milestone is extended by **queryable Landing response snapshots after each batch**. It provides bounded WDI, BDL
 and Eurostat adapters; separate recent, history, discovery and reconciliation work lanes; exact response retention;
 immutable receipts; per-source state snapshots; conservative quotas and capacity pauses; and a serialized production
 campaign entrypoint. A completed task means that a response was accepted and durably recorded. It does not mean that its
-records were typed, deduplicated, reconciled into a business fact or published for analysis.
+records were typed, deduplicated or reconciled into a business fact. A separate verified Landing snapshot
+can expose the exact response as a SQL row before those business transformations.
 
-This first boundary does **not** implement independent source data releases, Bronze/Silver/Gold or semantic models, dbt
-catalogue publication, cross-source marts, full operator commands, or a sharded scalable ledger. The present per-source
+Independent Landing snapshots are an early publication boundary. They do **not** implement modeled
+source releases, Bronze/Silver/Gold or semantic models, dbt catalogue publication, cross-source marts,
+full operator commands, or a sharded scalable ledger. The present per-source
 state is deliberately bounded and monolithic. Further all-source expansion must add sharding and compaction before state or
 pending-task limits are approached; raising limits is not a scaling design.
 
 Phase 2 passed bounded production acceptance in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540):
 WDI, BDL and Eurostat each accepted recent and historical responses and passed fresh-process replay.
 [The dated evidence record](releases/2026-09-08-source-campaigns.md) identifies the configured production root, code revisions,
-checkpoint counts, resource measurements, failures and repairs. Collection runs every four hours; coverage remains incomplete
+checkpoint counts, resource measurements, failures and repairs. The accepted initial run used four-hour triggers; ADR 0005 replaces them with consecutive batches and
+thirty-minute triggers. Coverage remains incomplete
 and the later modeling, publication and scaling phases are not delivered by this acceptance.
 
 The discovery baseline contains 442 assignments from the 182 inventory products and 30 assignments from seven bounded
@@ -85,9 +91,9 @@ implementation.
 | 2 | **Delivered, bounded acceptance:** first WDI, BDL and Eurostat production campaigns | Phase 1; taxonomy; source contracts | Bounded production Landing runs retain verified responses/receipts and advance only durable checkpoints; coverage remains explicitly incomplete while queues remain |
 | 3 | Sharded scalable ledger and full operator controls | Measured Phase 2 state/task growth | State shards, manifests and compaction survive interruption; operators can inspect and control work without loading or rewriting one unbounded state object |
 | 4 | Geography and classification backbones | Phase 1; source contracts | TERYT and applicable NUTS/LAU editions plus official classification structures/crosswalk evidence are retained and modeled |
-| 5 | Bronze and Silver models | Phases 2–4 | Raw replay produces typed source-grain records with keys, flags, versions and reconciliation tests |
+| 5 | Bronze and Silver models, source by source | Retained Landing and the reference slices needed for that dataset | Raw replay produces typed source-grain records with keys, flags, versions and reconciliation tests |
 | 6 | Independent source releases, Gold and semantics | Phase 5 | Validated immutable source releases, recoverable promotion, domain facts/dimensions, catalogue lineage and validated source-defined metrics |
-| 7 | High-readiness public source waves and Poland depth | Phases 3–6; measured capacity | Each admitted source passes the applicable Landing and later modeling gates; no source starves recent work or blocks another source |
+| 7 | High-readiness public source waves and Poland depth | Per-source access/contract readiness and measured capacity; modeling proceeds alongside collection | Each admitted source passes the applicable Landing and later modeling gates; no source starves recent work or blocks another source |
 | 8 | Commercial, key-gated and restricted products | Concrete business need and recorded prerequisites | Contract/budget/rights decision exists before credentials or payment; permitted fields and downstream use are enforced |
 | 9 | Whole-scope convergence | All prior phases | Every inventory ID has a current disposition; every admitted dataset reports recent and historical coverage independently |
 
@@ -136,8 +142,8 @@ Framework acceptance uses fixtures to prove:
 
 ## Phase 2 — first three production source campaigns
 
-The first production campaigns exercise three statistical access patterns. They write only Landing responses, receipts and
-collection checkpoints in this phase. Their future Bronze/Silver/Gold and semantic targets are recorded so intake retains
+The first production campaigns exercise three statistical access patterns. They retain Landing responses, receipts and
+collection checkpoints, then expose accepted payloads through independently verified Landing snapshots. Their future Bronze/Silver/Gold and semantic targets are recorded so intake retains
 the needed provenance, but those targets are not implemented by a successful campaign.
 
 | Campaign | Recent Landing milestone | Historical Landing milestone | Future Silver and Gold milestone | Future semantic/catalogue milestone |
@@ -242,7 +248,9 @@ These sources narrow two gaps but do not by themselves complete FMCG or sport co
 
 ## Phase 8 — paid, key-gated and restricted products
 
-Do not sign up for or buy a service during autonomous onboarding. Create a prerequisite record containing the source and
+Prepare free-account onboarding and secure secret names as soon as it improves feasible access; see
+[the account registry](source-accounts.md). Complete identity/verification steps with the owner where needed.
+Do not buy a service or accept a card-backed trial without the concrete business decision. Create a prerequisite record containing the source and
 dataset, required account/key/contract, price or quote if already supplied by the vendor, permitted purpose, retention,
 redistribution, field restrictions, expected history, rate limits, data residency/privacy implications, smallest useful
 test, free/public alternative and business value. Credentials enter only the supported secret store after authorization;
