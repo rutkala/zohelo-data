@@ -75,7 +75,10 @@ Each job prints a JSON summary and writes the Actions step summary. Inspect per-
 failed requests, pending retries, next retry, last attempt/success and cumulative bytes. Received
 records can include metadata, repeated representations and explicit missing observations;
 they are not a count of unique analytical facts. `coverage_status: incomplete` and
-`publication_layer: 01_landing` remain explicit. Failed requests make the job fail even when other
+`publication_layer: 01_landing` remain explicit. Run summaries retain each attempt failure even if later requests succeed. Fresh verification also
+reports the newest three retained rejection diagnostics without raw object identifiers. The
+verification step runs after partial collection failure, so retained metadata can still be
+verified; the failed collection remains a failed job. Failed requests make the job fail even when other
 requests succeeded and their durable progress is retained. A failed/no-op job is not coverage.
 
 ## Validation and next gates
@@ -88,3 +91,7 @@ accepted receipts and revalidates one exact response per represented lane. This 
 cold replay, not full-history replay. Live Actions evidence is separate. Further source families need concrete distribution contracts;
 new models need dbt grain/unit/status tests, raw replay, release restore and catalogue/semantic
 acceptance before they are described as published.
+
+The WDI timeout is 90 seconds following a measured 45-second production timeout. Task IDs and
+request parameters remain unchanged; time budgets are checked between attempts and do not
+interrupt an in-flight bounded request or checkpoint save.

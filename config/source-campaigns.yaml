@@ -20,6 +20,8 @@ defaults:
     - {seconds: 604800, requests: 6000}
 sources:
   world_bank_wdi:
+    # First exact production request timed out at 45s; preserve request identity and bound a 90s retry.
+    http_timeout_seconds: 90
     adapter: ingestion.sources.world_bank
     research_id: GL-005
     timezone: UTC

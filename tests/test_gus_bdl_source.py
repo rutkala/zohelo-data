@@ -117,6 +117,8 @@ class GusBdlSourceTests(unittest.TestCase):
             self.assertEqual(recent["recurrence_key"], f"variable:{variable_id}")
         page_one = task_of(result["next_tasks"], "variables", page=1, lang="pl")
         self.assertIn(":p000001", page_one["id"])
+        self.assertNotIn("root", page_one["cursor"])
+        self.assertEqual(gus_bdl.request_for(page_one)["params"]["page"], 1)
 
     def test_english_variable_catalogue_only_paginates_to_avoid_duplicate_campaigns(self):
         root = task_of(gus_bdl.initial_tasks(TODAY), "variables", lang="en")

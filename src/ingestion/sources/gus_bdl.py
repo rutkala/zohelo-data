@@ -252,7 +252,7 @@ def _interpret_page(
     if page != cursor["page"]:
         raise ValueError("GUS BDL response page does not match the task cursor")
     if page_size != cursor["page_size"]:
-        raise ValueError("GUS BDL response pageSize does not match the task cursor")
+        raise ValueError(f"GUS BDL response pageSize {page_size} differs from requested {cursor['page_size']}")
     if len(results) > page_size:
         raise ValueError("GUS BDL response contains more results than pageSize")
     links = payload.get("links")
@@ -263,7 +263,8 @@ def _interpret_page(
     if (page + 1) * page_size < total:
         next_cursor = dict(cursor)
         next_cursor["page"] = page + 1
-        next_cursor["root"] = False if task["kind"] == "data_by_variable" else next_cursor.get("root")
+        if task["kind"] == "data_by_variable":
+            next_cursor["root"] = False
         next_tasks.append(_task(task["lane"], task["kind"], next_cursor))
 
     kind = task["kind"]
@@ -371,11 +372,11 @@ def _validate_data_page(
 ) -> int:
     variable_id = payload.get("variableId")
     if not _is_int(variable_id) or variable_id != task["cursor"]["variable_id"]:
-        raise ValueError("GUS BDL data variableId does not match the task cursor")
+        raise ValueError(f"GUS BDL data variableId {variable_id!r} differs from requested {task['cursor']['variable_id']}")
     for optional_integer in ("measureUnitId", "aggregateId"):
         value = payload.get(optional_integer)
         if value is not None and (not _is_int(value) or value < 0):
-            raise ValueError(f"GUS BDL data {optional_integer} must be a non-negative integer")
+            raise ValueError(f"GUS BDL data {optional_integer} must be a non-negative integer; received {value!r}")
     last_update = payload.get("lastUpdate")
     if last_update is not None and not isinstance(last_update, str):
         raise ValueError("GUS BDL data lastUpdate must be a string or null")
@@ -399,7 +400,7 @@ def _validate_data_page(
                 raise ValueError("GUS BDL observation year must be a string or integer")
             attr_id = observation.get("attrId")
             if attr_id is not None and (not _is_int(attr_id) or attr_id < 0):
-                raise ValueError("GUS BDL observation attrId must be a non-negative integer or null")
+                raise ValueError(f"GUS BDL observation attrId must be a non-negative integer or null; received {attr_id!r}")
             # Live compact JSON uses ``val``; the published OpenAPI schema says
             # ``value``. Accept either spelling and leave the exact body intact.
             has_val = "val" in observation
@@ -408,10 +409,10 @@ def _validate_data_page(
                 raise ValueError("GUS BDL observation must contain exactly one of val or value")
             numeric_value = observation["val"] if has_val else observation["value"]
             if not isinstance(numeric_value, (int, float)) or isinstance(numeric_value, bool):
-                raise ValueError("GUS BDL observation value must be numeric")
+                raise ValueError(f"GUS BDL observation value must be numeric; received type {type(numeric_value).__name__}")
             precision = observation.get("precision")
             if precision is not None and (not _is_int(precision) or precision < 0):
-                raise ValueError("GUS BDL observation precision must be a non-negative integer")
+                raise ValueError(f"GUS BDL observation precision must be a non-negative integer; received {precision!r}")
             key = (variable_id, unit_id, str(year), attr_id)
             if key in seen:
                 raise ValueError("GUS BDL data page contains a duplicate observation grain")

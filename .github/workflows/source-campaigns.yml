@@ -93,7 +93,7 @@ jobs:
           fi
           python src/source_campaign.py "${args[@]}"
       - name: Restore accepted evidence in a fresh process
-        if: github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source
+        if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source) }}
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}

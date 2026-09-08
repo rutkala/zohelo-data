@@ -105,6 +105,12 @@ def main():
         state = store.load()
         if not state or not state.get("receipts"):
             raise RuntimeError("No accepted campaign receipt is available to verify")
+        rejected = []
+        for descriptor in state.get("rejected_receipts", [])[-3:]:
+            receipt = store.read_receipt(descriptor)
+            rejected.append({key: receipt.get(key) for key in
+                             ("task_id", "http_status", "error_type", "detail", "failed_at_utc")})
+        print(json.dumps({"source_id": args.source, "recent_rejections": rejected}), flush=True)
         lanes = {}
         # Select the newest accepted receipt per lane from the verified state. Reading
         # receipt metadata is bounded to the newest 12 receipts. Only one raw
