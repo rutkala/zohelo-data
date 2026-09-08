@@ -20,6 +20,14 @@ Total accepted tasks, recurring roots and retained raw bytes no longer have star
 ceilings. Provider quotas, finite historical queue backpressure, object size bounds
 and actual Drive/runner capacity checks remain operational controls.
 
+State shards are bounded at 2 MiB. The writer recomputes their hash-prefix layout on
+a changed save, compacting an earlier dense set of small shards while retaining every
+old immutable object. This avoids hundreds of 40–50 KiB Drive operations when a full
+catalogue only slightly exceeds the previous 512 KiB split threshold. State manifests
+remain bounded at 1 MiB. Roll out through the serialized provider jobs: binaries with
+the old 512 KiB read bound cannot read newly written larger shards. A rollback must
+retain the 2 MiB reader bound; never delete current state to run an older binary.
+
 WDI/Eurostat retain the 60 requests/15 minutes operator fair-use window, serialized
 requests and provider Retry-After. The former 600/12 hours and 6,000/week starter
 budgets were not documented provider quotas and no longer halt their bulk backfills.

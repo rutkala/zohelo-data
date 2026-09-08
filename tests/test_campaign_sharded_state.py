@@ -302,6 +302,46 @@ class ShardedCampaignStateTests(unittest.TestCase):
         self.assertTrue(all(len(key) > 1 for key in keys))
         self.assertEqual(self._store().load()["pending"], colliding)
 
+    def test_legacy_512k_fanout_recompacts_under_two_mib_without_losing_old_objects(self):
+        state = self._state()
+        # This mirrors the live inventory shape: the whole collection is over
+        # 8 MiB, each one-nibble bucket is just over 512 KiB, and the legacy
+        # radix split therefore fans out to hundreds of small two-nibble files.
+        state["pending"] = [
+            task(index, payload="x" * 900) for index in range(9000)
+        ]
+        with patch.object(campaign_store, "MAX_STATE_SHARD_BYTES", 512 * 1024):
+            self._store().save(state)
+        _, legacy_pointer = self._pointer()
+        legacy_manifest = json.loads(
+            (self.root / legacy_pointer["manifest_file_id"]).read_bytes()
+        )
+        legacy_descriptors = legacy_manifest["collections"]["pending"]
+        self.assertGreater(len(legacy_descriptors), 16)
+        legacy_names = {item["name"] for item in legacy_descriptors}
+
+        # A fresh upgraded worker reads every old v2 shard. A routine runtime
+        # checkpoint makes the next state distinct and deterministically
+        # replans the collection rather than preserving legacy leaf prefixes.
+        upgraded = self._store()
+        loaded = upgraded.load()
+        loaded["quota_attempts"].append(300.0)
+        upgraded.save(loaded)
+        _, upgraded_pointer = self._pointer()
+        upgraded_manifest = json.loads(
+            (self.root / upgraded_pointer["manifest_file_id"]).read_bytes()
+        )
+        upgraded_descriptors = upgraded_manifest["collections"]["pending"]
+        self.assertEqual(len(upgraded_descriptors), 16)
+        self.assertTrue(all(
+            item["size_bytes"] <= 2 * 1024 * 1024
+            for item in upgraded_descriptors
+        ))
+
+        states_root = self.root / "06_control/source_campaigns/fixture/states"
+        self.assertTrue(legacy_names.issubset({path.name for path in states_root.iterdir()}))
+        self.assertEqual(self._store().load(), loaded)
+
     def test_sharded_collections_can_exceed_the_legacy_four_mib_snapshot(self):
         state = self._state()
         state["pending"] = [task(index, payload="x" * 1100) for index in range(4000)]

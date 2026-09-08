@@ -19,7 +19,7 @@ from uuid import uuid4
 
 MAX_STATE_BYTES = 4 * 1024 * 1024
 MAX_STATE_MANIFEST_BYTES = 1024 * 1024
-MAX_STATE_SHARD_BYTES = 512 * 1024
+MAX_STATE_SHARD_BYTES = 2 * 1024 * 1024
 MAX_STATE_SHARDS = 4096
 RECEIPT_SEGMENT_ITEMS = 128
 # Cycle/corruption protection for linked receipt logs.  This is far beyond the
