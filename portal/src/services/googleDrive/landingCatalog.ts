@@ -18,7 +18,13 @@ import type {
   LakehouseFile,
 } from "./types";
 
-export const LANDING_SOURCE_IDS = ["world_bank_wdi", "gus_bdl", "eurostat"] as const;
+export const LANDING_SOURCE_IDS = [
+  "world_bank_wdi",
+  "gus_bdl",
+  "eurostat",
+  "world_bank_wdi_bulk",
+  "eurostat_bulk",
+] as const;
 
 const LANDING_COLUMNS = [
   ["source_id", "VARCHAR"],
@@ -33,6 +39,20 @@ const LANDING_COLUMNS = [
   ["metadata_json", "VARCHAR"],
   ["payload_utf8", "VARCHAR"],
   ["content_type", "VARCHAR"],
+] as const;
+
+const BULK_INDEX_COLUMNS = [
+  ["dataset_id", "VARCHAR"],
+  ["source_id", "VARCHAR"],
+  ["version", "VARCHAR"],
+  ["kind", "VARCHAR"],
+  ["retrieved_at_utc", "TIMESTAMP"],
+  ["raw_file_id", "VARCHAR"],
+  ["raw_file_name", "VARCHAR"],
+  ["raw_size_bytes", "BIGINT"],
+  ["raw_sha256", "VARCHAR"],
+  ["request_json", "VARCHAR"],
+  ["inspection_json", "VARCHAR"],
 ] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -52,7 +72,7 @@ const POINTER_FIELDS = new Set([
   "manifest_sha256",
   "manifest_size_bytes",
 ]);
-const MANIFEST_FIELDS = new Set([
+const LANDING_MANIFEST_FIELDS = new Set([
   "format_version",
   "kind",
   "source_id",
@@ -72,6 +92,35 @@ const MANIFEST_FIELDS = new Set([
   "receipt_checkpoint_sha256",
   "tests",
 ]);
+const BULK_MANIFEST_FIELDS = new Set([
+  "format_version",
+  "kind",
+  "source_id",
+  "snapshot_id",
+  "created_at_utc",
+  "code_sha",
+  "status",
+  "layer",
+  "table_name",
+  "row_count",
+  "coverage_status",
+  "files",
+  "columns",
+  "accepted_distribution_count",
+  "published_distribution_count",
+  "pending_publication_count",
+  "receipt_checkpoint_sha256",
+  "tests",
+]);
+
+const isBulkSource = (
+  sourceId: LandingSourceId
+): sourceId is "world_bank_wdi_bulk" | "eurostat_bulk" => sourceId.endsWith("_bulk");
+
+const tableNameForSource = (sourceId: LandingSourceId): string =>
+  isBulkSource(sourceId)
+    ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
+    : `${sourceId}_responses`;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -211,11 +260,13 @@ function parseManifest(
   pointer: LandingSnapshotPointer
 ): LandingSnapshotManifest {
   const raw = decodeJson(bytes, `${pointer.source_id} Landing manifest`);
+  const bulk = isBulkSource(pointer.source_id);
+  const expectedFields = bulk ? BULK_MANIFEST_FIELDS : LANDING_MANIFEST_FIELDS;
   if (
     !isRecord(raw) ||
-    !hasExactFields(raw, MANIFEST_FIELDS) ||
-    raw.format_version !== 1 ||
-    raw.kind !== "landing_snapshot" ||
+    !hasExactFields(raw, expectedFields) ||
+    raw.format_version !== (bulk ? 2 : 1) ||
+    raw.kind !== (bulk ? "full_distribution_index" : "landing_snapshot") ||
     raw.source_id !== pointer.source_id ||
     raw.snapshot_id !== pointer.snapshot_id
   ) {
@@ -224,11 +275,16 @@ function parseManifest(
   if (raw.status !== "validated" || raw.layer !== "01_landing") {
     throw new Error("Landing manifest is not a validated 01_landing snapshot.");
   }
-  const expectedTableName = `${pointer.source_id}_responses`;
+  const expectedTableName = tableNameForSource(pointer.source_id);
   if (raw.table_name !== expectedTableName) {
     throw new Error("Landing manifest has an invalid table_name.");
   }
-  if (raw.coverage_status !== "incomplete") {
+  if (
+    (!bulk && raw.coverage_status !== "incomplete") ||
+    (bulk &&
+      raw.coverage_status !== "incomplete" &&
+      raw.coverage_status !== "complete_current_catalogue")
+  ) {
     throw new Error("Landing manifest must identify its coverage as incomplete.");
   }
   const codeSha = requiredString(raw.code_sha, "code_sha");
@@ -236,16 +292,17 @@ function parseManifest(
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
     throw new Error("Landing snapshot does not have passing tests.");
   }
-  if (!Array.isArray(raw.columns) || raw.columns.length !== LANDING_COLUMNS.length) {
-    throw new Error("Landing manifest has invalid transport columns.");
+  const expectedColumns = bulk ? BULK_INDEX_COLUMNS : LANDING_COLUMNS;
+  if (!Array.isArray(raw.columns) || raw.columns.length !== expectedColumns.length) {
+    throw new Error("Landing manifest has invalid published columns.");
   }
   const columns = raw.columns.map((column, index) => {
     if (!isRecord(column) || !hasExactFields(column, new Set(["name", "type"]))) {
-      throw new Error("Landing manifest has invalid transport columns.");
+      throw new Error("Landing manifest has invalid published columns.");
     }
-    const [expectedName, expectedType] = LANDING_COLUMNS[index];
+    const [expectedName, expectedType] = expectedColumns[index];
     if (column.name !== expectedName || column.type !== expectedType) {
-      throw new Error("Landing manifest has invalid transport columns.");
+      throw new Error("Landing manifest has invalid published columns.");
     }
     return { name: expectedName, type: expectedType };
   });
@@ -257,34 +314,51 @@ function parseManifest(
     throw new Error("Landing manifest reuses a file ID.");
   }
   const rowCount = requiredInteger(raw.row_count, "row_count", false);
-  const accepted = requiredInteger(raw.accepted_response_count, "accepted_response_count");
-  const published = requiredInteger(raw.published_response_count, "published_response_count");
+  const acceptedField = bulk ? "accepted_distribution_count" : "accepted_response_count";
+  const publishedField = bulk ? "published_distribution_count" : "published_response_count";
+  const accepted = requiredInteger(raw[acceptedField], acceptedField);
+  const published = requiredInteger(raw[publishedField], publishedField);
   const pending = requiredInteger(raw.pending_publication_count, "pending_publication_count");
   if (published !== rowCount || accepted !== published + pending) {
-    throw new Error("Landing manifest response counts are inconsistent.");
+    throw new Error("Landing manifest publication counts are inconsistent.");
   }
-  return {
-    format_version: 1,
-    kind: "landing_snapshot",
+  const common = {
     source_id: pointer.source_id,
     snapshot_id: pointer.snapshot_id,
     created_at_utc: requiredTimestamp(raw.created_at_utc, "created_at_utc"),
     code_sha: codeSha,
-    status: "validated",
-    layer: "01_landing",
+    status: "validated" as const,
+    layer: "01_landing" as const,
     table_name: expectedTableName,
     row_count: rowCount,
-    coverage_status: "incomplete",
     files,
     columns,
-    accepted_response_count: accepted,
-    published_response_count: published,
     pending_publication_count: pending,
     receipt_checkpoint_sha256: requiredSha256(
       raw.receipt_checkpoint_sha256,
       "receipt_checkpoint_sha256"
     ),
-    tests: { passed: true },
+    tests: { passed: true as const },
+  };
+  if (bulk) {
+    return {
+      ...common,
+      format_version: 2,
+      kind: "full_distribution_index",
+      source_id: pointer.source_id as "world_bank_wdi_bulk" | "eurostat_bulk",
+      coverage_status: raw.coverage_status as "incomplete" | "complete_current_catalogue",
+      accepted_distribution_count: accepted,
+      published_distribution_count: published,
+    };
+  }
+  return {
+    ...common,
+    format_version: 1,
+    kind: "landing_snapshot",
+    source_id: pointer.source_id as "world_bank_wdi" | "gus_bdl" | "eurostat",
+    coverage_status: "incomplete",
+    accepted_response_count: accepted,
+    published_response_count: published,
   };
 }
 

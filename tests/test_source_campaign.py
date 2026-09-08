@@ -134,6 +134,33 @@ def ok_fetch(body=b'{"ok":true}', headers=None):
 
 
 class CampaignSchedulingTests(unittest.TestCase):
+    def test_completed_work_and_recurring_roots_do_not_close_full_discovery(self):
+        state = campaign.new_state("example", TODAY)
+        state["completed"] = {f"old-{i}": "accepted" for i in range(5001)}
+        state["recent_roots"] = {f"root-{i}": {} for i in range(1001)}
+        state["pending"] = [task(f"recent-{i}") for i in range(601)] + [task("catalogue", "discovery")]
+        state["lane_position"] = 4
+        configured = settings(max_pending_tasks=None, max_recent_roots=None, max_completed_tasks=None,
+                              max_retained_raw_bytes=None, discovery_pause_threshold=600)
+        selected = campaign.choose_task(state, configured, 1000)
+        self.assertEqual(selected["id"], "catalogue")
+
+    def test_unchanged_preparation_does_not_write_another_state_snapshot(self):
+        store = MemoryStore()
+        adapter = Adapter([task("history", "history")])
+        campaign.prepare_state(store, adapter, TODAY, settings())
+        self.assertEqual(store.saves, 1)
+        campaign.prepare_state(store, adapter, TODAY, settings())
+        self.assertEqual(store.saves, 1)
+
+    def test_finite_history_backlog_temporarily_backpressures_discovery(self):
+        state = campaign.new_state("example", TODAY)
+        state["pending"] = [task("h1", "history"), task("h2", "history"), task("catalogue", "discovery")]
+        state["lane_position"] = 4
+        self.assertEqual(campaign.choose_task(state, settings(discovery_pause_threshold=2), 1000)["lane"], "history")
+        state["pending"] = [task("catalogue", "discovery")]
+        self.assertEqual(campaign.choose_task(state, settings(discovery_pause_threshold=2), 1000)["id"], "catalogue")
+
     def test_recent_and_history_keep_allocations_under_full_backlog(self):
         initial = []
         for index in range(4):
@@ -414,6 +441,14 @@ class CampaignDurabilityTests(unittest.TestCase):
         self.assertEqual(state["quota_attempts"], [800, 920, 950, 999])
         self.assertEqual(campaign.quota_wait(state, configured, 1_100), 0)
         self.assertEqual(state["quota_attempts"], [920, 950, 999])
+
+    def test_shorter_operator_window_retains_configured_quota_history(self):
+        state = campaign.new_state("example", TODAY)
+        state["quota_attempts"] = [100, 950, 999]
+        configured = settings(quota_windows=[{"seconds": 60, "requests": 3}],
+                              quota_history_seconds=1000)
+        self.assertEqual(campaign.quota_wait(state, configured, 1000), 0)
+        self.assertEqual(state["quota_attempts"], [100, 950, 999])
 
     def test_invalid_200_retains_exact_bytes_without_advancing_task(self):
         body = b'{"valid_json":false,"source_contract":"wrong"}'

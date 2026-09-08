@@ -102,6 +102,20 @@ these snapshots alongside the NBP release and queries raw payloads before full m
 These are transport rows, not source observation facts. New-source dbt models, modeled source
 releases, compatible cross-source modeled-release pinning and semantic/catalogue integration remain
 subsequent source-specific increments. Encrypted Actions secrets provide source credentials;
-BDL enables its registered quota profile without putting a key in requests/receipts or the browser. Initial bounded state is a first
-admission envelope; full-catalogue scale requires measured sharding, bulk/change discovery,
-physical storage accounting and reference-safe compaction before the configured limits bind.
+BDL enables its registered quota profile without putting a key in requests/receipts or the browser.
+
+[ADR 0006](decisions/0006-complete-selected-source-coverage.md) replaces starter coverage
+ceilings with complete official distributions and exhaustive API paging. Campaign state v2
+uses immutable, adaptively split task/map shards and linked receipt segments; the existing
+pointer changes only after candidate verification. A verified in-process materialization
+can be reused after checking the current pointer, while fresh workers verify every shard.
+The runner still materializes a dictionary in native memory; this is an operating constraint
+to measure, not a promise of unlimited scale.
+
+WDI and Eurostat bulk collection shares the provider's quota ledger and serialized job with
+its recent API requests. Exact archives are streamed to disposable disk, uploaded as immutable
+Drive objects, and verified by streamed remote hashes. Their portal distribution indexes
+contain metadata and raw-file references, so archive size does not force browser downloads.
+The indexes do not replace source-specific Bronze/Silver models or establish semantic coverage.
+The repository's delivery record distinguishes implementation, successful collection and
+validated catalogue completeness. Retention and reference-safe compaction remain separate work.

@@ -6,6 +6,7 @@ business transformations. All network attempts are reserved durably before execu
 from copy import deepcopy
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from hashlib import sha256
 import json
 import math
 import time
@@ -30,6 +31,14 @@ class CapacityPause(CampaignError):
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+
+
+def state_digest(value):
+    digest = sha256()
+    encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+    for piece in encoder.iterencode(value):
+        digest.update(piece.encode("utf-8"))
+    return digest.digest()
 
 
 def validate_task(task):
@@ -76,14 +85,15 @@ def add_tasks(state, tasks, adapter, today, settings):
         if task["id"] not in existing:
             state["pending"].append(task)
             existing.add(task["id"])
-    if len(state["pending"]) > settings["max_pending_tasks"]:
+    if settings.get("max_pending_tasks") is not None and len(state["pending"]) > settings["max_pending_tasks"]:
         raise CapacityPause("Pending task capacity reached; discovery must wait for admitted work")
-    if len(state["recent_roots"]) > settings["max_recent_roots"]:
+    if settings.get("max_recent_roots") is not None and len(state["recent_roots"]) > settings["max_recent_roots"]:
         raise CapacityPause("Recent-series capacity requires sharding/change-feed design before expansion")
 
 
 def prepare_state(store, adapter, today, settings):
-    state = store.load()
+    state = getattr(store, "load_cached", store.load)()
+    original = state_digest(state) if state is not None else None
     if state is None:
         state = new_state(adapter.SOURCE_ID, today)
         add_tasks(state, adapter.initial_tasks(today), adapter, today, settings)
@@ -105,26 +115,29 @@ def prepare_state(store, adapter, today, settings):
     # Pending earlier generations finish before a new generation is enqueued.
     busy = {t.get("recurrence_key") for t in state["pending"] if t["lane"] == "recent"}
     templates = list(state["recent_roots"].items())
+    refreshes = []
     for key, template in templates:
         if key not in busy:
             refreshed = adapter.refresh_task(template, today)
             if refreshed is not None:
-                add_tasks(state, [refreshed], adapter, today, settings)
+                refreshes.append(refreshed)
     seeds = [task for task in adapter.recent_tasks(today) if task.get("recurrence_key") not in busy]
-    add_tasks(state, seeds, adapter, today, settings)
-    store.save(state)
+    add_tasks(state, [*refreshes, *seeds], adapter, today, settings)
+    if original is None or state_digest(state) != original:
+        store.save(state)
     return state
 
 
 def choose_task(state, settings, now, *, history_enabled=True):
+    historical_backlog = sum(t["lane"] in {"history", "reconcile"} for t in state["pending"])
     for offset in range(len(LANE_CYCLE)):
         slot = (state["lane_position"] + offset) % len(LANE_CYCLE)
         lane = LANE_CYCLE[slot]
         if lane in {"history", "reconcile"} and not history_enabled:
             continue
-        # Discovery is backpressured, while admitted history and recent work continue.
-        if lane == "discovery" and (len(state["pending"]) >= settings["discovery_pause_threshold"]
-                                     or len(state["recent_roots"]) >= settings["max_recent_roots"] - 100):
+        # Only finite historical work applies backpressure. Recurring series and
+        # completed history cannot permanently close catalogue admission.
+        if lane == "discovery" and historical_backlog >= settings["discovery_pause_threshold"]:
             continue
         for task in state["pending"]:
             if task["lane"] == lane and task.get("retry_at", 0) <= now:
@@ -135,7 +148,7 @@ def choose_task(state, settings, now, *, history_enabled=True):
 
 def quota_wait(state, settings, now):
     windows = settings["quota_windows"]
-    longest = max(w["seconds"] for w in windows)
+    longest = max(settings.get("quota_history_seconds", 0), max(w["seconds"] for w in windows))
     state["quota_attempts"] = [t for t in state["quota_attempts"] if t > now - longest]
     waits = []
     for window in windows:
@@ -213,10 +226,11 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
             run["reason"] = "provider_retry_after"
             run["retry_after_seconds"] = round(state["provider_retry_at"] - now, 1)
             break
-        if len(state["completed"]) >= settings["max_completed_tasks"]:
+        if settings.get("max_completed_tasks") is not None and len(state["completed"]) >= settings["max_completed_tasks"]:
             run["reason"] = "state_capacity_pause"
             break
-        if state["raw_bytes"] + settings["max_response_bytes"] > settings["max_retained_raw_bytes"]:
+        if (settings.get("max_retained_raw_bytes") is not None
+                and state["raw_bytes"] + settings["max_response_bytes"] > settings["max_retained_raw_bytes"]):
             run["reason"] = "storage_capacity_pause"
             break
         task = choose_task(state, settings, now, history_enabled=history_enabled)

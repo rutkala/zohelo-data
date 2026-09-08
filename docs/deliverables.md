@@ -55,6 +55,15 @@ paid-account access and unresolved consequential business definitions remain con
 
 ## Evidence
 
+**Complete-source correction in progress, 8 September:** the owner rejected the partial
+production scope. Inspection found permanent WDI/BDL discovery ceilings, Eurostat's three
+filtered starter datasets, repeated whole-state writes and Drive user-rate-limit failures.
+[ADR 0006](decisions/0006-complete-selected-source-coverage.md) records full selected-product
+acceptance. The correction adds full official WDI/Eurostat distributions, state sharding,
+streamed raw verification and queryable distribution indexes, while preserving BDL's
+quota-bound exhaustive pagination. Implementation tests, reviewed merge and live coverage
+will be recorded here after they succeed. This entry is not a claim of full production coverage.
+
 Agile source delivery, 8 September: [PR 77](https://github.com/rutkala/zohelo-data/pull/77) merged after [252 data tests](https://github.com/rutkala/zohelo-data/actions/runs/34221334104). An immediate earlier batch added 29 responses; the improved [production run](https://github.com/rutkala/zohelo-data/actions/runs/34221713083) then added 81 through three collect/publish cycles per source, leaving 178 accepted responses fully published and freshly verified. Half-hour triggers continue resumable collection. [PR 78](https://github.com/rutkala/zohelo-data/pull/78) passed two production builds, 685 unit tests and 14 browser flows per base path in [CI 34223422928](https://github.com/rutkala/zohelo-data/actions/runs/34223422928); [deployment 34223857331](https://github.com/rutkala/zohelo-data/actions/runs/34223857331) succeeded at `40844c3bd30aa84a3cec7b4e6fdb5a5995c05975`. Production data was verified through fresh Actions processes and portal SQL through browser fixtures; the cloud browser had no owner Drive session for an authenticated live data query. [Detailed snapshot evidence](releases/2026-09-08-agile-landing.md) separates response rows from facts, pending collection from pending publication, and registered support from an acquired key.
 
 Audit acceptance release: `96b14b78-dc36-4422-952c-5fb3af726ac8`, producer [`8f29a0b`](https://github.com/rutkala/zohelo-data/commit/8f29a0b98876f6ae6b161aae3ec5be5cbeb247cb). [Successful publication, fresh metrics, raw replay and health run](https://github.com/rutkala/zohelo-data/actions/runs/34167068188). It contains 15 tables and 429,795 cleaned observations. Previous releases remain retained.

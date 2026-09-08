@@ -297,9 +297,10 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
 
       {(lakehouseLanding?.snapshots.length ?? 0) > 0 && (
         <div className="px-3 py-1 text-[11px] text-muted-foreground border-b">
-          Landing tables contain one accepted source response per row. Inspect{" "}
+          Response tables contain one accepted source reply per row. Inspect{" "}
           <code className="font-mono text-[10px]">payload_utf8</code> for the original source JSON
-          or text.
+          or text. Distribution tables list downloaded archives, their versions, sizes and Drive
+          file IDs.
         </div>
       )}
 

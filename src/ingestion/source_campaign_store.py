@@ -7,6 +7,7 @@ own control directory.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
 import json
@@ -17,6 +18,13 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 MAX_STATE_BYTES = 4 * 1024 * 1024
+MAX_STATE_MANIFEST_BYTES = 1024 * 1024
+MAX_STATE_SHARD_BYTES = 512 * 1024
+MAX_STATE_SHARDS = 4096
+RECEIPT_SEGMENT_ITEMS = 128
+# Cycle/corruption protection for linked receipt logs.  This is far beyond the
+# current campaign scale and does not make the manifest grow with log lifetime.
+MAX_RECEIPT_CHAIN_SEGMENTS = 1_000_000
 MAX_RAW_BYTES = 8 * 1024 * 1024
 MAX_RECEIPT_BYTES = MAX_STATE_BYTES
 MAX_POINTER_BYTES = 16 * 1024
@@ -28,12 +36,32 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _STATE_FILE_RE = re.compile(
     r"^state-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$"
 )
+_STATE_OBJECT_RE = re.compile(
+    r"^state-(manifest|pending|completed|recent-roots|receipts|rejected-receipts)-"
+    r"([a-z0-9]+-)?[0-9a-f]{64}\.json$"
+)
 _POINTER_NAME = "current-ingestion-state.json"
 _LANDING_POINTER_NAME = "current-landing.json"
 _LANDING_OBJECT_RE = re.compile(
     r"^(?:fragment|manifest)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12}\.(?:parquet|json)$"
 )
+
+_SHARDED_FIELDS = (
+    "pending",
+    "completed",
+    "recent_roots",
+    "receipts",
+    "rejected_receipts",
+)
+_MAP_FIELDS = {"completed", "recent_roots"}
+_SHARD_KIND = {
+    "pending": "pending",
+    "completed": "completed",
+    "recent_roots": "recent-roots",
+    "receipts": "receipts",
+    "rejected_receipts": "rejected-receipts",
+}
 
 
 class CampaignStoreError(RuntimeError):
@@ -86,15 +114,28 @@ class _CampaignStore:
         source_id: str,
         control_root_id: str,
         responses_root_id: str,
+        *,
+        max_materialized_bytes: int | None = None,
     ) -> None:
         self._store = store
         self.source_id = _require_source_id(source_id)
         self._control_root_id = _require_object_id(control_root_id, "control root id")
         self._responses_root_id = _require_object_id(responses_root_id, "responses root id")
+        if max_materialized_bytes is not None and (
+            isinstance(max_materialized_bytes, bool)
+            or not isinstance(max_materialized_bytes, int)
+            or max_materialized_bytes < 1
+        ):
+            raise CampaignStoreError("materialized state budget must be a positive integer")
+        self._max_materialized_bytes = max_materialized_bytes
         self._expected_pointer: _PointerObservation | None = None
         self._pointer_observed = False
         self._expected_landing_pointer: _PointerObservation | None = None
         self._landing_pointer_observed = False
+        self._folder_ids: dict[tuple[str, str], str] = {}
+        self._verified_state_objects: dict[str, dict[str, Any]] = {}
+        self._entry_orders: dict[str, dict[str, int]] = {}
+        self._materialized_state: dict[str, Any] | None = None
 
     def load(self) -> dict[str, Any] | None:
         """Load and verify the current immutable state snapshot, if it exists."""
@@ -102,9 +143,17 @@ class _CampaignStore:
         if observed is None:
             self._expected_pointer = None
             self._pointer_observed = True
+            self._materialized_state = None
             return None
 
         pointer = observed.value
+        if pointer.get("format_version") == 2:
+            state = self._load_sharded_state(pointer)
+            self._expected_pointer = observed
+            self._pointer_observed = True
+            self._materialized_state = deepcopy(state)
+            return state
+
         snapshot_name = pointer.get("state_file_name")
         if not isinstance(snapshot_name, str) or not _STATE_FILE_RE.fullmatch(snapshot_name):
             raise CampaignStoreError("current campaign pointer has an unsafe state file name")
@@ -125,17 +174,43 @@ class _CampaignStore:
         if len(raw) != expected_size or sha256(raw).hexdigest() != expected_sha:
             raise CampaignStoreError("state snapshot does not match the current campaign pointer")
         state = _decode_object(raw, "state snapshot")
+        if "source_id" in state and state["source_id"] != self.source_id:
+            raise CampaignStoreError("state snapshot source identity does not match its store")
 
         self._expected_pointer = observed
         self._pointer_observed = True
+        self._materialized_state = deepcopy(state)
         return state
 
+    def load_cached(self) -> dict[str, Any] | None:
+        """Reuse a verified materialization only while the exact pointer is current.
+
+        This is intended for consecutive operations in one serialized worker.
+        A fresh store still performs full namespace, size and hash verification,
+        and :meth:`load` remains the explicit full-read path.
+        """
+        observed = self._read_pointer()
+        if (
+            self._pointer_observed
+            and _same_pointer(observed, self._expected_pointer)
+            and self._materialized_state is not None
+        ):
+            return deepcopy(self._materialized_state)
+        return self.load()
+
     def save(self, state: dict[str, Any]) -> None:
-        """Persist an immutable state snapshot, then safely promote its pointer."""
-        state_raw = _json_object_bytes(state, "campaign state")
-        if len(state_raw) > MAX_STATE_BYTES:
+        """Persist bounded immutable v2 shards, then safely promote their pointer.
+
+        The caller-facing value remains the legacy materialized dictionary for
+        now.  This limits integration churn while removing the unbounded remote
+        rewrite.  Deployments may set ``max_materialized_bytes`` as a diagnosed
+        resource guard; no arbitrary lifetime catalogue ceiling is implied.
+        """
+        self._validate_state_input(state)
+        state_digest, state_size = _json_object_identity(state, "campaign state")
+        if self._max_materialized_bytes is not None and state_size > self._max_materialized_bytes:
             raise CampaignCapacityError(
-                f"campaign state exceeds the {MAX_STATE_BYTES}-byte (4 MiB) limit"
+                "campaign state exceeds the configured materialized-runner resource budget"
             )
 
         if not self._pointer_observed:
@@ -148,32 +223,665 @@ class _CampaignStore:
                 "current campaign pointer changed since state was loaded or saved"
             )
 
-        states_root = self._states_root()
-        snapshot_name = f"state-{uuid4()}.json"
-        snapshot_id = self._create_verified(
-            snapshot_name, state_raw, states_root, "state snapshot"
+        manifest_descriptor = self._write_sharded_state(
+            state, state_digest=state_digest, state_size=state_size
         )
         pointer = {
-            "format_version": 1,
+            "format_version": 2,
             "source_id": self.source_id,
-            "state_file_id": snapshot_id,
-            "state_file_name": snapshot_name,
-            "state_sha256": sha256(state_raw).hexdigest(),
-            "state_size_bytes": len(state_raw),
+            "manifest_file_id": manifest_descriptor["id"],
+            "manifest_file_name": manifest_descriptor["name"],
+            "manifest_sha256": manifest_descriptor["sha256"],
+            "manifest_size_bytes": manifest_descriptor["size_bytes"],
+            # Transitional aliases let existing diagnostics identify and
+            # inspect the immutable object without treating it as a v1 state.
+            "state_file_id": manifest_descriptor["id"],
+            "state_file_name": manifest_descriptor["name"],
+            "state_sha256": manifest_descriptor["sha256"],
+            "state_size_bytes": manifest_descriptor["size_bytes"],
         }
         pointer_raw = _json_object_bytes(pointer, "campaign state pointer")
         if len(pointer_raw) > MAX_POINTER_BYTES:  # defensive; normal pointers are tiny
             raise CampaignCapacityError("campaign state pointer exceeds its safety limit")
 
+        # Re-saving an identical materialized state is a true no-op.  The
+        # pointer observation above still detects a stale writer first.
+        if expected is not None and expected.raw == pointer_raw:
+            self._materialized_state = deepcopy(state)
+            return
+
         # This is deliberately fresh and immediately precedes the only mutable
         # operation. Drive has no compare-and-swap, so the root workflow must
         # still serialize writers for each provider.
-        if not _same_pointer(self._read_pointer(), expected):
+        try:
+            current = self._read_pointer()
+        except CampaignStoreError as exc:
+            raise CampaignStoreError(
+                "current campaign pointer changed during state upload"
+            ) from exc
+        if not _same_pointer(current, expected):
             raise CampaignStoreError("current campaign pointer changed during state upload")
 
         promoted = self._promote_pointer(expected, pointer_raw)
         self._expected_pointer = promoted
         self._pointer_observed = True
+        self._materialized_state = deepcopy(state)
+
+    def _validate_state_input(self, state: Any) -> None:
+        """Reject malformed materialized collections before creating any shard."""
+        if not isinstance(state, dict):
+            raise CampaignStoreError("campaign state must be a JSON object")
+        if "source_id" in state and state["source_id"] != self.source_id:
+            raise CampaignStoreError("campaign state source identity does not match its store")
+        for field in _SHARDED_FIELDS:
+            if field not in state:
+                continue
+            value = state[field]
+            if field in _MAP_FIELDS:
+                if not isinstance(value, dict):
+                    raise CampaignStoreError(f"campaign state {field} must be an object")
+                if any(not isinstance(key, str) or not key for key in value):
+                    raise CampaignStoreError(
+                        f"campaign state {field} contains an invalid identity"
+                    )
+                continue
+            if not isinstance(value, list):
+                raise CampaignStoreError(f"campaign state {field} must be a list")
+            if field == "pending":
+                identities = []
+                for item in value:
+                    if (
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("id"), str)
+                        or not item["id"]
+                    ):
+                        raise CampaignStoreError(
+                            "campaign pending task identity is invalid"
+                        )
+                    identities.append(item["id"])
+                if len(identities) != len(set(identities)):
+                    raise CampaignStoreError(
+                        "campaign state pending contains duplicate identities"
+                    )
+            elif field in {"receipts", "rejected_receipts"}:
+                receipt_ids: set[str] = set()
+                for item in value:
+                    if not isinstance(item, dict) or set(item) != {
+                        "task_id",
+                        "id",
+                        "sha256",
+                        "size_bytes",
+                    }:
+                        raise CampaignStoreError(
+                            f"campaign state {field} receipt link fields are invalid"
+                        )
+                    task_id = item.get("task_id")
+                    if not isinstance(task_id, str) or not task_id:
+                        raise CampaignStoreError(
+                            f"campaign state {field} task identity is invalid"
+                        )
+                    receipt_id = _require_object_id(
+                        item.get("id"), f"campaign state {field} receipt id"
+                    )
+                    _require_sha256(
+                        item.get("sha256"), f"campaign state {field} receipt SHA-256"
+                    )
+                    _bounded_size(
+                        item.get("size_bytes"),
+                        MAX_RECEIPT_BYTES,
+                        f"campaign state {field} receipt",
+                    )
+                    if receipt_id in receipt_ids:
+                        raise CampaignStoreError(
+                            f"campaign state {field} contains duplicate receipt links"
+                        )
+                    receipt_ids.add(receipt_id)
+
+    def _write_sharded_state(
+        self,
+        state: dict[str, Any],
+        *,
+        state_digest: str,
+        state_size: int,
+    ) -> dict[str, Any]:
+        present_fields = [field for field in _SHARDED_FIELDS if field in state]
+        collections: dict[str, list[dict[str, Any]]] = {}
+        for field in _SHARDED_FIELDS:
+            if field not in state:
+                collections[field] = []
+                self._entry_orders[field] = {}
+                continue
+            value = state[field]
+            if field in _MAP_FIELDS:
+                if not isinstance(value, dict):
+                    raise CampaignStoreError(f"campaign state {field} must be an object")
+                items = list(value.items())
+                if any(not isinstance(key, str) or not key for key, _ in items):
+                    raise CampaignStoreError(
+                        f"campaign state {field} contains an invalid identity"
+                    )
+            else:
+                if not isinstance(value, list):
+                    raise CampaignStoreError(f"campaign state {field} must be a list")
+                if field == "pending":
+                    items = []
+                    for item in value:
+                        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                            raise CampaignStoreError("campaign pending task identity is invalid")
+                        items.append((item["id"], item))
+                else:
+                    items = [(str(index), item) for index, item in enumerate(value)]
+
+            if field in {"receipts", "rejected_receipts"}:
+                collections[field] = self._write_state_segments(field, value)
+                self._entry_orders[field] = {
+                    str(index): index for index in range(len(value))
+                }
+            else:
+                entries, orders = self._ordered_state_entries(field, items)
+                collections[field] = self._write_hash_shards(field, entries)
+                self._entry_orders[field] = orders
+
+        runtime = {key: value for key, value in state.items() if key not in _SHARDED_FIELDS}
+        manifest = {
+            "format_version": 2,
+            "kind": "campaign_state_manifest",
+            "source_id": self.source_id,
+            "runtime": runtime,
+            "present_fields": present_fields,
+            "collections": collections,
+            "materialized_state_sha256": state_digest,
+            "materialized_state_size_bytes": state_size,
+        }
+        manifest_raw = _json_object_bytes(manifest, "campaign state manifest")
+        if len(manifest_raw) > MAX_STATE_MANIFEST_BYTES:
+            raise CampaignCapacityError(
+                "campaign state manifest exceeds its 1 MiB safety limit; the legacy "
+                "4 MiB monolithic-state allowance cannot hold unsharded runtime payloads"
+            )
+        return self._put_state_object("manifest", "root", manifest_raw)
+
+    def _ordered_state_entries(
+        self, field: str, items: list[tuple[str, Any]]
+    ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        keys = [key for key, _ in items]
+        if len(keys) != len(set(keys)):
+            raise CampaignStoreError(f"campaign state {field} contains duplicate identities")
+        previous = self._entry_orders.get(field, {})
+        retained = [key for key in keys if key in previous]
+        preserves_order = retained == sorted(retained, key=previous.__getitem__)
+        seen_new = False
+        append_only_new = True
+        for key in keys:
+            if key not in previous:
+                seen_new = True
+            elif seen_new:
+                append_only_new = False
+                break
+        if preserves_order and append_only_new:
+            next_order = max(previous.values(), default=-1) + 1
+            orders: dict[str, int] = {}
+            for key in keys:
+                if key in previous:
+                    orders[key] = previous[key]
+                else:
+                    orders[key] = next_order
+                    next_order += 1
+        else:
+            orders = {key: index for index, key in enumerate(keys)}
+        entries = [
+            {"key": key, "order": orders[key], "value": value}
+            for key, value in items
+        ]
+        return entries, orders
+
+    def _write_hash_shards(
+        self, field: str, entries: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        if not entries:
+            return []
+        kind = _SHARD_KIND[field]
+        root_payload = {
+            "format_version": 2,
+            "kind": kind,
+            "source_id": self.source_id,
+            "key": "root",
+            "entries": entries,
+        }
+        root_raw = _json_object_bytes(root_payload, f"campaign {field} shard")
+        if len(root_raw) <= MAX_STATE_SHARD_BYTES:
+            return [
+                self._put_state_object(
+                    kind, "root", root_raw, item_count=len(entries)
+                )
+            ]
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for entry in entries:
+            prefix = sha256(entry["key"].encode("utf-8")).hexdigest()[:1]
+            grouped.setdefault(prefix, []).append(entry)
+        descriptors: list[dict[str, Any]] = []
+        for prefix, group in sorted(grouped.items()):
+            descriptors.extend(self._write_hash_bucket(field, prefix, group))
+        if len(descriptors) > MAX_STATE_SHARDS:
+            raise CampaignCapacityError("campaign state exceeds the state-shard descriptor limit")
+        return descriptors
+
+    def _write_hash_bucket(
+        self, field: str, prefix: str, entries: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        kind = _SHARD_KIND[field]
+        payload = {
+            "format_version": 2,
+            "kind": kind,
+            "source_id": self.source_id,
+            "key": prefix,
+            "entries": entries,
+        }
+        raw = _json_object_bytes(payload, f"campaign {field} shard")
+        if len(raw) <= MAX_STATE_SHARD_BYTES:
+            return [self._put_state_object(kind, prefix, raw, item_count=len(entries))]
+        if len(prefix) >= 64:
+            raise CampaignCapacityError(f"one campaign {field} entry exceeds the shard limit")
+        children: dict[str, list[dict[str, Any]]] = {}
+        for entry in entries:
+            digest = sha256(entry["key"].encode("utf-8")).hexdigest()
+            child = digest[: len(prefix) + 1]
+            children.setdefault(child, []).append(entry)
+        if len(children) == 1:
+            return self._write_hash_bucket(field, next(iter(children)), entries)
+        result: list[dict[str, Any]] = []
+        for child, group in sorted(children.items()):
+            result.extend(self._write_hash_bucket(field, child, group))
+        return result
+
+    def _write_state_segments(
+        self, field: str, values: list[Any]
+    ) -> list[dict[str, Any]]:
+        kind = _SHARD_KIND[field]
+        previous: dict[str, Any] | None = None
+        start = 0
+        while start < len(values):
+            stop = min(start + RECEIPT_SEGMENT_ITEMS, len(values))
+            while True:
+                entries = [
+                    {"key": str(index), "order": index, "value": values[index]}
+                    for index in range(start, stop)
+                ]
+                key = f"{start:012d}"
+                payload = {
+                    "format_version": 2,
+                    "kind": kind,
+                    "source_id": self.source_id,
+                    "key": key,
+                    "entries": entries,
+                    "previous": previous,
+                    "total_items": stop,
+                }
+                raw = _json_object_bytes(payload, f"campaign {field} segment")
+                if len(raw) <= MAX_STATE_SHARD_BYTES:
+                    break
+                if stop - start == 1:
+                    raise CampaignCapacityError(
+                        f"one campaign {field} entry exceeds the segment limit"
+                    )
+                stop = start + max(1, (stop - start) // 2)
+            previous = self._put_state_object(
+                kind, key, raw, item_count=len(entries)
+            )
+            start = stop
+        # The root manifest retains only the linked head.  Old full segments
+        # remain immutable and a growing receipt history cannot grow the root.
+        return [] if previous is None else [previous]
+
+    def _put_state_object(
+        self, kind: str, key: str, raw: bytes, *, item_count: int = 0
+    ) -> dict[str, Any]:
+        digest = sha256(raw).hexdigest()
+        name = f"state-{kind}-{key}-{digest}.json"
+        cached = self._verified_state_objects.get(name)
+        if cached is not None:
+            return dict(cached)
+        root = self._states_root()
+        found = self._find(name, root)
+        if len(found) > 1:
+            raise CampaignStoreError("ambiguous content-addressed campaign state object")
+        if found:
+            object_id = found[0]
+            if self._read(object_id, "campaign state object") != raw:
+                raise CampaignStoreError(
+                    "existing content-addressed campaign state object has different bytes"
+                )
+        else:
+            object_id = self._create_verified(
+                name, raw, root, "campaign state object"
+            )
+        descriptor = {
+            "id": object_id,
+            "name": name,
+            "sha256": digest,
+            "size_bytes": len(raw),
+            "item_count": item_count,
+            "key": key,
+        }
+        self._verified_state_objects[name] = descriptor
+        return dict(descriptor)
+
+    def _load_sharded_state(self, pointer: dict[str, Any]) -> dict[str, Any]:
+        descriptor = {
+            "id": pointer.get("manifest_file_id"),
+            "name": pointer.get("manifest_file_name"),
+            "sha256": pointer.get("manifest_sha256"),
+            "size_bytes": pointer.get("manifest_size_bytes"),
+            "item_count": 0,
+            "key": "root",
+        }
+        raw = self._read_state_object(
+            descriptor, "manifest", maximum=MAX_STATE_MANIFEST_BYTES
+        )
+        manifest = _decode_object(raw, "campaign state manifest")
+        required = {
+            "format_version",
+            "kind",
+            "source_id",
+            "runtime",
+            "present_fields",
+            "collections",
+            "materialized_state_sha256",
+            "materialized_state_size_bytes",
+        }
+        if set(manifest) != required or (
+            manifest.get("format_version") != 2
+            or manifest.get("kind") != "campaign_state_manifest"
+            or manifest.get("source_id") != self.source_id
+        ):
+            raise CampaignStoreError("campaign state manifest identity/fields are invalid")
+        runtime = manifest.get("runtime")
+        if not isinstance(runtime, dict) or any(key in runtime for key in _SHARDED_FIELDS):
+            raise CampaignStoreError("campaign state manifest runtime is invalid")
+        if "source_id" in runtime and runtime["source_id"] != self.source_id:
+            raise CampaignStoreError("campaign state runtime source identity is invalid")
+        present = manifest.get("present_fields")
+        if (
+            not isinstance(present, list)
+            or any(field not in _SHARDED_FIELDS for field in present)
+            or len(present) != len(set(present))
+            or present != [field for field in _SHARDED_FIELDS if field in present]
+        ):
+            raise CampaignStoreError("campaign state manifest present_fields are invalid")
+        collections = manifest.get("collections")
+        if not isinstance(collections, dict) or set(collections) != set(_SHARDED_FIELDS):
+            raise CampaignStoreError("campaign state manifest collections are invalid")
+
+        state = dict(runtime)
+        seen_object_ids: set[str] = set()
+        seen_object_names: set[str] = set()
+        for field in _SHARDED_FIELDS:
+            descriptors = collections[field]
+            if not isinstance(descriptors, list) or len(descriptors) > MAX_STATE_SHARDS:
+                raise CampaignStoreError(f"campaign state {field} descriptors are invalid")
+            if field in {"receipts", "rejected_receipts"}:
+                if len(descriptors) > 1:
+                    raise CampaignStoreError(
+                        f"campaign state {field} must contain at most one segment head"
+                    )
+                entries = self._load_state_segment_chain(
+                    field,
+                    descriptors[0] if descriptors else None,
+                    seen_object_ids,
+                    seen_object_names,
+                )
+                values, orders = self._materialize_state_entries(field, entries)
+                self._entry_orders[field] = orders
+                if field in present:
+                    state[field] = values
+                elif descriptors:
+                    raise CampaignStoreError(
+                        f"campaign state absent field {field} has unexpected descriptors"
+                    )
+                continue
+            entries: list[dict[str, Any]] = []
+            shard_keys: set[str] = set()
+            for item in descriptors:
+                normalized = self._validate_state_descriptor(item, field)
+                if normalized["key"] in shard_keys:
+                    raise CampaignStoreError(f"campaign state {field} has duplicate shard keys")
+                if normalized["key"] == "root" and descriptors != [item]:
+                    raise CampaignStoreError(
+                        f"campaign state {field} root shard cannot have siblings"
+                    )
+                if field not in {"receipts", "rejected_receipts"} and any(
+                    normalized["key"].startswith(existing)
+                    or existing.startswith(normalized["key"])
+                    for existing in shard_keys
+                ):
+                    raise CampaignStoreError(
+                        f"campaign state {field} has overlapping shard prefixes"
+                    )
+                if normalized["id"] in seen_object_ids or normalized["name"] in seen_object_names:
+                    raise CampaignStoreError("campaign state manifest reuses a state object")
+                shard_keys.add(normalized["key"])
+                seen_object_ids.add(normalized["id"])
+                seen_object_names.add(normalized["name"])
+                shard_raw = self._read_state_object(
+                    normalized, _SHARD_KIND[field], maximum=MAX_STATE_SHARD_BYTES
+                )
+                shard = _decode_object(shard_raw, f"campaign {field} shard")
+                if set(shard) != {"format_version", "kind", "source_id", "key", "entries"} or (
+                    shard.get("format_version") != 2
+                    or shard.get("kind") != _SHARD_KIND[field]
+                    or shard.get("source_id") != self.source_id
+                    or shard.get("key") != normalized["key"]
+                    or not isinstance(shard.get("entries"), list)
+                    or len(shard["entries"]) != normalized["item_count"]
+                ):
+                    raise CampaignStoreError(f"campaign {field} shard identity/fields are invalid")
+                for entry in shard["entries"]:
+                    entry_key = entry.get("key") if isinstance(entry, dict) else None
+                    if (
+                        not isinstance(entry_key, str)
+                        or (
+                            normalized["key"] != "root"
+                            and not sha256(entry_key.encode("utf-8"))
+                            .hexdigest()
+                            .startswith(normalized["key"])
+                        )
+                    ):
+                        raise CampaignStoreError(
+                            f"campaign state {field} entry is in the wrong shard"
+                        )
+                entries.extend(shard["entries"])
+
+            values, orders = self._materialize_state_entries(field, entries)
+            self._entry_orders[field] = orders
+            if field in present:
+                state[field] = values
+            elif descriptors:
+                raise CampaignStoreError(
+                    f"campaign state absent field {field} has unexpected descriptors"
+                )
+
+        expected_digest = _require_sha256(
+            manifest.get("materialized_state_sha256"), "materialized campaign state SHA-256"
+        )
+        expected_size = _nonnegative_size(
+            manifest.get("materialized_state_size_bytes"), "materialized campaign state"
+        )
+        try:
+            state_digest, state_size = _json_object_identity(
+                state, "materialized campaign state"
+            )
+        except MemoryError as exc:
+            raise CampaignCapacityError(
+                "available memory could not materialize the sharded campaign state"
+            ) from exc
+        if self._max_materialized_bytes is not None and state_size > self._max_materialized_bytes:
+            raise CampaignCapacityError(
+                "campaign state exceeds the configured materialized-runner resource budget"
+            )
+        if state_size != expected_size or state_digest != expected_digest:
+            raise CampaignStoreError("materialized campaign state does not match its manifest")
+        return state
+
+    def _load_state_segment_chain(
+        self,
+        field: str,
+        head: Any,
+        seen_object_ids: set[str],
+        seen_object_names: set[str],
+    ) -> list[dict[str, Any]]:
+        if head is None:
+            return []
+        entries: list[dict[str, Any]] = []
+        descriptor = head
+        expected_total: int | None = None
+        segments = 0
+        while descriptor is not None:
+            segments += 1
+            if segments > MAX_RECEIPT_CHAIN_SEGMENTS:
+                raise CampaignCapacityError("campaign receipt segment chain is excessive")
+            normalized = self._validate_state_descriptor(descriptor, field)
+            if normalized["id"] in seen_object_ids or normalized["name"] in seen_object_names:
+                raise CampaignStoreError("campaign state receipt segment chain contains a cycle")
+            seen_object_ids.add(normalized["id"])
+            seen_object_names.add(normalized["name"])
+            raw = self._read_state_object(
+                normalized, _SHARD_KIND[field], maximum=MAX_STATE_SHARD_BYTES
+            )
+            segment = _decode_object(raw, f"campaign {field} segment")
+            required = {
+                "format_version",
+                "kind",
+                "source_id",
+                "key",
+                "entries",
+                "previous",
+                "total_items",
+            }
+            segment_entries = segment.get("entries")
+            total = segment.get("total_items")
+            if set(segment) != required or (
+                segment.get("format_version") != 2
+                or segment.get("kind") != _SHARD_KIND[field]
+                or segment.get("source_id") != self.source_id
+                or segment.get("key") != normalized["key"]
+                or not isinstance(segment_entries, list)
+                or len(segment_entries) != normalized["item_count"]
+                or isinstance(total, bool)
+                or not isinstance(total, int)
+                or total < 1
+            ):
+                raise CampaignStoreError(f"campaign {field} segment identity/fields are invalid")
+            try:
+                start = int(normalized["key"])
+            except ValueError as exc:
+                raise CampaignStoreError(
+                    f"campaign state {field} segment key is invalid"
+                ) from exc
+            if total != start + len(segment_entries) or (
+                expected_total is not None and total != expected_total
+            ):
+                raise CampaignStoreError(f"campaign state {field} segment totals are invalid")
+            segment_orders = [
+                entry.get("order") if isinstance(entry, dict) else None
+                for entry in segment_entries
+            ]
+            if segment_orders != list(range(start, total)):
+                raise CampaignStoreError(f"campaign state {field} segment range is invalid")
+            entries.extend(segment_entries)
+            descriptor = segment.get("previous")
+            if descriptor is not None and not isinstance(descriptor, dict):
+                raise CampaignStoreError(f"campaign state {field} previous segment is invalid")
+            expected_total = start if descriptor is not None else None
+            if descriptor is None and start != 0:
+                raise CampaignStoreError(f"campaign state {field} segment chain is incomplete")
+        return entries
+
+    def _validate_state_descriptor(
+        self, value: Any, field: str
+    ) -> dict[str, Any]:
+        required = {"id", "name", "sha256", "size_bytes", "item_count", "key"}
+        if not isinstance(value, dict) or set(value) != required:
+            raise CampaignStoreError(f"campaign state {field} descriptor fields are invalid")
+        kind = _SHARD_KIND[field]
+        key = value.get("key")
+        if not isinstance(key, str) or not re.fullmatch(r"[a-z0-9]{1,64}", key):
+            raise CampaignStoreError(f"campaign state {field} descriptor key is invalid")
+        digest = _require_sha256(value.get("sha256"), f"campaign {field} shard SHA-256")
+        expected_name = f"state-{kind}-{key}-{digest}.json"
+        if value.get("name") != expected_name or not _STATE_OBJECT_RE.fullmatch(expected_name):
+            raise CampaignStoreError(f"campaign state {field} descriptor name is unsafe")
+        object_id = _require_object_id(value.get("id"), f"campaign {field} shard id")
+        size = _bounded_size(
+            value.get("size_bytes"), MAX_STATE_SHARD_BYTES, f"campaign {field} shard"
+        )
+        count = value.get("item_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise CampaignStoreError(f"campaign state {field} item count is invalid")
+        return {
+            "id": object_id,
+            "name": expected_name,
+            "sha256": digest,
+            "size_bytes": size,
+            "item_count": count,
+            "key": key,
+        }
+
+    def _read_state_object(
+        self, descriptor: dict[str, Any], kind: str, *, maximum: int
+    ) -> bytes:
+        name = descriptor.get("name")
+        digest = _require_sha256(descriptor.get("sha256"), "campaign state object SHA-256")
+        key = descriptor.get("key")
+        expected_name = f"state-{kind}-{key}-{digest}.json"
+        if name != expected_name or not _STATE_OBJECT_RE.fullmatch(expected_name):
+            raise CampaignStoreError("campaign state object name is unsafe")
+        object_id = _require_object_id(descriptor.get("id"), "campaign state object id")
+        expected_size = _bounded_size(
+            descriptor.get("size_bytes"), maximum, "campaign state object"
+        )
+        matches = self._find(expected_name, self._states_root())
+        if len(matches) != 1 or matches[0] != object_id:
+            raise CampaignStoreError(
+                "campaign state object is missing, ambiguous, or outside its source namespace"
+            )
+        raw = self._read(object_id, "campaign state object")
+        if len(raw) != expected_size or sha256(raw).hexdigest() != digest:
+            raise CampaignStoreError("campaign state object does not match its descriptor")
+        self._verified_state_objects[expected_name] = dict(descriptor)
+        return raw
+
+    def _materialize_state_entries(
+        self, field: str, entries: list[Any]
+    ) -> tuple[Any, dict[str, int]]:
+        normalized: list[tuple[int, str, Any]] = []
+        keys: set[str] = set()
+        orders: set[int] = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != {"key", "order", "value"}:
+                raise CampaignStoreError(f"campaign state {field} entry fields are invalid")
+            key = entry.get("key")
+            order = entry.get("order")
+            if not isinstance(key, str) or not key:
+                raise CampaignStoreError(f"campaign state {field} entry key is invalid")
+            if isinstance(order, bool) or not isinstance(order, int) or order < 0:
+                raise CampaignStoreError(f"campaign state {field} entry order is invalid")
+            if key in keys or order in orders:
+                raise CampaignStoreError(f"campaign state {field} contains duplicate entries")
+            if field == "pending" and (
+                not isinstance(entry["value"], dict) or entry["value"].get("id") != key
+            ):
+                raise CampaignStoreError("campaign pending shard task identity is inconsistent")
+            keys.add(key)
+            orders.add(order)
+            normalized.append((order, key, entry["value"]))
+        normalized.sort()
+        order_map = {key: order for order, key, _ in normalized}
+        if field in _MAP_FIELDS:
+            return {key: value for _, key, value in normalized}, order_map
+        if field in {"receipts", "rejected_receipts"}:
+            if [order for order, _, _ in normalized] != list(range(len(normalized))):
+                raise CampaignStoreError(f"campaign state {field} segment order is not contiguous")
+        return [value for _, _, value in normalized], order_map
 
     def put_raw(self, body: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
         """Persist exact response bytes and an immutable metadata receipt."""
@@ -382,16 +1090,23 @@ class _CampaignStore:
         return self._one_folder("landing_publications", self._control_root_id)
 
     def _one_folder(self, name: str, parent_id: str) -> str:
+        cache_key = (parent_id, name)
+        cached = self._folder_ids.get(cache_key)
+        if cached is not None:
+            return cached
         found = self._find(name, parent_id)
         if len(found) > 1:
             raise CampaignStoreError(f"ambiguous {name} folders in source campaign")
         if found:
-            return _require_object_id(found[0], f"{name} folder id")
+            folder_id = _require_object_id(found[0], f"{name} folder id")
+            self._folder_ids[cache_key] = folder_id
+            return folder_id
         folder_id = self._store.mkdir(name, parent_id)
         folder_id = _require_object_id(folder_id, f"{name} folder id")
         after = self._find(name, parent_id)
         if len(after) != 1 or after[0] != folder_id:
             raise CampaignStoreError(f"new {name} folder did not resolve unambiguously")
+        self._folder_ids[cache_key] = folder_id
         return folder_id
 
     def _create_verified(self, name: str, data: bytes, parent_id: str, label: str) -> str:
@@ -413,12 +1128,22 @@ class _CampaignStore:
             raise UncertainCampaignWriteError(
                 f"{label} write outcome is uncertain"
             ) from exc
-        found = self._find(name, parent_id)
+        try:
+            found = self._find(name, parent_id)
+        except Exception as exc:
+            raise UncertainCampaignWriteError(
+                f"new {label} was created but its namespace could not be verified"
+            ) from exc
         if len(found) != 1 or found[0] != file_id:
             raise UncertainCampaignWriteError(
                 f"new {label} did not resolve unambiguously"
             )
-        readback = self._read(file_id, label)
+        try:
+            readback = self._read(file_id, label)
+        except Exception as exc:
+            raise UncertainCampaignWriteError(
+                f"new {label} was created but its bytes could not be verified"
+            ) from exc
         if readback != data or sha256(readback).digest() != sha256(data).digest():
             raise CampaignStoreError(f"{label} did not read back exactly")
         return file_id
@@ -451,14 +1176,50 @@ class _CampaignStore:
         if len(raw) > MAX_POINTER_BYTES:
             raise CampaignCapacityError("current campaign state pointer exceeds its safety limit")
         value = _decode_object(raw, "current campaign state pointer")
-        if value.get("format_version") != 1 or value.get("source_id") != self.source_id:
+        version = value.get("format_version")
+        if version not in {1, 2} or value.get("source_id") != self.source_id:
             raise CampaignStoreError("current campaign state pointer has invalid identity")
-        snapshot_name = value.get("state_file_name")
-        if not isinstance(snapshot_name, str) or not _STATE_FILE_RE.fullmatch(snapshot_name):
-            raise CampaignStoreError("current campaign pointer has an unsafe state file name")
-        _require_object_id(value.get("state_file_id"), "state snapshot id")
-        _require_sha256(value.get("state_sha256"), "state snapshot SHA-256")
-        _bounded_size(value.get("state_size_bytes"), MAX_STATE_BYTES, "state snapshot")
+        if version == 1:
+            snapshot_name = value.get("state_file_name")
+            if not isinstance(snapshot_name, str) or not _STATE_FILE_RE.fullmatch(snapshot_name):
+                raise CampaignStoreError("current campaign pointer has an unsafe state file name")
+            _require_object_id(value.get("state_file_id"), "state snapshot id")
+            _require_sha256(value.get("state_sha256"), "state snapshot SHA-256")
+            _bounded_size(value.get("state_size_bytes"), MAX_STATE_BYTES, "state snapshot")
+        else:
+            required = {
+                "format_version",
+                "source_id",
+                "manifest_file_id",
+                "manifest_file_name",
+                "manifest_sha256",
+                "manifest_size_bytes",
+                "state_file_id",
+                "state_file_name",
+                "state_sha256",
+                "state_size_bytes",
+            }
+            if set(value) != required:
+                raise CampaignStoreError("current campaign v2 pointer fields are invalid")
+            digest = _require_sha256(
+                value.get("manifest_sha256"), "state manifest SHA-256"
+            )
+            expected_name = f"state-manifest-root-{digest}.json"
+            if value.get("manifest_file_name") != expected_name:
+                raise CampaignStoreError("current campaign manifest name is unsafe")
+            manifest_id = _require_object_id(value.get("manifest_file_id"), "state manifest id")
+            manifest_size = _bounded_size(
+                value.get("manifest_size_bytes"),
+                MAX_STATE_MANIFEST_BYTES,
+                "state manifest",
+            )
+            if (
+                value.get("state_file_id") != manifest_id
+                or value.get("state_file_name") != expected_name
+                or value.get("state_sha256") != digest
+                or value.get("state_size_bytes") != manifest_size
+            ):
+                raise CampaignStoreError("current campaign v2 pointer aliases are inconsistent")
         return _PointerObservation(file_id, raw, value)
 
     def _promote_pointer(
@@ -584,7 +1345,9 @@ class _CampaignStore:
 class DriveCampaignStore(_CampaignStore):
     """Campaign transport rooted inside the selected configured Drive tree."""
 
-    def __init__(self, storage: Any, source_id: str) -> None:
+    def __init__(
+        self, storage: Any, source_id: str, *, max_materialized_bytes: int | None = None
+    ) -> None:
         # LocalCampaignStore remains usable when Google dependencies are not
         # installed; only constructing the Drive backend imports them.
         from ingestion.drive_state_store import DriveStateStore
@@ -601,20 +1364,34 @@ class DriveCampaignStore(_CampaignStore):
         transport = DriveStateStore(
             storage, selected_root, control_root, allow_landing_pointer=True
         )
-        super().__init__(transport, source_id, control_root, responses_root)
+        super().__init__(
+            transport,
+            source_id,
+            control_root,
+            responses_root,
+            max_materialized_bytes=max_materialized_bytes,
+        )
 
 
 class LocalCampaignStore(_CampaignStore):
     """Filesystem campaign transport; it never initializes or calls Drive."""
 
-    def __init__(self, root: Path, source_id: str) -> None:
+    def __init__(
+        self, root: Path, source_id: str, *, max_materialized_bytes: int | None = None
+    ) -> None:
         source_id = _require_source_id(source_id)
         if not isinstance(root, Path):
             raise CampaignStoreError("local campaign root must be a pathlib.Path")
         transport = _LocalObjectStore(root)
         control_root = transport.ensure_path(["06_control", "source_campaigns", source_id])
         responses_root = transport.ensure_path(["01_landing", source_id, "responses"])
-        super().__init__(transport, source_id, control_root, responses_root)
+        super().__init__(
+            transport,
+            source_id,
+            control_root,
+            responses_root,
+            max_materialized_bytes=max_materialized_bytes,
+        )
 
 
 class _LocalObjectStore:
@@ -814,11 +1591,39 @@ def _json_object_bytes(value: Any, label: str) -> bytes:
         raise CampaignStoreError(f"{label} is not safely JSON serializable") from exc
 
 
+def _json_object_identity(value: Any, label: str) -> tuple[str, int]:
+    """Return canonical JSON digest/size without allocating the complete encoding."""
+    if not isinstance(value, dict):
+        raise CampaignStoreError(f"{label} must be a JSON object")
+    encoder = json.JSONEncoder(
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    digest = sha256()
+    size = 0
+    try:
+        for text_part in encoder.iterencode(value):
+            part = text_part.encode("utf-8")
+            digest.update(part)
+            size += len(part)
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise CampaignStoreError(f"{label} is not safely JSON serializable") from exc
+    return digest.hexdigest(), size
+
+
 def _bounded_json(value: Any, label: str, maximum: int) -> bytes:
     raw = _json_object_bytes(value, label)
     if len(raw) > maximum:
         raise CampaignCapacityError(f"{label} exceeds the {maximum}-byte safety limit")
     return raw
+
+
+def _nonnegative_size(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CampaignStoreError(f"invalid {label} size")
+    return value
 
 
 def _decode_object(raw: bytes, label: str) -> dict[str, Any]:

@@ -31,6 +31,9 @@ on:
     branches: [main]
     paths:
       - 'src/source_campaign.py'
+      - 'src/full_source_campaign.py'
+      - 'src/drive_release_store.py'
+      - 'src/storage_manager.py'
       - 'src/ingestion/**'
       - 'src/ingestion/sources/**'
       - 'config/source-campaigns.yaml'
@@ -81,7 +84,7 @@ jobs:
       group: zohelo-source-campaign-${{ matrix.source }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -116,6 +119,38 @@ jobs:
             args+=(--retry-validation-failures)
           fi
           python src/source_campaign.py "${args[@]}"
+      - name: Restore provider ledger before the full-distribution writer
+        id: restored_provider_ledger
+        if: >-
+          !cancelled() && matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CAMPAIGN_SOURCE: ${{ matrix.source }}
+        run: python src/source_campaign.py --source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --verify-state
+      - name: Collect complete official distributions and checkpoint remaining catalogue
+        if: >-
+          !cancelled() && steps.restored_provider_ledger.outcome == 'success' &&
+          matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CAMPAIGN_SOURCE: ${{ matrix.source }}
+        run: python src/full_source_campaign.py --source "$CAMPAIGN_SOURCE" --allow-production-write
+      - name: Restore a full distribution in a fresh process
+        if: >-
+          !cancelled() && matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CAMPAIGN_SOURCE: ${{ matrix.source }}
+        run: python src/full_source_campaign.py --source "$CAMPAIGN_SOURCE" --allow-production-write --verify-current
       - name: Restore accepted evidence in a fresh process
         if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source) }}
         env:

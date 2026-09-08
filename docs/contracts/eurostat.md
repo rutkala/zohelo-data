@@ -1,9 +1,34 @@
 # Eurostat ingestion contract
 
-Status: initial GL-001 starter contract, verified by bounded public-API probes and
-production Landing collection with fresh-process replay on 8 September 2026. GL-002
-Comext is described below but is not admitted by this contract. This document does
-not claim that the whole Eurostat catalogue is ingested.
+Status: the starter API path was verified by production Landing collection on
+8 September 2026. ADR 0006 supersedes its coverage restrictions with full official
+distribution intake. The delivery record, rather than this contract, establishes
+which distributions have actually been retained and verified.
+
+## Complete distribution extension
+
+The full path enumerates the official `files/inventory` endpoint with `type=data`,
+`type=codelist` and `type=metadata`, all with `lang=en`. Every returned official
+distribution is queued. Data inventory rows supply full TSV and structural SDMX
+URLs; codelists supply their versioned TSV; metadata supplies complete ZIP packages.
+No country, sex, age, industry, product, unit or period filter narrows those files.
+Exact URL/query, catalogue version, source response headers, retrieval time, raw
+hashes, ZIP members and TSV/XML structure checks are retained with each receipt.
+
+Full files are preferred over extraction. Asynchronous envelopes retain their raw
+evidence and provider job identity. Oversized uncached requests require authoritative
+dataflow/DSD/content-constraint partition planning, with completion only after every
+disjoint leaf is accepted. Such work remains visibly pending while incomplete.
+Comext URLs use the provider's separate dissemination route when listed; no filtered
+starter slice is used as proof that a large trade dataset is complete.
+
+Private source retention does not confer commercial redistribution permission.
+Preserve the Eurostat notice and dataset exceptions for downstream publication,
+including geography, third-party and detailed trade conditions. Full source bytes
+remain in the owner's authenticated Drive. [Official route and reuse evidence](../research/full-source-routes-2026-09-08.md#eurostat).
+
+The following sections preserve the existing JSON-stat response adapter's narrower
+request/replay contract. It provides recent API evidence alongside the full path.
 
 ## Provider routes and discovery
 

@@ -51,13 +51,17 @@ def load_settings(source_id, config_path=ROOT / "config/source-campaigns.yaml"):
         raise ValueError("Unknown campaign configuration/source")
     settings = {**document["defaults"], **document["sources"][source_id]}
     for key in ("max_requests", "max_run_seconds", "http_timeout_seconds", "max_response_bytes",
-                "max_retained_raw_bytes", "max_pending_tasks", "discovery_pause_threshold",
-                "max_recent_roots", "max_completed_tasks", "min_request_interval_seconds", "max_inline_wait_seconds"):
+                "discovery_pause_threshold", "min_request_interval_seconds", "max_inline_wait_seconds",
+                "quota_history_seconds"):
         if type(settings.get(key)) is not int or settings[key] <= 0:
             raise ValueError(f"Invalid positive campaign setting: {key}")
+    for key in ("max_retained_raw_bytes", "max_pending_tasks", "max_recent_roots", "max_completed_tasks"):
+        if settings.get(key) is not None and (type(settings[key]) is not int or settings[key] <= 0):
+            raise ValueError(f"Invalid optional campaign resource setting: {key}")
     if settings["max_response_bytes"] > 8 * 1024 * 1024 or settings["max_run_seconds"] > 600:
         raise ValueError("Campaign exceeds response/time envelope")
-    if settings["max_requests"] > 100 or settings["discovery_pause_threshold"] >= settings["max_pending_tasks"]:
+    if settings["max_requests"] > 100 or (settings["max_pending_tasks"] is not None
+            and settings["discovery_pause_threshold"] >= settings["max_pending_tasks"]):
         raise ValueError("Campaign request or discovery envelope is invalid")
     for window in settings["quota_windows"]:
         if any(type(window.get(k)) is not int or window[k] <= 0 for k in ("seconds", "requests")):
@@ -71,6 +75,7 @@ def main():
     operation = parser.add_mutually_exclusive_group()
     operation.add_argument("--initialize-drive", action="store_true")
     operation.add_argument("--verify-current", action="store_true")
+    operation.add_argument("--verify-state", action="store_true")
     operation.add_argument("--verify-landing", action="store_true")
     operation.add_argument("--publish-only", action="store_true")
     parser.add_argument("--retry-validation-failures", action="store_true")
@@ -84,7 +89,7 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.cycles <= 6 or not 60 <= args.session_seconds <= 1800:
         parser.error("Use 1–6 cycles and a 60–1800 second session budget")
-    if args.retry_validation_failures and (args.initialize_drive or args.verify_current or args.verify_landing or args.publish_only):
+    if args.retry_validation_failures and (args.initialize_drive or args.verify_current or args.verify_state or args.verify_landing or args.publish_only):
         parser.error("Validation retry is a collection operation")
     if args.initialize_drive:
         storage = production_storage(args.allow_production_write)
@@ -111,6 +116,7 @@ def main():
                 DriveCampaignStore(storage, source_id)
         print(json.dumps({"status": "source_campaign_paths_ready", "sources": list(SOURCE_IDS),
                           "session_cycles": args.cycles, "reserved_headroom_bytes": reserve,
+                          "available_storage_bytes": int(limit) - int(usage) if limit is not None and usage is not None else None,
                           "storage_quota_reported": limit is not None and usage is not None}))
         return 0
     if args.source is None:
@@ -135,6 +141,16 @@ def main():
     if args.retry_validation_failures:
         from ingestion.campaign_recovery import retry_validation_failures
         print(json.dumps(retry_validation_failures(store, os.environ.get("GITHUB_SHA", "local"))), flush=True)
+    if args.verify_state:
+        from ingestion.source_campaign import validate_state
+        state = store.load()
+        if state is None:
+            raise RuntimeError("No provider quota ledger is available")
+        validate_state(state, args.source)
+        print(json.dumps({"source_id": args.source, "status": "fresh_state_verified",
+                          "accepted_responses": state["accepted_responses"],
+                          "pending_tasks": len(state["pending"])}), flush=True)
+        return 0
     if args.verify_landing:
         from ingestion.landing_publication import verify_landing
         manifest = verify_landing(store)
