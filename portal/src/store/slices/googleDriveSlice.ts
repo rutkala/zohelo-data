@@ -663,7 +663,11 @@ export const createGoogleDriveSlice: StateCreator<
                 ({ manifest }) => manifest.source_id === sourceId
               );
               if (selected?.fingerprint === loadedFingerprint) continue;
-              const tableName = `${sourceId}_responses`;
+              const tableName =
+                selected?.manifest.table_name ??
+                (sourceId.endsWith("_bulk")
+                  ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
+                  : `${sourceId}_responses`);
               await local.connection.query(`DROP VIEW IF EXISTS "01_landing"."${tableName}";`);
               loadedLanding.delete(sourceId);
               if (

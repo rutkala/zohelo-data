@@ -62,16 +62,25 @@ def publish_landing(store: Any, adapter: Any, code_sha: str) -> dict[str, Any] |
 
     The returned manifest is the verified current snapshot.  ``None`` means the
     campaign has no accepted response and therefore has no publishable snapshot.
+    An append authenticates the previous pointer and manifest and requires its
+    accepted-receipt checkpoint to match campaign state.  Previously validated
+    immutable fragments are then trusted; only new fragments receive remote
+    Parquet readback.  Use :func:`verify_landing` for a fresh full-fragment audit.
     """
     source_id = _source_identity(store, adapter)
     _require_code_sha(code_sha)
-    state = store.load()
+    state = getattr(store, "load_cached", store.load)()
     if state is None:
         return None
     receipts = _accepted_receipts(state, source_id)
 
     pointer = store.load_landing_pointer()
-    previous = _read_snapshot(store, pointer) if pointer is not None else None
+    # The current pointer authenticates its immutable manifest.  That manifest's
+    # validated file descriptors are the trust boundary for its already-published
+    # fragments; re-reading every old fragment here would make each small append
+    # progressively more expensive.  ``verify_landing`` remains the explicit
+    # fresh audit that reads every fragment.
+    previous = _read_snapshot_metadata(store, pointer) if pointer is not None else None
     published = 0 if previous is None else previous["published_response_count"]
     previous_files = [] if previous is None else previous["files"]
 
@@ -155,25 +164,39 @@ def publish_landing(store: Any, adapter: Any, code_sha: str) -> dict[str, Any] |
         "manifest_sha256": manifest_descriptor["sha256"],
         "manifest_size_bytes": manifest_descriptor["size"],
     }
-    # Validate the complete candidate through the same reader used by consumers
-    # before changing the only mutable publication object.
-    candidate = _read_snapshot(store, pointer_value)
-    if candidate["snapshot_id"] != snapshot_id:
-        raise LandingPublicationError("Landing snapshot candidate identity changed")
+    # Read the uploaded manifest back and validate its complete metadata.  The
+    # old immutable descriptor prefix was authenticated above, so only the new
+    # fragments need another remote read before pointer promotion.
+    candidate = _read_snapshot_metadata(store, pointer_value)
+    if candidate != manifest:
+        raise LandingPublicationError("Landing snapshot candidate metadata changed")
+    _verify_snapshot_files(store, new_files, expected_rows=len(rows))
     store.promote_landing_pointer(pointer_value)
-    verified = verify_landing(store)
-    if verified is None or verified["snapshot_id"] != snapshot_id:
+    promoted_pointer = store.load_landing_pointer()
+    if promoted_pointer != pointer_value:
+        raise LandingPublicationError("promoted Landing pointer was not readable")
+    verified = _read_snapshot_metadata(store, promoted_pointer)
+    if verified != manifest:
         raise LandingPublicationError("promoted Landing snapshot was not readable")
     return verified
 
 
 def verify_landing(store: Any) -> dict[str, Any] | None:
-    """Verify the current source snapshot from a fresh pointer/object read."""
+    """Freshly audit the current pointer, manifest, and every Parquet fragment."""
     pointer = store.load_landing_pointer()
     return None if pointer is None else _read_snapshot(store, pointer)
 
 
 def _read_snapshot(store: Any, pointer: Mapping[str, Any]) -> dict[str, Any]:
+    manifest = _read_snapshot_metadata(store, pointer)
+    _verify_snapshot_files(
+        store, manifest["files"], expected_rows=manifest["row_count"]
+    )
+    return manifest
+
+
+def _read_snapshot_metadata(store: Any, pointer: Mapping[str, Any]) -> dict[str, Any]:
+    """Authenticate and validate snapshot metadata without reading Parquet."""
     descriptor = {
         "id": pointer.get("manifest_file_id"),
         "name": pointer.get("manifest_file_name"),
@@ -188,14 +211,21 @@ def _read_snapshot(store: Any, pointer: Mapping[str, Any]) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise LandingPublicationError("Landing manifest is not valid UTF-8 JSON") from exc
     _validate_manifest(manifest, pointer, store.source_id)
+    return manifest
 
+
+def _verify_snapshot_files(
+    store: Any,
+    file_descriptors: list[dict[str, Any]],
+    *,
+    expected_rows: int,
+) -> None:
     actual_rows = 0
-    for file_descriptor in manifest["files"]:
+    for file_descriptor in file_descriptors:
         parquet = store.read_landing_object(file_descriptor)
         actual_rows += _verify_parquet(parquet)
-    if actual_rows != manifest["row_count"]:
+    if actual_rows != expected_rows:
         raise LandingPublicationError("Landing Parquet row count does not match manifest")
-    return manifest
 
 
 def _accepted_receipts(state: Any, source_id: str) -> list[dict[str, Any]]:

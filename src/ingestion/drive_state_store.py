@@ -3,7 +3,7 @@ import io
 
 from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
-from drive_release_store import DriveReleaseStore
+from drive_release_store import DRIVE_REPEATABLE_REQUEST_RETRIES, DriveReleaseStore
 
 
 class DriveStateStore(DriveReleaseStore):
@@ -25,7 +25,9 @@ class DriveStateStore(DriveReleaseStore):
             raise ValueError("allow_landing_pointer must be a boolean")
 
     def read(self, file_id):
-        metadata = self.files.get(fileId=file_id, fields="id,size,trashed").execute(num_retries=2)
+        metadata = self.files.get(fileId=file_id, fields="id,size,trashed").execute(
+            num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES
+        )
         size = int(metadata.get("size", -1))
         if metadata.get("id") != file_id or metadata.get("trashed") is not False or not 0 < size <= 12_000_000:
             raise ValueError("Ingestion object has missing or excessive size metadata")
@@ -33,7 +35,7 @@ class DriveStateStore(DriveReleaseStore):
         reader = MediaIoBaseDownload(buffer, self.files.get_media(fileId=file_id), chunksize=512 * 1024)
         done = False
         while not done:
-            _, done = reader.next_chunk(num_retries=2)
+            _, done = reader.next_chunk(num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES)
             if buffer.tell() > size:
                 raise ValueError("Ingestion object grew during transfer")
         if buffer.tell() != size:
@@ -41,11 +43,10 @@ class DriveStateStore(DriveReleaseStore):
         return buffer.getvalue()
 
     def replace(self, file_id, data):
-        self.storage.authorize_writes()
-        self.storage._assert_parent_within_selected_root(self.control_root_id)
+        self._authorize_parent(self.control_root_id)
         metadata = self.files.get(
             fileId=file_id, fields="id,name,mimeType,parents,ownedByMe,trashed",
-        ).execute(num_retries=2)
+        ).execute(num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES)
         if not (
             metadata.get("id") == file_id
             and metadata.get("name") in self._replaceable_pointer_names

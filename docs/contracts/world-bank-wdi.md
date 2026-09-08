@@ -7,6 +7,22 @@ Checked-in responses remain representative contract fixtures; the separate
 [live acceptance record](../releases/2026-09-08-source-campaigns.md) identifies actual
 production runs and retained-response verification.
 
+## Complete distribution extension
+
+ADR 0006 adds the official complete CSV ZIP at
+`https://databank.worldbank.org/data/download/WDI_CSV.zip`, including its official
+download-host redirect. Retain the exact archive and every member. Streaming ZIP/CRC
+and CSV checks require populated observation data plus country and series metadata;
+the archive's supplied history and dimensions are not filtered during extraction.
+Country-series, series-time, footnotes and other supplied members remain present.
+
+Each daily check records source headers, hashes, retrieval time and inspected member
+metadata. Content-addressed storage reuses unchanged bytes. The API recent/history
+path remains separate evidence and shares the provider quota ledger; the bulk archive
+does not prove API freshness beyond its own publisher version. The source product is
+WDI; this is not a claim to have ingested every other World Bank dataset.
+[Official archive, version and licence evidence](../research/full-source-routes-2026-09-08.md#world-bank-world-development-indicators).
+
 ## Dataset identity and permission
 
 | Field | Contract |

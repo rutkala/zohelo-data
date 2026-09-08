@@ -1,5 +1,31 @@
 # Source campaign operations
 
+The owner now requires complete selected-source coverage (ADR 0006). In addition to
+the API response campaigns described below, the same serialized source job runs
+`python src/full_source_campaign.py --source world_bank_wdi --allow-production-write`
+or the Eurostat equivalent. Full archives are stored under
+`01_landing/<source>/bulk`; their separate durable ledger is under
+`06_control/source_campaigns/<source>_bulk`. The main provider ledger remains the
+shared quota authority for both API and bulk requests.
+
+The full path enumerates official distributions and retains all supplied dimensions
+and periods. Its summary reports catalogue distributions, validated current
+distributions, pending/failed tasks and raw bytes. Raw coverage is not a modeled
+Silver/Gold/semantic release. A successful run can still have pending catalogue work.
+
+Campaign state pointers now accept v1 and v2. On the next successful save, v1 data is
+preserved in immutable v2 shards and the existing pointer is promoted only after
+verification. No raw/receipt identities or existing Landing pointers are replaced.
+Total accepted tasks, recurring roots and retained raw bytes no longer have starter
+ceilings. Provider quotas, finite historical queue backpressure, object size bounds
+and actual Drive/runner capacity checks remain operational controls.
+
+WDI/Eurostat retain the 60 requests/15 minutes operator fair-use window, serialized
+requests and provider Retry-After. The former 600/12 hours and 6,000/week starter
+budgets were not documented provider quotas and no longer halt their bulk backfills.
+Seven days of attempt history is retained. BDL's documented anonymous/registered
+multi-window quota enforcement remains unchanged.
+
 The `Source ingestion campaigns` workflow collects exact public WDI, GUS BDL and Eurostat
 responses into Drive Landing and publishes verified response tables for portal preview and SQL.
 Each source has its own Landing snapshot; the NBP release pointer remains separate.
@@ -12,13 +38,15 @@ The schedule is `7,37 * * * *` UTC: a recovery/catch-up trigger every thirty min
 of NBP's daily schedule. Each job immediately runs up to three collection/publication batches
 within a 900-second between-operation session budget. A batch remains bounded to twelve source
 requests and 240 seconds between attempts. Source calls and durable publication already in flight
-finish safely; the workflow has a 35-minute outer timeout. Quota, capacity, no-due-work and source
+finish safely. WDI/Eurostat then run a full-distribution session of up to 24 requests
+and 1,200 seconds between operations. The workflow has a 60-minute outer timeout. Quota, capacity, no-due-work and source
 failures stop consecutive collection without spinning or resetting provider history.
 
 From Actions, run the workflow on `main`, choose all or one source, choose the batch count
 (default three), and optionally pause history. `publish_only` exposes already-collected accepted
 responses without making source API requests.
-The history input also pauses reconciliation. Recent and discovery tasks remain eligible.
+The history input also pauses reconciliation and the full-distribution backfill.
+Recent API and discovery tasks remain eligible.
 Set a source's `enabled: false` in `config/source-campaigns.yaml` through a checked PR to pause it
 persistently. Disabling the workflow stops all new campaigns and retains existing evidence.
 

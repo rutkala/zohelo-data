@@ -124,7 +124,9 @@ export interface PlatformReleaseManifest extends ReleaseManifestBase {
 
 export type ReleaseManifest = SilverReleaseManifest | PlatformReleaseManifest;
 
-export type LandingSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
+export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
+export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk";
+export type LandingSourceId = LandingResponseSourceId | BulkLandingSourceId;
 
 export interface LandingSnapshotPointer {
   format_version: 1;
@@ -136,10 +138,10 @@ export interface LandingSnapshotPointer {
   manifest_size_bytes: number;
 }
 
-export interface LandingSnapshotManifest {
+export interface LandingResponseSnapshotManifest {
   format_version: 1;
   kind: "landing_snapshot";
-  source_id: LandingSourceId;
+  source_id: LandingResponseSourceId;
   snapshot_id: string;
   created_at_utc: string;
   code_sha: string;
@@ -156,6 +158,31 @@ export interface LandingSnapshotManifest {
   receipt_checkpoint_sha256: string;
   tests: { passed: true };
 }
+
+/** A metadata-only index of full archives retained outside browser DuckDB. */
+export interface BulkDistributionIndexManifest {
+  format_version: 2;
+  kind: "full_distribution_index";
+  source_id: BulkLandingSourceId;
+  snapshot_id: string;
+  created_at_utc: string;
+  code_sha: string;
+  status: "validated";
+  layer: "01_landing";
+  table_name: string;
+  row_count: number;
+  coverage_status: "incomplete" | "complete_current_catalogue";
+  files: LakehouseFile[];
+  columns: Array<{ name: string; type: string }>;
+  accepted_distribution_count: number;
+  published_distribution_count: number;
+  pending_publication_count: number;
+  receipt_checkpoint_sha256: string;
+  tests: { passed: true };
+}
+
+export type LandingSnapshotManifest =
+  LandingResponseSnapshotManifest | BulkDistributionIndexManifest;
 
 export interface LandingSnapshotResolution {
   pointer: LandingSnapshotPointer;

@@ -17,6 +17,19 @@ from google_auth_httplib2 import Request as HttpLib2Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+_REPEATABLE_REQUEST_RETRIES = 4
+
+
+class _DriveWriteSession:
+    """Short-lived proof of write authority for one StorageManager instance."""
+
+    def __init__(self, manager, root_id):
+        self.manager = manager
+        self.root_id = root_id
+        self.selector = manager._write_selector_fingerprint()
+        self.drive_service = manager.drive_service
+        self.verified_parent_ids = {root_id}
+
 
 class StorageManager:
     """Address and manage the durable storage hierarchy."""
@@ -271,7 +284,9 @@ class StorageManager:
             }
             if page_token:
                 list_args["pageToken"] = page_token
-            response = self.drive_service.files().list(**list_args).execute()
+            response = self._execute_repeatable(
+                self.drive_service.files().list(**list_args)
+            )
             folders.extend(response.get("files", []))
             page_token = response.get("nextPageToken")
             if not page_token:
@@ -280,15 +295,24 @@ class StorageManager:
             if item.get("mimeType") == self.FOLDER_MIME_TYPE and item.get("name") == folder_name
             and item.get("trashed") is not True]
 
-    def _get_or_create_folder(self, folder_name, parent_id=None):
+    def _get_or_create_folder(self, folder_name, parent_id=None, *, write_session=None):
         """Find an exact folder, or create it after authorizing the write."""
-        self.authorize_writes()
+        if write_session is None:
+            self.authorize_writes()
+        elif parent_id is None:
+            raise ValueError("A write session may only create folders below its selected root.")
+        else:
+            self.authorize_session_parent(write_session, parent_id)
         folders = self._list_exact_folders(folder_name, parent_id=parent_id)
         if len(folders) > 1:
             parent_desc = " under a parent folder" if parent_id else " at Drive root"
             raise ValueError(f"Ambiguous folder '{folder_name}'{parent_desc}: multiple exact folders found.")
         if folders:
-            return folders[0]["id"]
+            folder_id = folders[0]["id"]
+            self._validate_drive_id(folder_id, "folder ID")
+            if write_session is not None:
+                write_session.verified_parent_ids.add(folder_id)
+            return folder_id
         print(f"🏗️ Creating folder '{folder_name}'...")
         metadata = {"name": folder_name, "mimeType": self.FOLDER_MIME_TYPE}
         if parent_id:
@@ -296,19 +320,32 @@ class StorageManager:
         folder_id = self.drive_service.files().create(body=metadata, fields="id").execute().get("id")
         if not folder_id:
             raise ValueError(f"Drive did not return an ID when creating folder '{folder_name}'.")
+        self._validate_drive_id(folder_id, "folder ID")
+        if write_session is not None:
+            write_session.verified_parent_ids.add(folder_id)
         return folder_id
 
     def _resolve_root_by_id(self):
         if not self.root_id:
             return None
-        if self._resolved_root_metadata is not None:
+        self._validate_drive_id(self.root_id, "root_id")
+        if (
+            self._resolved_root_metadata is not None
+            and self._resolved_root_metadata.get("id") == self.root_id
+        ):
             return self._resolved_root_metadata
+        # A caller that deliberately changes the selected ID must never reuse
+        # metadata verified for the previous root.
+        self._resolved_root_metadata = None
         try:
-            metadata = self.drive_service.files().get(fileId=self.root_id,
-                fields="id, name, mimeType, trashed").execute()
+            metadata = self._execute_repeatable(
+                self.drive_service.files().get(
+                    fileId=self.root_id, fields="id, name, mimeType, trashed"
+                )
+            )
         except Exception:
             raise ValueError("Configured Drive root ID could not be verified.") from None
-        if (not metadata or metadata.get("id", self.root_id) != self.root_id
+        if (not metadata or metadata.get("id") != self.root_id
                 or metadata.get("mimeType") != self.FOLDER_MIME_TYPE
                 or metadata.get("trashed") is not False or not metadata.get("name")):
             raise ValueError("Configured Drive root ID must identify an untrashed folder.")
@@ -369,11 +406,50 @@ class StorageManager:
             raise PermissionError("Writes to the production Drive root 'zohelo-data' require ZOHELO_ALLOW_PRODUCTION_WRITES=true outside GitHub Actions.")
         return True
 
+    def begin_write_session(self):
+        """Authorize writes once and bind a session to the selected Drive root."""
+        self.authorize_writes()
+        selected_root_id = self.resolve_root(create=False)
+        self._validate_drive_id(selected_root_id, "selected root ID")
+        return _DriveWriteSession(self, selected_root_id)
+
+    def _write_selector_fingerprint(self):
+        """Return the mutable fields that define this manager's Drive root."""
+        return (
+            self.backend,
+            self.root_id,
+            self.root_name,
+            self.master_folder_name,
+            self._configured_root_name,
+        )
+
+    def authorize_session_parent(self, write_session, parent_id: str):
+        """Verify one parent for reuse only inside an explicitly authorized session."""
+        if not isinstance(write_session, _DriveWriteSession) or write_session.manager is not self:
+            raise ValueError("Drive write session does not belong to this storage manager.")
+        if (
+            write_session.drive_service is not self.drive_service
+            or write_session.selector != self._write_selector_fingerprint()
+        ):
+            raise ValueError(
+                "Drive storage selection changed after the write session was authorized."
+            )
+        self._validate_drive_id(parent_id, "parent_id")
+        if parent_id in write_session.verified_parent_ids:
+            return True
+        verified_ids = self._verify_parent_within_root(parent_id, write_session.root_id)
+        write_session.verified_parent_ids.update(verified_ids)
+        return True
+
     def _assert_parent_within_selected_root(self, parent_id: str):
         """Reject writes whose supplied parent is outside the selected root."""
         selected_root_id = self.resolve_root(create=False)
+        self._verify_parent_within_root(parent_id, selected_root_id)
+
+    def _verify_parent_within_root(self, parent_id: str, selected_root_id: str):
+        """Return ancestry IDs only after proving a path reaches the selected root."""
         if parent_id == selected_root_id:
-            return
+            return {selected_root_id}
 
         current_id = parent_id
         visited = set()
@@ -383,10 +459,12 @@ class StorageManager:
                 raise ValueError("Parent folder ancestry is cyclic and could not be verified.")
             visited.add(current_id)
             try:
-                metadata = self.drive_service.files().get(
-                    fileId=current_id,
-                    fields="id, parents, mimeType, trashed",
-                ).execute()
+                metadata = self._execute_repeatable(
+                    self.drive_service.files().get(
+                        fileId=current_id,
+                        fields="id, parents, mimeType, trashed",
+                    )
+                )
             except Exception:
                 raise ValueError("Parent folder could not be verified inside the selected root.") from None
             if (
@@ -402,18 +480,20 @@ class StorageManager:
             for candidate in parents:
                 self._validate_drive_id(candidate, "parent_id")
             if selected_root_id in parents:
-                return
+                return visited | {selected_root_id}
             # Drive normally has one parent. If legacy multi-parent metadata
             # exists, verify each branch until one reaches the selected root.
             next_id = parents[0]
             for candidate in parents[1:]:
                 try:
-                    self._assert_ancestor_branch(candidate, selected_root_id, visited)
+                    branch_ids = self._assert_ancestor_branch(
+                        candidate, selected_root_id, set(visited)
+                    )
                 except ValueError:
                     continue
-                return
+                return visited | branch_ids
             current_id = next_id
-        return
+        return visited | {selected_root_id}
 
     def _assert_ancestor_branch(self, current_id: str, selected_root_id: str, visited: set):
         while current_id != selected_root_id:
@@ -422,10 +502,12 @@ class StorageManager:
                 raise ValueError("Parent folder ancestry is cyclic and could not be verified.")
             visited.add(current_id)
             try:
-                metadata = self.drive_service.files().get(
-                    fileId=current_id,
-                    fields="id, parents, mimeType, trashed",
-                ).execute()
+                metadata = self._execute_repeatable(
+                    self.drive_service.files().get(
+                        fileId=current_id,
+                        fields="id, parents, mimeType, trashed",
+                    )
+                )
             except Exception:
                 raise ValueError("Parent folder could not be verified inside the selected root.") from None
             if (
@@ -439,9 +521,9 @@ class StorageManager:
             if not parents:
                 raise ValueError("Parent folder is outside the selected root.")
             if selected_root_id in parents:
-                return
+                return visited | {selected_root_id}
             current_id = parents[0]
-        return
+        return visited | {selected_root_id}
 
     def init_infrastructure(self):
         """Deploy the configured folder structure to the storage backend."""
@@ -457,18 +539,37 @@ class StorageManager:
             return zone_ids
         return None
 
-    def get_or_create_nested_folder(self, path_segments: list, root_id: str) -> str:
+    def get_or_create_nested_folder(
+        self, path_segments: list, root_id: str, *, write_session=None
+    ) -> str:
         """Create nested folders safely under ``root_id`` and return the leaf ID."""
         segments = self._validate_path_segments(path_segments, "path_segments")
         if not root_id or not isinstance(root_id, str):
             raise ValueError("root_id must be a non-empty Drive folder ID.")
         self._validate_drive_id(root_id, "root_id")
-        self._assert_parent_within_selected_root(root_id)
-        self.authorize_writes()
+        if write_session is None:
+            self._assert_parent_within_selected_root(root_id)
+            self.authorize_writes()
+        else:
+            self.authorize_session_parent(write_session, root_id)
         current_id = root_id
         for segment in segments:
-            current_id = self._get_or_create_folder(segment, parent_id=current_id)
+            current_id = self._get_or_create_folder(
+                segment, parent_id=current_id, write_session=write_session
+            )
         return current_id
+
+    @staticmethod
+    def _execute_repeatable(request):
+        """Execute a repeatable Drive request with bounded client backoff."""
+        try:
+            return request.execute(num_retries=_REPEATABLE_REQUEST_RETRIES)
+        except TypeError as exc:
+            # Lightweight Drive-shaped test doubles and adapters may expose an
+            # execute() method without googleapiclient's optional argument.
+            if "unexpected keyword argument 'num_retries'" not in str(exc):
+                raise
+            return request.execute()
 
     def get_path(self, zone_name: str, filename: str = "") -> str:
         """Return the universal URI for a configured zone and optional file."""

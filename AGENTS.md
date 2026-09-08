@@ -114,3 +114,15 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
 - Free account identity/email verification remains a concrete owner step when not supplied;
   do not invent personal details or claim a key/account exists before it does. Paid service
   subscriptions and card-backed trials require the concrete business decision.
+
+## Complete selected-source coverage
+
+- Apply ADR 0006: starter slices and permanent cumulative task/raw ceilings are not complete
+  source delivery. Prefer official complete distributions and exhaust paginated catalogues.
+- `src/full_source_campaign.py` collects full WDI/Eurostat distributions after the recent API
+  batch within the same serialized provider job and quota ledger. Large raw objects are
+  streamed, remotely hash-verified and indexed; do not load archives into browser memory.
+- Campaign state v2 shards preserve v1 receipts, ordering, quotas and pointers on migration.
+  Batch/object limits protect execution; measured catalogue coverage establishes completion.
+- Report full raw archives separately from typed models and semantic definitions. Preserve
+  the distinction between selected source products and every product of their providers.

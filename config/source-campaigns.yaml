@@ -1,23 +1,27 @@
 schema_version: 1
 # Operator budgets below are conservative platform limits, not claims about vendor quotas.
-# Admission advances in bounded batches; full-source target does not mean full coverage today.
+# Batch limits limit one execution, never the eventual source catalogue or history.
 defaults:
   enabled: true
   max_requests: 12
   max_run_seconds: 240
   http_timeout_seconds: 45
   max_response_bytes: 8388608
-  max_retained_raw_bytes: 268435456
-  max_pending_tasks: 2048
+  # Total coverage is not capped. Immutable state shards bound individual writes;
+  # physical Drive headroom and provider quotas still apply to every run.
+  max_retained_raw_bytes: null
+  max_pending_tasks: null
   discovery_pause_threshold: 600
-  max_recent_roots: 1000
-  max_completed_tasks: 5000
+  max_recent_roots: null
+  max_completed_tasks: null
   min_request_interval_seconds: 2
   max_inline_wait_seconds: 10
+  # Keyless WDI/Eurostat use serial requests and provider Retry-After. No
+  # documented 12-hour/weekly request quota justified the former starter caps.
+  # Keep seven days of reservations even though this fair-use window is shorter.
+  quota_history_seconds: 604800
   quota_windows:
     - {seconds: 900, requests: 60}
-    - {seconds: 43200, requests: 600}
-    - {seconds: 604800, requests: 6000}
 sources:
   world_bank_wdi:
     # First exact production request timed out at 45s; preserve request identity and bound a 90s retry.
@@ -25,14 +29,14 @@ sources:
     adapter: ingestion.sources.world_bank
     research_id: GL-005
     timezone: UTC
-    target_scope: All discoverable WDI source=2 indicators, economies and aggregates, and available API history; progressive admission.
+    target_scope: Complete official WDI CSV archive including all members, economies, aggregates, indicators and available periods; API recent/history reconciliation remains independent evidence.
     contract: docs/contracts/world-bank-wdi.md
     permitted_operation: Public statistical collection into the owner's private Drive; attribution and source-level exceptions retained.
   gus_bdl:
     adapter: ingestion.sources.gus_bdl
     research_id: PLS-001
     timezone: Europe/Warsaw
-    target_scope: All discoverable BDL variables, units and available years; progressive admission subject to documented anonymous quotas.
+    target_scope: All discoverable BDL variables, units, localities, metadata and available years; exhaustive resumable pagination under the effective anonymous or registered quota.
     contract: docs/contracts/gus-bdl.md
     permitted_operation: Public BDL API collection under CC BY 4.0; retain source metadata and attribution.
     # Below public 5/s, 100/15m, 1000/12h and 10000/7d ceilings.
@@ -45,6 +49,6 @@ sources:
     adapter: ingestion.sources.eurostat
     research_id: GL-001
     timezone: Europe/Luxembourg
-    target_scope: Metadata discovery and explicit permitted statistical slices; dataset, dimension and rights review precedes further activation.
+    target_scope: Every distribution in the official complete inventory, all supplied dimensions, geographies and periods, with catalogue change refreshes; retain source notices for downstream reuse controls.
     contract: docs/contracts/eurostat.md
-    permitted_operation: Public statistics for configured EU/EFTA scope, excluding third-party exceptions and restricted detailed trade.
+    permitted_operation: Public distributions retained in the owner's private Drive with source attribution and notices; commercial redistribution restrictions remain downstream publication controls.
