@@ -204,3 +204,19 @@ different response is an observed source change. It is not labelled an official
 correction reason or date unless GUS metadata says so. Raw responses, task identity,
 collection time, bilingual metadata and source `lastUpdate` provide the evidence for
 downstream current-value and detected-change policy.
+
+## Initial production acceptance
+
+[Run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540)
+accepted eight observation pages (four recent and four history) and one variable-catalogue
+page after the pagination repair. A fresh process successfully replayed retained history,
+recent and discovery responses. The checkpoint reported 22 cumulative accepted responses,
+856,167 received body bytes, 152 pending tasks, 21 recent roots and no pending retries.
+The catalogue page reported 172,573 variables; discovery and history remain incomplete.
+
+The recovery control recorded two eligible parser retries, and the plan migration retained
+two obsolete root-locality requests as superseded dispositions. This run did not execute
+municipality-scoped locality tasks, so their live acceptance remains unproven. Counts include
+metadata, missing observations and repeated representations, not unique analytical facts.
+See the [dated acceptance record](../releases/2026-09-08-source-campaigns.md) for code
+revisions, earlier rejection evidence, bounds and the separate downstream modeling gates.
