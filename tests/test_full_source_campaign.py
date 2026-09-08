@@ -60,6 +60,92 @@ def eurostat_distribution(dataset="demo_cube", version="2026-09-08"):
 
 
 class FullSourceCampaignTests(unittest.TestCase):
+    def test_index_batches_keep_per_object_checkpoints_and_flush_on_request_budget(self):
+        store = MemoryStore()
+        quota = MemoryStore(new_state("world_bank_wdi", TODAY))
+        clock = FakeClock(1788825600)
+        published = []
+        observed_checkpoints = []
+
+        def fetcher(request, path, hosts, **kwargs):
+            observed_checkpoints.append(store.state["accepted_responses"])
+            clock.now += 3
+            path.write_bytes(b"complete archive")
+            return {"status_code": 200}
+
+        def publish(current_store, sha):
+            published.append(current_store.state["accepted_responses"])
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_full_campaign(
+                store, RawStore(), quota, "world_bank_wdi", settings(), directory,
+                max_requests=11, clock=clock, fetcher=fetcher,
+                inspector=lambda *a: {"status": "complete"},
+                planner=lambda source: [distribution(f"part_{i}") for i in range(12)],
+                publish=publish,
+            )
+        self.assertEqual(observed_checkpoints, list(range(11)))
+        self.assertEqual(published, [1, 9, 11])
+        self.assertEqual(report["accepted"], 11)
+        self.assertEqual(report["pending_tasks"], 1)
+
+    def test_index_flushes_elapsed_batch_and_prior_successes_after_source_failure(self):
+        store = MemoryStore()
+        clock = FakeClock(1788825600)
+        published = []
+        attempts = 0
+
+        def fetcher(request, path, hosts, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            clock.now += 70
+            if attempts > 4:
+                raise OSError("provider connection failed")
+            path.write_bytes(b"complete archive")
+            return {"status_code": 200}
+
+        with tempfile.TemporaryDirectory() as directory:
+            report = run_full_campaign(
+                store, RawStore(), MemoryStore(new_state("world_bank_wdi", TODAY)),
+                "world_bank_wdi", settings(), directory,
+                max_requests=7, clock=clock, fetcher=fetcher,
+                inspector=lambda *a: {"status": "complete"},
+                planner=lambda source: [distribution(f"part_{i}") for i in range(7)],
+                publish=lambda current, sha: published.append(current.state["accepted_responses"]),
+            )
+        self.assertEqual(published, [1, 3, 4])
+        self.assertEqual(report["accepted"], 4)
+        self.assertEqual(len(report["failures"]), 3)
+
+    def test_index_failure_stops_requests_and_restart_publishes_retained_progress_first(self):
+        store = MemoryStore()
+        quota = MemoryStore(new_state("world_bank_wdi", TODAY))
+        clock = FakeClock(1788825600)
+        events = []
+
+        def fetcher(request, path, hosts, **kwargs):
+            clock.now += 3
+            events.append("fetch")
+            path.write_bytes(b"complete archive")
+            return {"status_code": 200}
+
+        def fail_publish(*args):
+            raise RuntimeError("ambiguous index promotion")
+
+        with tempfile.TemporaryDirectory() as directory:
+            kwargs = dict(clock=clock, fetcher=fetcher,
+                          inspector=lambda *a: {"status": "complete"},
+                          planner=lambda source: [distribution("one"), distribution("two")])
+            with self.assertRaisesRegex(RuntimeError, "ambiguous index promotion"):
+                run_full_campaign(store, RawStore(), quota, "world_bank_wdi", settings(),
+                                  directory, publish=fail_publish, **kwargs)
+            self.assertEqual(events, ["fetch"])
+            self.assertEqual(store.state["accepted_responses"], 1)
+            events.clear()
+            run_full_campaign(store, RawStore(), quota, "world_bank_wdi", settings(),
+                              directory, publish=lambda *a: events.append("publish"), **kwargs)
+        self.assertEqual(events, ["publish", "fetch", "publish"])
+
     def test_full_archive_reserves_existing_provider_quota_and_restores_checkpoint(self):
         store = MemoryStore()
         quota = MemoryStore(new_state("world_bank_wdi", TODAY))

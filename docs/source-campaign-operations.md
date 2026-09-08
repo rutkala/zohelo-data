@@ -16,6 +16,22 @@ parent, ownership, size, MD5 and streamed SHA-256 checks still establish raw int
 distributions, pending/failed tasks and raw bytes. Raw coverage is not a modeled
 Silver/Gold/semantic release. A successful run can still have pending catalogue work.
 
+Full collection commits each raw object and its accepted receipt/state before the next
+request. The consumer distribution index publishes the first accepted object immediately,
+then after eight new distributions or 120 seconds between operations, and at every normal
+session exit (including a quota stop or known source failure). This reduces cumulative
+index scans, tail rewrites and Drive pointer promotions while keeping data access prompt.
+An in-flight transfer/checkpoint is allowed to finish, so 120 seconds is not a hard
+publication SLA. Uncertain storage failures stop immediately; the next fresh worker
+publishes retained backlog before collecting again. Previous valid indexes remain usable.
+
+Fresh index verification checks the manifest's receipt prefix against the restored campaign
+state. The full-runner verification additionally requires every currently accepted receipt
+to be indexed, zero publication backlog and matching current coverage metadata. A change
+in coverage without new raw objects produces a new manifest using the same data fragments.
+The raw restore is explicitly labelled `sampled_latest_accepted_object`; it is not an audit
+of every retained archive. Full-current-raw acceptance remains a separate resumable audit.
+
 Campaign state pointers now accept v1 and v2. On the next successful save, v1 data is
 preserved in immutable v2 shards and the existing pointer is promoted only after
 verification. No raw/receipt identities or existing Landing pointers are replaced.

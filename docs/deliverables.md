@@ -4,9 +4,59 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and selected NBP product acceptance are complete; full coverage of all four selected sources is not.** NBP has 15 published tables and five verified daily metrics; its latest checked daily release contains 429,841 cleaned observations through 7 September. Daily ingestion runs at **02:00 UTC**. The owner has delegated full feasible onboarding across the [182 researched products/families](source-research/README.md), with no source-by-source review gate. [ADR 0006](decisions/0006-complete-selected-source-coverage.md) corrects the starter-only production scope: PRs 80–82 are merged, permanent cumulative starter ceilings are removed, and the [distribution-index portal is deployed](https://github.com/rutkala/zohelo-data/actions/runs/34241326729). In [production run 34245632263](https://github.com/rutkala/zohelo-data/actions/runs/34245632263), the complete official WDI archive is accepted, indexed and freshly verified. Eurostat full-distribution collection is running; BDL has 228 accepted and published responses and is respecting a provider rate-limit delay. The [dated coverage record](releases/2026-09-08-complete-source-correction.md) distinguishes catalogue discovery, verified raw coverage and modeled delivery. Eurostat/BDL full coverage and new-source Bronze/Silver/Gold/semantic publication remain open. Half-hour triggers resume saved ingestion progress; the [secure BDL key setup](source-accounts.md) can activate the free registered quota.
+Updated 8 September 2026. **The audit and selected NBP product acceptance are complete; full coverage of all four selected sources is not.** NBP has 15 published tables and five verified daily metrics; its latest previously checked daily release contains 429,841 cleaned observations through 7 September. Daily ingestion runs at **02:00 UTC**. The owner has delegated full feasible onboarding across the [182 researched products/families](source-research/README.md), with no source-by-source review gate. [ADR 0006](decisions/0006-complete-selected-source-coverage.md) replaces starter-only scope with complete selected-product coverage. PRs 80–82 and the distribution-index portal are deployed. The fresh [successful run 34252801846](https://github.com/rutkala/zohelo-data/actions/runs/34252801846) verifies the complete WDI archive, 53 of 21,233 current Eurostat distributions, and 278 published BDL responses; the detailed checkpoint and remaining acceptance programme are below. Full Eurostat/BDL coverage and new-source Bronze/Silver/Gold/semantic delivery remain open. Serialized half-hour Actions resume saved ingestion progress, and an enabled daily engineering review now provides separate follow-through. The [secure BDL key setup](source-accounts.md) can activate the free registered quota.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
+
+### Fresh-context completion agreement — 8 September 2026
+
+The owner reaffirmed autonomous delivery within the initial boundaries and rejected stopping at
+partial results as though the complete goal were delivered. The [working agreement](collaboration.md)
+and [shared agent instructions](../AGENTS.md) apply this to every component, including the portal.
+For ingestion the target remains every available dataset, dimension, geography, historical period
+and accompanying metadata in each selected product. Execution limits produce resumable checkpoints;
+they do not reduce that target. A source-access, provider, capacity or implementation blocker must
+remain visible with its next action. Partial data can be useful while the complete goal stays open.
+
+The fresh check of [run 34252801846](https://github.com/rutkala/zohelo-data/actions/runs/34252801846)
+found all three jobs successful and the following measured progress. These figures are a dated
+checkpoint, not an all-source completion claim or a claim of new-source modeled data.
+
+| Selected product | Verified checkpoint | Remaining acceptance |
+| --- | --- | --- |
+| NBP REST A/B/C and gold | Existing accepted 15-table/five-metric release; latest previously recorded daily check is through 7 September | Continue daily freshness/recovery checks; other NBP statistical products stay separate inventory work. |
+| World Bank WDI | Complete 282,845,220-byte official archive freshly restored at 16:51 UTC; 218 API response rows published | Full source-shaped/typed/modelled access, revision reconciliation and release acceptance; API reconciliation remains separate from archive coverage. |
+| Eurostat | All three inventories current; 53 of 21,233 catalogue distributions accepted at 17:20 UTC; 21,180 pending, zero failed pending tasks; 304 API responses published | Exhaust the current catalogue, recover oversized/asynchronous distributions, validate published coverage and deliver typed/modelled access. |
+| GUS BDL | 278 accepted/published responses at 17:00 UTC; 559 pending tasks, zero pending retries; variable catalogue reports 172,573 entries | Exhaust catalogue/history, reconcile page membership and completeness, refresh catalogue generations, then deliver typed/modelled access. Response count is not variable or observation coverage. |
+
+Half-hour serialized Actions jobs were actually active during this check. The enabled daily
+**Advance Zohelo-data delivery** task was also created on 8 September to review current Actions,
+investigate stalls and advance feasible engineering work. It has not yet supplied a completed
+review run. These are specific continuation mechanisms, not a promise of continuous AI execution.
+
+Priority is to close correctness gaps before claiming completeness, then remove measured throughput
+bottlenecks while retaining quotas and recovery guarantees. This correction rejects incomplete BDL response pages, binds fresh distribution-index verification
+to the current campaign checkpoint, and coalesces index publication while keeping every raw/state
+checkpoint durable. It does not close the remaining acceptance items. The remaining completion programme is:
+
+1. **Catalogue and extraction:** version BDL catalogue discovery, reconcile expected/observed unique
+   IDs and page totals, and track unavailable/failed scope explicitly. Complete Eurostat backfill
+   using its durable queue, asynchronous preparation and adaptive partitions. Catalogue totals must
+   be scoped to their endpoint/parent/generation; a child-subject total is not a global total.
+2. **Operational convergence:** measure accepted useful work per runner minute and retained bytes,
+   prioritize bulk over redundant starter reconciliation, detect progress stalls outside provider
+   cooldowns and replace repeated full-state work where measurement warrants it. Keep Actions as the
+   current human-operable orchestrator; revisit a dedicated orchestrator against these measurements.
+3. **Completion proof:** reconcile current catalogue membership, accepted raw, published indexes,
+   missing/failed work and revisions. Add a resumable full-current-raw audit before final full-source
+   acceptance; existing fresh bulk restore samples only the latest raw object. A successful sample
+   or a complete archive is not proof of all-source end-to-end delivery.
+4. **Usable data delivery:** continue source-specific dbt Bronze/Silver, dimensional Gold and
+   appropriate semantics, with replay/release/catalogue/SQL acceptance. Raw responses and archive
+   indexes are intermediate access, not a substitute for this already-authorized outcome.
+
+These items remain open until their actual acceptance evidence is recorded. Future improvements
+are reprioritized from observed usefulness, correctness, reliability and cost in this same record.
 
 **Status meanings:** **Done** = delivered and evidenced; **In progress** = active work or verification; **On hold** = explicitly excluded for now with a reason and reopening condition; **Waiting for input** = an owner choice; **Not started** = future implementation; **Cancelled** = intentionally retired.
 

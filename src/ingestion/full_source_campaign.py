@@ -25,6 +25,11 @@ HOSTS = {
 
 MAX_PARTITION_PLAN_BYTES = 512 * 1024
 MAX_PROTOCOL_BYTES = 16 * 1024 * 1024
+# Raw/state progress is still committed for every object. Coalesce only the
+# consumer index to avoid a cumulative scan, tail rewrite and pointer promotion
+# for each of the tens of thousands of catalogue distributions.
+INDEX_BATCH_DISTRIBUTIONS = 8
+INDEX_BATCH_SECONDS = 120
 
 
 def task_for(distribution, *, lane="history", generation=None):
@@ -373,6 +378,9 @@ def run_full_campaign(store, raw_store, quota_store, source_id, settings, workdi
     state = prepare(store, source_id, today, planner)
     if publish and state.get("receipts"):
         publish(store, code_sha)
+    last_index_at = clock()
+    pending_index = 0
+    first_index = not state.get("receipts")
     report = {"requests": 0, "accepted": 0, "failures": [], "reason": "no_due_tasks"}
     while report["requests"] < max_requests and clock() - started < max_seconds:
         now = clock()
@@ -639,13 +647,23 @@ def run_full_campaign(store, raw_store, quota_store, source_id, settings, workdi
             path.unlink(missing_ok=True)
         store.save(candidate)
         state = candidate
-        if publish:
-            publish(store, code_sha)
         report["accepted"] += 1
+        pending_index += 1
+        if publish and (first_index or pending_index >= INDEX_BATCH_DISTRIBUTIONS
+                        or clock() - last_index_at >= INDEX_BATCH_SECONDS):
+            publish(store, code_sha)
+            pending_index = 0
+            first_index = False
+            last_index_at = clock()
         report["reason"] = "batch_budget"
         if on_progress:
             on_progress({
                 "distribution_completed": accepted_distribution["dataset_id"],
                 **coverage(state),
             })
+    # Normal budget/quota stops and known source failures publish every retained
+    # increment before returning. Uncertain storage failures propagate above;
+    # the next fresh worker publishes that durable backlog before new collection.
+    if publish and pending_index:
+        publish(store, code_sha)
     return {**report, **coverage(state), "elapsed_seconds": round(clock() - started, 2)}

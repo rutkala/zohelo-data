@@ -62,7 +62,15 @@ Verified bounded reads on 8 September 2026 found these live compact JSON shapes:
   2026 omitted the catalogue-style `page` member even though the request specified
   it. The adapter therefore uses its validated request cursor for by-variable page
   identity. If `page` or `pageSize` is present, its type and value must still match
-  the cursor. Catalogue responses must always provide both members.
+  the cursor. Catalogue responses must always provide both members. Ordinary paged
+  responses must contain exactly `min(pageSize, totalRecords - page*pageSize)` result
+  objects, and a page whose offset is at or beyond a positive total is invalid. This
+  rejects short interior pages, short or overfilled final pages, and cursors beyond
+  the declared result set instead of silently treating missing members as complete.
+  The one documented exception is the parent-scoped subject route described below.
+- The dictionary and years routes have no page cursor in the v1 contract. Their
+  returned result count must therefore equal `totalRecords`; a mismatch remains a
+  visible failed task rather than an accepted partial dictionary.
 
 `interpret()` performs structural checks only. It returns an observation count for
 data pages and a result-object count for catalogue pages. It does not translate
@@ -79,7 +87,10 @@ The retained observation grain is:
 availability situations. Null remains null. It is not discarded merely because a
 numeric value is present. `precision` and `valueFormatted` are also retained; the
 numeric value is not rescaled in ingestion. Duplicate keys within one response page
-fail structural validation.
+fail structural validation. A by-variable page also rejects a repeated unit ID even
+when the duplicate unit happens to contain different years, attributes or no values.
+Units with an empty `values` array remain valid membership with zero observations;
+missing observations are not invented or converted to zero.
 
 Variable metadata supplies the measure unit and up to five source dimensions. Those
 fields define the series and must remain joinable by variable ID. Ratios, shares,
@@ -194,10 +205,14 @@ the anonymous path remains functional and no account is assumed here.
 
 ## Failure and change behavior
 
-Malformed JSON, a false-empty object, an explicit page/cursor disagreement, invalid identifiers,
-non-numeric values, and duplicate observation grains fail the task. The task is not
-marked complete and no follow-up page is inferred. Extra source fields remain in the
-retained exact bytes for forward-compatible dbt handling.
+Malformed JSON, a false-empty object, an explicit page/cursor disagreement, declared
+total/result-count mismatch, a page beyond the declared total, invalid identifiers,
+non-numeric values, repeated data units, and duplicate observation grains fail the
+task. The task is not marked complete and no follow-up page is inferred. These checks
+prove each accepted response page's cardinality; a future cross-page catalogue ledger
+is still required to reconcile unique identifiers and a consistent total across a
+whole catalogue vintage. Extra source fields remain in the retained exact bytes for
+forward-compatible dbt handling.
 
 BDL says resources are continuously supplemented, updated and corrected. A later
 different response is an observed source change. It is not labelled an official
