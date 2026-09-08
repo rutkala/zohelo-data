@@ -9,7 +9,10 @@ or the Eurostat equivalent. Full archives are stored under
 shared quota authority for both API and bulk requests.
 
 The full path enumerates official distributions and retains all supplied dimensions
-and periods. Its summary reports catalogue distributions, validated current
+and periods. Drive may identify uploaded raw bytes as ZIP, gzip, XML or text even when
+the upload requested a generic binary MIME type. Verification accepts non-native media
+types while rejecting Google-native documents, folders and shortcuts; exact identity,
+parent, ownership, size, MD5 and streamed SHA-256 checks still establish raw integrity. Its summary reports catalogue distributions, validated current
 distributions, pending/failed tasks and raw bytes. Raw coverage is not a modeled
 Silver/Gold/semantic release. A successful run can still have pending catalogue work.
 
@@ -19,6 +22,14 @@ verification. No raw/receipt identities or existing Landing pointers are replace
 Total accepted tasks, recurring roots and retained raw bytes no longer have starter
 ceilings. Provider quotas, finite historical queue backpressure, object size bounds
 and actual Drive/runner capacity checks remain operational controls.
+
+State shards are bounded at 2 MiB. The writer recomputes their hash-prefix layout on
+a changed save, compacting an earlier dense set of small shards while retaining every
+old immutable object. This avoids hundreds of 40–50 KiB Drive operations when a full
+catalogue only slightly exceeds the previous 512 KiB split threshold. State manifests
+remain bounded at 1 MiB. Roll out through the serialized provider jobs: binaries with
+the old 512 KiB read bound cannot read newly written larger shards. A rollback must
+retain the 2 MiB reader bound; never delete current state to run an older binary.
 
 WDI/Eurostat retain the 60 requests/15 minutes operator fair-use window, serialized
 requests and provider Retry-After. The former 600/12 hours and 6,000/week starter
@@ -35,12 +46,19 @@ See the canonical [delivery record](deliverables.md) for live evidence and
 ## Run and pause
 
 The schedule is `7,37 * * * *` UTC: a recovery/catch-up trigger every thirty minutes, independent
-of NBP's daily schedule. Each job immediately runs up to three collection/publication batches
-within a 900-second between-operation session budget. A batch remains bounded to twelve source
-requests and 240 seconds between attempts. Source calls and durable publication already in flight
-finish safely. WDI/Eurostat then run a full-distribution session of up to 24 requests
-and 1,200 seconds between operations. The workflow has a 60-minute outer timeout. Quota, capacity, no-due-work and source
-failures stop consecutive collection without spinning or resetting provider history.
+of NBP's daily schedule. Each source retains its requested API batch count (default three)
+and a 900-second aggregate between-operation API budget. A batch remains bounded to twelve
+source requests and 240 seconds between attempts. Normal WDI/Eurostat jobs run one API batch,
+verify the provider ledger, then start the full-distribution session (up to 24 requests and
+1,200 seconds between operations). After full collection and fresh restore succeed, remaining
+API cycles use the original API budget minus elapsed initial API time. Fewer than 60 remaining
+seconds skips that continuation. Any failed initial/bulk/restore stage prevents continuation
+API writes. BDL, paused-history and publish-only operations keep the ordinary API sequence.
+
+Source calls and durable publication already in flight finish safely; these between-operation
+budgets are not hard wall-clock deadlines. The workflow has a 60-minute outer timeout. Quota,
+capacity, no-due-work and source failures stop collection without spinning or resetting
+provider history.
 
 From Actions, run the workflow on `main`, choose all or one source, choose the batch count
 (default three), and optionally pause history. `publish_only` exposes already-collected accepted

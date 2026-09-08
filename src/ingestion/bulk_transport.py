@@ -27,6 +27,10 @@ _SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,119}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _STRONG_ETAG_RE = re.compile(r'^"[^"\r\n]{1,1022}"$')
+_MEDIA_MIME_RE = re.compile(
+    r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$"
+)
+_GOOGLE_NATIVE_MIME_PREFIX = "application/vnd.google-apps."
 _SENSITIVE_KEYS = {
     "authorization",
     "proxy-authorization",
@@ -659,7 +663,7 @@ class BulkDriveRawStore:
         if not (
             item.get("id") == file_id
             and item.get("name") == name
-            and item.get("mimeType") == "application/octet-stream"
+            and _is_non_native_media_mime(item.get("mimeType"))
             and item.get("parents") == [self.responses_root_id]
             and item.get("ownedByMe") is True
             and item.get("trashed") is False
@@ -924,6 +928,15 @@ def _quota_bytes(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed >= 0 else None
+
+
+def _is_non_native_media_mime(value: Any) -> bool:
+    """Accept Drive-sniffed raw media while excluding native Drive resources."""
+    return (
+        isinstance(value, str)
+        and _MEDIA_MIME_RE.fullmatch(value) is not None
+        and not value.lower().startswith(_GOOGLE_NATIVE_MIME_PREFIX)
+    )
 
 
 def _positive_int(value: Any, label: str) -> int:
