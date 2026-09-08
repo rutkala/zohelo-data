@@ -196,6 +196,81 @@ class GusBdlSourceTests(unittest.TestCase):
         details = [task for task in result["next_tasks"] if task["kind"] == "subject_detail"]
         self.assertEqual(len(details), 4)
 
+    def test_complete_subject_child_list_may_exceed_advertised_page_size(self):
+        # Live K9 returns all 21 children on every requested page while echoing
+        # pageSize=20 and even advertising a next link. totalRecords and the full
+        # unique result set are the only consistent completion evidence.
+        task = {
+            "id": "discovery:subjects:pl:K9:p000000",
+            "lane": "discovery",
+            "kind": "subjects",
+            "cursor": {
+                "lang": "pl",
+                "parent_id": "K9",
+                "page": 0,
+                "page_size": 20,
+            },
+        }
+        results = [
+            {
+                "id": f"G{number}",
+                "parentId": "K9",
+                "name": f"Subject {number}",
+                "hasVariables": True,
+                "children": [],
+                "levels": [0, 2, 5, 6],
+            }
+            for number in range(1, 22)
+        ]
+        payload = {
+            "totalRecords": 21,
+            "page": 0,
+            "pageSize": 20,
+            "results": results,
+            "links": {
+                "self": "official retained URL",
+                "next": "provider advertises a redundant page 1",
+            },
+        }
+        interpreted = gus_bdl.interpret(task, json.dumps(payload).encode(), TODAY)
+        self.assertEqual(interpreted["record_count"], 21)
+        self.assertEqual(
+            interpreted["metadata"]["api_pagination_mode"],
+            "complete_child_list",
+        )
+        self.assertFalse(
+            any(
+                item["kind"] == "subjects"
+                and item["cursor"].get("parent_id") == "K9"
+                for item in interpreted["next_tasks"]
+            )
+        )
+        self.assertEqual(
+            len(
+                [
+                    item
+                    for item in interpreted["next_tasks"]
+                    if item["kind"] == "subject_detail"
+                ]
+            ),
+            42,
+        )
+
+        incomplete = copy.deepcopy(payload)
+        incomplete["totalRecords"] = 22
+        with self.assertRaisesRegex(ValueError, "more results than pageSize"):
+            gus_bdl.interpret(task, json.dumps(incomplete).encode(), TODAY)
+
+        duplicate = copy.deepcopy(payload)
+        duplicate["results"][-1]["id"] = duplicate["results"][0]["id"]
+        with self.assertRaisesRegex(ValueError, "duplicate result identifiers"):
+            gus_bdl.interpret(task, json.dumps(duplicate).encode(), TODAY)
+
+        escaped_parent = copy.deepcopy(payload)
+        escaped_parent["results"][0]["parentId"] = "K8"
+        with self.assertRaisesRegex(ValueError, "escaped the requested parent"):
+            gus_bdl.interpret(task, json.dumps(escaped_parent).encode(), TODAY)
+
     def test_localities_are_discovered_from_required_municipality_parents(self):
         root = task_of(gus_bdl.initial_tasks(TODAY), "units", lang="pl")
         result = gus_bdl.interpret(root, fixture("units_pl_page_0.json"), TODAY)
