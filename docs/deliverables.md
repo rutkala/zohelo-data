@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; the first WDI/BDL/Eurostat Landing campaigns passed production collection and fresh-process replay in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540). The owner subsequently required faster collection and immediate data access: [ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds consecutive collect/publish batches, thirty-minute triggers and secure free-account/key setup. Production collection and queryable Landing acceptance passed: 178 accepted response envelopes are published (WDI 47, BDL 61, Eurostat 70), with zero publication backlog in [run 34221713083](https://github.com/rutkala/zohelo-data/actions/runs/34221713083). Portal support passed both CI configurations, merged in PR 78 and [deployed successfully](https://github.com/rutkala/zohelo-data/actions/runs/34223857331). The three source tables appear under `01_landing` after the connected portal refreshes its catalog. All three histories remain incomplete. New-source Silver/Gold/semantic publication remains separate implementation work.
+Updated 8 September 2026. **The audit and selected NBP product acceptance are complete; full coverage of all four selected sources is not.** NBP has 15 published tables and five verified daily metrics; its latest checked daily release contains 429,841 cleaned observations through 7 September. Daily ingestion runs at **02:00 UTC**. The owner has delegated full feasible onboarding across the [182 researched products/families](source-research/README.md), with no source-by-source review gate. [ADR 0006](decisions/0006-complete-selected-source-coverage.md) corrects the starter-only production scope: PRs 80–82 are merged, permanent cumulative starter ceilings are removed, and the [distribution-index portal is deployed](https://github.com/rutkala/zohelo-data/actions/runs/34241326729). In [production run 34245632263](https://github.com/rutkala/zohelo-data/actions/runs/34245632263), the complete official WDI archive is accepted, indexed and freshly verified. Eurostat full-distribution collection is running; BDL has 228 accepted and published responses and is respecting a provider rate-limit delay. The [dated coverage record](releases/2026-09-08-complete-source-correction.md) distinguishes catalogue discovery, verified raw coverage and modeled delivery. Eurostat/BDL full coverage and new-source Bronze/Silver/Gold/semantic publication remain open. Half-hour triggers resume saved ingestion progress; the [secure BDL key setup](source-accounts.md) can activate the free registered quota.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -17,7 +17,7 @@ This is the single project-status and owner-question record. Research, architect
 | D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. The new detection rules ran successfully in the verified live release. |
 | D4. NBP end-to-end including semantic queries | **Done** | All 15 tables and five daily metrics are published. Fresh native queries matched gold; raw replay matched 1,329,363 rows exactly. The complete capacity inventory is below current warning thresholds. |
 | D5. One data catalogue with source and metric lineage | **Done** | Five real metric definitions and source methodology/frequency/reuse metadata are in the matching release artifacts. The native viewer passes discovery and semantic-to-physical-lineage browser checks. |
-| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat recent/history intake and cold replay passed. Consecutive batches, queryable Landing snapshots and BDL API-key support are merged under ADR 0005. Live collection and fresh raw/Parquet verification passed for all three sources; 178 responses are published. Portal integration passed both CI configurations and is deployed, including preview, the visible three-dot query menu and ordinary SQL loading alongside NBP. Broad expansion and new-source modeled delivery remain open. [Agile Landing evidence](releases/2026-09-08-agile-landing.md). |
+| D6. Define and onboard additional sources | **In progress** | Research and the [implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. ADR 0006 requires complete selected products. PRs 80–82 implement full WDI/Eurostat distributions and scalable BDL paging; the portal supports response tables and archive indexes. The complete WDI CSV archive is accepted, indexed and freshly verified. Eurostat and BDL backfills remain incomplete. Broader onboarding and new-source Bronze/Silver/Gold/semantic models remain open. [Measured coverage and validation](releases/2026-09-08-complete-source-correction.md). |
 | D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
 | Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
@@ -55,14 +55,26 @@ paid-account access and unresolved consequential business definitions remain con
 
 ## Evidence
 
-**Complete-source correction in progress, 8 September:** the owner rejected the partial
+**Complete-source correction deployed; backfills in progress, 8 September:** the owner rejected the partial
 production scope. Inspection found permanent WDI/BDL discovery ceilings, Eurostat's three
 filtered starter datasets, repeated whole-state writes and Drive user-rate-limit failures.
 [ADR 0006](decisions/0006-complete-selected-source-coverage.md) records full selected-product
-acceptance. The correction adds full official WDI/Eurostat distributions, state sharding,
-streamed raw verification and queryable distribution indexes, while preserving BDL's
-quota-bound exhaustive pagination. Implementation tests, reviewed merge and live coverage
-will be recorded here after they succeed. This entry is not a claim of full production coverage.
+acceptance. [PR 80](https://github.com/rutkala/zohelo-data/pull/80) merged as `1287f65`,
+[PR 81](https://github.com/rutkala/zohelo-data/pull/81) as `1f841d6`, and
+[PR 82](https://github.com/rutkala/zohelo-data/pull/82) as `75c1afd`.
+Final [data CI](https://github.com/rutkala/zohelo-data/actions/runs/34245075797) passed 347 tests;
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/34240810496) passed both builds,
+686 unit tests and 14 browser flows per base path. The portal deployed at `1287f65`;
+the later fixes affect backend collection, storage verification and workflow ordering.
+The [corrected production run](https://github.com/rutkala/zohelo-data/actions/runs/34245632263)
+accepted and published the 282,845,220-byte WDI archive and passed fresh full-distribution
+verification. Its six CSV members include 396,970 country–indicator rows with 1960–2025
+year columns. BDL has 228 accepted/published responses with fresh verification passed and
+a provider-issued rate-limit delay. Eurostat's data and codelist inventories now identify
+16,964 distributions; the first complete dataset `AACT_ALI01` and its structure are accepted
+and indexed alongside those two inventories. Its full collector remains active. These are dated
+observations, not a claim of complete Eurostat/BDL or new modeled coverage.
+[Detailed production evidence](releases/2026-09-08-complete-source-correction.md).
 
 Agile source delivery, 8 September: [PR 77](https://github.com/rutkala/zohelo-data/pull/77) merged after [252 data tests](https://github.com/rutkala/zohelo-data/actions/runs/34221334104). An immediate earlier batch added 29 responses; the improved [production run](https://github.com/rutkala/zohelo-data/actions/runs/34221713083) then added 81 through three collect/publish cycles per source, leaving 178 accepted responses fully published and freshly verified. Half-hour triggers continue resumable collection. [PR 78](https://github.com/rutkala/zohelo-data/pull/78) passed two production builds, 685 unit tests and 14 browser flows per base path in [CI 34223422928](https://github.com/rutkala/zohelo-data/actions/runs/34223422928); [deployment 34223857331](https://github.com/rutkala/zohelo-data/actions/runs/34223857331) succeeded at `40844c3bd30aa84a3cec7b4e6fdb5a5995c05975`. Production data was verified through fresh Actions processes and portal SQL through browser fixtures; the cloud browser had no owner Drive session for an authenticated live data query. [Detailed snapshot evidence](releases/2026-09-08-agile-landing.md) separates response rows from facts, pending collection from pending publication, and registered support from an acquired key.
 
@@ -141,8 +153,11 @@ small batches. A new immediate run of the existing workflow completed successful
 cumulative accepted responses to WDI 21, BDL 31 and Eurostat 45.
 [ADR 0005](decisions/0005-agile-landing-and-source-access.md) implements consecutive collection
 and publication, independently verified/queryable Landing snapshots, and the
-[free-account and secure-key setup](source-accounts.md). Deployment and live portal acceptance
-are still being verified; fixture tests alone do not close this increment.
+[free-account and secure-key setup](source-accounts.md). Production collection and fresh
+Landing verification passed; [portal deployment](https://github.com/rutkala/zohelo-data/actions/runs/34223857331)
+also passed. Browser SQL behavior was verified with fixtures; an authenticated owner-session
+browser query was not performed. The complete-source correction and current coverage are
+recorded above.
 
 **Following increments:** source-specific dbt Bronze/Silver and then Gold/semantics using only
 the references needed for each slice. Broader source waves can progress alongside those models.
