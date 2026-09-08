@@ -76,6 +76,13 @@ budgets are not hard wall-clock deadlines. The workflow has a 60-minute outer ti
 capacity, no-due-work and source failures stop collection without spinning or resetting
 provider history.
 
+The schedule is a wake-up frequency, not a promise that each complete provider job finishes
+within thirty minutes. Each provider has one active writer and, under the default GitHub
+concurrency queue, one pending job; a newer scheduled job can replace that pending job without
+cancelling the active writer. See [GitHub concurrency behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+Thus a cancelled superseded run, a failed request, a quota wait and a completed backfill are
+different outcomes. Inspect the provider job and its accepted/published checkpoints.
+
 From Actions, run the workflow on `main`, choose all or one source, choose the batch count
 (default three), and optionally pause history. `publish_only` exposes already-collected accepted
 responses without making source API requests.
@@ -123,6 +130,20 @@ series is retried later while unrelated tasks can advance; auth/service failures
 provider. An ambiguous Drive write stops the job for inspection rather than reporting a retry
 as successful. Re-run the same workflow after the cause is resolved; never delete pointers or
 successful history to force a retry. There is no automatic data deletion.
+
+`transport_retries: 1` allows one additional attempt for a transient API network failure
+within the current batch. The retry uses the same task/request, another durable quota
+reservation, and the existing request/time/inline-wait limits. Each failed attempt retains
+its immutable rejection receipt and normal persisted task backoff. Only the current process
+may prioritize that one immediate retry; a restart observes the saved backoff. HTTP errors,
+provider cooldowns, invalid response content, storage failures and uncertain promotions do
+not enter this retry path. Exhaustion or insufficient budget leaves the task failed/pending.
+
+Reports distinguish `failed_attempts`, `transport_retry_attempts`,
+`recovered_transport_failures`, and `failed_requests` (unrecovered tasks attempted in this run).
+A recovered transient failure can finish successfully while retaining its error evidence.
+An unrecovered request or failed validation/publication still fails the provider job; a green
+job does not establish complete coverage of its source.
 
 ## Capacity and report meanings
 

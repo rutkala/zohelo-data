@@ -58,6 +58,30 @@ checkpoint durable. It does not close the remaining acceptance items. The remain
 These items remain open until their actual acceptance evidence is recorded. Future improvements
 are reprioritized from observed usefulness, correctness, reliability and cost in this same record.
 
+### Ingestion Action failures checked on 8 September
+
+The owner's follow-up asked to check several hours of failed ingestion before other work.
+The fresh run/job logs establish distinct causes:
+
+| Failure evidence | Actual cause | Resolution / current evidence |
+| --- | --- | --- |
+| [34240148821](https://github.com/rutkala/zohelo-data/actions/runs/34240148821), [34241326444](https://github.com/rutkala/zohelo-data/actions/runs/34241326444), BDL | A valid parent-subject listing returned all 21 children despite `pageSize=20`; the parser rejected it. | Fixed by `1f841d6`; the later all-source successful run accepted BDL pages with zero failed requests. |
+| 34241326444, WDI | Drive reported a ZIP media MIME type, and immutable raw verification rejected it. | Fixed by `75c1afd`; the complete 282,845,220-byte archive is accepted and freshly restored. |
+| 34241326444, Eurostat | `RemoteDisconnected` on one API history request. | Retained progress was published; later runs resumed with zero pending retries. |
+| [34245632263](https://github.com/rutkala/zohelo-data/actions/runs/34245632263), [34246624216](https://github.com/rutkala/zohelo-data/actions/runs/34246624216), WDI | Historical API reads timed out at 90 seconds (`BX.GSR.CCIS.CD` and `BX.GSR.INSF.ZS`). The bulk archive and other provider jobs succeeded. | Subsequent run 34252801846 succeeded for all three providers. This correction adds one bounded, quota-reserved in-run transport retry with retained failure receipts and separate recovered/unrecovered counts. |
+
+The source workflow runs at minutes **7 and 37 UTC** with separate serialized WDI/BDL/Eurostat
+jobs and a **60-minute job timeout**. Normal API collection uses three cycles, up to twelve
+requests/240 seconds per cycle and a 900-second aggregate between-operation budget. WDI/Eurostat
+run the first API cycle, then up to 24 full-distribution requests/1,200 seconds, then remaining
+API cycles after successful collection/verification. Provider quotas and cooldowns apply to
+every path. Work can span the next schedule; an older pending job may be superseded while the
+active source writer finishes its checkpoint. A red workflow can contain successful provider
+jobs and durable published increments. It is not an instruction to restart all data.
+
+NBP is separate: its daily **02:00 UTC** [run 34179015910](https://github.com/rutkala/zohelo-data/actions/runs/34179015910)
+succeeded on 8 September. Manual/configuration guidance remains in [campaign operations](source-campaign-operations.md).
+
 **Status meanings:** **Done** = delivered and evidenced; **In progress** = active work or verification; **On hold** = explicitly excluded for now with a reason and reopening condition; **Waiting for input** = an owner choice; **Not started** = future implementation; **Cancelled** = intentionally retired.
 
 | Deliverable | Status | What this means |

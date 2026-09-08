@@ -16,6 +16,9 @@ defaults:
   max_completed_tasks: null
   min_request_interval_seconds: 2
   max_inline_wait_seconds: 10
+  # Retry one transient socket/read failure inside the same bounded session.
+  # Each retry is quota-reserved and durably receipted like every source attempt.
+  transport_retries: 1
   # Keyless WDI/Eurostat use serial requests and provider Retry-After. No
   # documented 12-hour/weekly request quota justified the former starter caps.
   # Keep seven days of reservations even though this fair-use window is shorter.

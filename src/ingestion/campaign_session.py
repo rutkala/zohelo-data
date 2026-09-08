@@ -58,6 +58,11 @@ def run_collection_session(store, adapter, settings, *, today_factory, publish,
         "requests": sum(r["requests"] for r in reports),
         "accepted_responses": sum(r["accepted_responses"] for r in reports),
         "failed_requests": sum(r["failed_requests"] for r in reports),
+        "failed_attempts": sum(r.get("failed_attempts", r["failed_requests"]) for r in reports),
+        "transport_retry_attempts": sum(r.get("transport_retry_attempts", 0) for r in reports),
+        "recovered_transport_failures": sum(
+            r.get("recovered_transport_failures", 0) for r in reports
+        ),
         "elapsed_seconds": round(clock() - started, 2),
         "coverage_status": "incomplete",
         "publication_layer": "01_landing",
