@@ -70,7 +70,7 @@ export function TableActions({
           type="button"
           size="icon"
           variant="ghost"
-          className="h-9 w-9 shrink-0 opacity-100 transition-opacity md:h-6 md:w-6 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+          className="h-9 w-9 shrink-0 md:h-6 md:w-6"
           aria-label={`Actions for ${displayName}`}
           title={`Actions for ${displayName}`}
           onClick={(event) => event.stopPropagation()}
