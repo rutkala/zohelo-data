@@ -186,7 +186,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
     state = prepare_state(store, adapter, today, settings)
     run = {"source_id": adapter.SOURCE_ID, "requests": 0, "accepted_responses": 0,
            "records_received": 0, "retrieved_bytes": 0, "failed_requests": 0, "by_lane": {},
-           "by_kind": {}, "reason": "no_due_tasks"}
+           "by_kind": {}, "errors": [], "reason": "no_due_tasks"}
     while run["requests"] < settings["max_requests"]:
         now = clock()
         if now - started >= settings["max_run_seconds"]:
@@ -264,6 +264,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                        "error_type": type(error).__name__, "detail": str(error)[:300],
                        "failed_at_utc": state["last_attempt_utc"]}
             state["last_error"] = failure
+            run["errors"].append({key: value for key, value in failure.items() if key != "raw"})
             rejected = store.put_receipt({"schema_version": 1, "accepted": False, "source_id": adapter.SOURCE_ID,
                                           "task": task, "request": request_spec, "code_sha": code_sha, **failure})
             state.setdefault("rejected_receipts", []).append({"task_id": task["id"], **rejected})

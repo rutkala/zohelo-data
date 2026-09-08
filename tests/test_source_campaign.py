@@ -251,6 +251,8 @@ class CampaignDurabilityTests(unittest.TestCase):
         self.assertEqual(result["failed_requests"], 1)
         self.assertEqual(result["accepted_responses"], 1)
         self.assertEqual(result["records_received"], 4)
+        self.assertEqual(result["errors"][0]["task_id"], "bad-series")
+        self.assertNotIn("raw", result["errors"][0])
         self.assertEqual(list(store.state["completed"]), ["healthy-history"])
         self.assertEqual([item["id"] for item in store.state["pending"]], ["bad-series"])
         self.assertGreater(store.state["pending"][0]["retry_at"], clock.now)
