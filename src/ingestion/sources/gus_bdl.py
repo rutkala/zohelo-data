@@ -343,6 +343,13 @@ def _interpret_page(
     )
     if len(results) > page_size and not complete_child_listing:
         raise ValueError("GUS BDL response contains more results than pageSize")
+    if not complete_child_listing:
+        expected_results = _expected_page_cardinality(page, page_size, total)
+        if len(results) != expected_results:
+            raise ValueError(
+                "GUS BDL response result count does not match the declared page "
+                f"cardinality: expected {expected_results}, received {len(results)}"
+            )
     links = payload.get("links")
     if links is not None and not isinstance(links, dict):
         raise ValueError("GUS BDL links must be an object when present")
@@ -497,6 +504,7 @@ def _validate_data_page(
         raise ValueError("GUS BDL data lastUpdate must be a string or null")
 
     count = 0
+    seen_units: set[str] = set()
     seen: set[tuple[int, str, str, int | None]] = set()
     for unit in results:
         if not isinstance(unit, dict):
@@ -504,6 +512,9 @@ def _validate_data_page(
         unit_id = unit.get("id")
         if not _matches(_UNIT_ID_RE, unit_id):
             raise ValueError("GUS BDL data unit id must be a 12-digit BDL identifier")
+        if unit_id in seen_units:
+            raise ValueError("GUS BDL data page contains a repeated unit identifier")
+        seen_units.add(unit_id)
         if unit.get("name") is not None and not isinstance(unit["name"], str):
             raise ValueError("GUS BDL data unit name must be a string or null")
         values = _list_field(unit, "values")
@@ -595,8 +606,10 @@ def _interpret_dictionary(
 ) -> dict[str, Any]:
     results = _list_field(payload, "results")
     total = _nonnegative_int(payload, "totalRecords")
-    if len(results) > total:
-        raise ValueError("GUS BDL dictionary result count exceeds totalRecords")
+    if len(results) != total:
+        raise ValueError(
+            "GUS BDL unpaged dictionary result count does not match totalRecords"
+        )
     for item in results:
         if not isinstance(item, dict) or "id" not in item:
             raise ValueError("GUS BDL dictionary results must be identified objects")
@@ -614,6 +627,8 @@ def _interpret_dictionary(
 def _interpret_years(payload: dict[str, Any]) -> dict[str, Any]:
     results = _list_field(payload, "results")
     total = _nonnegative_int(payload, "totalRecords")
+    if len(results) != total:
+        raise ValueError("GUS BDL unpaged years result count does not match totalRecords")
     for item in results:
         if not isinstance(item, dict) or not _is_int(item.get("id")):
             raise ValueError("GUS BDL years must contain objects with integer ids")
@@ -876,6 +891,14 @@ def _optional_paging_int(
     if value != expected:
         raise ValueError(f"GUS BDL response {field} does not match the task cursor")
     return value
+
+
+def _expected_page_cardinality(page: int, page_size: int, total: int) -> int:
+    """Return the exact result count for one zero-based BDL page."""
+    offset = page * page_size
+    if offset > total or (offset == total and total > 0):
+        raise ValueError("GUS BDL response page starts beyond totalRecords")
+    return min(page_size, total - offset)
 
 
 def _cursor_nonnegative_int(cursor: dict[str, Any], field: str) -> int:

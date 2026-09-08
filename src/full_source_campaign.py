@@ -46,10 +46,16 @@ def main():
         receipt = store.read_receipt(state["receipts"][-1])
         with tempfile.TemporaryDirectory(prefix="zohelo-bulk-verify-") as directory:
             raw_store.read_to_file(receipt["raw"], Path(directory) / "restored.download")
-        index = verify_bulk_index(store)
+        index = verify_bulk_index(store, require_current=True)
         if index is None:
             raise RuntimeError("Full-distribution index has not been published")
-        print(json.dumps({"status": "fresh_full_distribution_verified", **coverage(state)}), flush=True)
+        print(json.dumps({
+            "status": "fresh_full_distribution_verified",
+            "raw_verification_scope": "sampled_latest_accepted_object",
+            "raw_history_audit": False,
+            "index_snapshot_id": index["snapshot_id"],
+            **coverage(state),
+        }), flush=True)
         return 0
     quota_store = DriveCampaignStore(storage, args.source)
     with tempfile.TemporaryDirectory(prefix="zohelo-full-source-") as directory:

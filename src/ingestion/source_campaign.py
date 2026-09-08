@@ -7,10 +7,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
+from http.client import RemoteDisconnected
 import json
 import math
+import socket
+import ssl
 import time
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
@@ -27,6 +30,18 @@ class CampaignError(ValueError):
 
 class CapacityPause(CampaignError):
     pass
+
+
+def transient_transport_error(error):
+    """Return whether an exception is a bounded, safe-to-repeat fetch failure."""
+    if isinstance(error, (HTTPError, ssl.SSLError)):
+        return False
+    if isinstance(error, (TimeoutError, ConnectionError, RemoteDisconnected, socket.gaierror)):
+        return True
+    if isinstance(error, URLError):
+        reason = error.reason
+        return reason is not error and transient_transport_error(reason)
+    return False
 
 
 def canonical(value):
@@ -212,11 +227,20 @@ def fetch(request_spec, allowed_hosts, *, max_bytes, timeout, headers=None):
 
 def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetcher=fetch,
                  clock=time.time, sleeper=time.sleep, code_sha="unknown"):
+    transport_retry_limit = settings.get("transport_retries", 0)
+    if type(transport_retry_limit) is not int or not 0 <= transport_retry_limit <= 2:
+        raise CampaignError("Transport retries must be between zero and two")
     started = clock()
     state = prepare_state(store, adapter, today, settings)
     run = {"source_id": adapter.SOURCE_ID, "requests": 0, "accepted_responses": 0,
-           "records_received": 0, "retrieved_bytes": 0, "failed_requests": 0, "by_lane": {},
-           "by_kind": {}, "errors": [], "reason": "no_due_tasks"}
+           "records_received": 0, "retrieved_bytes": 0, "failed_requests": 0,
+           "failed_attempts": 0, "transport_retry_attempts": 0,
+           "recovered_transport_failures": 0, "by_lane": {}, "by_kind": {},
+           "errors": [], "reason": "no_due_tasks"}
+    failed_task_ids = set()
+    transient_failed_task_ids = set()
+    transport_retries_used = {}
+    preferred_retry_task_id = None
     while run["requests"] < settings["max_requests"]:
         now = clock()
         if now - started >= settings["max_run_seconds"]:
@@ -233,7 +257,17 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                 and state["raw_bytes"] + settings["max_response_bytes"] > settings["max_retained_raw_bytes"]):
             run["reason"] = "storage_capacity_pause"
             break
-        task = choose_task(state, settings, now, history_enabled=history_enabled)
+        retry_attempt = preferred_retry_task_id is not None
+        if retry_attempt:
+            task = next(
+                (item for item in state["pending"] if item["id"] == preferred_retry_task_id),
+                None,
+            )
+            if task is None:
+                raise CampaignError("Transport retry task is no longer pending")
+            preferred_retry_task_id = None
+        else:
+            task = choose_task(state, settings, now, history_enabled=history_enabled)
         if task is None:
             break
         wait = quota_wait(state, settings, now)
@@ -250,12 +284,26 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
         state["last_attempt_utc"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
         store.save(state)
         run["requests"] += 1
+        if retry_attempt:
+            run["transport_retry_attempts"] += 1
         body, headers, status = b"", {}, 0
         descriptor = None
+        transient_fetch_failure = False
         try:
-            status, body, headers = fetcher(request_spec, adapter.ALLOWED_HOSTS,
-                                            max_bytes=settings["max_response_bytes"],
-                                            timeout=settings["http_timeout_seconds"])
+            try:
+                status, body, headers = fetcher(
+                    request_spec,
+                    adapter.ALLOWED_HOSTS,
+                    max_bytes=settings["max_response_bytes"],
+                    timeout=settings["http_timeout_seconds"],
+                )
+            except OSError as error:
+                # Only failures raised by the source transport are eligible.
+                # Storage, parsing and publication happen outside this block.
+                if getattr(error, "uncertain", False) or not transient_transport_error(error):
+                    raise
+                transient_fetch_failure = True
+                raise
             if body:
                 descriptor = store.put_raw(body, {"task_id": task["id"], "source_id": adapter.SOURCE_ID})
                 state["raw_bytes"] += len(body)
@@ -296,6 +344,8 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                        "failed_at_utc": state["last_attempt_utc"]}
             state["last_error"] = failure
             run["errors"].append({key: value for key, value in failure.items() if key != "raw"})
+            run["failed_attempts"] += 1
+            failed_task_ids.add(task["id"])
             rejected = store.put_receipt({"schema_version": 1, "accepted": False, "source_id": adapter.SOURCE_ID,
                                           "task": task, "request": request_spec, "code_sha": code_sha, **failure})
             state.setdefault("rejected_receipts", []).append({"task_id": task["id"], **rejected})
@@ -304,20 +354,32 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
             if status in (429, 503):
                 state["provider_retry_at"] = task["retry_at"]
             store.save(state)
-            run["failed_requests"] += 1
             run["reason"] = "source_error"
+            used = transport_retries_used.get(task["id"], 0)
+            if transient_fetch_failure and used < transport_retry_limit:
+                transport_retries_used[task["id"]] = used + 1
+                transient_failed_task_ids.add(task["id"])
+                # This process may retry the same task despite its durable backoff.
+                # A restart has no local preference and respects the saved retry_at.
+                preferred_retry_task_id = task["id"]
+                continue
             # A bad/retired series is isolated; rate/auth/service trouble stops this provider.
-            if status not in (200, 400, 404, 422) or run["failed_requests"] >= 3:
+            if status not in (200, 400, 404, 422) or len(failed_task_ids) >= 3:
                 break
             continue
         # Promotion failures propagate. Do not resume with an uncertain in-memory state.
         store.save(candidate)
         state = candidate
+        if task["id"] in transient_failed_task_ids:
+            run["recovered_transport_failures"] += 1
+            transient_failed_task_ids.remove(task["id"])
+        failed_task_ids.discard(task["id"])
         run["accepted_responses"] += 1
         run["records_received"] += result["record_count"]
         for group, key in (("by_lane", task["lane"]), ("by_kind", task["kind"])):
             run[group][key] = run[group].get(key, 0) + 1
         run["reason"] = "request_budget"
+    run["failed_requests"] = len(failed_task_ids)
     run.update({"pending_tasks": len(state["pending"]), "registered_recent_roots": len(state["recent_roots"]),
                 "total_accepted_responses": state["accepted_responses"], "total_raw_bytes": state["raw_bytes"],
                 "coverage_status": "incomplete", "publication_layer": "01_landing",

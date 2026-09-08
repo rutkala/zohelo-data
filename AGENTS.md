@@ -4,8 +4,10 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Own the technical handoff.**
 
-- The owner supplies goals and business decisions. Handle routine branches, pull requests, checks and deployment within the authorized task; do not leave those as unexplained homework for the owner.
+- The owner's initial goal and boundaries authorize the work within them. Own the complete goal and every necessary deliverable; proceed autonomously through routine design, implementation, branches, pull requests, checks, merge, deployment and production verification. Ask only when a consequential business choice, missing credential or boundary change is required.
+- Do not silently narrow scope, treat an intermediate as the requested outcome, or stop because one implementation increment works. If completion is not yet possible, record the verified progress, remaining work and either the active continuation or a concrete blocker in [docs/deliverables.md](docs/deliverables.md).
 - Creating a branch or passing tests is not the same as updating `main` or the live portal. State which of these has actually happened, and finish the authorized delivery or name the concrete blocker.
+- Mark work **Done** only when the user's outcome is validated, the change is merged and deployed where applicable, and claimed data coverage is established by actual collection and coverage evidence. Code, a workflow, a successful sample, or a running backfill is an intermediate state when more of the authorized outcome remains.
 - Keep owner-facing updates short and in plain language. Ask one necessary business question at a time. If an owner action is unavoidable, give one clear next step.
 - Do not imply that work continues after a reply unless a specific background task has actually been started.
 
@@ -21,6 +23,7 @@ Shared instructions for coding work in this repository. Run commands from the re
 - Separate observed facts, technical inferences and unresolved business decisions. Verify uncertain technical behavior against code, fixtures or current primary documentation. Ask the owner only for a consequential business choice; do not invent metric definitions, revision policy, availability promises or a new paid service.
 - Research each source's official terminology and prepare sourced business definitions before asking the owner about analytical use cases. Keep unresolved business questions, their stable IDs, researched options, and recorded answers in [docs/deliverables.md](docs/deliverables.md), the single project-status record. The owner may answer an ID in chat; update that record after an explicit decision.
 - Keep the portal data-first: its single native dbt catalogue shows published release data, lineage, and approved metric definitions only. Do not put project-management or owner-review flows in the portal or catalogue. Keep proposed definitions visibly distinct from approved, executable metrics, and describe a current portal change as awaiting validation and main deployment until both have occurred.
+- Apply an evidence-led improvement loop to every solution, including the portal: observe real use, correctness, coverage, failures and operating cost; reprioritize the remaining authorized work toward usefulness and owner satisfaction; then validate the next increment. Preserve operation by a human without AI, cost and secret boundaries, reuse terms, production serialization, and [the one canonical GitHub status record](docs/deliverables.md). This loop governs active authorized work and does not imply unbounded background activity.
 - Use economical delegation for concrete independent tasks. Select a lighter available model explicitly for inventory or straightforward implementation; keep architecture, ambiguous failures and integration with the lead agent. Do not spawn agents merely to fill slots or let them silently inherit an expensive model. Report delegation honestly; actual billed savings may be unavailable.
 
 **Repository map.**
@@ -117,8 +120,10 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
 
 ## Complete selected-source coverage
 
-- Apply ADR 0006: starter slices and permanent cumulative task/raw ceilings are not complete
-  source delivery. Prefer official complete distributions and exhaust paginated catalogues.
+- Apply ADR 0006: a selected source product means its full available datasets, dimensions,
+  geographies, history and accompanying metadata. Starter slices and permanent cumulative
+  task/raw ceilings are not complete source delivery. Prefer official complete distributions;
+  otherwise use resumable batches that continue toward catalogue and page exhaustion.
 - `src/full_source_campaign.py` collects full WDI/Eurostat distributions after the recent API
   batch within the same serialized provider job and quota ledger. Large raw objects are
   streamed, remotely hash-verified and indexed; do not load archives into browser memory.

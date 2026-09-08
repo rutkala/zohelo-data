@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from uuid import uuid4
 
 import duckdb
 
@@ -189,9 +190,155 @@ class BulkPublicationTests(unittest.TestCase):
             / "06_control/source_campaigns/eurostat_bulk/current-landing.json"
         )
         before = pointer.read_bytes()
+        objects_before = {
+            path.relative_to(self.root)
+            for path in self.root.rglob("*")
+            if path.is_file()
+        }
         same = publish_bulk_index(self.store(), "c" * 40)
         self.assertEqual(same, second)
         self.assertEqual(pointer.read_bytes(), before)
+        self.assertEqual(
+            {
+                path.relative_to(self.root)
+                for path in self.root.rglob("*")
+                if path.is_file()
+            },
+            objects_before,
+        )
+
+    def test_fresh_verifier_accepts_stale_prefix_unless_current_is_required(self):
+        store = self.store()
+        first = accepted(store, self.provider_id, 1)
+        save_state(store, self.provider_id, [first])
+        published = publish_bulk_index(store, "a" * 40)
+
+        changed = self.store()
+        second = accepted(changed, self.provider_id, 2)
+        save_state(changed, self.provider_id, [first, second])
+
+        verified = verify_bulk_index(self.store())
+        self.assertEqual(verified["snapshot_id"], published["snapshot_id"])
+        self.assertEqual(verified["published_distribution_count"], 1)
+        with self.assertRaisesRegex(BulkPublicationError, "not current"):
+            verify_bulk_index(self.store(), require_current=True)
+
+    def test_fresh_verifier_rejects_manifest_checkpoint_not_bound_to_state(self):
+        store = self.store()
+        item = accepted(store, self.provider_id, 1)
+        save_state(store, self.provider_id, [item])
+        manifest = publish_bulk_index(store, "a" * 40)
+
+        tampering = self.store()
+        tampering.load_landing_pointer()
+        changed = deepcopy(manifest)
+        changed["snapshot_id"] = str(uuid4())
+        changed["receipt_checkpoint_sha256"] = "0" * 64
+        raw = json.dumps(
+            changed,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode()
+        descriptor = tampering.put_landing_object(
+            f"manifest-{changed['snapshot_id']}.json", raw
+        )
+        tampering.promote_landing_pointer({
+            "format_version": 1,
+            "source_id": f"{self.provider_id}_bulk",
+            "snapshot_id": changed["snapshot_id"],
+            "manifest_file_id": descriptor["id"],
+            "manifest_file_name": descriptor["name"],
+            "manifest_sha256": descriptor["sha256"],
+            "manifest_size_bytes": descriptor["size"],
+        })
+
+        with self.assertRaisesRegex(BulkPublicationError, "checkpoint"):
+            verify_bulk_index(self.store())
+
+    def test_coverage_change_publishes_manifest_only_and_then_noops(self):
+        provider_id = "world_bank_wdi"
+        store = LocalCampaignStore(self.root, f"{provider_id}_bulk")
+        item = accepted(store, provider_id, 1)
+        save_state(store, provider_id, [item])
+        first = publish_bulk_index(store, "a" * 40)
+        self.assertEqual(first["coverage_status"], "incomplete")
+
+        changed = LocalCampaignStore(self.root, f"{provider_id}_bulk")
+        state = changed.load()
+        catalogue_date = "2026-09-08"
+        state["last_catalogue_date"] = catalogue_date
+        state["last_catalogue_success"] = catalogue_date
+        state["latest_wdi"] = {"catalogue_date": catalogue_date}
+        changed.save(state)
+        writes = []
+        original_put = changed.put_landing_object
+
+        def observed_put(name, payload, **kwargs):
+            writes.append(name)
+            return original_put(name, payload, **kwargs)
+
+        changed.put_landing_object = observed_put
+        second = publish_bulk_index(changed, "b" * 40)
+
+        self.assertNotEqual(second["snapshot_id"], first["snapshot_id"])
+        self.assertEqual(second["coverage_status"], "complete_current_catalogue")
+        self.assertEqual(second["files"], first["files"])
+        self.assertEqual(second["row_count"], first["row_count"])
+        self.assertEqual(len(writes), 1)
+        self.assertTrue(writes[0].startswith("manifest-"))
+        self.assertEqual(
+            verify_bulk_index(
+                LocalCampaignStore(self.root, f"{provider_id}_bulk"),
+                require_current=True,
+            )["snapshot_id"],
+            second["snapshot_id"],
+        )
+
+        pointer = (
+            self.root
+            / f"06_control/source_campaigns/{provider_id}_bulk/current-landing.json"
+        )
+        before = pointer.read_bytes()
+        same = publish_bulk_index(
+            LocalCampaignStore(self.root, f"{provider_id}_bulk"), "c" * 40
+        )
+        self.assertEqual(same, second)
+        self.assertEqual(pointer.read_bytes(), before)
+
+        failing = LocalCampaignStore(self.root, f"{provider_id}_bulk")
+        state = failing.load()
+        state["last_catalogue_success"] = None
+        failing.save(state)
+        pointer_before_failure = pointer.read_bytes()
+        fragment_paths = [self.root / item["id"] for item in second["files"]]
+        real_put = failing.put_landing_object
+
+        def corrupt_manifest(name, payload, **kwargs):
+            value = json.loads(payload)
+            value["row_count"] += 1
+            return real_put(
+                name,
+                json.dumps(value, sort_keys=True, separators=(",", ":")).encode(),
+                **kwargs,
+            )
+
+        failing.put_landing_object = corrupt_manifest
+        with self.assertRaisesRegex(BulkPublicationError, "counts|row count"):
+            publish_bulk_index(failing, "d" * 40)
+        self.assertEqual(pointer.read_bytes(), pointer_before_failure)
+        self.assertTrue(all(path.is_file() for path in fragment_paths))
+        self.assertEqual(
+            verify_bulk_index(
+                LocalCampaignStore(self.root, f"{provider_id}_bulk")
+            )["snapshot_id"],
+            second["snapshot_id"],
+        )
+        with self.assertRaisesRegex(BulkPublicationError, "not current"):
+            verify_bulk_index(
+                LocalCampaignStore(self.root, f"{provider_id}_bulk"),
+                require_current=True,
+            )
 
     def test_many_single_record_publishes_compact_only_the_small_tail(self):
         items = []

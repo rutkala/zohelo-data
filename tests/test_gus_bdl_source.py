@@ -20,6 +20,25 @@ def fixture(name):
     return (FIXTURES / name).read_bytes()
 
 
+def complete_page_fixture(name):
+    """Expand compact checked-in examples to their declared page cardinality."""
+    payload = json.loads(fixture(name))
+    page = payload.get("page", 0)
+    page_size = payload.get("pageSize", 100)
+    expected = min(page_size, payload["totalRecords"] - page * page_size)
+    while len(payload["results"]) < expected:
+        item = copy.deepcopy(payload["results"][-1])
+        ordinal = len(payload["results"]) + 1
+        if name.startswith("variables_"):
+            item["id"] = 80000 + ordinal
+        else:
+            item["id"] = f"9{ordinal:011d}"
+            if name.startswith("data_"):
+                item["values"] = []
+        payload["results"].append(item)
+    return json.dumps(payload).encode()
+
+
 def task_of(tasks, kind, **cursor_values):
     return next(
         task
@@ -142,10 +161,11 @@ class GusBdlSourceTests(unittest.TestCase):
 
     def test_polish_variable_catalogue_paginates_and_admits_every_returned_variable(self):
         root = task_of(gus_bdl.initial_tasks(TODAY), "variables", lang="pl")
-        result = gus_bdl.interpret(root, fixture("variables_pl_page_0.json"), TODAY)
-        self.assertEqual(result["record_count"], 2)
+        result = gus_bdl.interpret(root, complete_page_fixture("variables_pl_page_0.json"), TODAY)
+        self.assertEqual(result["record_count"], 20)
         self.assertEqual(result["metadata"]["api_total_records"], 21)
-        self.assertEqual(result["metadata"]["result_ids"], [72305, 72306])
+        self.assertEqual(result["metadata"]["result_ids"][:2], [72305, 72306])
+        self.assertEqual(len(set(result["metadata"]["result_ids"])), 20)
 
         for variable_id in (72305, 72306):
             self.assertEqual(
@@ -180,8 +200,8 @@ class GusBdlSourceTests(unittest.TestCase):
 
     def test_english_variable_catalogue_only_paginates_to_avoid_duplicate_campaigns(self):
         root = task_of(gus_bdl.initial_tasks(TODAY), "variables", lang="en")
-        result = gus_bdl.interpret(root, fixture("variables_en_page_0.json"), TODAY)
-        self.assertEqual(result["record_count"], 2)
+        result = gus_bdl.interpret(root, complete_page_fixture("variables_en_page_0.json"), TODAY)
+        self.assertEqual(result["record_count"], 20)
         self.assertEqual([task["kind"] for task in result["next_tasks"]], ["variables"])
 
     def test_subject_tree_expansion_keeps_both_source_languages(self):
@@ -271,9 +291,74 @@ class GusBdlSourceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escaped the requested parent"):
             gus_bdl.interpret(task, json.dumps(escaped_parent).encode(), TODAY)
 
+    def test_paged_routes_require_exact_interior_last_and_in_range_cardinality(self):
+        root = task_of(gus_bdl.initial_tasks(TODAY), "variables", lang="pl")
+        with self.assertRaisesRegex(ValueError, "declared page cardinality"):
+            gus_bdl.interpret(root, fixture("variables_pl_page_0.json"), TODAY)
+
+        first = gus_bdl.interpret(
+            root, complete_page_fixture("variables_pl_page_0.json"), TODAY
+        )
+        last_task = task_of(first["next_tasks"], "variables", lang="pl", page=1)
+        last_payload = json.loads(fixture("variables_pl_page_0.json"))
+        last_payload.update({"page": 1, "results": [last_payload["results"][0]]})
+        accepted_last = gus_bdl.interpret(
+            last_task, json.dumps(last_payload).encode(), TODAY
+        )
+        self.assertEqual(accepted_last["record_count"], 1)
+        self.assertFalse(any(task["kind"] == "variables" for task in accepted_last["next_tasks"]))
+
+        for results in ([], last_payload["results"] * 2):
+            short_or_long = copy.deepcopy(last_payload)
+            short_or_long["results"] = results
+            with self.subTest(result_count=len(results)):
+                with self.assertRaisesRegex(ValueError, "declared page cardinality"):
+                    gus_bdl.interpret(
+                        last_task, json.dumps(short_or_long).encode(), TODAY
+                    )
+
+        beyond = copy.deepcopy(last_payload)
+        beyond["totalRecords"] = 20
+        beyond["results"] = []
+        with self.assertRaisesRegex(ValueError, "beyond totalRecords"):
+            gus_bdl.interpret(last_task, json.dumps(beyond).encode(), TODAY)
+
+    def test_unpaged_dictionary_and_year_totals_must_match_returned_objects(self):
+        tasks = gus_bdl.initial_tasks(TODAY)
+        dictionary = task_of(
+            tasks, "dictionary", resource="attributes", lang="pl"
+        )
+        years = task_of(tasks, "years")
+
+        valid_dictionary = {"totalRecords": 1, "results": [{"id": 1}]}
+        self.assertEqual(
+            gus_bdl.interpret(
+                dictionary, json.dumps(valid_dictionary).encode(), TODAY
+            )["record_count"],
+            1,
+        )
+        valid_years = {"totalRecords": 2, "results": [{"id": 2025}, {"id": 2026}]}
+        self.assertEqual(
+            gus_bdl.interpret(years, json.dumps(valid_years).encode(), TODAY)[
+                "record_count"
+            ],
+            2,
+        )
+
+        incomplete_dictionary = copy.deepcopy(valid_dictionary)
+        incomplete_dictionary["totalRecords"] = 2
+        with self.assertRaisesRegex(ValueError, "dictionary result count"):
+            gus_bdl.interpret(
+                dictionary, json.dumps(incomplete_dictionary).encode(), TODAY
+            )
+        incomplete_years = copy.deepcopy(valid_years)
+        incomplete_years["totalRecords"] = 3
+        with self.assertRaisesRegex(ValueError, "years result count"):
+            gus_bdl.interpret(years, json.dumps(incomplete_years).encode(), TODAY)
+
     def test_localities_are_discovered_from_required_municipality_parents(self):
         root = task_of(gus_bdl.initial_tasks(TODAY), "units", lang="pl")
-        result = gus_bdl.interpret(root, fixture("units_pl_page_0.json"), TODAY)
+        result = gus_bdl.interpret(root, complete_page_fixture("units_pl_page_0.json"), TODAY)
         locality_tasks = [
             task for task in result["next_tasks"] if task["kind"] == "localities"
         ]
@@ -292,7 +377,7 @@ class GusBdlSourceTests(unittest.TestCase):
 
     def test_level_six_unit_detail_recovers_locality_discovery(self):
         unit_root = task_of(gus_bdl.initial_tasks(TODAY), "units", lang="pl")
-        listed = gus_bdl.interpret(unit_root, fixture("units_pl_page_0.json"), TODAY)
+        listed = gus_bdl.interpret(unit_root, complete_page_fixture("units_pl_page_0.json"), TODAY)
         detail = task_of(
             listed["next_tasks"],
             "unit_detail",
@@ -317,7 +402,7 @@ class GusBdlSourceTests(unittest.TestCase):
 
     def test_data_response_counts_observations_and_preserves_source_grain_in_metadata(self):
         root = task_of(gus_bdl.recent_tasks(TODAY), "data_by_variable")
-        result = gus_bdl.interpret(root, fixture("data_72305_recent_page_0.json"), TODAY)
+        result = gus_bdl.interpret(root, complete_page_fixture("data_72305_recent_page_0.json"), TODAY)
         self.assertEqual(result["record_count"], 3)
         self.assertEqual(result["metadata"]["variable_id"], 72305)
         self.assertEqual(result["metadata"]["measure_unit_id"], 26)
@@ -332,9 +417,26 @@ class GusBdlSourceTests(unittest.TestCase):
         self.assertEqual(gus_bdl.request_for(page_one)["params"]["page"], 1)
         self.assertIsNone(gus_bdl.refresh_task(page_one, date(2026, 9, 11)))
 
+    def test_data_pages_require_complete_unit_membership_and_unique_unit_ids(self):
+        root = gus_bdl.recent_tasks(TODAY)[0]
+        with self.assertRaisesRegex(ValueError, "declared page cardinality"):
+            gus_bdl.interpret(root, fixture("data_72305_recent_page_0.json"), TODAY)
+
+        complete = json.loads(complete_page_fixture("data_72305_recent_page_0.json"))
+        # Empty value arrays are legitimate missing observations; page membership
+        # is measured from returned units rather than observation values.
+        self.assertEqual(
+            gus_bdl.interpret(root, json.dumps(complete).encode(), TODAY)["record_count"],
+            3,
+        )
+        repeated_unit = copy.deepcopy(complete)
+        repeated_unit["results"][-1]["id"] = repeated_unit["results"][0]["id"]
+        with self.assertRaisesRegex(ValueError, "repeated unit identifier"):
+            gus_bdl.interpret(root, json.dumps(repeated_unit).encode(), TODAY)
+
     def test_data_page_markers_may_be_absent_but_explicit_markers_are_strict(self):
         root = gus_bdl.recent_tasks(TODAY)[0]
-        body = json.loads(fixture("data_72305_recent_page_0.json"))
+        body = json.loads(complete_page_fixture("data_72305_recent_page_0.json"))
         self.assertNotIn("page", body)
         self.assertNotIn("pageSize", body)
         self.assertEqual(gus_bdl.interpret(root, json.dumps(body).encode(), TODAY)["record_count"], 3)
@@ -387,12 +489,12 @@ class GusBdlSourceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     gus_bdl.interpret(root, invalid, TODAY)
 
-        wrong_page = json.loads(fixture("data_72305_recent_page_0.json"))
+        wrong_page = json.loads(complete_page_fixture("data_72305_recent_page_0.json"))
         wrong_page["page"] = 1
         with self.assertRaisesRegex(ValueError, "page does not match"):
             gus_bdl.interpret(root, json.dumps(wrong_page).encode(), TODAY)
 
-        duplicate = json.loads(fixture("data_72305_recent_page_0.json"))
+        duplicate = json.loads(complete_page_fixture("data_72305_recent_page_0.json"))
         duplicate["results"][0]["values"].append(
             copy.deepcopy(duplicate["results"][0]["values"][0])
         )

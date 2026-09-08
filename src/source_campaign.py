@@ -58,6 +58,8 @@ def load_settings(source_id, config_path=ROOT / "config/source-campaigns.yaml"):
     for key in ("max_retained_raw_bytes", "max_pending_tasks", "max_recent_roots", "max_completed_tasks"):
         if settings.get(key) is not None and (type(settings[key]) is not int or settings[key] <= 0):
             raise ValueError(f"Invalid optional campaign resource setting: {key}")
+    if type(settings.get("transport_retries", 0)) is not int or not 0 <= settings.get("transport_retries", 0) <= 2:
+        raise ValueError("Invalid transport retry count; use 0–2")
     if settings["max_response_bytes"] > 8 * 1024 * 1024 or settings["max_run_seconds"] > 600:
         raise ValueError("Campaign exceeds response/time envelope")
     if settings["max_requests"] > 100 or (settings["max_pending_tasks"] is not None

@@ -96,8 +96,37 @@ def publish_bulk_index(store: Any, code_sha: str) -> dict[str, Any] | None:
         checkpoint = _receipt_checkpoint(receipts[:published])
         if previous["receipt_checkpoint_sha256"] != checkpoint:
             raise BulkPublicationError("bulk index receipt checkpoint does not match campaign state")
+        if previous["accepted_distribution_count"] > len(receipts):
+            raise BulkPublicationError(
+                "bulk index accepted count exceeds current campaign state"
+            )
+    current_coverage = _campaign_coverage(state)
     if published == len(receipts):
-        return previous
+        if previous is None:  # receipts are non-empty, so this is defensive
+            raise BulkPublicationError("bulk index metadata is missing")
+        if (
+            previous["accepted_distribution_count"] == len(receipts)
+            and previous["pending_publication_count"] == 0
+            and previous["coverage_status"] == current_coverage
+        ):
+            return previous
+
+        # Catalogue state can change without accepting another raw distribution.
+        # Publish a new immutable manifest so its coverage/count metadata remains
+        # bound to the campaign state while retaining the authenticated fragments.
+        return _promote_manifest(
+            store,
+            code_sha=code_sha,
+            campaign_id=campaign_id,
+            provider_id=provider_id,
+            coverage_status=current_coverage,
+            files=[dict(item) for item in previous_files],
+            accepted_count=len(receipts),
+            published_count=published,
+            receipt_checkpoint=checkpoint,
+            new_files=[],
+            new_file_rows=0,
+        )
 
     rows: list[tuple[Any, ...]] = []
     metadata_bytes = 0
@@ -141,8 +170,38 @@ def publish_bulk_index(store: Any, code_sha: str) -> dict[str, Any] | None:
             store.put_landing_object(f"fragment-{uuid4()}.parquet", payload)
         )
 
-    snapshot_id = str(uuid4())
     new_published = published + len(rows)
+    return _promote_manifest(
+        store,
+        code_sha=code_sha,
+        campaign_id=campaign_id,
+        provider_id=provider_id,
+        coverage_status=current_coverage,
+        files=retained_files + new_files,
+        accepted_count=len(receipts),
+        published_count=new_published,
+        receipt_checkpoint=_receipt_checkpoint(receipts[:new_published]),
+        new_files=new_files,
+        new_file_rows=len(rows_to_write),
+    )
+
+
+def _promote_manifest(
+    store: Any,
+    *,
+    code_sha: str,
+    campaign_id: str,
+    provider_id: str,
+    coverage_status: str,
+    files: list[dict[str, Any]],
+    accepted_count: int,
+    published_count: int,
+    receipt_checkpoint: str,
+    new_files: list[dict[str, Any]],
+    new_file_rows: int,
+) -> dict[str, Any]:
+    """Write, verify, and promote metadata for an authenticated receipt prefix."""
+    snapshot_id = str(uuid4())
     manifest = {
         "format_version": 2,
         "kind": "full_distribution_index",
@@ -153,16 +212,16 @@ def publish_bulk_index(store: Any, code_sha: str) -> dict[str, Any] | None:
         "status": "validated",
         "layer": "01_landing",
         "table_name": f"{provider_id}_distributions",
-        "row_count": new_published,
-        "coverage_status": _campaign_coverage(state),
-        "files": retained_files + new_files,
+        "row_count": published_count,
+        "coverage_status": coverage_status,
+        "files": files,
         "columns": [
             {"name": name, "type": kind} for name, kind in BULK_INDEX_COLUMNS
         ],
-        "accepted_distribution_count": len(receipts),
-        "published_distribution_count": new_published,
-        "pending_publication_count": len(receipts) - new_published,
-        "receipt_checkpoint_sha256": _receipt_checkpoint(receipts[:new_published]),
+        "accepted_distribution_count": accepted_count,
+        "published_distribution_count": published_count,
+        "pending_publication_count": accepted_count - published_count,
+        "receipt_checkpoint_sha256": receipt_checkpoint,
         "tests": {"passed": True},
     }
     manifest_raw = _canonical_bytes(manifest, "bulk index manifest")
@@ -185,7 +244,8 @@ def publish_bulk_index(store: Any, code_sha: str) -> dict[str, Any] | None:
     candidate = _read_manifest(store, pointer_value, campaign_id, provider_id)
     if candidate != manifest:
         raise BulkPublicationError("bulk index candidate metadata changed")
-    _verify_files(store, new_files, len(rows_to_write))
+    if new_files:
+        _verify_files(store, new_files, new_file_rows)
     store.promote_landing_pointer(pointer_value)
     promoted = store.load_landing_pointer()
     if promoted != pointer_value:
@@ -196,13 +256,45 @@ def publish_bulk_index(store: Any, code_sha: str) -> dict[str, Any] | None:
     return verified
 
 
-def verify_bulk_index(store: Any) -> dict[str, Any] | None:
-    """Freshly verify the current bulk index manifest and all Parquet fragments."""
+def verify_bulk_index(
+    store: Any, *, require_current: bool = False
+) -> dict[str, Any] | None:
+    """Freshly verify the index, its files, and its campaign receipt prefix.
+
+    A non-current index can still be a valid immutable prefix.  ``require_current``
+    additionally requires all currently accepted receipts and current catalogue
+    coverage metadata to be represented by the index.
+    """
+    if type(require_current) is not bool:
+        raise BulkPublicationError("require_current must be a boolean")
     campaign_id, provider_id = _source_identity(store)
+    state = store.load()
     pointer = store.load_landing_pointer()
     if pointer is None:
         return None
+    if state is None:
+        raise BulkPublicationError("bulk index has no current campaign state")
+    receipts = _accepted_receipts(state, campaign_id, provider_id)
     manifest = _read_manifest(store, pointer, campaign_id, provider_id)
+    published = manifest["published_distribution_count"]
+    accepted = manifest["accepted_distribution_count"]
+    if published > len(receipts) or accepted > len(receipts):
+        raise BulkPublicationError(
+            "bulk index publishes receipts absent from current campaign state"
+        )
+    if manifest["receipt_checkpoint_sha256"] != _receipt_checkpoint(
+        receipts[:published]
+    ):
+        raise BulkPublicationError(
+            "bulk index receipt checkpoint does not match current campaign state"
+        )
+    if require_current and (
+        accepted != len(receipts)
+        or published != len(receipts)
+        or manifest["pending_publication_count"] != 0
+        or manifest["coverage_status"] != _campaign_coverage(state)
+    ):
+        raise BulkPublicationError("bulk index is not current for campaign state")
     _verify_files(store, manifest["files"], manifest["row_count"])
     return manifest
 
