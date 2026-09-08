@@ -1,6 +1,15 @@
-# Candidate public-data sources
+# Candidate data sources
 
-**Review date:** 2026-09-07. **Status:** research inventory only; neither source is approved, configured, ingested, or prioritised.
+The current [global and Polish research package](source-research/README.md), dated
+8 September 2026, covers 182 products/families with access, rights, loading, modeling,
+overlap and evidence fields. Start there for the expanded landscape and proposed review
+sequence. New connection testing and onboarding have not started.
+
+## Initial Eurostat and WDI assessment
+
+**Historical review date:** 2026-09-07. The two-source assessment below preceded the
+expanded research. Neither source was approved, configured, ingested or prioritized in
+that assessment; subsequent review recommendations are in the current research package.
 
 | Candidate | Official access | Reuse evidence and attribution | Exceptions / limits to resolve before use |
 | --- | --- | --- |
