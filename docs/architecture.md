@@ -84,3 +84,19 @@ GitHub Pages restricts operation of online businesses, commercial transactions a
 This is a bounded owner platform, not an unlimited archive or availability promise. Raw/state/release history is retained; compaction and destructive cleanup remain separate work. Capacity reports must expose batch/byte headroom before more sources are admitted. Increasing state snapshots, browser downloads and native peak memory are measured constraints, not solved by nominal Drive capacity.
 
 Use [the operating guide](nbp-platform-operations.md) to validate, publish, restore, query and recover without AI. The delivery record links actual CI/deployment/production evidence; this document is not proof of a live deployment.
+
+## Source expansion intake boundary
+
+[ADR 0004](decisions/0004-autonomous-source-onboarding.md) authorizes autonomous onboarding.
+A separate bounded campaign runner now implements WDI, BDL and Eurostat Landing intake with
+per-source state/serialization, fair recent/history queues and durable provider quotas. A shared
+preparation job initializes Drive paths before parallel source workers. Exact bytes and accepted
+or rejected receipts survive restart; uncertain state promotion stops the source. This changes
+no NBP release or consumer pointer. See [campaign operations](source-campaign-operations.md).
+
+The [domain taxonomy](../config/domain-taxonomy.yaml) separates stable categories, analytical
+dimensions and classification systems from the [candidate coverage ledger](../config/source-domain-coverage.json).
+New-source dbt models, source-independent release publication, compatible cross-source release
+pinning and semantic/catalogue integration remain planned. Initial bounded state is a first
+admission envelope; full-catalogue scale requires measured sharding, bulk/change discovery,
+physical storage accounting and reference-safe compaction before the configured limits bind.

@@ -1,7 +1,8 @@
 # Source expansion: global context and detailed Poland coverage
 
 Status: Accepted owner requirements, 8 September 2026. Specific sources and technical
-implementation choices remain subject to review.
+implementation choices remained subject to review at that stage. The owner-selection gate
+is superseded by [ADR 0004](0004-autonomous-source-onboarding.md).
 
 ## Context
 

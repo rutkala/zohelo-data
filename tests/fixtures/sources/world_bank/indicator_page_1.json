@@ -1,0 +1,28 @@
+[
+  {
+    "page": 1,
+    "pages": 2,
+    "per_page": "2",
+    "total": 3
+  },
+  [
+    {
+      "id": "NY.GDP.MKTP.CD",
+      "name": "GDP (current US$)",
+      "unit": "",
+      "source": {"id": "2", "value": "World Development Indicators"},
+      "sourceNote": "GDP at purchaser's prices is the sum of gross value added.",
+      "sourceOrganization": "World Bank national accounts data, and OECD National Accounts data files.",
+      "topics": [{"id": "3", "value": "Economy & Growth"}]
+    },
+    {
+      "id": "SP.POP.TOTL",
+      "name": "Population, total",
+      "unit": "people",
+      "source": {"id": "2", "value": "World Development Indicators"},
+      "sourceNote": "Total population is based on the de facto definition of population.",
+      "sourceOrganization": "World Population Prospects and national statistical offices.",
+      "topics": [{"id": "8", "value": "Health"}]
+    }
+  ]
+]
