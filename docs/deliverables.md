@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) is complete for owner review: 182 products/families, including the existing NBP baseline. New connection testing and onboarding have not started; longer-term exclusions are explicit below.
+Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; first WDI/BDL/Eurostat Landing campaigns are in implementation and production acceptance. New-source Silver/Gold/semantic publication remains to be implemented.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -17,7 +17,7 @@ This is the single project-status and owner-question record. Research, architect
 | D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. The new detection rules ran successfully in the verified live release. |
 | D4. NBP end-to-end including semantic queries | **Done** | All 15 tables and five daily metrics are published. Fresh native queries matched gold; raw replay matched 1,329,363 rows exactly. The complete capacity inventory is below current warning thresholds. |
 | D5. One data catalogue with source and metric lineage | **Done** | Five real metric definitions and source methodology/frequency/reuse metadata are in the matching release artifacts. The native viewer passes discovery and semantic-to-physical-lineage browser checks. |
-| D6. Define and onboard additional sources | **Waiting for input** | Broad research is **Done**: [182 products/families](source-research/README.md), source evidence, coverage gaps, loading/modeling proposals and review batches. Owner review and selection are next. New connection tests and onboarding are **Not started**. |
+| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat Landing collection is undergoing production acceptance; broad source expansion and new-source Silver/Gold/semantic delivery remain open. |
 | D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
 | Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
@@ -44,9 +44,12 @@ These are visible limits, not claims of completed functionality. None requires i
 
 **Q-M1 is resolved for the baseline:** the 7 September instruction authorizes researching and implementing source-defined daily NBP observations. Five definitions are documented in [NBP methodology](nbp-business-definitions.md). It is no longer a blocker. Optional derived metrics are H-DERIVED.
 
-| ID | Next decision | Preparation |
-| --- | --- | --- |
-| Q-S1 | Which analytical question or domain should the first selected source slice support? | [Expanded research and proposed review batches](source-research/review-plan.md): a Poland/EU regional profile using BDL/Eurostat with WDI context; energy/environment; institutions/procurement; or another researched domain. The owner has established global context, detailed Poland coverage, English data documentation and research-before-testing; the first slice is not yet chosen. |
+**Q-S1 is resolved:** on 8 September 2026 the owner delegated source selection, implementation,
+connection tests and production intake, targeting all feasible scope and recoverable history.
+The owner requested stable domain/category coverage, granular FMCG/markets, media and sport,
+and discovery of additional sources for gaps. [ADR 0004](decisions/0004-autonomous-source-onboarding.md)
+records this authorization. There is no source-by-source review gate. New paid services,
+account access and unresolved consequential business definitions remain concrete future prerequisites.
 
 ## Evidence
 
@@ -102,10 +105,18 @@ a coverage matrix, a reviewed ingestion/modeling proposal and bounded future-tes
 support selection. Schema, IDs, evidence labels, exports and documentation links were
 checked. Documentation research is not a successful connection or production acceptance.
 
-**Next gate:** Q-S1 and owner review of the candidate scope, followed by bounded connection
-tests and detailed dataset contracts. The proposed general scheduler/release changes and
-new gold/semantic models are not implemented. No new source ingest or production backfill
-was started by this research work.
+**Implementation now authorized:** [ADR 0004](decisions/0004-autonomous-source-onboarding.md)
+supersedes the owner-selection gate. The versioned taxonomy has 15 domains, 45 subdomains,
+231 categories and 17 analytical dimensions, independent of official classification editions.
+All 182 inventory IDs have candidate mappings; these do not establish dataset or ingested coverage.
+The plan records 15 gaps and seven additional candidates.
+
+**First delivery boundary:** independent WDI/BDL/Eurostat Landing campaigns with exact raw
+responses, durable recent/history queues, persisted quotas and source-scoped Drive state.
+[Operations](source-campaign-operations.md) documents the bounded schedule, controls and capacity
+limits. Production evidence is recorded here after acceptance. Bronze/Silver, domain Gold,
+semantic models, new-source publication, broad dataset completion and scalable state compaction
+are subsequent implementation milestones, not completed capabilities.
 
 ### D7. Data-first portal and SQL experience
 

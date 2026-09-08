@@ -88,3 +88,15 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
 - Source-defined daily NBP metrics do not require another owner methodology question. Optional derived/period metrics remain separate decisions. Use scripts/query_metrics.py to enforce the documented grain; raw mf commands can bypass it.
 - Use config/nbp-platform.yaml for effective ingestion policy; config/sources.yaml contains provider metadata. Legacy transformation CLIs are retired.
 - Published candidates must pass remote Parquet/provenance checks before pointer promotion. Production rollback/promotion uses the serialized Actions operation and an expected-current release identity.
+
+## Autonomous source expansion
+
+- Apply accepted ADR 0004 and `docs/source-expansion-plan.md`: source-by-source owner selection
+  is no longer a gate. Continue all feasible scope; ask only for concrete consequential prerequisites.
+- `src/source_campaign.py` and `config/source-campaigns.yaml` operate the first WDI/BDL/Eurostat
+  Landing campaigns through the serialized main-branch Actions workflow. Read
+  `docs/source-campaign-operations.md` before changing or running them.
+- Candidate category mappings are not verified dataset/ingested coverage. Keep research snapshots
+  distinct from runtime receipts and new-source Landing distinct from published NBP medallion data.
+- Validate taxonomy/coverage with `python scripts/check-source-coverage.py`. Preserve independent
+  provider quotas, resumability and NBP pointer boundaries; do not raise capacity caps blindly.

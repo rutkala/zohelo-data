@@ -1,0 +1,967 @@
+schema_version: 1.0.0
+taxonomy_version: 2026-09-08.1
+language: en
+status: candidate
+scope: Product-level discovery taxonomy for worldwide context and detailed Poland coverage.
+interpretation:
+- A taxonomy assignment is a discovery hypothesis, not proof that a source contains every dataset in the category.
+- Subject domains, analytical dimensions and official classifications are independent axes; never substitute one for
+  another.
+- Dataset contracts may select narrower categories and must retain source-native codes, labels, versions and definitions.
+identifier_policy:
+  format: lowercase ASCII segments separated by hyphens; hierarchy separated by dots
+  stability: Published identifiers are append-only. Rename labels without changing identifiers; deprecate instead
+    of reusing identifiers.
+  versioning: Patch for wording/evidence, minor for additive categories, major for identifier removal or changed meaning.
+subject_domains:
+- id: demography-society
+  name: Demography and society
+  subdomains:
+  - id: demography-society.population
+    name: Population
+    categories:
+    - id: demography-society.population.population-stock
+      name: Population stock and structure
+    - id: demography-society.population.fertility-births
+      name: Fertility and births
+    - id: demography-society.population.mortality-life-expectancy
+      name: Mortality and life expectancy
+    - id: demography-society.population.migration
+      name: Migration
+    - id: demography-society.population.forced-displacement
+      name: Forced displacement, asylum and statelessness
+  - id: demography-society.households
+    name: Households and living conditions
+    categories:
+    - id: demography-society.households.households-families
+      name: Households and families
+    - id: demography-society.households.income-poverty
+      name: Income, poverty and deprivation
+    - id: demography-society.households.inequality-gender
+      name: Inequality and gender
+    - id: demography-society.households.housing-conditions
+      name: Housing conditions
+    - id: demography-society.households.social-participation
+      name: Social and civic participation
+- id: economy-finance
+  name: Economy and finance
+  subdomains:
+  - id: economy-finance.macro
+    name: Macroeconomy
+    categories:
+    - id: economy-finance.macro.national-accounts
+      name: National accounts and economic growth
+    - id: economy-finance.macro.forecasts-leading-indicators
+      name: Forecasts and leading indicators
+    - id: economy-finance.macro.prices-inflation-ppp
+      name: Prices, inflation and purchasing power
+    - id: economy-finance.macro.external-sector-bop-iip
+      name: Balance of payments and international investment position
+    - id: economy-finance.macro.development-finance-debt
+      name: Development finance and external debt
+  - id: economy-finance.money-finance
+    name: Money and financial system
+    categories:
+    - id: economy-finance.money-finance.money-monetary-policy
+      name: Money and monetary policy
+    - id: economy-finance.money-finance.foreign-exchange
+      name: Foreign exchange
+    - id: economy-finance.money-finance.banking-credit
+      name: Banking, credit and prudential statistics
+    - id: economy-finance.money-finance.interest-rates
+      name: Interest and reference rates
+    - id: economy-finance.money-finance.payments-financial-inclusion
+      name: Payments and financial inclusion
+    - id: economy-finance.money-finance.insurance-pensions
+      name: Insurance and funded pensions
+    - id: economy-finance.money-finance.securities-capital-markets
+      name: Securities and capital markets
+    - id: economy-finance.money-finance.derivatives
+      name: Derivatives
+  - id: economy-finance.public-finance
+    name: Public finance
+    categories:
+    - id: economy-finance.public-finance.government-budget
+      name: Government budgets and execution
+    - id: economy-finance.public-finance.public-debt
+      name: Public debt
+    - id: economy-finance.public-finance.taxation-revenue
+      name: Taxation and public revenue
+    - id: economy-finance.public-finance.local-government-finance
+      name: Local-government finance
+    - id: economy-finance.public-finance.public-investment-aid
+      name: Public investment and aid
+- id: business-industry
+  name: Business and industry
+  subdomains:
+  - id: business-industry.business-identity
+    name: Business identity
+    categories:
+    - id: business-industry.business-identity.legal-entities-registers
+      name: Legal entities and business registers
+    - id: business-industry.business-identity.establishments-activities
+      name: Establishments and economic activities
+    - id: business-industry.business-identity.beneficial-ownership
+      name: Beneficial ownership
+    - id: business-industry.business-identity.entity-resolution
+      name: Entity identifiers and resolution
+  - id: business-industry.corporate
+    name: Corporate information
+    categories:
+    - id: business-industry.corporate.corporate-filings-accounts
+      name: Corporate filings and accounts
+    - id: business-industry.corporate.corporate-actions-disclosures
+      name: Corporate actions and disclosures
+    - id: business-industry.corporate.entrepreneurship-business-climate
+      name: Entrepreneurship and business climate
+    - id: business-industry.corporate.competition-consumer-protection
+      name: Competition and consumer protection
+  - id: business-industry.industry
+    name: Industry and production
+    categories:
+    - id: business-industry.industry.manufacturing-output
+      name: Manufacturing and product output
+    - id: business-industry.industry.mining-quarrying-materials
+      name: Mining, quarrying and materials
+    - id: business-industry.industry.construction-output
+      name: Construction activity
+    - id: business-industry.industry.services-output
+      name: Market services output
+    - id: business-industry.industry.supply-chains-inputs
+      name: Supply chains and intermediate inputs
+  - id: business-industry.innovation-ip
+    name: Innovation and intellectual property
+    categories:
+    - id: business-industry.innovation-ip.research-development
+      name: Research and development
+    - id: business-industry.innovation-ip.patents
+      name: Patents
+    - id: business-industry.innovation-ip.trademarks
+      name: Trademarks
+    - id: business-industry.innovation-ip.industrial-designs
+      name: Industrial designs
+    - id: business-industry.innovation-ip.technology-transfer
+      name: Technology transfer
+- id: labour-social-protection
+  name: Labour and social protection
+  subdomains:
+  - id: labour-social-protection.labour-market
+    name: Labour market
+    categories:
+    - id: labour-social-protection.labour-market.employment-unemployment
+      name: Employment and unemployment
+    - id: labour-social-protection.labour-market.vacancies-labour-demand
+      name: Vacancies and labour demand
+    - id: labour-social-protection.labour-market.earnings-hours
+      name: Earnings, hours and labour costs
+    - id: labour-social-protection.labour-market.occupations-skills
+      name: Occupations, skills and shortages
+    - id: labour-social-protection.labour-market.workplace-safety-absence
+      name: Workplace safety and sickness absence
+  - id: labour-social-protection.social-protection
+    name: Social protection
+    categories:
+    - id: labour-social-protection.social-protection.social-insurance-contributions
+      name: Social insurance and contributions
+    - id: labour-social-protection.social-protection.pensions-benefits
+      name: Pensions and cash benefits
+    - id: labour-social-protection.social-protection.social-assistance-care
+      name: Social assistance and care services
+    - id: labour-social-protection.social-protection.family-child-support
+      name: Family and child support
+- id: health
+  name: Health and care
+  subdomains:
+  - id: health.health-status
+    name: Health status
+    categories:
+    - id: health.health-status.mortality-burden
+      name: Mortality and burden of disease
+    - id: health.health-status.disease-epidemiology
+      name: Disease and epidemiology
+    - id: health.health-status.nutrition-health-behaviour
+      name: Nutrition and health behaviour
+    - id: health.health-status.maternal-child-health
+      name: Maternal and child health
+  - id: health.health-system
+    name: Health system
+    categories:
+    - id: health.health-system.providers-facilities-workforce
+      name: Providers, facilities and workforce
+    - id: health.health-system.utilisation-diagnoses-procedures
+      name: Utilisation, diagnoses and procedures
+    - id: health.health-system.access-waiting-times
+      name: Access and waiting times
+    - id: health.health-system.contracts-public-spending
+      name: Contracts and public healthcare spending
+    - id: health.health-system.digital-health-events
+      name: Digital health services and events
+  - id: health.medicines-safety
+    name: Medicines and public health
+    categories:
+    - id: health.medicines-safety.medicines-prescriptions-reimbursement
+      name: Medicines, prescriptions and reimbursement
+    - id: health.medicines-safety.pharmaceutical-products-market
+      name: Pharmaceutical product market
+    - id: health.medicines-safety.infectious-disease-vaccination
+      name: Infectious disease and vaccination
+    - id: health.medicines-safety.sanitary-food-environmental-health
+      name: Sanitary, food and environmental health
+- id: education-science
+  name: Education and science
+  subdomains:
+  - id: education-science.education-system
+    name: Education system
+    categories:
+    - id: education-science.education-system.early-childhood-school
+      name: Early childhood and school education
+    - id: education-science.education-system.vocational-adult-learning
+      name: Vocational and adult learning
+    - id: education-science.education-system.higher-education
+      name: Higher education
+    - id: education-science.education-system.institutions-facilities
+      name: Education institutions and facilities
+    - id: education-science.education-system.students-teachers-graduates
+      name: Students, teachers and graduates
+    - id: education-science.education-system.examinations-learning-outcomes
+      name: Examinations and learning outcomes
+    - id: education-science.education-system.graduate-employment-earnings
+      name: Graduate employment and earnings
+  - id: education-science.science
+    name: Science and scholarly communication
+    categories:
+    - id: education-science.science.research-organisations-funding
+      name: Research organisations and funding
+    - id: education-science.science.researchers-workforce
+      name: Researchers and science workforce
+    - id: education-science.science.scholarly-outputs-citations
+      name: Scholarly outputs, identifiers and citations
+- id: agriculture-food-fmcg
+  name: Agriculture, food and fast-moving consumer goods
+  subdomains:
+  - id: agriculture-food-fmcg.agriculture
+    name: Agriculture and rural economy
+    categories:
+    - id: agriculture-food-fmcg.agriculture.farms-land-use
+      name: Farms and agricultural land use
+    - id: agriculture-food-fmcg.agriculture.agricultural-support-cap
+      name: Agricultural support and CAP payments
+    - id: agriculture-food-fmcg.agriculture.crops-horticulture
+      name: Crops and horticulture
+    - id: agriculture-food-fmcg.agriculture.livestock
+      name: Livestock
+    - id: agriculture-food-fmcg.agriculture.forestry-primary
+      name: Primary forestry
+    - id: agriculture-food-fmcg.agriculture.fish-aquaculture
+      name: Fish and aquaculture
+    - id: agriculture-food-fmcg.agriculture.inputs-fertiliser-feed
+      name: Agricultural inputs, fertiliser and feed
+  - id: agriculture-food-fmcg.food-markets
+    name: Food and agricultural markets
+    categories:
+    - id: agriculture-food-fmcg.food-markets.grain-oilseed-feed
+      name: Grain, oilseed and feed
+    - id: agriculture-food-fmcg.food-markets.meat-livestock-products
+      name: Meat and livestock products
+    - id: agriculture-food-fmcg.food-markets.milk-dairy
+      name: Milk and dairy
+    - id: agriculture-food-fmcg.food-markets.eggs-poultry
+      name: Eggs and poultry
+    - id: agriculture-food-fmcg.food-markets.fruit-vegetables
+      name: Fruit and vegetables
+    - id: agriculture-food-fmcg.food-markets.sugar-sweeteners
+      name: Sugar and sweeteners
+    - id: agriculture-food-fmcg.food-markets.oils-fats
+      name: Oils and fats
+    - id: agriculture-food-fmcg.food-markets.fish-seafood
+      name: Fish and seafood
+    - id: agriculture-food-fmcg.food-markets.food-prices-trade-balances
+      name: Food prices, trade and balances
+  - id: agriculture-food-fmcg.fmcg
+    name: FMCG consumer products
+    categories:
+    - id: agriculture-food-fmcg.fmcg.processed-packaged-food
+      name: Processed and packaged food
+    - id: agriculture-food-fmcg.fmcg.non-alcoholic-beverages
+      name: Non-alcoholic beverages
+    - id: agriculture-food-fmcg.fmcg.alcoholic-beverages
+      name: Alcoholic beverages
+    - id: agriculture-food-fmcg.fmcg.tobacco-nicotine
+      name: Tobacco and nicotine products
+    - id: agriculture-food-fmcg.fmcg.personal-care-cosmetics
+      name: Personal care and cosmetics
+    - id: agriculture-food-fmcg.fmcg.household-cleaning-paper
+      name: Household cleaning, paper and disposable goods
+    - id: agriculture-food-fmcg.fmcg.pet-food-care
+      name: Pet food and care
+    - id: agriculture-food-fmcg.fmcg.fmcg-retail-distribution
+      name: FMCG retail and distribution
+- id: trade-markets-consumption
+  name: Trade, markets and consumption
+  subdomains:
+  - id: trade-markets-consumption.international-trade
+    name: International trade
+    categories:
+    - id: trade-markets-consumption.international-trade.goods-trade
+      name: Trade in goods
+    - id: trade-markets-consumption.international-trade.services-trade
+      name: Trade in services
+    - id: trade-markets-consumption.international-trade.tariffs-trade-policy
+      name: Tariffs and trade policy
+    - id: trade-markets-consumption.international-trade.shipping-trade-flows
+      name: Shipping and trade flows
+  - id: trade-markets-consumption.consumer-economy
+    name: Consumer economy
+    categories:
+    - id: trade-markets-consumption.consumer-economy.household-expenditure
+      name: Household expenditure and consumption
+    - id: trade-markets-consumption.consumer-economy.retail-wholesale
+      name: Retail and wholesale
+    - id: trade-markets-consumption.consumer-economy.ecommerce-marketplaces
+      name: E-commerce and marketplaces
+    - id: trade-markets-consumption.consumer-economy.consumer-confidence
+      name: Consumer confidence
+    - id: trade-markets-consumption.consumer-economy.consumer-price-observation
+      name: Observed consumer prices
+  - id: trade-markets-consumption.markets
+    name: Market verticals
+    categories:
+    - id: trade-markets-consumption.markets.financial-markets
+      name: Financial markets
+    - id: trade-markets-consumption.markets.commodity-markets
+      name: Commodity markets
+    - id: trade-markets-consumption.markets.agricultural-markets
+      name: Agricultural markets
+    - id: trade-markets-consumption.markets.energy-carbon-markets
+      name: Energy and carbon markets
+    - id: trade-markets-consumption.markets.real-estate-housing-market
+      name: Real-estate and housing market
+    - id: trade-markets-consumption.markets.construction-market
+      name: Construction market
+    - id: trade-markets-consumption.markets.automotive-market
+      name: Automotive market
+    - id: trade-markets-consumption.markets.transport-logistics-market
+      name: Transport and logistics market
+    - id: trade-markets-consumption.markets.labour-market-services
+      name: Labour-market services
+    - id: trade-markets-consumption.markets.telecom-digital-market
+      name: Telecommunications and digital market
+    - id: trade-markets-consumption.markets.media-advertising-market
+      name: Media and advertising market
+    - id: trade-markets-consumption.markets.travel-hospitality-market
+      name: Travel and hospitality market
+    - id: trade-markets-consumption.markets.health-pharma-market
+      name: Healthcare and pharmaceutical market
+    - id: trade-markets-consumption.markets.sports-market
+      name: Sports market
+    - id: trade-markets-consumption.markets.public-procurement-market
+      name: Public procurement market
+- id: governance-law-safety
+  name: Governance, law and safety
+  subdomains:
+  - id: governance-law-safety.government
+    name: Government and democracy
+    categories:
+    - id: governance-law-safety.government.institutions-public-policy
+      name: Institutions and public policy
+    - id: governance-law-safety.government.parliament-legislative-process
+      name: Parliament and legislative process
+    - id: governance-law-safety.government.elections-referendums
+      name: Elections and referendums
+    - id: governance-law-safety.government.official-gazette-legal-acts
+      name: Official gazette and legal acts
+    - id: governance-law-safety.government.consultations-participation
+      name: Public consultations and participation
+    - id: governance-law-safety.government.governance-indicators
+      name: Governance indicators
+  - id: governance-law-safety.state-activity
+    name: State activity
+    categories:
+    - id: governance-law-safety.state-activity.public-procurement
+      name: Public procurement notices, lots and awards
+    - id: governance-law-safety.state-activity.public-audit-performance
+      name: Public audit and performance
+    - id: governance-law-safety.state-activity.open-data-catalogues
+      name: Open-data catalogues
+    - id: governance-law-safety.state-activity.regulation-supervision-enforcement
+      name: Regulation, supervision and enforcement
+    - id: governance-law-safety.state-activity.foreign-policy-defence
+      name: Foreign policy and defence
+  - id: governance-law-safety.justice-safety
+    name: Justice and public safety
+    categories:
+    - id: governance-law-safety.justice-safety.courts-cases
+      name: Courts and cases
+    - id: governance-law-safety.justice-safety.crime-policing
+      name: Crime and policing
+    - id: governance-law-safety.justice-safety.prisons-corrections
+      name: Prisons and corrections
+    - id: governance-law-safety.justice-safety.drugs-trafficking
+      name: Drugs and trafficking
+    - id: governance-law-safety.justice-safety.fire-rescue-emergencies
+      name: Fire, rescue and emergencies
+- id: environment-climate
+  name: Environment and climate
+  subdomains:
+  - id: environment-climate.atmosphere
+    name: Atmosphere and climate
+    categories:
+    - id: environment-climate.atmosphere.weather-observations-forecasts
+      name: Weather observations and forecasts
+    - id: environment-climate.atmosphere.climate-historical-reanalysis
+      name: Historical climate and reanalysis
+    - id: environment-climate.atmosphere.climate-projections-risks
+      name: Climate projections and risks
+    - id: environment-climate.atmosphere.air-quality-pollution
+      name: Air quality and pollution
+    - id: environment-climate.atmosphere.emissions-greenhouse-gases
+      name: Emissions and greenhouse gases
+  - id: environment-climate.water-nature
+    name: Water and nature
+    categories:
+    - id: environment-climate.water-nature.surface-water-hydrology
+      name: Surface water and hydrology
+    - id: environment-climate.water-nature.groundwater-hydrogeology
+      name: Groundwater and hydrogeology
+    - id: environment-climate.water-nature.water-quality
+      name: Water quality
+    - id: environment-climate.water-nature.flood-drought-risk
+      name: Flood and drought risk
+    - id: environment-climate.water-nature.biodiversity-habitats-protection
+      name: Biodiversity, habitats and protection
+    - id: environment-climate.water-nature.forests-ecosystems
+      name: Forests and ecosystems
+  - id: environment-climate.earth-resources
+    name: Earth and resources
+    categories:
+    - id: environment-climate.earth-resources.geology-boreholes
+      name: Geology and boreholes
+    - id: environment-climate.earth-resources.minerals-deposits-mining
+      name: Mineral deposits and mining
+    - id: environment-climate.earth-resources.land-cover-ecosystems
+      name: Land cover and ecosystems
+    - id: environment-climate.earth-resources.waste-circular-economy
+      name: Waste and circular economy
+- id: energy-utilities
+  name: Energy and utilities
+  subdomains:
+  - id: energy-utilities.energy-supply
+    name: Energy supply
+    categories:
+    - id: energy-utilities.energy-supply.energy-balances
+      name: Energy balances
+    - id: energy-utilities.energy-supply.electricity-generation-capacity
+      name: Electricity generation and capacity
+    - id: energy-utilities.energy-supply.renewable-energy
+      name: Renewable energy
+    - id: energy-utilities.energy-supply.natural-gas
+      name: Natural gas
+    - id: energy-utilities.energy-supply.oil-coal-fuels
+      name: Oil, coal and fuels
+  - id: energy-utilities.energy-systems
+    name: Energy systems and markets
+    categories:
+    - id: energy-utilities.energy-systems.power-grid-system-operations
+      name: Power-grid and system operations
+    - id: energy-utilities.energy-systems.gas-transmission-operations
+      name: Gas transmission and operations
+    - id: energy-utilities.energy-systems.balancing-wholesale-markets
+      name: Balancing and wholesale markets
+    - id: energy-utilities.energy-systems.energy-prices-tariffs
+      name: Energy prices and tariffs
+    - id: energy-utilities.energy-systems.utility-infrastructure-service
+      name: Utility infrastructure and service
+- id: geospatial-land-built
+  name: Geospatial, land and built environment
+  subdomains:
+  - id: geospatial-land-built.reference-geography
+    name: Reference geography
+    categories:
+    - id: geospatial-land-built.reference-geography.administrative-statistical-geographies
+      name: Administrative and statistical geographies
+    - id: geospatial-land-built.reference-geography.places-geographical-names
+      name: Places and geographical names
+    - id: geospatial-land-built.reference-geography.addresses
+      name: Addresses
+    - id: geospatial-land-built.reference-geography.boundaries-crosswalks
+      name: Boundary versions and crosswalks
+  - id: geospatial-land-built.land
+    name: Land and mapping
+    categories:
+    - id: geospatial-land-built.land.topography-base-mapping
+      name: Topography and base mapping
+    - id: geospatial-land-built.land.imagery-elevation-lidar
+      name: Imagery, elevation and lidar
+    - id: geospatial-land-built.land.cadastre-parcels
+      name: Cadastre and parcels
+    - id: geospatial-land-built.land.land-use-cover
+      name: Land use and land cover
+    - id: geospatial-land-built.land.spatial-planning-zoning
+      name: Spatial planning and zoning
+  - id: geospatial-land-built.built-environment
+    name: Built environment
+    categories:
+    - id: geospatial-land-built.built-environment.buildings-address-points
+      name: Buildings and address points
+    - id: geospatial-land-built.built-environment.construction-permits
+      name: Construction permits
+    - id: geospatial-land-built.built-environment.housing-stock
+      name: Housing stock
+    - id: geospatial-land-built.built-environment.public-facilities-poi
+      name: Public facilities and points of interest
+- id: transport-mobility
+  name: Transport and mobility
+  subdomains:
+  - id: transport-mobility.road
+    name: Road transport
+    categories:
+    - id: transport-mobility.road.road-network-infrastructure
+      name: Road network and infrastructure
+    - id: transport-mobility.road.road-traffic
+      name: Road traffic
+    - id: transport-mobility.road.vehicles-drivers
+      name: Vehicles and drivers
+    - id: transport-mobility.road.road-safety
+      name: Road safety
+  - id: transport-mobility.rail
+    name: Rail transport
+    categories:
+    - id: transport-mobility.rail.rail-network-service
+      name: Rail network and service
+    - id: transport-mobility.rail.rail-passengers-freight
+      name: Rail passengers and freight
+  - id: transport-mobility.aviation
+    name: Aviation
+    categories:
+    - id: transport-mobility.aviation.airports-flights-passengers
+      name: Airports, flights and passengers
+    - id: transport-mobility.aviation.air-freight
+      name: Air freight
+  - id: transport-mobility.maritime
+    name: Maritime and inland waterways
+    categories:
+    - id: transport-mobility.maritime.ports-cargo-vessels
+      name: Ports, cargo and vessels
+    - id: transport-mobility.maritime.inland-waterways
+      name: Inland waterways
+  - id: transport-mobility.freight-logistics
+    name: Freight and logistics
+    categories:
+    - id: transport-mobility.freight-logistics.freight-forwarding-logistics
+      name: Freight forwarding and logistics
+    - id: transport-mobility.freight-logistics.postal-parcel-courier
+      name: Postal, parcel and courier services
+    - id: transport-mobility.freight-logistics.warehousing-distribution
+      name: Warehousing and distribution
+  - id: transport-mobility.public-mobility
+    name: Public and shared mobility
+    categories:
+    - id: transport-mobility.public-mobility.transit-schedules-stops-routes
+      name: Transit schedules, stops and routes
+    - id: transport-mobility.public-mobility.realtime-vehicle-events
+      name: Real-time vehicle and service events
+    - id: transport-mobility.public-mobility.cycling-walking-shared-mobility
+      name: Cycling, walking and shared mobility
+- id: digital-media-information
+  name: Digital, media and information
+  subdomains:
+  - id: digital-media-information.connectivity
+    name: Connectivity and digital infrastructure
+    categories:
+    - id: digital-media-information.connectivity.telecommunications-services
+      name: Telecommunications services
+    - id: digital-media-information.connectivity.broadband-coverage-quality
+      name: Broadband coverage and quality
+    - id: digital-media-information.connectivity.digital-access-use-skills
+      name: Digital access, use and skills
+    - id: digital-media-information.connectivity.cybersecurity-incidents
+      name: Cybersecurity and incidents
+  - id: digital-media-information.media
+    name: Media and communications
+    categories:
+    - id: digital-media-information.media.broadcast-radio-television
+      name: Broadcast radio and television
+    - id: digital-media-information.media.press-news-events
+      name: Press, news and events
+    - id: digital-media-information.media.online-video-streaming
+      name: Online video and streaming
+    - id: digital-media-information.media.social-platform-content
+      name: Social-platform content
+    - id: digital-media-information.media.discussion-communities
+      name: Discussion communities
+    - id: digital-media-information.media.professional-networks
+      name: Professional networks
+    - id: digital-media-information.media.audience-reach-engagement
+      name: Audience, reach and engagement
+    - id: digital-media-information.media.advertising-commercial-content
+      name: Advertising and commercial content
+    - id: digital-media-information.media.media-ownership-plurality
+      name: Media ownership and plurality
+  - id: digital-media-information.knowledge
+    name: Knowledge and language
+    categories:
+    - id: digital-media-information.knowledge.encyclopedic-content
+      name: Encyclopedic content
+    - id: digital-media-information.knowledge.knowledge-graphs
+      name: Knowledge graphs
+    - id: digital-media-information.knowledge.language-content
+      name: Language and content metadata
+    - id: digital-media-information.knowledge.identifiers-registries
+      name: Identifiers and registries
+- id: culture-tourism-sport
+  name: Culture, tourism and sport
+  subdomains:
+  - id: culture-tourism-sport.culture-heritage
+    name: Culture and heritage
+    categories:
+    - id: culture-tourism-sport.culture-heritage.heritage-monuments-sites
+      name: Heritage, monuments and sites
+    - id: culture-tourism-sport.culture-heritage.museums-galleries-collections
+      name: Museums, galleries and collections
+    - id: culture-tourism-sport.culture-heritage.libraries-books-archives
+      name: Libraries, books and archives
+    - id: culture-tourism-sport.culture-heritage.performing-visual-arts
+      name: Performing and visual arts
+    - id: culture-tourism-sport.culture-heritage.screen-music-games
+      name: Screen, music and games
+    - id: culture-tourism-sport.culture-heritage.cultural-participation-employment
+      name: Cultural participation and employment
+  - id: culture-tourism-sport.tourism
+    name: Tourism and hospitality
+    categories:
+    - id: culture-tourism-sport.tourism.accommodation-capacity-occupancy
+      name: Accommodation capacity and occupancy
+    - id: culture-tourism-sport.tourism.visitor-arrivals-nights
+      name: Visitor arrivals and nights
+    - id: culture-tourism-sport.tourism.tourism-expenditure
+      name: Tourism expenditure
+    - id: culture-tourism-sport.tourism.attractions-destinations
+      name: Attractions and destinations
+  - id: culture-tourism-sport.sport
+    name: Sport and physical activity
+    categories:
+    - id: culture-tourism-sport.sport.participation-physical-activity
+      name: Participation and physical activity
+    - id: culture-tourism-sport.sport.facilities-clubs-organisations
+      name: Facilities, clubs and organisations
+    - id: culture-tourism-sport.sport.athletes-teams-people
+      name: Athletes, teams and people
+    - id: culture-tourism-sport.sport.competitions-fixtures-results
+      name: Competitions, fixtures and results
+    - id: culture-tourism-sport.sport.performance-rankings-records
+      name: Performance, rankings and records
+    - id: culture-tourism-sport.sport.sport-economy-employment
+      name: Sport economy and employment
+    - id: culture-tourism-sport.sport.sport-governance-funding
+      name: Sport governance and funding
+    - id: culture-tourism-sport.sport.esports
+      name: Esports
+analytical_dimensions:
+- id: geography
+  name: Geography
+  examples:
+  - country
+  - NUTS
+  - LAU
+  - TERYT
+  - grid
+  - coordinates
+  - catchment
+  - service area
+- id: time
+  name: Time
+  examples:
+  - observation period
+  - publication time
+  - event time
+  - validity interval
+  - vintage
+  - revision time
+- id: entity
+  name: Entity
+  examples:
+  - population aggregate
+  - legal entity
+  - enterprise
+  - establishment
+  - institution
+  - facility
+  - instrument
+  - vehicle
+  - document
+  - spatial feature
+- id: product-service
+  name: Product or service
+  examples:
+  - source product code
+  - good
+  - service
+  - commodity
+  - medicine
+  - media content
+  - transport service
+- id: economic-activity
+  name: Economic activity
+  examples:
+  - producer activity
+  - employer industry
+  - establishment activity
+- id: market-channel
+  name: Market and channel
+  examples:
+  - venue
+  - platform
+  - retail channel
+  - wholesale channel
+  - distribution channel
+  - advertising channel
+- id: counterparty-flow
+  name: Counterparty and flow
+  examples:
+  - origin
+  - destination
+  - buyer
+  - supplier
+  - creditor
+  - debtor
+  - import
+  - export
+- id: measure-unit
+  name: Measure and unit
+  examples:
+  - count
+  - rate
+  - index
+  - currency
+  - mass
+  - volume
+  - energy
+  - area
+  - distance
+- id: price-valuation
+  name: Price and valuation
+  examples:
+  - current price
+  - constant price
+  - market price
+  - administered price
+  - bid
+  - ask
+  - fixing
+  - valuation basis
+- id: population-universe
+  name: Population and universe
+  examples:
+  - resident population
+  - insured people
+  - survey respondents
+  - registered entities
+  - all notices
+- id: demographic-characteristic
+  name: Demographic characteristic
+  examples:
+  - age
+  - sex
+  - gender
+  - citizenship
+  - household type
+  - disability
+- id: scenario-status
+  name: Scenario and status
+  examples:
+  - observed
+  - forecast
+  - target
+  - provisional
+  - revised
+  - suppressed
+  - seasonally adjusted
+- id: methodology
+  name: Methodology
+  examples:
+  - survey
+  - administrative register
+  - sensor
+  - modeled estimate
+  - accounting standard
+  - estimation method
+- id: document-event
+  name: Document and event
+  examples:
+  - filing version
+  - legal act version
+  - notice
+  - award
+  - vote
+  - match
+  - incident
+  - transaction
+- id: fmcg-product-family
+  name: FMCG product family
+  examples:
+  - meat and livestock products
+  - milk and dairy
+  - eggs and poultry
+  - grain, oilseed and feed
+  - fruit and vegetables
+  - processed and packaged food
+  - non-alcoholic beverages
+  - alcoholic beverages
+  - tobacco and nicotine
+  - personal care and cosmetics
+  - household cleaning and paper
+  - pet food and care
+- id: media-form-channel
+  name: Media form and channel
+  examples:
+  - press
+  - radio
+  - television
+  - cinema
+  - music
+  - games
+  - podcasts
+  - social platforms
+  - online video
+  - streaming
+  - out-of-home
+- id: sport-discipline
+  name: Sport discipline
+  examples:
+  - team sports
+  - racket sports
+  - athletics
+  - aquatics
+  - cycling
+  - gymnastics
+  - combat sports
+  - motorsport
+  - winter sports
+  - equestrian sports
+  - precision and mind sports
+  - para and adaptive sports
+  - esports
+dimension_value_policy:
+- Dimension examples are illustrative, not closed code lists.
+- Retain source-native values and governing scheme/version; add conformed values only through versioned mappings.
+- Product, media-channel and sport-discipline dimensions may grow without changing subject-category identifiers.
+official_classifications:
+- id: PKD
+  name: Polish Classification of Activities
+  jurisdiction: Poland
+  classifies: economic activity
+  related_to:
+  - NACE
+  version_required: true
+  authority: Statistics Poland
+  reference: https://stat.gov.pl/en/metainformation/classifications/
+- id: NACE
+  name: Statistical classification of economic activities in the European Union
+  jurisdiction: European Union
+  classifies: economic activity
+  related_to:
+  - PKD
+  - ISIC
+  version_required: true
+  authority: Eurostat
+  reference: https://ec.europa.eu/eurostat/web/nace
+- id: PKWiU
+  name: Polish Classification of Products and Services
+  jurisdiction: Poland
+  classifies: products and services by activity
+  related_to:
+  - CPA
+  version_required: true
+  authority: Statistics Poland
+  reference: https://stat.gov.pl/en/metainformation/classifications/
+- id: CPA
+  name: Statistical Classification of Products by Activity
+  jurisdiction: European Union
+  classifies: products and services by activity
+  related_to:
+  - PKWiU
+  - CPC
+  - NACE
+  version_required: true
+  authority: Eurostat
+  reference: https://ec.europa.eu/eurostat/web/cpa
+- id: CPC
+  name: Central Product Classification
+  jurisdiction: Worldwide
+  classifies: goods and services
+  related_to:
+  - CPA
+  version_required: true
+  authority: United Nations Statistics Division
+  reference: https://unstats.un.org/unsd/classifications/Econ/
+- id: HS
+  name: Harmonized Commodity Description and Coding System
+  jurisdiction: Worldwide
+  classifies: traded goods
+  related_to:
+  - CN
+  version_required: true
+  authority: World Customs Organization
+  reference: https://www.wcoomd.org/en/topics/nomenclature/overview/what-is-the-harmonized-system.aspx
+- id: CN
+  name: Combined Nomenclature
+  jurisdiction: European Union
+  classifies: traded goods and customs tariff lines
+  related_to:
+  - HS
+  version_required: true
+  authority: European Commission
+  reference: https://taxation-customs.ec.europa.eu/customs/common-customs-tariff-cct/tariff-classification-goods/combined-nomenclature_en
+- id: COICOP
+  name: Classification of Individual Consumption According to Purpose
+  jurisdiction: Worldwide / EU adaptations
+  classifies: household consumption expenditure by purpose
+  related_to: []
+  version_required: true
+  authority: United Nations Statistics Division / Eurostat
+  reference: https://unstats.un.org/unsd/classifications/Econ
+- id: COFOG
+  name: Classification of the Functions of Government
+  jurisdiction: Worldwide / EU use
+  classifies: government expenditure by function
+  related_to: []
+  version_required: true
+  authority: United Nations Statistics Division
+  reference: https://unstats.un.org/unsd/classifications/Family/Detail/4
+- id: ISCED
+  name: International Standard Classification of Education
+  jurisdiction: Worldwide
+  classifies: education programmes, attainment and fields
+  related_to: []
+  version_required: true
+  authority: UNESCO Institute for Statistics
+  reference: https://uis.unesco.org/en/topic/international-standard-classification-education-isced
+- id: ICD
+  name: International Classification of Diseases
+  jurisdiction: Worldwide with national modifications
+  classifies: diseases, health conditions and causes of death
+  related_to: []
+  version_required: true
+  authority: World Health Organization
+  reference: https://www.who.int/standards/classifications/classification-of-diseases
+classification_rules:
+- Store scheme, edition/version, code, source-native label, English label, validity interval and hierarchy path with
+  every classified value.
+- A correspondence table is evidence for a versioned mapping, not proof of one-to-one equivalence; retain mapping
+  direction, cardinality and provenance.
+- PKD/NACE classify activities; PKWiU/CPA/CPC classify products or services; HS/CN classify traded goods; COICOP classifies
+  consumption purpose; COFOG classifies government function; ISCED classifies education; ICD classifies disease and
+  causes of death.
+- Do not derive a product category from an entity activity code, or an activity from a product code, without an explicit
+  versioned rule.
+evidence:
+- title: Statistics Poland classifications
+  url: https://stat.gov.pl/en/metainformation/classifications/
+- title: Eurostat classifications metadata
+  url: https://ec.europa.eu/eurostat/web/metadata/classifications
+- title: Eurostat NACE overview
+  url: https://ec.europa.eu/eurostat/web/nace
+- title: Eurostat CPA overview
+  url: https://ec.europa.eu/eurostat/web/cpa
+- title: EU Combined Nomenclature
+  url: https://taxation-customs.ec.europa.eu/customs/common-customs-tariff-cct/tariff-classification-goods/combined-nomenclature_en

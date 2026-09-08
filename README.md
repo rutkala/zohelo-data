@@ -19,3 +19,5 @@ The NBP v2 data release is live as of 7 September 2026 with 15 physical tables, 
 Start with [development setup](docs/development.md), then [platform operations](docs/nbp-platform-operations.md). The [workflow inventory](docs/audits/2026-09-07-workflows.md) explains every Actions button. For ordinary local analysis, restore a verified release with `scripts/restore_release.py`, then use DuckDB SQL or `scripts/query_metrics.py`. Neither command writes to Drive.
 
 [Current architecture](docs/architecture.md) explains tool choices and change conditions. [Working agreement](docs/collaboration.md) explains focused chats, GitHub records and handoffs.
+
+[Source expansion plan](docs/source-expansion-plan.md) · [Domain/category taxonomy](config/domain-taxonomy.yaml) · [Source campaign operations](docs/source-campaign-operations.md) — autonomous full feasible scope, with first WDI/BDL/Eurostat Landing campaigns and explicit later modeling/publication gates.

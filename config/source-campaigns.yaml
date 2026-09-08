@@ -1,0 +1,48 @@
+schema_version: 1
+# Operator budgets below are conservative platform limits, not claims about vendor quotas.
+# Admission advances in bounded batches; full-source target does not mean full coverage today.
+defaults:
+  enabled: true
+  max_requests: 12
+  max_run_seconds: 240
+  http_timeout_seconds: 45
+  max_response_bytes: 8388608
+  max_retained_raw_bytes: 268435456
+  max_pending_tasks: 2048
+  discovery_pause_threshold: 600
+  max_recent_roots: 1000
+  max_completed_tasks: 5000
+  min_request_interval_seconds: 2
+  max_inline_wait_seconds: 10
+  quota_windows:
+    - {seconds: 900, requests: 60}
+    - {seconds: 43200, requests: 600}
+    - {seconds: 604800, requests: 6000}
+sources:
+  world_bank_wdi:
+    adapter: ingestion.sources.world_bank
+    research_id: GL-005
+    timezone: UTC
+    target_scope: All discoverable WDI source=2 indicators, economies and aggregates, and available API history; progressive admission.
+    contract: docs/contracts/world-bank-wdi.md
+    permitted_operation: Public statistical collection into the owner's private Drive; attribution and source-level exceptions retained.
+  gus_bdl:
+    adapter: ingestion.sources.gus_bdl
+    research_id: PLS-001
+    timezone: Europe/Warsaw
+    target_scope: All discoverable BDL variables, units and available years; progressive admission subject to documented anonymous quotas.
+    contract: docs/contracts/gus-bdl.md
+    permitted_operation: Public BDL API collection under CC BY 4.0; retain source metadata and attribution.
+    # Below public 5/s, 100/15m, 1000/12h and 10000/7d ceilings.
+    min_request_interval_seconds: 3
+    quota_windows:
+      - {seconds: 900, requests: 80}
+      - {seconds: 43200, requests: 800}
+      - {seconds: 604800, requests: 8000}
+  eurostat:
+    adapter: ingestion.sources.eurostat
+    research_id: GL-001
+    timezone: Europe/Luxembourg
+    target_scope: Metadata discovery and explicit permitted statistical slices; dataset, dimension and rights review precedes further activation.
+    contract: docs/contracts/eurostat.md
+    permitted_operation: Public statistics for configured EU/EFTA scope, excluding third-party exceptions and restricted detailed trade.
