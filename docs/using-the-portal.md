@@ -1,6 +1,6 @@
 # Using the portal
 
-The NBP v2 data release is live as of 7 September 2026. It has published source and lineage metadata and gold tables; governed metric definitions are not published. See the [release evidence](releases/2026-09-07-nbp-platform.md).
+The NBP v2 data release is live as of 7 September 2026. It includes 15 tables, source and lineage metadata, gold tables, and five verified source-defined daily MetricFlow metrics. See the [audit release evidence](releases/2026-09-07-platform-readiness.md).
 
 Open [Zohelo-data](https://data.zohelo.com/) and choose **Sign in** in the **Lakehouse (Google Drive)** panel. Approve the existing Google read-only Drive login. After **Drive Connected** appears, refresh the lakehouse if needed. The release badge identifies the data snapshot in use.
 
@@ -12,7 +12,7 @@ Open [Data catalogue](https://data.zohelo.com/?view=catalog) from Home or the le
 
 On a phone, use **Browse** inside the catalogue to open its Project or Database tree. Select a model to return to its details. The portal's **Tables** button opens the SQL data explorer.
 
-No governed metric definitions are published for the current release. Full provider licence/reuse, frequency and coverage metadata remains a catalogue follow-up in [the delivery plan](deliverables.md).
+The catalogue includes the five published daily metric definitions and their lineage, plus source methodology, frequency, coverage and reuse metadata. Execute native MetricFlow queries through the [operating guide](nbp-platform-operations.md); the browser workspace runs SQL. Optional derived metrics and commercial redistribution remain explicit holds in [the delivery plan](deliverables.md).
 
 Project status and owner questions are kept in [the delivery plan](deliverables.md). Send a question ID and your answer in chat; the assistant maintains that record.
 
@@ -52,7 +52,7 @@ Use the generated `"layer"."table"` names when referring to published data. Auto
 
 ## Table actions and views
 
-Use the **⋮** next to a published table or workspace relation. It is available on hover or keyboard focus and remains visible on touch screens.
+Use the **⋮** next to a published table or workspace relation. It stays visible on desktop and mobile, without needing to hover, and can also be reached with the keyboard.
 
 - **Query as SELECT** opens generated SQL in a new tab and keeps your existing draft. Press Run when ready.
 - **Insert in SQL editor** inserts the quoted relation at the current selection in the active SQL tab.

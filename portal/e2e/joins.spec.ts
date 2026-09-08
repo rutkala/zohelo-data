@@ -337,7 +337,15 @@ for (const mobile of [false, true]) {
     if (mobile) await page.getByRole("button", { name: "Tables", exact: true }).click();
     const explorer = mobile ? page.getByLabel("Data Explorer") : page.locator("main");
     await explorer.getByText("04_gold", { exact: true }).click();
-    await explorer.getByRole("button", { name: "Actions for dim_currency", exact: true }).click();
+    // Playwright can click opacity-zero buttons, so visibility/click checks alone
+    // miss a menu that users cannot discover before hovering its table row.
+    await page.mouse.move(0, 0);
+    const publishedAction = explorer.getByRole("button", {
+      name: "Actions for dim_currency",
+      exact: true,
+    });
+    await expect(publishedAction).toHaveCSS("opacity", "1");
+    await publishedAction.click();
     await page.getByRole("menuitem", { name: "Query as SELECT", exact: true }).click();
     if (mobile) await expect(page.getByLabel("Data Explorer")).toBeHidden();
     await expect(editor).toContainText('"04_gold"."dim_currency"');
@@ -385,9 +393,13 @@ for (const mobile of [false, true]) {
     await expect(
       explorer.getByRole("treeitem").filter({ hasText: "my_currency_view" }).last()
     ).toBeVisible();
-    await explorer
-      .getByRole("button", { name: "Actions for my_currency_view", exact: true })
-      .click();
+    await page.mouse.move(0, 0);
+    const workspaceAction = explorer.getByRole("button", {
+      name: "Actions for my_currency_view",
+      exact: true,
+    });
+    await expect(workspaceAction).toHaveCSS("opacity", "1");
+    await workspaceAction.click();
     await page.getByRole("menuitem", { name: "Query as SELECT", exact: true }).click();
     if (mobile) await expect(page.getByLabel("Data Explorer")).toBeHidden();
     await expect(editor).toContainText('"my_currency_view"');
@@ -427,6 +439,8 @@ for (const mobile of [false, true]) {
       const action = page
         .getByRole("button", { name: "Actions for dim_date", exact: true })
         .filter({ visible: true });
+      await page.mouse.move(0, 0);
+      await expect(action).toHaveCSS("opacity", "1");
       const actionBox = await action.boundingBox();
       const panelBox = await page.locator("[data-panel]").filter({ has: action }).boundingBox();
       expect(actionBox).not.toBeNull();
