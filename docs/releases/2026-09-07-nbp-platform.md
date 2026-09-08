@@ -1,5 +1,10 @@
 # NBP data release verified — 7 September 2026
 
+**Historical release evidence.** This records the earlier foundation snapshot.
+The subsequent [audit acceptance release](2026-09-07-platform-readiness.md)
+completed the five daily NBP metrics and full scoped acceptance. Current work
+and later operational checks are recorded in [the delivery record](../deliverables.md).
+
 **The NBP data foundation is live. The complete platform scope remains open for governed metrics.** This is evidence for a Drive data snapshot, not a published GitHub Release or a claim that the semantic layer is finished.
 
 ## Release and verification
