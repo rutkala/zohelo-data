@@ -96,7 +96,8 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install pinned dependencies
         run: python -m pip install -r requirements.txt
-      - name: Collect and publish consecutive Landing batches
+      - name: Collect initial Landing batch or complete ordinary API session
+        id: initial_api
         if: github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
@@ -109,7 +110,14 @@ jobs:
           CAMPAIGN_PAUSE_HISTORY: ${{ inputs.pause_history || 'false' }}
           CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
         run: |
-          args=(--source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --summary campaign-summary.json --cycles "$CAMPAIGN_CYCLES")
+          started_at=$(date +%s)
+          api_cycles="$CAMPAIGN_CYCLES"
+          split_full_path=false
+          if [[ "$CAMPAIGN_SOURCE" != "gus_bdl" && "$CAMPAIGN_PUBLISH_ONLY" != "true" && "$CAMPAIGN_PAUSE_HISTORY" != "true" ]]; then
+            api_cycles=1
+            split_full_path=true
+          fi
+          args=(--source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --summary campaign-summary.json --cycles "$api_cycles")
           if [[ "$CAMPAIGN_PAUSE_HISTORY" == "true" ]]; then
             args+=(--pause-history)
           fi
@@ -118,7 +126,25 @@ jobs:
           elif [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
             args+=(--retry-validation-failures)
           fi
-          python src/source_campaign.py "${args[@]}"
+          status=0
+          python src/source_campaign.py "${args[@]}" || status=$?
+          elapsed_seconds=$(( $(date +%s) - started_at ))
+          remaining_seconds=$(( 900 - elapsed_seconds ))
+          if (( remaining_seconds < 0 )); then
+            remaining_seconds=0
+          fi
+          remaining_cycles=0
+          continue_api=false
+          if [[ "$split_full_path" == "true" ]]; then
+            remaining_cycles=$(( CAMPAIGN_CYCLES - 1 ))
+            if (( remaining_cycles > 0 && remaining_seconds >= 60 )); then
+              continue_api=true
+            fi
+          fi
+          echo "remaining_seconds=$remaining_seconds" >> "$GITHUB_OUTPUT"
+          echo "remaining_cycles=$remaining_cycles" >> "$GITHUB_OUTPUT"
+          echo "continue_api=$continue_api" >> "$GITHUB_OUTPUT"
+          exit "$status"
       - name: Restore provider ledger before the full-distribution writer
         id: restored_provider_ledger
         if: >-
@@ -131,6 +157,7 @@ jobs:
           CAMPAIGN_SOURCE: ${{ matrix.source }}
         run: python src/source_campaign.py --source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --verify-state
       - name: Collect complete official distributions and checkpoint remaining catalogue
+        id: full_bulk
         if: >-
           !cancelled() && steps.restored_provider_ledger.outcome == 'success' &&
           matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
@@ -142,6 +169,7 @@ jobs:
           CAMPAIGN_SOURCE: ${{ matrix.source }}
         run: python src/full_source_campaign.py --source "$CAMPAIGN_SOURCE" --allow-production-write
       - name: Restore a full distribution in a fresh process
+        id: restored_full
         if: >-
           !cancelled() && matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
           (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
@@ -151,6 +179,28 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           CAMPAIGN_SOURCE: ${{ matrix.source }}
         run: python src/full_source_campaign.py --source "$CAMPAIGN_SOURCE" --allow-production-write --verify-current
+      - name: Continue remaining Landing API batches within the original budget
+        if: >-
+          !cancelled() && steps.initial_api.outcome == 'success' &&
+          steps.full_bulk.outcome == 'success' && steps.restored_full.outcome == 'success' &&
+          steps.initial_api.outputs.continue_api == 'true' &&
+          matrix.source != 'gus_bdl' && inputs.publish_only != true && inputs.pause_history != true &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GUS_BDL_API_KEY: ${{ matrix.source == 'gus_bdl' && secrets.GUS_BDL_API_KEY || '' }}
+          CAMPAIGN_SOURCE: ${{ matrix.source }}
+          CAMPAIGN_REMAINING_CYCLES: ${{ steps.initial_api.outputs.remaining_cycles }}
+          CAMPAIGN_REMAINING_SECONDS: ${{ steps.initial_api.outputs.remaining_seconds }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
+        run: |
+          args=(--source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --summary campaign-summary.json --cycles "$CAMPAIGN_REMAINING_CYCLES" --session-seconds "$CAMPAIGN_REMAINING_SECONDS")
+          if [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
+          fi
+          python src/source_campaign.py "${args[@]}"
       - name: Restore accepted evidence in a fresh process
         if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source) }}
         env:

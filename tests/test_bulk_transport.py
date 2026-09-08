@@ -266,6 +266,7 @@ class FakeFiles:
         self.raise_after_create = False
         self.corrupt_download = False
         self.download_chunks = 0
+        self.object_mime_type = "application/octet-stream"
 
     def get(self, *, fileId, fields):
         def action():
@@ -277,7 +278,7 @@ class FakeFiles:
             return {
                 "id": fileId, "name": item["name"], "size": str(len(data)),
                 "md5Checksum": hashlib.md5(data, usedforsecurity=False).hexdigest(),
-                "mimeType": "application/octet-stream", "parents": ["responsesroot"],
+                "mimeType": self.object_mime_type, "parents": ["responsesroot"],
                 "ownedByMe": True, "trashed": False,
             }
         return FakeRequest(action)
@@ -424,6 +425,46 @@ class DriveBulkTransportTests(unittest.TestCase):
         descriptor = self.store.put_file(path)
         self.assertEqual(descriptor["id"], "allocated1")
         self.assertEqual(self.store.verify(descriptor), descriptor)
+
+    def test_drive_sniffed_non_native_mime_types_preserve_hash_verification(self):
+        path = self.root / "archive.zip"
+        path.write_bytes(b"complete archive")
+        files = self.storage.drive_service._files
+        files.object_mime_type = "application/x-zip"
+        descriptor = self.store.put_file(path)
+
+        for mime_type in (
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/gzip",
+            "application/xml",
+            "text/tab-separated-values",
+        ):
+            with self.subTest(mime_type=mime_type):
+                files.object_mime_type = mime_type
+                self.assertEqual(self.store.verify(descriptor), descriptor)
+
+        files.corrupt_download = True
+        with self.assertRaisesRegex(DriveIntegrityError, "do not match"):
+            self.store.verify(descriptor)
+
+    def test_google_native_files_folders_and_shortcuts_are_rejected(self):
+        path = self.root / "archive.zip"
+        path.write_bytes(b"complete archive")
+        descriptor = self.store.put_file(path)
+        files = self.storage.drive_service._files
+        downloads_before = files.download_chunks
+
+        for mime_type in (
+            "application/vnd.google-apps.document",
+            "application/vnd.google-apps.folder",
+            "application/vnd.google-apps.shortcut",
+        ):
+            with self.subTest(mime_type=mime_type):
+                files.object_mime_type = mime_type
+                with self.assertRaisesRegex(DriveIntegrityError, "metadata escaped"):
+                    self.store.verify(descriptor)
+        self.assertEqual(files.download_chunks, downloads_before)
 
     def test_unprovable_upload_failure_is_fail_closed_and_marked_uncertain(self):
         path = self.root / "archive.zip"
