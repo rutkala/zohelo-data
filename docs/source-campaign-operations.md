@@ -118,15 +118,15 @@ Drive usage. Immutable states and receipts consume additional storage. Preparati
 free account quota for a worst-case configured parallel run, including bounded state snapshots;
 it cannot reserve capacity against unrelated account writes.
 
-Initial admission caps: 2,048 pending tasks, 1,000 recurring roots, 5,000 completed tasks,
-256 MiB cumulative received bytes per source, 4 MiB per state snapshot. Discovery yields before
-pending/root limits. Reaching a state/raw bound pauses new collection; it does not mark completion.
-Do not raise caps blindly: source-specific bulk/change discovery, a sharded completion ledger,
-reference-safe compaction and physical retained-byte accounting are required scaling milestones.
-The trigger frequency and consecutive batches use available provider budgets sooner. They do
-not remove anonymous/registered quotas, state/byte bounds or source latency, and do not promise
-a daily refresh for every discovered series. When a bound is reached the run reports the specific
-reason and keeps previous data available. Adding a key does not bypass storage or compute limits.
+API campaigns have no cumulative raw-byte, pending-task, recurring-root or completed-task
+ceiling. Discovery pauses when finite history/reconciliation work reaches 600 tasks and resumes
+as that queue drains. Individual API responses remain bounded at 8 MiB; v2 manifests at 1 MiB
+and shards at 2 MiB. Full distributions use streamed transfer with physical capacity checks,
+independent of the API response limit. Provider quotas, execution budgets and measured physical
+capacity remain enforced. The trigger frequency and consecutive batches use available budgets
+sooner; they do not promise a daily refresh for every discovered series. When an execution or
+capacity bound is reached, the run reports the specific reason and preserves progress for
+continuation. Adding a key does not bypass storage or compute limits.
 
 Each job prints a JSON summary and writes the Actions step summary. Inspect per-lane successes,
 failed requests, pending retries, next retry, last attempt/success and cumulative bytes. Received
