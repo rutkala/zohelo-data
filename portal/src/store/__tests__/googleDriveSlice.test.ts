@@ -10,6 +10,7 @@ import {
   resolvePublishedTableReferences,
   resolveLayerFolderId,
   listSubfolders,
+  resolveLandingCatalog,
   resolveReleaseCatalog,
   GoogleDriveAuthError,
 } from "@/services/googleDrive";
@@ -26,6 +27,7 @@ vi.mock("@/services/googleDrive", async (original) => ({
   resolvePublishedTableReferences: vi.fn(),
   resolveLayerFolderId: vi.fn(),
   listSubfolders: vi.fn(),
+  resolveLandingCatalog: vi.fn(),
   resolveReleaseCatalog: vi.fn(),
 }));
 
@@ -94,6 +96,11 @@ beforeEach(() => {
   });
   vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
   vi.mocked(resolveReleaseCatalog).mockResolvedValue({ kind: "legacy" });
+  vi.mocked(resolveLandingCatalog).mockResolvedValue({
+    snapshots: [],
+    issues: [],
+    fingerprint: "none",
+  });
 });
 
 describe("Drive selection state", () => {
@@ -287,6 +294,84 @@ describe("immutable release selection", () => {
         ],
       })),
     },
+  });
+
+  const landing = (snapshotId: string) =>
+    ({
+      snapshots: [
+        {
+          fingerprint: `world_bank_wdi:${snapshotId}:manifest:${"b".repeat(64)}`,
+          pointer: { snapshot_id: snapshotId },
+          manifest: {
+            source_id: "world_bank_wdi",
+            snapshot_id: snapshotId,
+            layer: "01_landing",
+            table_name: "world_bank_wdi_responses",
+            columns: [{ name: "payload_utf8", type: "VARCHAR" }],
+            files: [
+              {
+                id: `${snapshotId}-file`,
+                name: "part-00000.parquet",
+                size: 10,
+                sha256: "c".repeat(64),
+                tableName: "world_bank_wdi_responses",
+                layer: "01_landing",
+              },
+            ],
+          },
+        },
+      ],
+      issues: [],
+      fingerprint: `world_bank_wdi:${snapshotId}`,
+    }) as unknown as DuckStoreState["lakehouseLanding"] & {};
+
+  it("merges an independently pinned Landing table without changing the NBP manifest", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(landing("snapshot-1"));
+
+    await store.getState().refreshLakehouseCatalog();
+
+    const selectedRelease = store.getState().lakehouseRelease;
+    expect(selectedRelease?.kind === "release" && selectedRelease.manifest.datasets).toHaveLength(
+      4
+    );
+    expect(
+      store
+        .getState()
+        .lakehouseCatalog.find((layer) => layer.name === "01_landing")
+        ?.children.map((table) => table.name)
+    ).toEqual(["world_bank_wdi_responses"]);
+    expect(store.getState().lakehouseStatusMessage).toContain("1 Landing source snapshot");
+  });
+
+  it("invalidates only a changed Landing view on refresh and retains the NBP pin", async () => {
+    const store = makeStore();
+    const firstLanding = landing("snapshot-1");
+    vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(firstLanding);
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().selectLakehouseDataset("01_landing", "world_bank_wdi_responses");
+
+    const connection = (
+      store.getState().currentSession as unknown as {
+        local: { connection: { query: ReturnType<typeof vi.fn> } };
+      }
+    ).local.connection;
+    connection.query.mockClear();
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(landing("snapshot-2"));
+
+    await expect(store.getState().refreshLakehouseCatalog()).resolves.toBeUndefined();
+
+    expect(connection.query).toHaveBeenCalledWith(
+      'DROP VIEW IF EXISTS "01_landing"."world_bank_wdi_responses";'
+    );
+    expect(store.getState().lakehouseRelease).toMatchObject({
+      kind: "release",
+      manifest: { release_id: "release-1" },
+    });
+    expect(store.getState().activeLakehouseDataset).toBeNull();
+    expect(loadTableIntoDuckDB).toHaveBeenCalledTimes(1);
   });
 
   it("pins the loaded release and refuses an explicit refresh to a different release", async () => {
@@ -537,6 +622,73 @@ describe("lazy published-query loading", () => {
       expect.any(Function)
     );
     expect(store.getState().createTab).not.toHaveBeenCalled();
+  });
+
+  it("autoloads an independently pinned Landing response table for SQL", async () => {
+    const store = makeStore();
+    const landingFile = {
+      id: "landing-file",
+      name: "part-00000.parquet",
+      size: 10,
+      sha256: "d".repeat(64),
+      tableName: "world_bank_wdi_responses",
+      layer: "01_landing",
+    };
+    store.setState({
+      lakehouseRelease: { kind: "legacy" },
+      lakehouseLanding: {
+        snapshots: [
+          {
+            fingerprint: "landing-fingerprint",
+            pointer: {},
+            manifest: {
+              source_id: "world_bank_wdi",
+              table_name: "world_bank_wdi_responses",
+              layer: "01_landing",
+              columns: [{ name: "payload_utf8", type: "VARCHAR" }],
+              files: [landingFile],
+            },
+          },
+        ],
+        issues: [],
+        fingerprint: "landing-fingerprint",
+      } as unknown as DuckStoreState["lakehouseLanding"],
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      {
+        datasetName: "world_bank_wdi_responses",
+        layerName: "01_landing",
+        files: [landingFile],
+      },
+    ]);
+
+    await store
+      .getState()
+      .preparePublishedTablesForQuery(
+        'SELECT payload_utf8 FROM "01_landing"."world_bank_wdi_responses"'
+      );
+
+    expect(resolvePublishedTableReferences).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      [
+        expect.objectContaining({
+          layer: "01_landing",
+          table_name: "world_bank_wdi_responses",
+        }),
+      ]
+    );
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      [expect.objectContaining({ layerName: "01_landing" })],
+      "fixture-token",
+      expect.anything(),
+      expect.any(Function)
+    );
   });
 
   it("does not replace an existing selection when referenced-table loading fails", async () => {

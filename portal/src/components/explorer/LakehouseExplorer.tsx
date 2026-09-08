@@ -34,6 +34,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const googleAuth = useDuckStore((s) => s.googleAuth);
   const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
   const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
+  const lakehouseLanding = useDuckStore((s) => s.lakehouseLanding);
   const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
   const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
@@ -55,6 +56,9 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const [popoverOpen, setPopoverOpen] = useState(false);
   const baseUrl = import.meta.env.BASE_URL === "./" ? "/" : (import.meta.env.BASE_URL ?? "/");
   const privacyUrl = `${baseUrl.replace(/\/$/, "")}/privacy.html`;
+  const sourceAccessGuideUrl =
+    "https://github.com/rutkala/zohelo-data/blob/main/docs/source-accounts.md";
+  const encryptedSecretsUrl = "https://github.com/rutkala/zohelo-data/settings/secrets/actions";
 
   const handleApplyManualToken = async () => {
     if (!manualToken.trim()) return;
@@ -204,6 +208,27 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
         </a>
       </div>
 
+      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span>Source access:</span>
+        <a
+          href={sourceAccessGuideUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          setup guide
+        </a>
+        <span aria-hidden="true">·</span>
+        <a
+          href={encryptedSecretsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          GitHub encrypted secrets
+        </a>
+      </div>
+
       {/* Auth Status & Notification Pill */}
       <div className="px-3 py-1.5 bg-muted/20 border-b flex items-center justify-between text-[11px]">
         <div className="flex items-center gap-1.5 truncate">
@@ -238,6 +263,15 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               legacy / unversioned
             </Badge>
           )}
+          {(lakehouseLanding?.snapshots.length ?? 0) > 0 && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
+              title="Independently validated source Landing snapshots"
+            >
+              Landing {lakehouseLanding?.snapshots.length}
+            </Badge>
+          )}
           {activeLakehouseDataset && (
             <Badge
               variant="secondary"
@@ -258,6 +292,14 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
         >
           {isLakehouseLoading && <Loader2 className="h-3 w-3 animate-spin shrink-0" />}
           <span className="break-words min-w-0">{lakehouseStatusMessage}</span>
+        </div>
+      )}
+
+      {(lakehouseLanding?.snapshots.length ?? 0) > 0 && (
+        <div className="px-3 py-1 text-[11px] text-muted-foreground border-b">
+          Landing tables contain one accepted source response per row. Inspect{" "}
+          <code className="font-mono text-[10px]">payload_utf8</code> for the original source JSON
+          or text.
         </div>
       )}
 

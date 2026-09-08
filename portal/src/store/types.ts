@@ -10,6 +10,7 @@ import type { ForkTableProgress } from "@/services/collaboration/fork";
 import type { Dashboard } from "@/services/dashboard/types";
 import type {
   GoogleDriveAuthState,
+  LandingCatalogResolution,
   LakehouseLayer,
   ReleaseCatalogResolution,
 } from "@/services/googleDrive/types";
@@ -629,6 +630,8 @@ export interface GoogleDriveSlice {
   lakehouseCatalog: LakehouseLayer[];
   /** Pinned immutable release, or legacy when no pointer exists. */
   lakehouseRelease: ReleaseCatalogResolution | null;
+  /** Independently pinned source Landing snapshots and source-specific metadata errors. */
+  lakehouseLanding: LandingCatalogResolution | null;
   isLakehouseLoading: boolean;
   lakehouseStatusMessage: string;
   activeLakehouseDataset: string | null;

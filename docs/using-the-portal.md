@@ -47,6 +47,26 @@ LIMIT 10;
 
 See [joining NBP v2 tables](sql-joins.md) for the released-table names and join keys.
 
+Validated source snapshots appear independently under `01_landing` as
+`world_bank_wdi_responses`, `gus_bdl_responses`, and `eurostat_responses` when each source has
+published data. These transport tables do not change the NBP release manifest or its dbt catalogue.
+Each row is one accepted HTTP response with request and retrieval metadata; `payload_utf8` contains
+the exact source JSON or text. Use these rows to inspect and query newly collected source data while
+Bronze, Silver, Gold, and governed definitions are still source-specific future work.
+
+```sql
+SELECT task_id, retrieved_at_utc, record_count, payload_utf8
+FROM "01_landing"."world_bank_wdi_responses"
+ORDER BY retrieved_at_utc DESC
+LIMIT 10;
+```
+
+The portal validates each source pointer, manifest, file size, and SHA-256 independently. An absent
+pointer means that source has not published a snapshot yet. A malformed source snapshot is reported
+without removing a healthy NBP release or another valid Landing source. Refreshing after a source
+publishes a different snapshot invalidates only that source's browser view; the next query loads the
+new immutable files.
+
 Use the generated `"layer"."table"` names when referring to published data. Automatic loading applies to SELECT queries, including joins, unions, nested queries and CTEs. Bare table names follow DuckDB’s local schema rules. CREATE VIEW also loads the published relations used in its SELECT or WITH query. Other local DDL/DML stays on the normal engine path.
 
 
