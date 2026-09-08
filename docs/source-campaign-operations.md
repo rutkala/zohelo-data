@@ -95,3 +95,19 @@ acceptance before they are described as published.
 The WDI timeout is 90 seconds following a measured 45-second production timeout. Task IDs and
 request parameters remain unchanged; time budgets are checked between attempts and do not
 interrupt an in-flight bounded request or checkpoint save.
+
+## Corrected parser and planning errors
+
+After a parser correction, the explicit `retry_validation` workflow input or CLI
+`--retry-validation-failures` can make eligible pending tasks immediately due. A reviewed
+merge can opt in with `[retry-source-validation]` together with `[run-source-campaigns]`.
+Only the latest retained rejection per task among the newest 20 receipts is considered: it
+must be HTTP 200, `ValueError`, from an older code revision and match the exact pending task.
+The control preserves failure counts, provider cooldowns, quota reservations, accepted work
+and all receipts; it records a bounded durable audit before any new request. It cannot clear
+HTTP 429/503 or network backoff, and repeated control under the same revision is a no-op.
+
+The BDL contract migration retires only the two obsolete root-locality requests, preserving
+their original tasks and reason in `plan_dispositions`. Municipality-scoped discovery replaces
+them. Superseded requests are not counted as ingested or completed. The generic migration
+guard rejects changes to quota, provider cooldowns, accepted evidence or other protected state.

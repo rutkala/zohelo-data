@@ -90,6 +90,18 @@ def prepare_state(store, adapter, today, settings):
     validate_state(state, adapter.SOURCE_ID)
     if today.isoformat() < state["onboarding_date"]:
         raise CampaignError("Campaign date cannot precede onboarding")
+    migrate = getattr(adapter, "migrate_state", None)
+    if migrate is not None:
+        migrated = migrate(deepcopy(state), today)
+        if not isinstance(migrated, dict):
+            raise CampaignError("Adapter planning migration must return state")
+        # Planning corrections may supersede queued work, but cannot rewrite
+        # received evidence, completed work, quota or provider cooldown history.
+        for key in set(state) | set(migrated):
+            if key not in {"pending", "plan_dispositions"} and state.get(key) != migrated.get(key):
+                raise CampaignError("Adapter planning migration changed protected campaign evidence")
+        validate_state(migrated, adapter.SOURCE_ID)
+        state = migrated
     # Pending earlier generations finish before a new generation is enqueued.
     busy = {t.get("recurrence_key") for t in state["pending"] if t["lane"] == "recent"}
     templates = list(state["recent_roots"].items())
@@ -248,7 +260,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
             receipt_descriptor = store.put_receipt(receipt)
             candidate["receipts"].append({"task_id": task["id"], **receipt_descriptor})
             if task["lane"] == "discovery":
-                for field in ("api_total", "total_records", "totalRecords"):
+                for field in ("api_total", "api_total_records", "total_records", "totalRecords"):
                     total = result.get("metadata", {}).get(field)
                     if type(total) is int and total >= 0:
                         candidate.setdefault("catalogue_totals", {})[task["kind"]] = total
@@ -293,6 +305,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                 "last_success_utc": state.get("last_success_utc"), "last_error": state.get("last_error"),
                 "catalogue_totals": state.get("catalogue_totals", {}),
                 "pending_retry_tasks": sum(bool(t.get("failures")) for t in state["pending"]),
+                "superseded_plan_tasks": len(state.get("plan_dispositions", {})),
                 "repeated_failure_tasks": sum(t.get("failures", 0) >= 3 for t in state["pending"]),
                 "elapsed_seconds": round(clock() - started, 2)})
     # record_count is representations received, including metadata/rechecks, not distinct facts.

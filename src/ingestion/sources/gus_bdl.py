@@ -7,6 +7,7 @@ response to make discovery resumable without interpreting business measures.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import date
 import json
 import math
@@ -35,6 +36,16 @@ _DETAIL_KINDS = {"subject_detail", "unit_detail", "locality_detail", "variable_d
 _SUBJECT_ID_RE = re.compile(r"^[A-Z][0-9]+$")
 _UNIT_ID_RE = re.compile(r"^[0-9]{12}$")
 _LOCALITY_ID_RE = re.compile(r"^[0-9]{12}-[0-9]{7}$")
+_OBSOLETE_ROOT_LOCALITY_IDS = {
+    "discovery:localities:pl:root:p000000": "pl",
+    "discovery:localities:en:root:p000000": "en",
+}
+_LOCALITY_DISPOSITION_REASON = "obsolete_root_locality_request"
+_LOCALITY_DISPOSITION_EVIDENCE = (
+    "Production returned HTTP 400; the official /units/localities contract "
+    "requires a municipality parent-id."
+)
+_LOCALITY_CONTRACT_REVISION = "gus-bdl-parent-scoped-localities-2026-09-08"
 
 
 def _task_id(lane: str, kind: str, cursor: dict[str, Any]) -> str:
@@ -118,7 +129,9 @@ def initial_tasks(today: date) -> list[dict[str, Any]]:
         for lang in _LANGUAGES:
             tasks.append(_task("discovery", "dictionary", {"resource": resource, "lang": lang}))
     tasks.append(_task("discovery", "years", {}))
-    for kind in ("subjects", "units", "localities", "variables"):
+    # Statistical localities have no valid root listing. They are discovered
+    # from municipality (level 6) units through the required parent-id filter.
+    for kind in ("subjects", "units", "variables"):
         for lang in _LANGUAGES:
             tasks.append(
                 _task(
@@ -139,6 +152,58 @@ def initial_tasks(today: date) -> list[dict[str, Any]]:
         tasks.append(_history_data_task(item["id"]))
     tasks.extend(recent_tasks(today))
     return _unique_tasks(tasks)
+
+
+def migrate_state(state: dict[str, Any], today: date) -> dict[str, Any]:
+    """Retire only the two invalid pre-parent locality root tasks.
+
+    The runner validates the returned state and persists it. This hook records
+    an auditable planning disposition without converting rejected work into a
+    completed request or touching retained response evidence.
+    """
+    _require_date(today)
+    if not isinstance(state, dict):
+        raise TypeError("GUS BDL campaign state must be an object")
+    migrated = deepcopy(state)
+    if migrated.get("source_id") != SOURCE_ID:
+        raise ValueError("GUS BDL state migration requires source_id gus_bdl")
+    pending = migrated.get("pending")
+    if not isinstance(pending, list):
+        raise ValueError("GUS BDL state pending tasks must be a list")
+
+    obsolete: list[dict[str, Any]] = []
+    retained: list[Any] = []
+    for task in pending:
+        task_id = task.get("id") if isinstance(task, dict) else None
+        if task_id not in _OBSOLETE_ROOT_LOCALITY_IDS:
+            retained.append(task)
+            continue
+        _validate_obsolete_locality_task(task, _OBSOLETE_ROOT_LOCALITY_IDS[task_id])
+        obsolete.append(task)
+
+    if not obsolete:
+        return migrated
+
+    dispositions = migrated.get("plan_dispositions")
+    if dispositions is None:
+        dispositions = {}
+        migrated["plan_dispositions"] = dispositions
+    if not isinstance(dispositions, dict):
+        raise ValueError("GUS BDL state plan_dispositions must be an object")
+    for task in obsolete:
+        task_id = task["id"]
+        disposition = {
+            "original_task": deepcopy(task),
+            "reason": _LOCALITY_DISPOSITION_REASON,
+            "evidence": _LOCALITY_DISPOSITION_EVIDENCE,
+            "contract_revision": _LOCALITY_CONTRACT_REVISION,
+        }
+        existing = dispositions.get(task_id)
+        if existing is not None and existing != disposition:
+            raise ValueError(f"GUS BDL state has conflicting disposition for {task_id}")
+        dispositions[task_id] = disposition
+    migrated["pending"] = retained
+    return migrated
 
 
 def refresh_task(task: dict[str, Any], today: date) -> dict[str, Any] | None:
@@ -190,7 +255,8 @@ def request_for(task: dict[str, Any]) -> dict[str, Any]:
                 "lang": cursor["lang"],
                 "page": cursor["page"],
                 "page-size": cursor["page_size"],
-                "sort": "Id",
+                "sort": "id",
+                "parent-id": cursor["parent_id"],
             }
         )
     elif kind in _DETAIL_KINDS:
@@ -246,13 +312,27 @@ def _interpret_page(
 ) -> dict[str, Any]:
     results = _list_field(payload, "results")
     total = _nonnegative_int(payload, "totalRecords")
-    page = _nonnegative_int(payload, "page")
-    page_size = _positive_int(payload, "pageSize")
     cursor = task["cursor"]
-    if page != cursor["page"]:
-        raise ValueError("GUS BDL response page does not match the task cursor")
-    if page_size != cursor["page_size"]:
-        raise ValueError(f"GUS BDL response pageSize {page_size} differs from requested {cursor['page_size']}")
+
+    # SingleVariableData does not promise response page/pageSize members;
+    # the retained request cursor remains the
+    # paging authority. If the API does echo either member, validate it strictly
+    # so an explicit wrong page can never be accepted.
+    if task["kind"] == "data_by_variable":
+        page = _optional_paging_int(payload, "page", cursor["page"], positive=False)
+        page_size = _optional_paging_int(
+            payload, "pageSize", cursor["page_size"], positive=True
+        )
+    else:
+        page = _nonnegative_int(payload, "page")
+        page_size = _positive_int(payload, "pageSize")
+        if page != cursor["page"]:
+            raise ValueError("GUS BDL response page does not match the task cursor")
+        if page_size != cursor["page_size"]:
+            raise ValueError(
+                f"GUS BDL response pageSize {page_size} differs from requested "
+                f"{cursor['page_size']}"
+            )
     if len(results) > page_size:
         raise ValueError("GUS BDL response contains more results than pageSize")
     links = payload.get("links")
@@ -339,6 +419,20 @@ def _interpret_page(
                                 "discovery",
                                 detail_kind,
                                 {"lang": lang, "entity_id": item["id"]},
+                            )
+                        )
+                if kind == "units" and item["level"] == 6:
+                    for lang in _LANGUAGES:
+                        next_tasks.append(
+                            _task(
+                                "discovery",
+                                "localities",
+                                {
+                                    "lang": lang,
+                                    "parent_id": item["id"],
+                                    "page": 0,
+                                    "page_size": _DISCOVERY_PAGE_SIZE,
+                                },
                             )
                         )
         elif kind == "variables":
@@ -533,9 +627,27 @@ def _interpret_detail(task: dict[str, Any], payload: dict[str, Any]) -> dict[str
     else:
         if not isinstance(actual, str) or not actual:
             raise ValueError("GUS BDL unit detail id must be a non-empty string")
+        level = payload.get("level")
+        if level is not None and (not _is_int(level) or level < 0):
+            raise ValueError("GUS BDL unit detail level must be a non-negative integer or null")
+    next_tasks: list[dict[str, Any]] = []
+    if task["kind"] == "unit_detail" and payload.get("level") == 6:
+        for lang in _LANGUAGES:
+            next_tasks.append(
+                _task(
+                    "discovery",
+                    "localities",
+                    {
+                        "lang": lang,
+                        "parent_id": actual,
+                        "page": 0,
+                        "page_size": _DISCOVERY_PAGE_SIZE,
+                    },
+                )
+            )
     return {
         "record_count": 1,
-        "next_tasks": [],
+        "next_tasks": next_tasks,
         "metadata": {
             "entity_id": actual,
             "language": task["cursor"]["lang"],
@@ -598,7 +710,14 @@ def _validate_task(task: dict[str, Any]) -> None:
         pattern = _SUBJECT_ID_RE if kind == "subjects" else _UNIT_ID_RE
         if parent_id is not None and not _matches(pattern, parent_id):
             raise ValueError(f"GUS BDL {kind} parent id is invalid")
-    elif kind in {"localities", "variables"}:
+    elif kind == "localities":
+        if (
+            cursor_fields != {"lang", "parent_id", "page", "page_size"}
+            or task["lane"] != "discovery"
+            or not _matches(_UNIT_ID_RE, task["cursor"].get("parent_id"))
+        ):
+            raise ValueError("GUS BDL localities task shape is invalid")
+    elif kind == "variables":
         if cursor_fields != {"lang", "page", "page_size"} or task["lane"] != "discovery":
             raise ValueError(f"GUS BDL {kind} task shape is invalid")
     elif kind in _DETAIL_KINDS:
@@ -665,6 +784,30 @@ def _unique_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(by_id.values())
 
 
+def _validate_obsolete_locality_task(task: dict[str, Any], lang: str) -> None:
+    expected_fields = {"id", "lane", "kind", "cursor"}
+    runtime_fields = {"failures", "retry_at"}
+    if set(task) - expected_fields - runtime_fields:
+        raise ValueError("Obsolete GUS BDL locality task has unexpected fields")
+    if not expected_fields <= set(task):
+        raise ValueError("Obsolete GUS BDL locality task is missing fields")
+    if task["lane"] != "discovery" or task["kind"] != "localities":
+        raise ValueError("Obsolete GUS BDL locality task has unexpected identity")
+    if task["cursor"] != {"lang": lang, "page": 0, "page_size": _DISCOVERY_PAGE_SIZE}:
+        raise ValueError("Obsolete GUS BDL locality task has unexpected cursor")
+    failures = task.get("failures")
+    if failures is not None and (not _is_int(failures) or failures < 0):
+        raise ValueError("Obsolete GUS BDL locality task failures are invalid")
+    retry_at = task.get("retry_at")
+    if retry_at is not None and (
+        not isinstance(retry_at, (int, float))
+        or isinstance(retry_at, bool)
+        or not math.isfinite(retry_at)
+        or retry_at < 0
+    ):
+        raise ValueError("Obsolete GUS BDL locality task retry_at is invalid")
+
+
 def _require_date(value: date) -> None:
     if not isinstance(value, date):
         raise TypeError("today must be a date")
@@ -696,6 +839,21 @@ def _positive_int(payload: dict[str, Any], field: str) -> int:
     value = payload.get(field)
     if not _is_int(value) or value <= 0:
         raise ValueError(f"GUS BDL response {field} must be a positive integer")
+    return value
+
+
+def _optional_paging_int(
+    payload: dict[str, Any], field: str, expected: int, *, positive: bool
+) -> int:
+    if field not in payload:
+        return expected
+    value = payload[field]
+    valid = _is_int(value) and (value > 0 if positive else value >= 0)
+    if not valid:
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"GUS BDL response {field} must be a {qualifier} integer")
+    if value != expected:
+        raise ValueError(f"GUS BDL response {field} does not match the task cursor")
     return value
 
 

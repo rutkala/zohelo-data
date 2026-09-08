@@ -14,6 +14,10 @@ on:
         description: 'Collect recent data and metadata while leaving historical tasks checkpointed'
         type: boolean
         default: false
+      retry_validation:
+        description: 'Retry HTTP-200 parser rejections from older code; preserve provider backoff and quotas'
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -86,10 +90,14 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           CAMPAIGN_SOURCE: ${{ matrix.source }}
           CAMPAIGN_PAUSE_HISTORY: ${{ inputs.pause_history || 'false' }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
         run: |
           args=(--source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --summary campaign-summary.json)
           if [[ "$CAMPAIGN_PAUSE_HISTORY" == "true" ]]; then
             args+=(--pause-history)
+          fi
+          if [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
           fi
           python src/source_campaign.py "${args[@]}"
       - name: Restore accepted evidence in a fresh process

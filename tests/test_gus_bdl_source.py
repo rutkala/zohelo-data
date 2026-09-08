@@ -30,16 +30,74 @@ def task_of(tasks, kind, **cursor_values):
 
 
 class GusBdlSourceTests(unittest.TestCase):
+    def test_state_migration_retires_only_exact_obsolete_locality_roots(self):
+        obsolete_pl = {
+            "id": "discovery:localities:pl:root:p000000",
+            "lane": "discovery",
+            "kind": "localities",
+            "cursor": {"lang": "pl", "page": 0, "page_size": 20},
+            "failures": 1,
+            "retry_at": 1789000000.5,
+        }
+        obsolete_en = {
+            "id": "discovery:localities:en:root:p000000",
+            "lane": "discovery",
+            "kind": "localities",
+            "cursor": {"lang": "en", "page": 0, "page_size": 20},
+        }
+        healthy = gus_bdl.recent_tasks(TODAY)[0]
+        state = {
+            "source_id": "gus_bdl",
+            "pending": [obsolete_pl, healthy, obsolete_en],
+            "completed": {"discovery:years": "2026-09-08T00:00:00+00:00"},
+            "receipts": [{"task_id": "discovery:years", "name": "receipt.json"}],
+            "rejected_receipts": [{"task_id": obsolete_pl["id"], "name": "rejected.json"}],
+            "raw_bytes": 333,
+            "quota_attempts": [1788999999.0],
+            "provider_retry_at": 1789000100.0,
+        }
+        original = copy.deepcopy(state)
+
+        migrated = gus_bdl.migrate_state(state, TODAY)
+        self.assertEqual(state, original)
+        self.assertEqual(migrated["pending"], [healthy])
+        for field in (
+            "completed",
+            "receipts",
+            "rejected_receipts",
+            "raw_bytes",
+            "quota_attempts",
+            "provider_retry_at",
+        ):
+            self.assertEqual(migrated[field], original[field])
+        self.assertEqual(
+            migrated["plan_dispositions"][obsolete_pl["id"]]["original_task"], obsolete_pl
+        )
+        self.assertEqual(
+            migrated["plan_dispositions"][obsolete_en["id"]]["original_task"], obsolete_en
+        )
+        for disposition in migrated["plan_dispositions"].values():
+            self.assertIn("parent-id", disposition["evidence"])
+            self.assertTrue(disposition["reason"])
+            self.assertTrue(disposition["contract_revision"])
+        self.assertEqual(gus_bdl.migrate_state(migrated, TODAY), migrated)
+
+        malformed = copy.deepcopy(original)
+        malformed["pending"][0]["cursor"]["page_size"] = 100
+        with self.assertRaisesRegex(ValueError, "unexpected cursor"):
+            gus_bdl.migrate_state(malformed, TODAY)
+
     def test_bootstrap_is_bilingual_and_starts_independent_recent_and_history_lanes(self):
         tasks = gus_bdl.initial_tasks(TODAY)
         json.dumps(tasks)
         self.assertEqual(gus_bdl.SOURCE_ID, "gus_bdl")
         self.assertEqual(gus_bdl.ALLOWED_HOSTS, ("bdl.stat.gov.pl",))
-        for kind in ("subjects", "units", "localities", "variables"):
+        for kind in ("subjects", "units", "variables"):
             self.assertEqual(
                 {task["cursor"]["lang"] for task in tasks if task["kind"] == kind},
                 {"pl", "en"},
             )
+        self.assertFalse(any(task["kind"] == "localities" for task in tasks))
 
         recent = task_of(
             tasks,
@@ -138,6 +196,50 @@ class GusBdlSourceTests(unittest.TestCase):
         details = [task for task in result["next_tasks"] if task["kind"] == "subject_detail"]
         self.assertEqual(len(details), 4)
 
+    def test_localities_are_discovered_from_required_municipality_parents(self):
+        root = task_of(gus_bdl.initial_tasks(TODAY), "units", lang="pl")
+        result = gus_bdl.interpret(root, fixture("units_pl_page_0.json"), TODAY)
+        locality_tasks = [
+            task for task in result["next_tasks"] if task["kind"] == "localities"
+        ]
+        self.assertEqual(
+            {(task["cursor"]["lang"], task["cursor"]["parent_id"]) for task in locality_tasks},
+            {("pl", "030210106062"), ("en", "030210106062")},
+        )
+        for task in locality_tasks:
+            request = gus_bdl.request_for(task)
+            self.assertEqual(request["params"]["parent-id"], "030210106062")
+            self.assertEqual(request["params"]["sort"], "id")
+        self.assertEqual(
+            gus_bdl.request_for(task_of(result["next_tasks"], "units", page=1))["params"]["page"],
+            1,
+        )
+
+    def test_level_six_unit_detail_recovers_locality_discovery(self):
+        unit_root = task_of(gus_bdl.initial_tasks(TODAY), "units", lang="pl")
+        listed = gus_bdl.interpret(unit_root, fixture("units_pl_page_0.json"), TODAY)
+        detail = task_of(
+            listed["next_tasks"],
+            "unit_detail",
+            lang="pl",
+            entity_id="030210106062",
+        )
+        body = json.dumps(
+            {
+                "id": "030210106062",
+                "name": "Wrocław",
+                "level": 6,
+                "description": "Source detail",
+            }
+        ).encode()
+        result = gus_bdl.interpret(detail, body, TODAY)
+        self.assertEqual(
+            {(task["cursor"]["lang"], task["cursor"]["parent_id"]) for task in result["next_tasks"]},
+            {("pl", "030210106062"), ("en", "030210106062")},
+        )
+        for task in result["next_tasks"]:
+            self.assertEqual(gus_bdl.request_for(task)["params"]["parent-id"], "030210106062")
+
     def test_data_response_counts_observations_and_preserves_source_grain_in_metadata(self):
         root = task_of(gus_bdl.recent_tasks(TODAY), "data_by_variable")
         result = gus_bdl.interpret(root, fixture("data_72305_recent_page_0.json"), TODAY)
@@ -152,7 +254,29 @@ class GusBdlSourceTests(unittest.TestCase):
         self.assertEqual(page_one["cursor"]["page"], 1)
         self.assertFalse(page_one["cursor"]["root"])
         self.assertEqual(page_one["recurrence_key"], "variable:72305")
+        self.assertEqual(gus_bdl.request_for(page_one)["params"]["page"], 1)
         self.assertIsNone(gus_bdl.refresh_task(page_one, date(2026, 9, 11)))
+
+    def test_data_page_markers_may_be_absent_but_explicit_markers_are_strict(self):
+        root = gus_bdl.recent_tasks(TODAY)[0]
+        body = json.loads(fixture("data_72305_recent_page_0.json"))
+        self.assertNotIn("page", body)
+        self.assertNotIn("pageSize", body)
+        self.assertEqual(gus_bdl.interpret(root, json.dumps(body).encode(), TODAY)["record_count"], 3)
+
+        for field, invalid in (
+            ("page", -1),
+            ("page", "0"),
+            ("page", 1),
+            ("pageSize", 0),
+            ("pageSize", "100"),
+            ("pageSize", 20),
+        ):
+            wrong = copy.deepcopy(body)
+            wrong[field] = invalid
+            with self.subTest(field=field, invalid=invalid):
+                with self.assertRaisesRegex(ValueError, field):
+                    gus_bdl.interpret(root, json.dumps(wrong).encode(), TODAY)
 
     def test_refresh_changes_generation_date_but_keeps_recurrence_key(self):
         root = gus_bdl.recent_tasks(TODAY)[0]
