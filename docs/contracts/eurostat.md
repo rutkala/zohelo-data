@@ -1,8 +1,9 @@
 # Eurostat ingestion contract
 
-Status: initial GL-001 starter contract, verified by bounded public-API probes on
-8 September 2026. GL-002 Comext is described below but is not admitted by this
-contract. This document does not claim that the whole Eurostat catalogue is ingested.
+Status: initial GL-001 starter contract, verified by bounded public-API probes and
+production Landing collection with fresh-process replay on 8 September 2026. GL-002
+Comext is described below but is not admitted by this contract. This document does
+not claim that the whole Eurostat catalogue is ingested.
 
 ## Provider routes and discovery
 
@@ -144,3 +145,17 @@ minutes. The adapter never issues an all-dataset request. The shared transport m
 retain its response-byte ceiling, runtime/request budgets, retry policy and no-redirect
 host validation. A Statistics API asynchronous warning is a failed bounded attempt;
 the adapter does not poll an unlimited extraction.
+
+## Initial production evidence
+
+[Run 34212811919](https://github.com/rutkala/zohelo-data/actions/runs/34212811919)
+accepted nine responses across recent, history and discovery lanes, including a catalogue
+with 12,234 records. Fresh-process replay verified one response from each lane.
+[Run 34214627594](https://github.com/rutkala/zohelo-data/actions/runs/34214627594)
+accepted twelve further responses, six recent and six historical, and replayed retained
+responses from both lanes. The cumulative checkpoint held 21 accepted responses and
+2,050,708 received body bytes, with 152 pending tasks and 81 recent roots. Catalogue
+records are discovery metadata; neither these counts nor the successful run establishes
+full dataset, country or historical coverage. Later runs may supersede these dated
+counts; the [acceptance record](../releases/2026-09-08-source-campaigns.md) records the
+final first-delivery observation and the unchanged Landing publication boundary.

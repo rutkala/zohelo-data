@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; first WDI/BDL/Eurostat Landing campaigns are in implementation and production acceptance. New-source Silver/Gold/semantic publication remains to be implemented.
+Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. The [expanded source research](source-research/README.md) contains 182 products/families, including NBP. The owner has now delegated full feasible source onboarding without a source-by-source review gate. The [implementation programme](source-expansion-plan.md) and domain coverage ledger are defined; the first WDI/BDL/Eurostat Landing campaigns passed production collection and fresh-process replay in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540). Bounded collection is scheduled every four hours; all three histories remain incomplete. New-source Silver/Gold/semantic publication remains to be implemented.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -17,7 +17,7 @@ This is the single project-status and owner-question record. Research, architect
 | D3. Source contracts, correction evidence and gold design | **Done** | Official definitions, declarative ingestion policy and correction evidence are documented, implemented and tested. The new detection rules ran successfully in the verified live release. |
 | D4. NBP end-to-end including semantic queries | **Done** | All 15 tables and five daily metrics are published. Fresh native queries matched gold; raw replay matched 1,329,363 rows exactly. The complete capacity inventory is below current warning thresholds. |
 | D5. One data catalogue with source and metric lineage | **Done** | Five real metric definitions and source methodology/frequency/reuse metadata are in the matching release artifacts. The native viewer passes discovery and semantic-to-physical-lineage browser checks. |
-| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat Landing collection is undergoing production acceptance; broad source expansion and new-source Silver/Gold/semantic delivery remain open. |
+| D6. Define and onboard additional sources | **In progress** | Research and the [full implementation plan](source-expansion-plan.md) cover 182 families and 231 categories. Autonomous onboarding is authorized. WDI/BDL/Eurostat Landing collection is live on a four-hour schedule with successful recent/history intake and cold replay. Broad source expansion and new-source Silver/Gold/semantic delivery remain open. [Initial live evidence](releases/2026-09-08-source-campaigns.md). |
 | D7. Portal UX and shared desktop/mobile theme | **Done** | Narrow palette alignment and identity/toolchain cleanup passed both deployment builds and all browser checks. Deployment evidence is linked below. |
 | Working agreement for the Zohelo-data subproject | **Done** | [Collaboration instructions](collaboration.md) define focused chats, one GitHub status record, Drive data artifacts and human-operable handoffs. |
 | Completed one-time migration workflow / old executable builders | **Cancelled** | Migration evidence and read-only comparison script remain; obsolete workflow and direct mutating CLI paths are retired. |
@@ -109,14 +109,25 @@ checked. Documentation research is not a successful connection or production acc
 supersedes the owner-selection gate. The versioned taxonomy has 15 domains, 45 subdomains,
 231 categories and 17 analytical dimensions, independent of official classification editions.
 All 182 inventory IDs have candidate mappings; these do not establish dataset or ingested coverage.
-The plan records 15 gaps and seven additional candidates.
+The plan records 15 thematic gaps and seven additional candidates. Across all candidates, 177 of 231 categories have a research lead and 54 have none; neither number measures ingested coverage.
 
 **First delivery boundary:** independent WDI/BDL/Eurostat Landing campaigns with exact raw
 responses, durable recent/history queues, persisted quotas and source-scoped Drive state.
 [Operations](source-campaign-operations.md) documents the bounded schedule, controls and capacity
-limits. Production evidence is recorded here after acceptance. Bronze/Silver, domain Gold,
-semantic models, new-source publication, broad dataset completion and scalable state compaction
-are subsequent implementation milestones, not completed capabilities.
+limits. [Production run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540)
+passed for all three providers and their fresh-process restore/replay steps at producer
+`7e43ccf1de25fdc8207f21f29861e6e3eb5402a5`. Cumulative accepted responses were WDI 13,
+BDL 22 and Eurostat 33; these include metadata and repeated representations, not unique facts.
+Each source advanced recent and historical queues, with zero pending retries at this checkpoint.
+The corrected implementation passed [222 full-suite tests](https://github.com/rutkala/zohelo-data/actions/runs/34216699560).
+[The dated evidence record](releases/2026-09-08-source-campaigns.md) preserves initial failures,
+repairs, run measurements and the bounded replay samples.
+
+**Next implementation sequence:** scalable sharded state and physical retained-byte accounting;
+shared geography and classification editions; dbt Bronze/Silver; domain Gold, independent source
+releases, semantics and catalogue publication; then broader source waves and whole-scope convergence.
+These remain implementation work. The scheduled collectors continue independently; no background
+AI development or full-source completion is implied by this record.
 
 ### D7. Data-first portal and SQL experience
 

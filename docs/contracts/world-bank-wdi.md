@@ -1,11 +1,11 @@
 # World Bank World Development Indicators source contract
 
-Status: adapter contract implemented for bounded ingestion; production publication and
-downstream dbt models are separate integration work. Official documentation and the WDI
-catalog record were reviewed on 8 September 2026. A bounded direct HTTP probe from the
-development sandbox was attempted but network approval was unavailable, so the checked-in
-responses are representative contract fixtures based on the documented API v2 shapes, not
-claims of a live connection test.
+Status: bounded production Landing collection and fresh-process replay verified on
+8 September 2026. Downstream dbt models and publication remain separate implementation
+work. Official documentation and the WDI catalog record were reviewed on that date.
+Checked-in responses remain representative contract fixtures; the separate
+[live acceptance record](../releases/2026-09-08-source-campaigns.md) identifies actual
+production runs and retained-response verification.
 
 ## Dataset identity and permission
 
@@ -178,3 +178,19 @@ Fixtures under `tests/fixtures/sources/world_bank/` exercise the documented JSON
 source scoping, country/group distinction, numeric and null observations, units, forecast
 status, footnotes and multi-page continuation. They are small structural examples and do not
 prove current upstream counts, availability or production ingestion.
+
+## Initial production evidence
+
+[Run 34214627594](https://github.com/rutkala/zohelo-data/actions/runs/34214627594)
+accepted three observation pages across recent and history lanes after earlier production
+progress. The cumulative checkpoint held seven accepted responses and 1,422,521 received
+body bytes. Its retained indicator-catalog page reported 1,498 indicators; discovery had
+not finished. A fresh process restored state and replayed retained recent, history and
+discovery responses successfully. These counts describe Landing representations, including
+nulls and overlap; they are not unique analytical facts or complete coverage.
+
+The original 45-second timeout failed on two measured requests. A source-specific bounded
+90-second timeout preserved the same request identities and enabled successful subsequent
+collection. The run time budget is checked between attempts, so an in-flight request and
+checkpoint save can extend elapsed time beyond 240 seconds. Later runs may supersede these
+dated counts; see the acceptance record for the final first-delivery observation.

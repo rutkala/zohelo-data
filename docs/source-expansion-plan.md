@@ -44,8 +44,11 @@ catalogue publication, cross-source marts, full operator commands, or a sharded 
 state is deliberately bounded and monolithic. Further all-source expansion must add sharding and compaction before state or
 pending-task limits are approached; raising limits is not a scaling design.
 
-Implementation and fixture acceptance are not live production evidence. Phase 2 remains pending until each authorized
-campaign records its actual Drive root, retained objects, checkpoint outcome, resource use and workflow run.
+Phase 2 passed bounded production acceptance in [run 34217059540](https://github.com/rutkala/zohelo-data/actions/runs/34217059540):
+WDI, BDL and Eurostat each accepted recent and historical responses and passed fresh-process replay.
+[The dated evidence record](releases/2026-09-08-source-campaigns.md) identifies the configured production root, code revisions,
+checkpoint counts, resource measurements, failures and repairs. Collection runs every four hours; coverage remains incomplete
+and the later modeling, publication and scaling phases are not delivered by this acceptance.
 
 The discovery baseline contains 442 assignments from the 182 inventory products and 30 assignments from seven bounded
 additional candidates. Inventory products touch 160 of 231 taxonomy categories; 71 have no inventory-product candidate.
@@ -79,7 +82,7 @@ implementation.
 | ---: | --- | --- | --- |
 | 0 | Versioned taxonomy and coverage ledger | Research inventory | Exactly 182 unique inventory IDs mapped; every domain/category reference resolves; gaps and candidate-only caveats present |
 | 1 | **Delivered:** source-neutral Landing intake and checkpoint framework | Existing storage boundaries and NBP isolation | Fixtures prove independent work lanes, bounded replay, shared quota controls, exact raw/receipt retention, recovery and fail-closed capacity pauses |
-| 2 | First WDI, BDL and Eurostat production campaigns | Phase 1; taxonomy; source contracts | Bounded production Landing runs retain verified responses/receipts and advance only durable checkpoints; coverage remains explicitly incomplete while queues remain |
+| 2 | **Delivered, bounded acceptance:** first WDI, BDL and Eurostat production campaigns | Phase 1; taxonomy; source contracts | Bounded production Landing runs retain verified responses/receipts and advance only durable checkpoints; coverage remains explicitly incomplete while queues remain |
 | 3 | Sharded scalable ledger and full operator controls | Measured Phase 2 state/task growth | State shards, manifests and compaction survive interruption; operators can inspect and control work without loading or rewriting one unbounded state object |
 | 4 | Geography and classification backbones | Phase 1; source contracts | TERYT and applicable NUTS/LAU editions plus official classification structures/crosswalk evidence are retained and modeled |
 | 5 | Bronze and Silver models | Phases 2–4 | Raw replay produces typed source-grain records with keys, flags, versions and reconciliation tests |
