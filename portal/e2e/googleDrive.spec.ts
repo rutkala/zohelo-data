@@ -80,7 +80,7 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
     'SELECT currency_code, mid_rate * 2 AS doubled_rate FROM "02_bronze"."fixture_rates";'
   );
   await expect(editor).toContainText("doubled_rate");
-  await page.getByRole("button", { name: "Run Query", exact: true }).click();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("2.46", { exact: true }).first()).toBeVisible();
   const tabCount = await page.getByRole("tab").count();
 
