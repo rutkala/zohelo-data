@@ -264,6 +264,16 @@ class CampaignDurabilityTests(unittest.TestCase):
         self.assertEqual(rejected["http_status"], 200)
         self.assertEqual(store.objects[rejected["raw"]["object_id"]], bad_body)
 
+    def test_planning_migration_cannot_erase_provider_quota(self):
+        state = campaign.new_state(Adapter.SOURCE_ID, TODAY)
+        state["quota_attempts"] = [1000.0]
+        store = MemoryStore(state)
+        adapter = Adapter()
+        adapter.migrate_state = lambda value, today: {**value, "quota_attempts": []}
+        with self.assertRaisesRegex(campaign.CampaignError, "protected campaign evidence"):
+            campaign.prepare_state(store, adapter, TODAY, settings())
+        self.assertEqual(store.state["quota_attempts"], [1000.0])
+
     def test_429_retry_after_stops_provider_before_other_tasks_advance(self):
         rate_body = b'{"error":"rate limited"}'
         calls = []

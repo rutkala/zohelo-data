@@ -1,11 +1,5 @@
 {
   "totalRecords": 101,
-  "page": 0,
-  "pageSize": 100,
-  "links": {
-    "self": "https://bdl.stat.gov.pl/api/v1/data/by-variable/72305?page=0&page-size=100",
-    "next": "https://bdl.stat.gov.pl/api/v1/data/by-variable/72305?page=1&page-size=100"
-  },
   "variableId": 72305,
   "measureUnitId": 26,
   "aggregateId": 1,

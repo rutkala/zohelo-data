@@ -53,12 +53,15 @@ def main():
     parser.add_argument("--source", choices=SOURCE_IDS)
     parser.add_argument("--initialize-drive", action="store_true")
     parser.add_argument("--verify-current", action="store_true")
+    parser.add_argument("--retry-validation-failures", action="store_true")
     parser.add_argument("--backend", choices=("local", "drive"), default="local")
     parser.add_argument("--local-root", type=Path)
     parser.add_argument("--allow-production-write", action="store_true")
     parser.add_argument("--pause-history", action="store_true")
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args()
+    if args.retry_validation_failures and (args.initialize_drive or args.verify_current):
+        parser.error("Validation retry is a collection operation")
     if args.initialize_drive:
         storage = production_storage(args.allow_production_write)
         quota = storage.drive_service.about().get(fields="storageQuota").execute(num_retries=2).get("storageQuota", {})
@@ -101,6 +104,9 @@ def main():
             raise ValueError("Local ingestion requires an explicit --local-root")
         from ingestion.source_campaign_store import LocalCampaignStore
         store = LocalCampaignStore(args.local_root, args.source)
+    if args.retry_validation_failures:
+        from ingestion.campaign_recovery import retry_validation_failures
+        print(json.dumps(retry_validation_failures(store, os.environ.get("GITHUB_SHA", "local"))), flush=True)
     if args.verify_current:
         state = store.load()
         if not state or not state.get("receipts"):

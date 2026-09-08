@@ -36,7 +36,7 @@ turns them into rows.
 | Variables | `/variables` and `/variables/{id}` | `id`, `subjectId`, `n1`…`n5`, `level`, `measureUnitId`, `measureUnitName`; details add `description` and `years` |
 | Subjects | `/subjects`, child lists using `parent-id`, and `/subjects/{id}` | `id`, `parentId`, `name`, `hasVariables`, `children`, `levels`; details add `years`, `availability`, `dimensions`, `lastUpdate`, `description` |
 | Territorial units | `/units` and `/units/{id}` | BDL `id`, `name`, `parentId`, `level`, `kind`, `hasDescription`; details add `description`, `years` and source availability fields |
-| Statistical localities | `/units/localities` and `/units/localities/{id}` | locality ID and the same source unit metadata; kept separate from ordinary territorial units |
+| Statistical localities | `/units/localities?parent-id={municipality-id}` and `/units/localities/{id}` | locality ID and the same source unit metadata; kept separate from ordinary territorial units |
 | Dictionaries | `/attributes`, `/aggregates`, `/levels`, `/measures`, `/years` | every returned dictionary object in Polish and English where language applies |
 | Observations | `/data/by-variable/{variable-id}` | response `variableId`, `measureUnitId`, `aggregateId`, `lastUpdate`; each result unit `id`, `name`; each value's exact `year`, numeric value, `attrId`, `precision`, and any formatted value |
 
@@ -58,7 +58,11 @@ Verified bounded reads on 8 September 2026 found these live compact JSON shapes:
   discrepancy from silently discarding values.
 - A by-variable response is a paged `SingleVariableData` object. Its results are
   units with value arrays; the response also carries `variableId`, `measureUnitId`,
-  `aggregateId`, and `lastUpdate`.
+  `aggregateId`, and `lastUpdate`. Production responses retained on 8 September
+  2026 omitted the catalogue-style `page` member even though the request specified
+  it. The adapter therefore uses its validated request cursor for by-variable page
+  identity. If `page` or `pageSize` is present, its type and value must still match
+  the cursor. Catalogue responses must always provide both members.
 
 `interpret()` performs structural checks only. It returns an observation count for
 data pages and a result-object count for catalogue pages. It does not translate
@@ -104,7 +108,7 @@ has to detect additions that occurred while a long campaign was running.
 
 | Lane | Partition | Continuation |
 | --- | --- | --- |
-| `discovery` | one resource × source language × page; one detail resource × source ID × language | paged variable, unit, locality and subject lists continue one page at a time; Polish variable pages admit every returned variable; subject children expand the full tree |
+| `discovery` | one resource × source language × page; locality lists also include their municipality parent; one detail resource × source ID × language | paged variable, unit, locality and subject lists continue one page at a time; Polish variable pages admit every returned variable; municipality units (level 6) emit bilingual locality lists; subject children expand the full tree |
 | `recent` | one admitted variable × current five-year window × unit page × collection date | page continuation preserves the date/window and `recurrence_key=variable:<id>`; `refresh_task()` creates a new dated generation only from page zero |
 | `history` | one admitted variable × all available periods × unit page | no `year` filter is sent, so the source returns the available history; unit pages continue until `totalRecords` is exhausted |
 | `reconcile` | reserved for explicitly scheduled rechecks | not emitted by this adapter; retained raw versions and later comparisons determine whether a value changed |
@@ -119,6 +123,21 @@ endpoint; variables without values in part of the window return only their avail
 observations. Older corrections require a bounded history
 or reconcile campaign; recent collection is not presented as complete revision
 detection.
+
+The locality endpoint requires a 12-character parent unit ID and has no valid root
+enumeration. Initial tasks therefore enumerate the full ordinary unit catalogue.
+Each municipality returned at official level 6 emits Polish and English locality
+list tasks with its exact BDL unit ID as `parent-id`. Level-6 unit details emit the
+same tasks as a recovery path for unit pages accepted before this rule was added.
+This makes the locality target progressive and resumable without treating the
+rejected root request as an empty or complete catalogue.
+
+Contract revision `gus-bdl-parent-scoped-localities-2026-09-08` retires exactly the
+two former page-zero root locality tasks, one per language. `migrate_state()` removes
+them only from pending work and records the full original tasks, reason, production
+HTTP 400 evidence, and this revision in `plan_dispositions`. It never marks them
+complete or removes their raw bodies and receipts. A matching legacy ID with any
+other cursor or task shape fails migration instead of being silently discarded.
 
 The Polish variable page is the expansion authority. For every discovered variable
 it emits an English detail task, a recent page-zero root, and an all-history page-zero
@@ -175,7 +194,7 @@ the anonymous path remains functional and no account is assumed here.
 
 ## Failure and change behavior
 
-Malformed JSON, a false-empty object, page/cursor disagreement, invalid identifiers,
+Malformed JSON, a false-empty object, an explicit page/cursor disagreement, invalid identifiers,
 non-numeric values, and duplicate observation grains fail the task. The task is not
 marked complete and no follow-up page is inferred. Extra source fields remain in the
 retained exact bytes for forward-compatible dbt handling.
