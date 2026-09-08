@@ -8,7 +8,7 @@ import sys
 import tempfile
 from types import ModuleType
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -21,6 +21,7 @@ from ingestion.source_campaign_store import (
     MAX_STATE_BYTES,
     UncertainCampaignWriteError,
 )
+from ingestion.drive_state_store import DriveStateStore
 
 
 class MemoryDriveObjects:
@@ -118,7 +119,9 @@ class FakeStorage:
 def drive_store(objects: MemoryDriveObjects, source_id: str = "world_bank"):
     storage = FakeStorage(objects)
     fake_module = ModuleType("ingestion.drive_state_store")
-    fake_module.DriveStateStore = lambda _storage, _root, _control: objects
+    fake_module.DriveStateStore = (
+        lambda _storage, _root, _control, *, allow_landing_pointer=False: objects
+    )
     with patch.dict(sys.modules, {"ingestion.drive_state_store": fake_module}):
         store = DriveCampaignStore(storage, source_id)
     return store, storage
@@ -283,6 +286,40 @@ class LocalCampaignStoreTests(unittest.TestCase):
 
 
 class DriveCampaignStoreTests(unittest.TestCase):
+    def test_drive_transport_requires_explicit_landing_pointer_opt_in(self):
+        storage = MagicMock()
+        files = storage.drive_service.files.return_value
+        common = {
+            "id": "pointer",
+            "mimeType": "application/json",
+            "parents": ["source-control"],
+            "ownedByMe": True,
+            "trashed": False,
+        }
+        default = DriveStateStore(storage, "platform-root", "source-control")
+        files.get.return_value.execute.return_value = {
+            **common, "name": "current-ingestion-state.json"
+        }
+        default.replace("pointer", b"{}")
+        files.update.assert_called_once()
+        files.update.reset_mock()
+
+        files.get.return_value.execute.return_value = {
+            **common, "name": "current-landing.json"
+        }
+        with self.assertRaisesRegex(ValueError, "explicitly allowed"):
+            default.replace("pointer", b"{}")
+        files.update.assert_not_called()
+
+        opted_in = DriveStateStore(
+            storage,
+            "platform-root",
+            "source-control",
+            allow_landing_pointer=True,
+        )
+        opted_in.replace("pointer", b"{}")
+        files.update.assert_called_once()
+
     def test_selected_root_paths_and_nbp_pointer_are_isolated(self):
         objects = MemoryDriveObjects()
         objects.files["nbppointer"] = {

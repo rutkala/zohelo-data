@@ -20,6 +20,8 @@ MAX_STATE_BYTES = 4 * 1024 * 1024
 MAX_RAW_BYTES = 8 * 1024 * 1024
 MAX_RECEIPT_BYTES = MAX_STATE_BYTES
 MAX_POINTER_BYTES = 16 * 1024
+MAX_LANDING_FILE_BYTES = 8 * 1024 * 1024
+MAX_LANDING_MANIFEST_BYTES = 1024 * 1024
 
 _SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,119}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -27,6 +29,11 @@ _STATE_FILE_RE = re.compile(
     r"^state-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$"
 )
 _POINTER_NAME = "current-ingestion-state.json"
+_LANDING_POINTER_NAME = "current-landing.json"
+_LANDING_OBJECT_RE = re.compile(
+    r"^(?:fragment|manifest)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12}\.(?:parquet|json)$"
+)
 
 
 class CampaignStoreError(RuntimeError):
@@ -86,6 +93,8 @@ class _CampaignStore:
         self._responses_root_id = _require_object_id(responses_root_id, "responses root id")
         self._expected_pointer: _PointerObservation | None = None
         self._pointer_observed = False
+        self._expected_landing_pointer: _PointerObservation | None = None
+        self._landing_pointer_observed = False
 
     def load(self) -> dict[str, Any] | None:
         """Load and verify the current immutable state snapshot, if it exists."""
@@ -280,11 +289,97 @@ class _CampaignStore:
             raise CampaignStoreError("campaign receipt checksum does not match its descriptor")
         return _decode_object(raw, "campaign receipt")
 
+    def load_landing_pointer(self) -> dict[str, Any] | None:
+        """Observe the source-scoped Landing pointer for a later safe promotion."""
+        observed = self._read_landing_pointer()
+        self._expected_landing_pointer = observed
+        self._landing_pointer_observed = True
+        return None if observed is None else dict(observed.value)
+
+    def put_landing_object(
+        self, name: str, data: bytes, *, maximum_bytes: int = MAX_LANDING_FILE_BYTES
+    ) -> dict[str, Any]:
+        """Create and verify one immutable publication object in the source namespace."""
+        _require_landing_object_name(name)
+        if not isinstance(data, bytes) or not data:
+            raise CampaignStoreError("Landing publication object must contain bytes")
+        if (
+            not isinstance(maximum_bytes, int)
+            or isinstance(maximum_bytes, bool)
+            or maximum_bytes < 1
+            or maximum_bytes > MAX_LANDING_FILE_BYTES
+        ):
+            raise CampaignStoreError("invalid Landing publication object size limit")
+        if len(data) > maximum_bytes:
+            raise CampaignCapacityError(
+                f"Landing publication object exceeds the {maximum_bytes}-byte safety limit"
+            )
+        object_id = self._create_verified(
+            name, data, self._landing_root(), "Landing publication object"
+        )
+        return {
+            "id": object_id,
+            "name": name,
+            "size": len(data),
+            "sha256": sha256(data).hexdigest(),
+        }
+
+    def read_landing_object(
+        self, descriptor: dict[str, Any], *, maximum_bytes: int = MAX_LANDING_FILE_BYTES
+    ) -> bytes:
+        """Read a publication object after namespace, size, and digest verification."""
+        if not isinstance(descriptor, dict):
+            raise CampaignStoreError("Landing publication descriptor must be an object")
+        name = _require_landing_object_name(descriptor.get("name"))
+        object_id = _require_object_id(descriptor.get("id"), "Landing publication object id")
+        if (
+            not isinstance(maximum_bytes, int)
+            or isinstance(maximum_bytes, bool)
+            or maximum_bytes < 1
+            or maximum_bytes > MAX_LANDING_FILE_BYTES
+        ):
+            raise CampaignStoreError("invalid Landing publication object size limit")
+        expected_size = _bounded_size(
+            descriptor.get("size"), maximum_bytes, "Landing publication object"
+        )
+        digest = _require_sha256(
+            descriptor.get("sha256"), "Landing publication object SHA-256"
+        )
+        found = self._find(name, self._landing_root())
+        if len(found) != 1 or found[0] != object_id:
+            raise CampaignStoreError(
+                "Landing publication object is missing, ambiguous, or outside this source namespace"
+            )
+        raw = self._read(object_id, "Landing publication object")
+        if len(raw) != expected_size or sha256(raw).hexdigest() != digest:
+            raise CampaignStoreError("Landing publication object does not match its descriptor")
+        return raw
+
+    def promote_landing_pointer(self, pointer: dict[str, Any]) -> None:
+        """Promote a fully written immutable snapshot with drift and readback checks."""
+        pointer_raw = _json_object_bytes(pointer, "Landing snapshot pointer")
+        if len(pointer_raw) > MAX_POINTER_BYTES:
+            raise CampaignCapacityError("Landing snapshot pointer exceeds its safety limit")
+        _validate_landing_pointer(pointer, self.source_id)
+        if not self._landing_pointer_observed:
+            self.load_landing_pointer()
+        expected = self._expected_landing_pointer
+        if not _same_pointer(self._read_landing_pointer(), expected):
+            raise CampaignStoreError("current Landing pointer changed since it was loaded")
+        if not _same_pointer(self._read_landing_pointer(), expected):
+            raise CampaignStoreError("current Landing pointer changed during snapshot upload")
+        promoted = self._promote_landing_pointer(expected, pointer_raw)
+        self._expected_landing_pointer = promoted
+        self._landing_pointer_observed = True
+
     def _states_root(self) -> str:
         return self._one_folder("states", self._control_root_id)
 
     def _receipts_root(self) -> str:
         return self._one_folder("receipts", self._control_root_id)
+
+    def _landing_root(self) -> str:
+        return self._one_folder("landing_publications", self._control_root_id)
 
     def _one_folder(self, name: str, parent_id: str) -> str:
         found = self._find(name, parent_id)
@@ -418,6 +513,73 @@ class _CampaignStore:
             "campaign state pointer update outcome is uncertain; no success was recorded"
         ) from error
 
+    def _read_landing_pointer(self) -> _PointerObservation | None:
+        found = self._find(_LANDING_POINTER_NAME, self._control_root_id)
+        if len(found) > 1:
+            raise CampaignStoreError("ambiguous current Landing pointers")
+        if not found:
+            return None
+        file_id = found[0]
+        raw = self._read(file_id, "current Landing pointer")
+        if len(raw) > MAX_POINTER_BYTES:
+            raise CampaignCapacityError("current Landing pointer exceeds its safety limit")
+        value = _decode_object(raw, "current Landing pointer")
+        _validate_landing_pointer(value, self.source_id)
+        return _PointerObservation(file_id, raw, value)
+
+    def _promote_landing_pointer(
+        self, expected: _PointerObservation | None, pointer_raw: bytes
+    ) -> _PointerObservation:
+        if expected is None:
+            try:
+                pointer_id = _require_object_id(
+                    self._store.create(
+                        _LANDING_POINTER_NAME, pointer_raw, self._control_root_id
+                    ),
+                    "Landing pointer id",
+                )
+            except Exception as exc:
+                return self._resolve_landing_promotion_after_error(None, pointer_raw, exc)
+        else:
+            pointer_id = expected.file_id
+            try:
+                self._store.replace(pointer_id, pointer_raw)
+            except Exception as exc:
+                return self._resolve_landing_promotion_after_error(expected, pointer_raw, exc)
+        try:
+            observed = self._read_landing_pointer()
+        except Exception as exc:
+            raise UncertainCampaignPointerError(
+                "Landing pointer promotion completed but its outcome is ambiguous"
+            ) from exc
+        if observed is None or observed.file_id != pointer_id or observed.raw != pointer_raw:
+            raise UncertainCampaignPointerError(
+                "Landing pointer readback differs after promotion"
+            )
+        return observed
+
+    def _resolve_landing_promotion_after_error(
+        self,
+        expected: _PointerObservation | None,
+        pointer_raw: bytes,
+        error: Exception,
+    ) -> _PointerObservation:
+        try:
+            observed = self._read_landing_pointer()
+        except Exception as read_error:
+            raise UncertainCampaignPointerError(
+                "Landing pointer update failed and could not be verified"
+            ) from read_error
+        if observed is not None and observed.raw == pointer_raw:
+            return observed
+        if _same_pointer(observed, expected):
+            raise CampaignStoreError(
+                "Landing pointer update failed; previous trusted snapshot was retained"
+            ) from error
+        raise UncertainCampaignPointerError(
+            "Landing pointer update outcome is uncertain; no success was recorded"
+        ) from error
+
 
 class DriveCampaignStore(_CampaignStore):
     """Campaign transport rooted inside the selected configured Drive tree."""
@@ -436,7 +598,9 @@ class DriveCampaignStore(_CampaignStore):
         responses_root = storage.get_or_create_nested_folder(
             [source_id, "responses"], root_id=landing_root
         )
-        transport = DriveStateStore(storage, selected_root, control_root)
+        transport = DriveStateStore(
+            storage, selected_root, control_root, allow_landing_pointer=True
+        )
         super().__init__(transport, source_id, control_root, responses_root)
 
 
@@ -509,10 +673,16 @@ class _LocalObjectStore:
 
     def replace(self, file_id: str, data: bytes) -> None:
         path = self._path(file_id)
-        expected = self.root / "06_control" / "source_campaigns" / path.parent.name / _POINTER_NAME
-        if path != expected or path.is_symlink() or not path.is_file():
-            raise CampaignStoreError("only a source campaign state pointer may be replaced")
-        temporary = path.with_name(f".{_POINTER_NAME}.{uuid4()}.tmp")
+        pointer_names = {_POINTER_NAME, _LANDING_POINTER_NAME}
+        expected_parent = self.root / "06_control" / "source_campaigns" / path.parent.name
+        if (
+            path.parent != expected_parent
+            or path.name not in pointer_names
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            raise CampaignStoreError("only a source campaign pointer may be replaced")
+        temporary = path.with_name(f".{path.name}.{uuid4()}.tmp")
         try:
             with temporary.open("xb") as handle:
                 handle.write(data)
@@ -591,6 +761,36 @@ def _require_sha256(value: Any, label: str) -> str:
     return value
 
 
+def _require_landing_object_name(value: Any) -> str:
+    if not isinstance(value, str) or not _LANDING_OBJECT_RE.fullmatch(value):
+        raise CampaignStoreError("unsafe Landing publication object name")
+    return value
+
+
+def _validate_landing_pointer(value: dict[str, Any], source_id: str) -> None:
+    if value.get("format_version") != 1 or value.get("source_id") != source_id:
+        raise CampaignStoreError("current Landing pointer has invalid identity")
+    snapshot_id = value.get("snapshot_id")
+    if (
+        not isinstance(snapshot_id, str)
+        or not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            snapshot_id,
+        )
+    ):
+        raise CampaignStoreError("current Landing pointer has invalid snapshot identity")
+    name = _require_landing_object_name(value.get("manifest_file_name"))
+    if name != f"manifest-{snapshot_id}.json":
+        raise CampaignStoreError("current Landing pointer manifest name does not match snapshot")
+    _require_object_id(value.get("manifest_file_id"), "Landing manifest id")
+    _require_sha256(value.get("manifest_sha256"), "Landing manifest SHA-256")
+    _bounded_size(
+        value.get("manifest_size_bytes"),
+        MAX_LANDING_MANIFEST_BYTES,
+        "Landing manifest",
+    )
+
+
 def _bounded_size(value: Any, maximum: int, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise CampaignStoreError(f"invalid {label} size")
@@ -659,6 +859,8 @@ __all__ = [
     "DriveCampaignStore",
     "LocalCampaignStore",
     "MAX_RAW_BYTES",
+    "MAX_LANDING_FILE_BYTES",
+    "MAX_LANDING_MANIFEST_BYTES",
     "MAX_STATE_BYTES",
     "UncertainCampaignPointerError",
     "UncertainCampaignWriteError",

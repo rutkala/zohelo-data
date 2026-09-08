@@ -88,7 +88,7 @@ Use [the operating guide](nbp-platform-operations.md) to validate, publish, rest
 ## Source expansion intake boundary
 
 [ADR 0004](decisions/0004-autonomous-source-onboarding.md) authorizes autonomous onboarding.
-A separate bounded campaign runner now implements WDI, BDL and Eurostat Landing intake with
+A separate campaign runner implements WDI, BDL and Eurostat Landing intake with
 per-source state/serialization, fair recent/history queues and durable provider quotas. A shared
 preparation job initializes Drive paths before parallel source workers. Exact bytes and accepted
 or rejected receipts survive restart; uncertain state promotion stops the source. This changes
@@ -96,7 +96,12 @@ no NBP release or consumer pointer. See [campaign operations](source-campaign-op
 
 The [domain taxonomy](../config/domain-taxonomy.yaml) separates stable categories, analytical
 dimensions and classification systems from the [candidate coverage ledger](../config/source-domain-coverage.json).
-New-source dbt models, source-independent release publication, compatible cross-source release
-pinning and semantic/catalogue integration remain planned. Initial bounded state is a first
+Under [ADR 0005](decisions/0005-agile-landing-and-source-access.md), each source also publishes
+immutable Parquet response envelopes through its own verified Landing pointer. The portal pins
+these snapshots alongside the NBP release and queries raw payloads before full medallion modeling.
+These are transport rows, not source observation facts. New-source dbt models, modeled source
+releases, compatible cross-source modeled-release pinning and semantic/catalogue integration remain
+subsequent source-specific increments. Encrypted Actions secrets provide source credentials;
+BDL enables its registered quota profile without putting a key in requests/receipts or the browser. Initial bounded state is a first
 admission envelope; full-catalogue scale requires measured sharding, bulk/change discovery,
 physical storage accounting and reference-safe compaction before the configured limits bind.

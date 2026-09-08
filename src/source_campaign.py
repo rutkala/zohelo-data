@@ -10,11 +10,28 @@ from zoneinfo import ZoneInfo
 
 import yaml
 
-from ingestion.source_campaign import run_campaign
+from ingestion.source_campaign import fetch
+from ingestion.campaign_session import run_collection_session
+from ingestion.source_credentials import effective_source_settings, make_authenticated_fetch, source_access_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_IDS = ("world_bank_wdi", "gus_bdl", "eurostat")
+
+
+def landing_summary(manifest):
+    if manifest is None:
+        return {"status": "no_accepted_responses"}
+    return {key: manifest[key] for key in (
+        "source_id", "snapshot_id", "status", "created_at_utc", "table_name",
+        "row_count", "accepted_response_count", "published_response_count",
+        "pending_publication_count", "coverage_status",
+    )}
+
+
+def publish_batch(store, adapter, code_sha):
+    from ingestion.landing_publication import publish_landing
+    return landing_summary(publish_landing(store, adapter, code_sha))
 
 
 def production_storage(allow_write):
@@ -45,22 +62,29 @@ def load_settings(source_id, config_path=ROOT / "config/source-campaigns.yaml"):
     for window in settings["quota_windows"]:
         if any(type(window.get(k)) is not int or window[k] <= 0 for k in ("seconds", "requests")):
             raise ValueError("Invalid quota window")
-    return settings
+    return effective_source_settings(source_id, settings)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", choices=SOURCE_IDS)
-    parser.add_argument("--initialize-drive", action="store_true")
-    parser.add_argument("--verify-current", action="store_true")
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument("--initialize-drive", action="store_true")
+    operation.add_argument("--verify-current", action="store_true")
+    operation.add_argument("--verify-landing", action="store_true")
+    operation.add_argument("--publish-only", action="store_true")
     parser.add_argument("--retry-validation-failures", action="store_true")
     parser.add_argument("--backend", choices=("local", "drive"), default="local")
     parser.add_argument("--local-root", type=Path)
     parser.add_argument("--allow-production-write", action="store_true")
     parser.add_argument("--pause-history", action="store_true")
     parser.add_argument("--summary", type=Path)
+    parser.add_argument("--cycles", type=int, default=3, help="Consecutive collection/publication batches (1–6)")
+    parser.add_argument("--session-seconds", type=int, default=900, help="Between-operation session budget (60–1800)")
     args = parser.parse_args()
-    if args.retry_validation_failures and (args.initialize_drive or args.verify_current):
+    if not 1 <= args.cycles <= 6 or not 60 <= args.session_seconds <= 1800:
+        parser.error("Use 1–6 cycles and a 60–1800 second session budget")
+    if args.retry_validation_failures and (args.initialize_drive or args.verify_current or args.verify_landing or args.publish_only):
         parser.error("Validation retry is a collection operation")
     if args.initialize_drive:
         storage = production_storage(args.allow_production_write)
@@ -69,11 +93,14 @@ def main():
         # Bound one complete parallel run, including two maximum-size state snapshots
         # per attempt and extra initialization/receipt headroom. This is a preflight,
         # not a reservation against unrelated account writers.
+        from ingestion.landing_publication import MAX_NEW_RESPONSES, MAX_LANDING_FILE_BYTES
         reserve = 16 * 1024 * 1024
         for source_id in SOURCE_IDS:
             settings = load_settings(source_id)
             if settings["enabled"]:
-                reserve += settings["max_requests"] * (settings["max_response_bytes"] + 8 * 1024 * 1024)
+                per_cycle = settings["max_requests"] * (settings["max_response_bytes"] + 8 * 1024 * 1024)
+                per_cycle += MAX_NEW_RESPONSES * MAX_LANDING_FILE_BYTES + 1024 * 1024
+                reserve += args.cycles * per_cycle
                 reserve += 8 * 1024 * 1024
         if limit is not None and usage is not None and int(limit) - int(usage) < reserve:
             raise RuntimeError("Available Drive quota is below the configured campaign-run reserve")
@@ -83,6 +110,7 @@ def main():
             if load_settings(source_id)["enabled"]:
                 DriveCampaignStore(storage, source_id)
         print(json.dumps({"status": "source_campaign_paths_ready", "sources": list(SOURCE_IDS),
+                          "session_cycles": args.cycles, "reserved_headroom_bytes": reserve,
                           "storage_quota_reported": limit is not None and usage is not None}))
         return 0
     if args.source is None:
@@ -107,6 +135,16 @@ def main():
     if args.retry_validation_failures:
         from ingestion.campaign_recovery import retry_validation_failures
         print(json.dumps(retry_validation_failures(store, os.environ.get("GITHUB_SHA", "local"))), flush=True)
+    if args.verify_landing:
+        from ingestion.landing_publication import verify_landing
+        manifest = verify_landing(store)
+        if manifest is None:
+            raise RuntimeError("No published Landing snapshot is available to verify")
+        print(json.dumps({**landing_summary(manifest), "status": "fresh_landing_verified"}), flush=True)
+        return 0
+    if args.publish_only:
+        print(json.dumps(publish_batch(store, adapter, os.environ.get("GITHUB_SHA", "local"))), flush=True)
+        return 0
     if args.verify_current:
         state = store.load()
         if not state or not state.get("receipts"):
@@ -137,9 +175,17 @@ def main():
         print(json.dumps({"source_id": args.source, "status": "fresh_restore_verified", "lanes": lanes,
                           "accepted_responses": state["accepted_responses"], "pending_tasks": len(state["pending"])}))
         return 0
-    today = datetime.now(ZoneInfo(settings["timezone"])).date()
-    report = run_campaign(store, adapter, today, settings, history_enabled=not args.pause_history,
-                          code_sha=os.environ.get("GITHUB_SHA", "local"))
+    access = source_access_status(args.source)
+    print(json.dumps({"source_id": args.source, "access_mode": access.mode,
+                      "secret_name": access.secret_name}), flush=True)
+    report = run_collection_session(
+        store, adapter, settings,
+        today_factory=lambda: datetime.now(ZoneInfo(settings["timezone"])).date(),
+        publish=publish_batch, max_cycles=args.cycles, max_seconds=args.session_seconds,
+        history_enabled=not args.pause_history, code_sha=os.environ.get("GITHUB_SHA", "local"),
+        fetcher=make_authenticated_fetch(args.source, fetch),
+        on_cycle=lambda cycle: print(json.dumps({"batch_completed": cycle}, sort_keys=True), flush=True),
+    )
     rendered = json.dumps(report, sort_keys=True, indent=2)
     print(rendered, flush=True)
     if args.summary:
@@ -149,7 +195,7 @@ def main():
     if summary_file:
         with open(summary_file, "a") as handle:
             handle.write(f"## Source campaign: {args.source}\n\n")
-            handle.write("Durable Landing collection; source scope remains incomplete. Received records include metadata and repeated representations.\n\n")
+            handle.write("Consecutive collection batches publish queryable Landing response tables. Source scope remains incomplete; response rows include metadata and repeated representations.\n\n")
             handle.write("```json\n" + rendered + "\n```\n")
     if "capacity_pause" in report["reason"]:
         print("::warning::Source campaign reached a documented capacity boundary; existing evidence is retained.")

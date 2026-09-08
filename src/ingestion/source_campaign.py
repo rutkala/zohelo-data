@@ -165,7 +165,7 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def fetch(request_spec, allowed_hosts, *, max_bytes, timeout):
+def fetch(request_spec, allowed_hosts, *, max_bytes, timeout, headers=None):
     url = request_spec["url"]
     parsed = urlsplit(url)
     if (parsed.scheme != "https" or parsed.hostname not in allowed_hosts or parsed.username
@@ -176,8 +176,13 @@ def fetch(request_spec, allowed_hosts, *, max_bytes, timeout):
         raise CampaignError("Request params must be a mapping")
     if params:
         url += ("&" if parsed.query else "?") + urlencode(params, doseq=True)
-    request = Request(url, headers={"Accept": "application/json, application/xml, text/plain;q=0.8",
-                                  "User-Agent": "zohelo-data/1.0 (+https://github.com/rutkala/zohelo-data)"})
+    # Credentials are injected by the source-specific transport wrapper, never by
+    # a persisted task/request specification or its immutable receipt.
+    request_headers = {"Accept": "application/json, application/xml, text/plain;q=0.8",
+                       "User-Agent": "zohelo-data/1.0 (+https://github.com/rutkala/zohelo-data)"}
+    if headers:
+        request_headers.update(headers)
+    request = Request(url, headers=request_headers)
     try:
         response = build_opener(NoRedirect()).open(request, timeout=timeout)
     except HTTPError as error:
