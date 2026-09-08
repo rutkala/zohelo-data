@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 7 September 2026. **The audit and live NBP acceptance are complete.** Release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC**. We are ready to define the next sources; longer-term exclusions are explicit below.
+Updated 8 September 2026. **The audit and live NBP acceptance are complete.** Audit acceptance release `96b14b78-dc36-4422-952c-5fb3af726ac8` has 15 tables, five verified daily MetricFlow metrics and 429,795 cleaned observations. Fresh SQL, exact raw replay and the full project-capacity check passed. Daily ingestion is active at **02:00 UTC** and the 8 September scheduled run also passed, publishing a newer release as recorded below. We are ready to define the next sources; longer-term exclusions are explicit below.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -50,7 +50,11 @@ These are visible limits, not claims of completed functionality. None requires i
 
 ## Evidence
 
-Current verified release: `96b14b78-dc36-4422-952c-5fb3af726ac8`, producer [`8f29a0b`](https://github.com/rutkala/zohelo-data/commit/8f29a0b98876f6ae6b161aae3ec5be5cbeb247cb). [Successful publication, fresh metrics, raw replay and health run](https://github.com/rutkala/zohelo-data/actions/runs/34167068188). It contains 15 tables and 429,795 cleaned observations. Previous releases remain retained.
+Audit acceptance release: `96b14b78-dc36-4422-952c-5fb3af726ac8`, producer [`8f29a0b`](https://github.com/rutkala/zohelo-data/commit/8f29a0b98876f6ae6b161aae3ec5be5cbeb247cb). [Successful publication, fresh metrics, raw replay and health run](https://github.com/rutkala/zohelo-data/actions/runs/34167068188). It contains 15 tables and 429,795 cleaned observations. Previous releases remain retained.
+
+Latest scheduled release checked on 8 September: `8d08c7b4-f9e3-485c-acfc-b194fc180b08`, producer [`b0eb886`](https://github.com/rutkala/zohelo-data/commit/b0eb88698c74687147764c0496938a90dd0dfd7b). [Scheduled run 34179015910](https://github.com/rutkala/zohelo-data/actions/runs/34179015910) passed publication, fresh SQL/native MetricFlow and health checks, with 15 tables and 429,841 cleaned observations. All four feeds were checked through 7 September. No capacity warnings were emitted. Routine scheduled runs do not repeat exact raw replay; the audit acceptance release above retains that separate proof. Later daily runs may supersede this dated operational observation.
+
+Desktop-menu follow-up, 8 September: [PR 70](https://github.com/rutkala/zohelo-data/pull/70) removed hover-only hiding from the shared table ellipsis, so published tables and Browser workspace relations expose the same visible menu on desktop and mobile. [Validation run 34196021287](https://github.com/rutkala/zohelo-data/actions/runs/34196021287) passed both production builds, 678 unit tests and 14 browser flows per deployment base, including non-hover visibility at desktop, phone and 768px widths. [Portal deployment 34196368805](https://github.com/rutkala/zohelo-data/actions/runs/34196368805) succeeded at commit `dc9f1283dd4153e40122e99c15fdff5568c52af8`. This portal correction did not run production ingestion or publish data. The resumed-chat audit found no unfinished essential deliverables, open PRs or active/queued Actions before this follow-up began; no separate AI monitoring task was started.
 
 [Audit delivery evidence](releases/2026-09-07-platform-readiness.md) records the live results plus 138 data tests, 678 portal unit tests and 14 browser flows for each deployment configuration. The full project inventory is 156,260,745 bytes; the highest used build/state bound is 17.92%, below the 70% review threshold. These are measured observations, not future capacity guarantees.
 

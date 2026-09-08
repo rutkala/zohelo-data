@@ -1,7 +1,13 @@
-# Verified MetricFlow runtime and remaining NBP work
+# Verified MetricFlow runtime compatibility
 
 Checked 7 September 2026. This is a synthetic technical compatibility check,
 not approval of NBP metrics or a deployed semantic service.
+
+**Production status updated 8 September 2026:** the later audit delivery published
+and verified five source-defined daily NBP metrics, modeled gold and release-pinned
+semantic artifacts. The synthetic proof below remains runtime evidence. See
+[live acceptance](releases/2026-09-07-platform-readiness.md) and the
+[current delivery record](deliverables.md) for production evidence and explicit holds.
 
 ## Package identity
 
@@ -69,15 +75,18 @@ proof. The accepted local query ran after kernel network denial was independentl
 confirmed in a child process. The repository fixture and its CI result are the
 repeatable acceptance evidence for the integrated dependency set.
 
-## Unresolved production choices
+## Production use and serving boundary
 
-This proves a technical route to self-managed native MetricFlow; it does not
-provide approved NBP metric definitions, modeled gold, release-pinned semantic
-artifacts or a running service. Those remain separate deliverables.
+This fixture proves the technical route to self-managed native MetricFlow. The
+production NBP definitions, gold models and matching semantic artifacts were
+subsequently delivered and verified separately. Restore a verified release and
+use `scripts/query_metrics.py` through the [operating guide](nbp-platform-operations.md)
+to enforce the daily metric grain.
 
 Dynamic queries need an available native runtime. Batch-published metric
 snapshots can instead be explored without an always-on runtime, with a fixed
 set of previously computed results. Codespaces and a static portal alone do
-not provide continuously available native execution. Ask the owner about the
-business definitions and needed availability before choosing a serving
-arrangement or promising a cost/SLA.
+not provide continuously available native execution. The five source-defined
+daily metrics need no further methodology decision. Optional derived metrics
+and always-on serving remain H-DERIVED and H-SERVE in the delivery record;
+resolve their intended use and availability before expanding that scope.
