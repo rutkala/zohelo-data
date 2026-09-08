@@ -1,0 +1,35 @@
+{
+  "products": 182,
+  "publisher_labels": 131,
+  "unique_reference_urls": 285,
+  "reference_entries": 312,
+  "by_section": {
+    "global-public": 40,
+    "poland-social": 35,
+    "poland-governance": 34,
+    "poland-environment": 35,
+    "commercial-disclosures": 34,
+    "additional": 4
+  },
+  "by_priority": {
+    "review-first": 79,
+    "specialist": 15,
+    "review-next": 57,
+    "conditional": 30,
+    "existing": 1
+  },
+  "by_access_evidence": {
+    "documented": 134,
+    "catalogue-only": 48
+  },
+  "by_reuse_status": {
+    "open-conditional": 43,
+    "dataset-specific": 26,
+    "unresolved": 85,
+    "restricted": 28
+  },
+  "by_reference_depth": {
+    "opened": 241,
+    "search-excerpt": 71
+  }
+}
