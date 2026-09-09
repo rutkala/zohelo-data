@@ -238,6 +238,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
            "recovered_transport_failures": 0, "by_lane": {}, "by_kind": {},
            "errors": [], "reason": "no_due_tasks"}
     failed_task_ids = set()
+    deferred_transport_task_ids = set()
     transient_failed_task_ids = set()
     transport_retries_used = {}
     preferred_retry_task_id = None
@@ -345,7 +346,6 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
             state["last_error"] = failure
             run["errors"].append({key: value for key, value in failure.items() if key != "raw"})
             run["failed_attempts"] += 1
-            failed_task_ids.add(task["id"])
             rejected = store.put_receipt({"schema_version": 1, "accepted": False, "source_id": adapter.SOURCE_ID,
                                           "task": task, "request": request_spec, "code_sha": code_sha, **failure})
             state.setdefault("rejected_receipts", []).append({"task_id": task["id"], **rejected})
@@ -363,6 +363,13 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                 # A restart has no local preference and respects the saved retry_at.
                 preferred_retry_task_id = task["id"]
                 continue
+            if transient_fetch_failure:
+                deferred_transport_task_ids.add(task["id"])
+                state["provider_retry_at"] = max(state.get("provider_retry_at", 0), task["retry_at"])
+                run["reason"] = "provider_retry_after"
+                run["retry_after_seconds"] = round(max(0, state["provider_retry_at"] - clock()), 1)
+                break
+            failed_task_ids.add(task["id"])
             # A bad/retired series is isolated; rate/auth/service trouble stops this provider.
             if status not in (200, 400, 404, 422) or len(failed_task_ids) >= 3:
                 break
@@ -386,6 +393,7 @@ def run_campaign(store, adapter, today, settings, *, history_enabled=True, fetch
                 "last_success_utc": state.get("last_success_utc"), "last_error": state.get("last_error"),
                 "catalogue_totals": state.get("catalogue_totals", {}),
                 "pending_retry_tasks": sum(bool(t.get("failures")) for t in state["pending"]),
+                "deferred_transport_failures": len(deferred_transport_task_ids),
                 "superseded_plan_tasks": len(state.get("plan_dispositions", {})),
                 "repeated_failure_tasks": sum(t.get("failures", 0) >= 3 for t in state["pending"]),
                 "elapsed_seconds": round(clock() - started, 2)})

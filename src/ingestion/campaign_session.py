@@ -63,6 +63,9 @@ def run_collection_session(store, adapter, settings, *, today_factory, publish,
         "recovered_transport_failures": sum(
             r.get("recovered_transport_failures", 0) for r in reports
         ),
+        "deferred_transport_failures": sum(
+            r.get("deferred_transport_failures", 0) for r in reports
+        ),
         "elapsed_seconds": round(clock() - started, 2),
         "coverage_status": "incomplete",
         "publication_layer": "01_landing",
