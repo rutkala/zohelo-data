@@ -45,7 +45,7 @@ class CampaignTransportRetryTests(unittest.TestCase):
         self.assertEqual(list(store.state['completed']), ['one'])
         self.assertEqual(store.state['pending'], [])
 
-    def test_exhaustion_keeps_both_rejections_and_stops_provider(self):
+    def test_exhaustion_keeps_both_rejections_and_defers_provider_retry(self):
         clock, store, calls = FakeClock(), MemoryStore(), []
 
         def fetcher(request, hosts, **kwargs):
@@ -58,9 +58,11 @@ class CampaignTransportRetryTests(unittest.TestCase):
         )
         self.assertEqual(calls, ['one', 'one'])
         self.assertEqual(len(store.state['quota_attempts']), 2)
-        self.assertEqual(report['reason'], 'source_error')
+        self.assertEqual(report['reason'], 'provider_retry_after')
+        self.assertGreater(report['retry_after_seconds'], 0)
         self.assertEqual(report['failed_attempts'], 2)
-        self.assertEqual(report['failed_requests'], 1)
+        self.assertEqual(report['failed_requests'], 0)
+        self.assertEqual(report['deferred_transport_failures'], 1)
         self.assertEqual(report['recovered_transport_failures'], 0)
         self.assertEqual(len(store.state['rejected_receipts']), 2)
         self.assertEqual([t['id'] for t in store.state['pending']], ['one', 'untouched'])
@@ -89,7 +91,7 @@ class CampaignTransportRetryTests(unittest.TestCase):
                 )
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(len(store.state['quota_attempts']), 1)
-                self.assertEqual(report['failed_requests'], 1)
+                self.assertEqual(report['failed_requests'], 0)
                 self.assertEqual(report['transport_retry_attempts'], 0)
                 self.assertGreater(store.state['pending'][0]['retry_at'], clock())
                 restarted = campaign.run_campaign(
@@ -169,6 +171,7 @@ class CampaignTransportRetryTests(unittest.TestCase):
         )
         self.assertEqual(report['failed_attempts'], 1)
         self.assertEqual(report['failed_requests'], 0)
+        self.assertEqual(report['deferred_transport_failures'], 0)
         self.assertEqual(report['recovered_transport_failures'], 1)
         self.assertEqual(publications, [1])
 
