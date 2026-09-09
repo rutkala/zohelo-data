@@ -28,8 +28,12 @@ from ingestion.source_campaign import new_state  # noqa: E402
 from ingestion.source_campaign_store import LocalCampaignStore  # noqa: E402
 
 
-def accepted(store, provider_id: str, number: int, *, params=None):
-    dataset_id = "__inventory__" if number == 0 else f"dataset_{number}"
+def accepted(store, provider_id: str, number: int, *, params=None, dataset_id=None):
+    dataset_id = (
+        ("__inventory__" if number == 0 else f"dataset_{number}")
+        if dataset_id is None
+        else dataset_id
+    )
     payload_hash = sha256(f"archive-{number}".encode()).hexdigest()
     raw = {
         "id": f"driveRaw{number}",
@@ -425,6 +429,15 @@ class BulkPublicationTests(unittest.TestCase):
         save_state(auth_store, self.provider_id, [item])
         with self.assertRaisesRegex(BulkPublicationError, "authentication field"):
             publish_bulk_index(LocalCampaignStore(auth_root, "eurostat_bulk"), "e" * 40)
+
+    def test_accepts_dataset_id_with_dollar_sign(self):
+        store = self.store()
+        item = accepted(store, self.provider_id, 1, dataset_id="dataset_$special")
+        save_state(store, self.provider_id, [item])
+
+        manifest = publish_bulk_index(store, "a" * 40)
+        self.assertEqual(manifest["published_distribution_count"], 1)
+        self.assertEqual(verify_bulk_index(self.store(), require_current=True)["row_count"], 1)
 
     def test_requires_bulk_store_and_strict_git_sha(self):
         ordinary = LocalCampaignStore(self.root / "ordinary", "eurostat")

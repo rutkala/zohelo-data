@@ -58,7 +58,7 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _CODE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SOURCE_RE = re.compile(r"^[a-z][a-z0-9_]{0,119}$")
-_SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:@/+\-]{0,1023}$")
+_SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.$:@/+\-]{0,1023}$")
 _SECRET_KEY_RE = re.compile(
     r"(?:auth|credential|password|secret|token|api[-_]?key|subscription[-_]?key)",
     re.I,
