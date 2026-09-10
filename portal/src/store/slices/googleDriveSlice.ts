@@ -29,10 +29,24 @@ import {
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
-const releaseMessage = (release: Extract<ReleaseCatalogResolution, { kind: "release" }>) =>
-  `Release ${release.manifest.release_id} · ${release.manifest.release_scope} · ${release.manifest.status}.`;
-const releaseFingerprint = (release: ReleaseCatalogResolution | null) =>
-  release?.kind === "release" ? release.fingerprint : release?.kind === "legacy" ? "legacy" : null;
+const releaseMessage = (release: Extract<ReleaseCatalogResolution, { kind: "release" }>) => {
+  const rels =
+    release.releases && release.releases.length > 0 ? release.releases : [release];
+  return rels
+    .map(
+      (r) =>
+        `Release ${r.manifest.release_id} · ${r.manifest.release_scope} · ${r.manifest.status}.`
+    )
+    .join(" ");
+};
+const releaseFingerprint = (release: ReleaseCatalogResolution | null) => {
+  if (!release) return null;
+  if (release.kind === "legacy") return "legacy";
+  if (release.releases && release.releases.length > 0) {
+    return release.releases.map((r) => r.fingerprint).sort().join(";");
+  }
+  return release.fingerprint;
+};
 
 const landingDatasets = (landing: LandingCatalogResolution | null): PublishedDataset[] =>
   (landing?.snapshots ?? []).map(({ manifest }) => ({
@@ -47,7 +61,11 @@ const publishedDatasets = (
   release: ReleaseCatalogResolution | null,
   landing: LandingCatalogResolution | null
 ): PublishedDataset[] => [
-  ...(release?.kind === "release" ? release.manifest.datasets : []),
+  ...(release?.kind === "release"
+    ? release.releases && release.releases.length > 0
+      ? release.releases.flatMap((r) => r.manifest.datasets)
+      : release.manifest.datasets
+    : []),
   ...landingDatasets(landing),
 ];
 

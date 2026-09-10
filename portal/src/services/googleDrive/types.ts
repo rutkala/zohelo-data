@@ -122,7 +122,16 @@ export interface PlatformReleaseManifest extends ReleaseManifestBase {
   release_scope: "nbp_platform";
 }
 
-export type ReleaseManifest = SilverReleaseManifest | PlatformReleaseManifest;
+/** The complete BDL platform release, including bronze, silver, and gold. */
+export interface BdlPlatformReleaseManifest extends ReleaseManifestBase {
+  format_version: 2;
+  release_scope: "bdl_platform";
+}
+
+export type ReleaseManifest =
+  | SilverReleaseManifest
+  | PlatformReleaseManifest
+  | BdlPlatformReleaseManifest;
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk";
@@ -243,6 +252,15 @@ export interface BusinessCatalogue {
   metrics: Array<Record<string, unknown>>;
 }
 
+export interface SingleReleaseResolution {
+  pointer: ReleasePointer;
+  manifest: ReleaseManifest;
+  manifestFileId: string;
+  fingerprint: string;
+  /** Present only for a validated v2 platform release. */
+  businessCatalogue?: BusinessCatalogue;
+}
+
 export type ReleaseCatalogResolution =
   | { kind: "legacy" }
   | {
@@ -253,4 +271,6 @@ export type ReleaseCatalogResolution =
       fingerprint: string;
       /** Present only for a validated v2 platform release. */
       businessCatalogue?: BusinessCatalogue;
+      /** All validated releases participating in this resolution (e.g. NBP, BDL). */
+      releases?: SingleReleaseResolution[];
     };

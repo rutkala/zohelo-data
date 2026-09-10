@@ -7,6 +7,7 @@ import {
   findNamedFilesInFolderById,
 } from "./driveApi";
 import type {
+  BdlPlatformReleaseManifest,
   BusinessCatalogue,
   BusinessCatalogueLineageNode,
   BusinessCatalogueSource,
@@ -19,6 +20,7 @@ import type {
   ReleaseManifest,
   ReleasePointer,
   SilverReleaseManifest,
+  SingleReleaseResolution,
 } from "./types";
 
 export const DRIVE_DOWNLOAD_LIMIT_BYTES = 64 * 1024 * 1024;
@@ -50,6 +52,32 @@ const V2_DATASETS: Record<string, ReleaseLayer> = {
   dim_commodity: "04_gold",
 };
 const V2_NULL_DATE_DATASETS = new Set(["dim_currency", "dim_source_table", "dim_commodity"]);
+
+export const BDL_DATASETS: Record<string, ReleaseLayer> = {
+  bronze_bdl_variables: "02_bronze",
+  bronze_bdl_subjects: "02_bronze",
+  bronze_bdl_units: "02_bronze",
+  bronze_bdl_dictionary_entries: "02_bronze",
+  bronze_bdl_years: "02_bronze",
+  bronze_bdl_observations: "02_bronze",
+  bdl_variables: "03_silver",
+  bdl_subjects: "03_silver",
+  bdl_units: "03_silver",
+  bdl_dictionary_entries: "03_silver",
+  bdl_observation_revisions: "03_silver",
+  bdl_observations: "03_silver",
+  dim_bdl_period: "04_gold",
+  dim_bdl_subject: "04_gold",
+  dim_bdl_variable: "04_gold",
+  dim_bdl_unit: "04_gold",
+  fact_bdl_observations: "04_gold",
+  mart_bdl_coverage: "04_gold",
+};
+export const BDL_DATED_DATASETS = new Set([
+  "dim_bdl_period",
+  "fact_bdl_observations",
+  "mart_bdl_coverage",
+]);
 const V2_REQUIRED_ARTIFACTS = new Set([
   "manifest.json",
   "catalog.json",
@@ -204,10 +232,18 @@ function parseFile(raw: unknown, datasetId: string, layer: ReleaseLayer): Lakeho
   };
 }
 
-function parseDataset(raw: unknown, formatVersion: 1 | 2): ReleaseDataset {
+function parseDataset(
+  raw: unknown,
+  scope: "nbp_silver" | "nbp_platform" | "bdl_platform"
+): ReleaseDataset {
   if (!isRecord(raw)) throw new Error("Release manifest has an invalid dataset.");
   const dataset_id = asNonEmptyString(raw.dataset_id, "dataset_id");
-  const expectedLayer = formatVersion === 1 ? "03_silver" : V2_DATASETS[dataset_id];
+  const expectedLayer =
+    scope === "nbp_silver"
+      ? "03_silver"
+      : scope === "nbp_platform"
+        ? V2_DATASETS[dataset_id]
+        : BDL_DATASETS[dataset_id];
   if (!expectedLayer || raw.layer !== expectedLayer) {
     throw new Error(`Release dataset '${dataset_id}' has an invalid layer.`);
   }
@@ -232,18 +268,18 @@ function parseDataset(raw: unknown, formatVersion: 1 | 2): ReleaseDataset {
     throw new Error(`Release dataset '${dataset_id}' has no files.`);
   }
   const row_count =
-    formatVersion === 1
-      ? asPositiveInteger(raw.row_count, "row_count")
-      : asNonNegativeInteger(raw.row_count, "row_count");
-  if (formatVersion === 2 && row_count === 0 && dataset_id !== "nbp_change_events") {
+    scope === "nbp_platform"
+      ? asNonNegativeInteger(raw.row_count, "row_count")
+      : asPositiveInteger(raw.row_count, "row_count");
+  if (scope === "nbp_platform" && row_count === 0 && dataset_id !== "nbp_change_events") {
     throw new Error(`Release dataset '${dataset_id}' may not have zero rows.`);
   }
   const min_date =
-    formatVersion === 1
+    scope === "nbp_silver"
       ? asIsoDate(raw.min_date, "min_date")
       : asNullableDate(raw.min_date, "min_date");
   const max_date =
-    formatVersion === 1
+    scope === "nbp_silver"
       ? asIsoDate(raw.max_date, "max_date")
       : asNullableDate(raw.max_date, "max_date");
   if ((min_date === null) !== (max_date === null)) {
@@ -251,11 +287,25 @@ function parseDataset(raw: unknown, formatVersion: 1 | 2): ReleaseDataset {
   }
   if (
     min_date === null &&
-    formatVersion === 2 &&
+    scope === "nbp_platform" &&
     !V2_NULL_DATE_DATASETS.has(dataset_id) &&
     row_count !== 0
   ) {
     throw new Error(`Release dataset '${dataset_id}' may not omit date bounds.`);
+  }
+  if (
+    scope === "bdl_platform" &&
+    BDL_DATED_DATASETS.has(dataset_id) &&
+    min_date === null
+  ) {
+    throw new Error(`Release dataset '${dataset_id}' may not omit date bounds.`);
+  }
+  if (
+    scope === "bdl_platform" &&
+    !BDL_DATED_DATASETS.has(dataset_id) &&
+    min_date !== null
+  ) {
+    throw new Error(`Release dataset '${dataset_id}' must not declare date bounds.`);
   }
   if (min_date !== null && max_date !== null && min_date > max_date) {
     throw new Error(`Release dataset '${dataset_id}' has inverted date bounds.`);
@@ -321,27 +371,46 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
     throw new Error("The selected release manifest does not match current-release.json.");
   }
   const format_version = raw.format_version;
-  const expectedScope = format_version === 1 ? "nbp_silver" : "nbp_platform";
-  if (raw.release_scope !== expectedScope || raw.status !== "validated") {
-    throw new Error(`The selected release is not a validated ${expectedScope} release.`);
+  const rawScope = raw.release_scope;
+  if (
+    (format_version === 1 && rawScope !== "nbp_silver") ||
+    (format_version === 2 && rawScope !== "nbp_platform" && rawScope !== "bdl_platform") ||
+    raw.status !== "validated"
+  ) {
+    throw new Error(
+      format_version === 1
+        ? "The selected release is not a validated nbp_silver release."
+        : "The selected release is not a validated platform release."
+    );
   }
+  const scope: "nbp_silver" | "nbp_platform" | "bdl_platform" = rawScope as
+    | "nbp_silver"
+    | "nbp_platform"
+    | "bdl_platform";
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
     throw new Error("The selected release does not have passing tests.");
   }
   if (!Array.isArray(raw.datasets))
     throw new Error("The selected release manifest has no datasets.");
-  const datasets = raw.datasets.map((dataset) => parseDataset(dataset, format_version));
+  const datasets = raw.datasets.map((dataset) => parseDataset(dataset, scope));
   const ids = new Set(datasets.map((dataset) => dataset.dataset_id));
-  const requiredIds = format_version === 1 ? V1_DATASETS : Object.keys(V2_DATASETS);
+  const requiredIds =
+    scope === "nbp_silver"
+      ? V1_DATASETS
+      : scope === "nbp_platform"
+        ? Object.keys(V2_DATASETS)
+        : Object.keys(BDL_DATASETS);
   if (
     ids.size !== datasets.length ||
     ids.size !== requiredIds.length ||
     requiredIds.some((id) => !ids.has(id))
   ) {
     throw new Error(
-      format_version === 1
+      scope === "nbp_silver"
         ? "The selected release must contain exactly the four required NBP silver datasets."
-        : "The selected platform release must contain exactly the 15 required NBP datasets."
+        : scope === "nbp_platform"
+          ? "The selected platform release must contain exactly the 15 required NBP datasets."
+          : "The selected platform release must contain exactly the 18 required BDL datasets."
     );
   }
   const fileIds = new Set<string>();
@@ -382,11 +451,18 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
       release_scope: "nbp_silver",
     } satisfies SilverReleaseManifest;
   }
+  if (scope === "nbp_platform") {
+    return {
+      ...base,
+      format_version: 2,
+      release_scope: "nbp_platform",
+    } satisfies PlatformReleaseManifest;
+  }
   return {
     ...base,
     format_version: 2,
-    release_scope: "nbp_platform",
-  } satisfies PlatformReleaseManifest;
+    release_scope: "bdl_platform",
+  } satisfies BdlPlatformReleaseManifest;
 }
 
 function parseBusinessSource(raw: unknown): BusinessCatalogueSource {
@@ -439,7 +515,7 @@ function parseLineageNode(raw: unknown): BusinessCatalogueLineageNode {
 
 function parseBusinessCatalogue(
   bytes: Uint8Array,
-  manifest: PlatformReleaseManifest
+  manifest: PlatformReleaseManifest | BdlPlatformReleaseManifest
 ): BusinessCatalogue {
   let raw: unknown;
   try {
@@ -514,33 +590,17 @@ async function downloadExact(
   return bytes;
 }
 
-export async function resolveReleaseCatalog(
+async function resolveSingleRelease(
+  pointerFile: { id: string; name: string; size?: number },
+  pointerLabel: string,
   token: string,
   budget: DriveDownloadBudget
-): Promise<ReleaseCatalogResolution> {
-  const roots = await findFoldersByName(DRIVE_ROOT, "root", token);
-  if (roots.length === 0) {
-    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' not found in Google Drive root.`);
-  }
-  if (roots.length !== 1) {
-    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in Google Drive root.`);
-  }
-  const pointerFiles = await findNamedFilesInFolder("current-release.json", roots[0].id, token);
-  if (pointerFiles.length === 0) return { kind: "legacy" };
-  if (
-    pointerFiles.length !== 1 ||
-    pointerFiles[0].mimeType === "application/vnd.google-apps.folder"
-  ) {
-    throw new Error(
-      "current-release.json is ambiguous or not a file; refusing to select a release."
-    );
-  }
-  const pointerFile = pointerFiles[0];
+): Promise<SingleReleaseResolution> {
   const pointerBytes = await downloadExact(
     pointerFile.id,
     pointerFile.size,
     POINTER_MAX_BYTES,
-    "current-release.json",
+    pointerLabel,
     token,
     budget
   );
@@ -558,8 +618,7 @@ export async function resolveReleaseCatalog(
     throw new Error("The selected release manifest does not match the pointer SHA-256.");
   }
   const manifest = parseManifest(manifestBytes, pointer);
-  const resolved = {
-    kind: "release" as const,
+  const resolved: SingleReleaseResolution = {
     pointer,
     manifest,
     manifestFileId: pointer.manifest_file_id,
@@ -585,4 +644,87 @@ export async function resolveReleaseCatalog(
     throw new Error("business-catalog.json does not match its release SHA-256.");
   }
   return { ...resolved, businessCatalogue: parseBusinessCatalogue(catalogueBytes, manifest) };
+}
+
+export async function resolveReleaseCatalog(
+  token: string,
+  budget: DriveDownloadBudget
+): Promise<ReleaseCatalogResolution> {
+  const roots = await findFoldersByName(DRIVE_ROOT, "root", token);
+  if (roots.length === 0) {
+    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' not found in Google Drive root.`);
+  }
+  if (roots.length !== 1) {
+    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in Google Drive root.`);
+  }
+  const rootId = roots[0].id;
+  const rootPointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
+  if (
+    rootPointerFiles.length > 1 ||
+    (rootPointerFiles.length === 1 &&
+      rootPointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+  ) {
+    throw new Error(
+      "current-release.json is ambiguous or not a file; refusing to select a release."
+    );
+  }
+
+  const bdlFolders = (await findFoldersByName("bdl-platform", rootId, token)).filter(
+    (folder) => folder.name === "bdl-platform"
+  );
+  let bdlPointerFile: { id: string; name: string; size?: number; mimeType?: string } | undefined;
+  if (bdlFolders.length === 1) {
+    const bdlPointerFiles = await findNamedFilesInFolder(
+      "current-release.json",
+      bdlFolders[0].id,
+      token
+    );
+    if (
+      bdlPointerFiles.length === 1 &&
+      bdlPointerFiles[0].mimeType !== "application/vnd.google-apps.folder"
+    ) {
+      bdlPointerFile = bdlPointerFiles[0];
+    } else if (bdlPointerFiles.length > 1) {
+      throw new Error(
+        "bdl-platform/current-release.json is ambiguous; refusing to select a release."
+      );
+    }
+  } else if (bdlFolders.length > 1) {
+    throw new Error("Folder 'bdl-platform' is ambiguous; refusing to select a release.");
+  }
+
+  if (rootPointerFiles.length === 0 && !bdlPointerFile) return { kind: "legacy" };
+
+  const releases: SingleReleaseResolution[] = [];
+  if (rootPointerFiles.length === 1) {
+    releases.push(
+      await resolveSingleRelease(rootPointerFiles[0], "current-release.json", token, budget)
+    );
+  }
+  if (bdlPointerFile) {
+    releases.push(
+      await resolveSingleRelease(
+        bdlPointerFile,
+        "bdl-platform/current-release.json",
+        token,
+        budget
+      )
+    );
+  }
+
+  const primary = releases[0];
+  const fingerprint =
+    releases.length === 1
+      ? primary.fingerprint
+      : releases.map((r) => r.fingerprint).sort().join(";");
+
+  return {
+    kind: "release",
+    pointer: primary.pointer,
+    manifest: primary.manifest,
+    manifestFileId: primary.manifestFileId,
+    fingerprint,
+    businessCatalogue: primary.businessCatalogue,
+    releases,
+  };
 }
