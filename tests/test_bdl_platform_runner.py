@@ -57,6 +57,10 @@ class BdlPlatformRunnerTests(unittest.TestCase):
                 release_calls["store"] = store
                 release_calls["root_id"] = root_id
                 release_calls["kwargs"] = kwargs
+                release_calls["artifact_payloads"] = {
+                    item["name"]: Path(item["path"]).read_text(encoding="utf-8")
+                    for item in kwargs.get("artifacts", [])
+                }
                 return {"release_id": "release-1"}
 
             def fake_build_platform(workspace):
@@ -114,11 +118,11 @@ class BdlPlatformRunnerTests(unittest.TestCase):
         artifact_names = {item["name"] for item in release_calls["kwargs"]["artifacts"]}
         self.assertTrue({"business-catalog.json", "ingestion-state.json", "manifest.json", "catalog.json", "run_results.json"}.issubset(artifact_names))
         state_artifact = next(item for item in release_calls["kwargs"]["artifacts"] if item["name"] == "ingestion-state.json")
-        state_document = json.loads(Path(state_artifact["path"]).read_text(encoding="utf-8"))
+        state_document = json.loads(release_calls["artifact_payloads"]["ingestion-state.json"])
         self.assertEqual(state_document["source_id"], "gus_bdl")
         self.assertEqual(state_document["sources"]["gus_bdl"]["coverage"]["modeled_total"], 1)
         business_catalog = next(item for item in release_calls["kwargs"]["artifacts"] if item["name"] == "business-catalog.json")
-        self.assertEqual(json.loads(Path(business_catalog["path"]).read_text(encoding="utf-8"))["sources"][0]["source_id"], "gus_bdl")
+        self.assertEqual(json.loads(release_calls["artifact_payloads"]["business-catalog.json"])["sources"][0]["source_id"], "gus_bdl")
         self.assertEqual(release_calls["kwargs"]["measurements"]["landing_fragments"], 2)
 
     def test_local_backend_is_rejected_before_publication(self):

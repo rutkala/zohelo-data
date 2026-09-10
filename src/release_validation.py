@@ -10,6 +10,9 @@ from typing import Any
 
 from ingestion.nbp_state import NBP_SOURCE_IDS, list_successful_response_descriptors
 from release_protocol import restore_release
+from semantic_query import METRICS as NBP_METRIC_SPECS
+
+NBP_METRIC_NAMES = frozenset(NBP_METRIC_SPECS)
 
 
 MAX_DATASET_BYTES = 128 * 1024 * 1024
@@ -251,6 +254,8 @@ def _source_defined_metrics(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for unique_id, record in sorted(metrics.items()):
         if not isinstance(record, dict):
+            continue
+        if record.get("name") not in NBP_METRIC_NAMES:
             continue
         config = record.get("config")
         meta = config.get("meta") if isinstance(config, dict) else None

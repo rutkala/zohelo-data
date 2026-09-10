@@ -153,11 +153,15 @@ class NbpSemanticTests(unittest.TestCase):
 
     def test_real_manifest_contains_production_lineage_and_no_synthetic_metric(self):
         manifest = json.loads(self.manifest.read_text())
-        self.assertEqual({item["name"] for item in manifest["metrics"]}, set(METRICS))
-        self.assertEqual({item["name"] for item in manifest["semantic_models"]},
-                         {"nbp_fx_quotes", "nbp_gold_prices"})
+        manifest_metric_names = {item["name"] for item in manifest["metrics"]}
+        self.assertTrue(set(METRICS).issubset(manifest_metric_names),
+                        f"Missing NBP metrics: {set(METRICS) - manifest_metric_names}")
+        self.assertTrue({"nbp_fx_quotes", "nbp_gold_prices"}.issubset(
+            {item["name"] for item in manifest["semantic_models"]}))
         self.assertNotIn("fixture_value_total", self.manifest.read_text())
-        for metric in manifest["metrics"]:
+        nbp_metrics = [m for m in manifest["metrics"] if m["name"] in METRICS]
+        self.assertEqual({m["name"] for m in nbp_metrics}, set(METRICS))
+        for metric in nbp_metrics:
             self.assertEqual(metric["config"]["meta"]["definition_status"], "source_defined")
             self.assertEqual(metric["config"]["meta"]["aggregation_policy"], "identity_at_daily_source_grain")
 

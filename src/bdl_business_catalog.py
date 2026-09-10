@@ -4,6 +4,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping
 
+from bdl_semantic import METRICS as BDL_METRIC_SPECS
+
+BDL_METRIC_NAMES = frozenset(BDL_METRIC_SPECS)
+
 
 SOURCE_ID = "gus_bdl"
 _SOURCE_SET = frozenset({SOURCE_ID})
@@ -213,6 +217,8 @@ def _source_metrics(manifest: Mapping[str, Any]) -> list[dict[str, Any]]:
     result = []
     for unique_id, record in sorted(metrics.items()):
         if not isinstance(record, Mapping) or _excluded(record, unique_id):
+            continue
+        if record.get("name") not in BDL_METRIC_NAMES:
             continue
         config = record.get("config", {})
         meta = config.get("meta") if isinstance(config, Mapping) else None
