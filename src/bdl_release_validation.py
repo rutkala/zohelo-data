@@ -100,6 +100,8 @@ def validate_staged_bdl_release(store: Any, pointer: dict[str, Any]) -> dict[str
     if isinstance(source_entry.get("coverage"), dict) and source_entry["coverage"] != coverage:
         raise ReleaseValidationError("business catalogue coverage differs from ingestion evidence")
     if coverage_rows:
+        if len(coverage_rows) != 1:
+            raise ReleaseValidationError("BDL modeled coverage mart must contain exactly one snapshot row")
         row = coverage_rows[0]
         expected = {
             "source_universe_total": row[2],

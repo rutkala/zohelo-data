@@ -8,9 +8,24 @@ with landing_counts as (
     from {{ source('landing', 'gus_bdl_responses') }}
     where source_id = 'gus_bdl'
 ),
+latest_catalogue_total as (
+    select source_universe_total
+    from (
+        select distinct
+            task_id,
+            retrieved_at_utc,
+            response_sha256,
+            source_universe_total
+        from {{ ref('br_bdl_variables') }}
+        where response_kind = 'catalogue'
+          and source_universe_total is not null
+    )
+    order by retrieved_at_utc desc, task_id desc, response_sha256 desc
+    limit 1
+),
 variable_counts as (
     select
-        max(source_universe_total) as source_universe_total,
+        (select source_universe_total from latest_catalogue_total) as source_universe_total,
         count(*) as discovered_total
     from {{ ref('stg_bdl_variables') }}
 ),

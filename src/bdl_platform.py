@@ -75,7 +75,7 @@ def _download_landing_snapshot(store, workspace: Path) -> list[Path]:
     return paths
 
 
-def build_platform(workspace: Path, landing_paths: list[Path]):
+def build_platform(workspace: Path):
     database = workspace / "build.duckdb"
     target = workspace / "target"
     env = dict(os.environ)
@@ -85,7 +85,12 @@ def build_platform(workspace: Path, landing_paths: list[Path]):
         DBT_SEND_ANONYMOUS_USAGE_STATS="false",
         DO_NOT_TRACK="1",
     )
-    env = {key: value for key, value in env.items() if not key.startswith(("GOOGLE_", "GCP_"))}
+    env = {
+        key: value
+        for key, value in env.items()
+        if not key.startswith(("GOOGLE_", "GCP_", "AWS_", "AZURE_"))
+        and key not in {"CLOUDSDK_CONFIG", "ZOHELO_DRIVE_ROOT_ID", "ZOHELO_DRIVE_ROOT_NAME"}
+    }
     common = ["--profiles-dir", str(REPO_ROOT), "--target-path", str(target), "--log-path", str(workspace / "logs"), "--threads", "1", "--no-partial-parse"]
     cli = [sys.executable, "-c", "from dbt.cli.main import cli; cli()"]
     model_names = list(BDL_PLATFORM_MODEL_NAMES.values())
@@ -162,7 +167,7 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
         if campaign_state is None:
             raise RuntimeError("No BDL campaign state is available")
         landing_paths = _download_landing_snapshot(campaign_store, workspace)
-        datasets, artifacts, coverage = build_platform(workspace, landing_paths)
+        datasets, artifacts, coverage = build_platform(workspace)
         source_config = yaml.safe_load((REPO_ROOT / "config/sources.yaml").read_text(encoding="utf-8"))
         ingestion_state = {
             "sources": {

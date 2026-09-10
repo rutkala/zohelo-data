@@ -36,8 +36,8 @@ def build_bdl_business_catalog(
     if not isinstance(code_sha, str) or not code_sha.strip():
         raise BdlBusinessCatalogError("code_sha must be a non-empty string")
     configured = _source_config(source_config)
-    if set(configured) != _SOURCE_SET:
-        raise BdlBusinessCatalogError("BDL source configuration must contain only gus_bdl")
+    if SOURCE_ID not in configured:
+        raise BdlBusinessCatalogError("BDL source configuration must include gus_bdl")
     state = _source_state(ingestion_state)
     if any(source_id not in _SOURCE_SET for source_id in state):
         raise BdlBusinessCatalogError("BDL ingestion state contains unknown sources")
