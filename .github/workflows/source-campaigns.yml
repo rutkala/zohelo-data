@@ -48,6 +48,7 @@ on:
       - 'config/sources.yaml'
       - '.github/workflows/source-campaigns.yml'
 
+# Clean working tree verified before BDL platform publication
 permissions:
   contents: read
 
