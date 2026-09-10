@@ -26,7 +26,7 @@ from bdl_release_validation import validate_staged_bdl_release
 from bdl_semantic import validate_release_metrics
 from drive_release_store import DriveReleaseStore
 from ingestion.landing_publication import verify_landing
-from ingestion.source_campaign_store import DriveCampaignStore, LocalCampaignStore
+from ingestion.source_campaign_store import DriveCampaignStore
 from release_protocol import publish_release, restore_current_release
 from runtime_metadata import _code_sha
 from storage_manager import StorageManager
@@ -57,10 +57,7 @@ def _campaign_store(backend: str, local_root: Path | None, allow_production_writ
         storage.authorize_writes()
         root_id = storage.resolve_root(create=False)
         return storage, root_id, DriveCampaignStore(storage, BDL_SOURCE_ID), DriveReleaseStore(storage, _release_root(storage, root_id))
-    if local_root is None:
-        raise ValueError("Local BDL publication requires --local-root")
-    store = LocalCampaignStore(local_root, BDL_SOURCE_ID)
-    return None, None, store, None
+    raise ValueError("BDL modeled publication currently supports only the drive backend")
 
 
 def _download_landing_snapshot(store, workspace: Path) -> list[Path]:
