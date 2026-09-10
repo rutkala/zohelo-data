@@ -211,9 +211,16 @@ def main():
         args.summary.write_text(rendered + "\n")
     summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_file:
+        landing_note = (
+            "Consecutive collection batches publish queryable Landing response tables. "
+            "For GUS BDL, the workflow continues with a separate modeled Bronze→Silver→Gold→semantic release step after Landing verification.\n\n"
+            if args.source == "gus_bdl" else
+            "Consecutive collection batches publish queryable Landing response tables. "
+            "Source scope remains incomplete; response rows include metadata and repeated representations.\n\n"
+        )
         with open(summary_file, "a") as handle:
             handle.write(f"## Source campaign: {args.source}\n\n")
-            handle.write("Consecutive collection batches publish queryable Landing response tables. Source scope remains incomplete; response rows include metadata and repeated representations.\n\n")
+            handle.write(landing_note)
             handle.write("```json\n" + rendered + "\n```\n")
     if "capacity_pause" in report["reason"]:
         print("::warning::Source campaign reached a documented capacity boundary; existing evidence is retained.")

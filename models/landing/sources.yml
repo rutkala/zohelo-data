@@ -10,3 +10,8 @@ sources:
         meta:
           formatter: template
           external_location: "read_json('{{ env_var('ZOHELO_NBP_BATCHES_PATH', '/tmp/zohelo_data/01_landing/nbp_batches/*.jsonl') }}', format = 'newline_delimited', columns = {'source_id': 'VARCHAR', 'batch_id': 'VARCHAR', 'ingestion_sequence': 'BIGINT', 'requested_start_date': 'VARCHAR', 'requested_end_date': 'VARCHAR', 'retrieved_at_utc': 'VARCHAR', 'response_sha256': 'VARCHAR', 'raw_file_id': 'VARCHAR', 'body_json': 'VARCHAR'})"
+      - name: gus_bdl_responses
+        description: "Accepted GUS BDL Landing response envelopes published from the source campaign. One row is one accepted HTTP response; payload_utf8 retains the exact JSON body as text."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_GUS_BDL_RESPONSES_PATH', '/tmp/zohelo_data/01_landing/gus_bdl/*.parquet') }}', union_by_name = true, filename = true)"

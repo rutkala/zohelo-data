@@ -82,3 +82,25 @@ sources:
       quote_unit: "PLN per gram of gold at 1000 millesimal fineness"
       methodology_notes: "NBP-calculated price of 1 g of gold at 1000 fineness; preserve the API cena value unchanged."
       description: "Current and historic NBP-calculated prices in PLN for 1 g of gold at 1000 millesimal fineness."
+
+  # ==========================================
+  # SOURCE 5: GUS BDL (Local Data Bank)
+  # ==========================================
+  gus_bdl:
+    metadata:
+      domain: "public_statistics"
+      category: "local_and_regional_statistics"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "GUS BDL (Local Data Bank)"
+      source_name: "Statistics Poland (GUS)"
+      provider_url: "https://stat.gov.pl/"
+      documentation_url: "https://bdl.stat.gov.pl/api/v1"
+      publication_schedule_url: "https://bdl.stat.gov.pl/bdl/start"
+      frequency: "source-updated statistical catalogue and observations"
+      coverage_start: "source_defined"
+      reuse_terms_url: "https://api.stat.gov.pl/Home/TermsOfService?lang=en"
+      reuse_summary: "Public BDL API access under Statistics Poland publication terms and CC BY 4.0 attribution requirements."
+      quote_unit: "Source-owned measure units vary by variable; preserve source unit IDs and labels."
+      methodology_notes: "Preserve BDL variable, unit, period and attrId semantics exactly; modeled metrics expose coverage/accountability totals rather than aggregating heterogeneous observation values."
+      description: "Statistics Poland Local Data Bank metadata and observation responses retained from the BDL API."
