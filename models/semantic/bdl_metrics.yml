@@ -1,0 +1,149 @@
+version: 2
+
+semantic_models:
+  - name: bdl_coverage
+    description: >-
+      Release-bound BDL coverage and accountability summary. One row per modeled
+      snapshot date records source-universe, discovered-variable, accepted
+      Landing-response, and modeled-variable totals plus ratios.
+    model: ref('mart_bdl_coverage')
+    defaults:
+      agg_time_dimension: snapshot_date
+    entities:
+      - name: bdl_coverage_snapshot
+        type: primary
+        expr: cast(snapshot_date as varchar)
+    dimensions:
+      - name: snapshot_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: bdl_source_universe_total_measure
+        description: Identity selector for the source universe total at one snapshot date.
+        agg: max
+        expr: source_universe_total
+      - name: bdl_discovered_total_measure
+        description: Identity selector for discovered BDL variables at one snapshot date.
+        agg: max
+        expr: discovered_total
+      - name: bdl_landed_accepted_total_measure
+        description: Identity selector for accepted BDL Landing responses at one snapshot date.
+        agg: max
+        expr: landed_accepted_total
+      - name: bdl_modeled_total_measure
+        description: Identity selector for distinct modeled BDL variables at one snapshot date.
+        agg: max
+        expr: modeled_total
+      - name: bdl_modeled_observation_total_measure
+        description: Identity selector for current modeled BDL observation rows at one snapshot date.
+        agg: max
+        expr: modeled_observation_total
+      - name: bdl_discovery_coverage_ratio_measure
+        description: Identity selector for discovery coverage at one snapshot date.
+        agg: max
+        expr: discovery_coverage_ratio
+      - name: bdl_modeled_coverage_ratio_measure
+        description: Identity selector for modeled coverage at one snapshot date.
+        agg: max
+        expr: modeled_coverage_ratio
+
+metrics:
+  - name: bdl_source_universe_total
+    config:
+      meta:
+        definition_status: source_defined
+        unit: BDL variables
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL source universe total
+    description: Official total number of BDL variables observed in the retained catalogue at a modeled snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_source_universe_total_measure
+  - name: bdl_discovered_total
+    config:
+      meta:
+        definition_status: source_defined
+        unit: BDL variables
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL discovered total
+    description: Distinct BDL variables represented in the modeled catalogue at a snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_discovered_total_measure
+  - name: bdl_landed_accepted_total
+    config:
+      meta:
+        definition_status: source_defined
+        unit: accepted BDL Landing responses
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL landed accepted total
+    description: Accepted retained BDL Landing response envelopes included in the modeled snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_landed_accepted_total_measure
+  - name: bdl_modeled_total
+    config:
+      meta:
+        definition_status: source_defined
+        unit: modeled BDL variables
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL modeled total
+    description: Distinct BDL variables with current typed modeled observations at a snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_modeled_total_measure
+  - name: bdl_modeled_observation_total
+    config:
+      meta:
+        definition_status: source_defined
+        unit: modeled BDL observation rows
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL modeled observation total
+    description: Current modeled BDL observation rows at the business fact grain for a snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_modeled_observation_total_measure
+  - name: bdl_discovery_coverage_ratio
+    config:
+      meta:
+        definition_status: source_defined
+        unit: ratio
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL discovery coverage ratio
+    description: Discovered BDL variables divided by the observed source-universe total at a snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_discovery_coverage_ratio_measure
+  - name: bdl_modeled_coverage_ratio
+    config:
+      meta:
+        definition_status: source_defined
+        unit: ratio
+        required_grain: [snapshot_date]
+        methodology_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+        aggregation_policy: identity_at_daily_snapshot_grain
+        version: '1'
+    label: BDL modeled coverage ratio
+    description: Modeled BDL variables divided by the observed source-universe total at a snapshot date.
+    type: simple
+    type_params:
+      measure: bdl_modeled_coverage_ratio_measure

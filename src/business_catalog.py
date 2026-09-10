@@ -130,10 +130,9 @@ def _state_source_mapping(ingestion_state: Any) -> Mapping[str, Any]:
 
 def _require_exact_source_ids(value: Mapping[str, Any], label: str) -> None:
     ids = set(value)
-    if ids != _SOURCE_ID_SET:
-        missing = sorted(_SOURCE_ID_SET - ids)
-        extra = sorted(ids - _SOURCE_ID_SET)
-        raise BusinessCatalogError(f"{label} must contain exactly the four NBP sources; missing={missing}, extra={extra}")
+    missing = sorted(_SOURCE_ID_SET - ids)
+    if missing:
+        raise BusinessCatalogError(f"{label} is missing required NBP sources: {missing}")
 
 
 def _require_no_unknown_source_ids(value: Mapping[str, Any], label: str) -> None:
@@ -330,7 +329,12 @@ def _excluded_manifest_record(unique_id: str, record: Mapping[str, Any]) -> bool
     if record.get("enabled") is False:
         return True
     searchable = " ".join(str(record.get(key, "")) for key in ("name", "alias", "path", "original_file_path", "unique_id")).lower()
-    return "fixture" in searchable or "tests/fixtures" in searchable
+    if "fixture" in searchable or "tests/fixtures" in searchable:
+        return True
+    name = str(record.get("name", ""))
+    if name.startswith("bdl_") or "gus_bdl" in searchable:
+        return True
+    return False
 
 
 def _source_id_for_record(unique_id: str, record: Mapping[str, Any]) -> str | None:

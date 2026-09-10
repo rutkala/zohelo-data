@@ -128,7 +128,8 @@ class NbpPlatformModelTests(unittest.TestCase):
         return subprocess.run(
             [sys.executable, str(OFFLINE), sys.executable, "-c", DBT_CLI, "build", "--profiles-dir", str(REPO_ROOT),
              "--target-path", str(target), "--log-path", str(target / "logs"), "--threads", "1", "--no-partial-parse",
-             "--vars", "{nbp_verified_batches: true}"],
+             "--vars", "{nbp_verified_batches: true}",
+             "--exclude", "source:landing.gus_bdl_responses+"],
             cwd=REPO_ROOT, env=env, text=True, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, timeout=120, check=False,
         )

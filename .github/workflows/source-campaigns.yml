@@ -32,12 +32,20 @@ on:
     paths:
       - 'src/source_campaign.py'
       - 'src/full_source_campaign.py'
+      - 'src/bdl_platform.py'
+      - 'src/bdl_release_validation.py'
+      - 'src/bdl_business_catalog.py'
+      - 'src/bdl_semantic.py'
+      - 'src/bdl_platform_contract.py'
       - 'src/drive_release_store.py'
+      - 'src/release_protocol.py'
       - 'src/storage_manager.py'
       - 'src/ingestion/**'
       - 'src/ingestion/sources/**'
+      - 'models/**'
       - 'config/source-campaigns.yaml'
       - 'config/source-access.yaml'
+      - 'config/sources.yaml'
       - '.github/workflows/source-campaigns.yml'
 
 permissions:
@@ -217,3 +225,23 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           CAMPAIGN_SOURCE: ${{ matrix.source }}
         run: python src/source_campaign.py --source "$CAMPAIGN_SOURCE" --backend drive --allow-production-write --verify-landing
+      - name: Build and publish BDL modeled release
+        id: publish_bdl
+        if: >-
+          !cancelled() && matrix.source == 'gus_bdl' &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/bdl_platform.py --backend drive --allow-production-write
+      - name: Verify current BDL modeled release in a fresh process
+        if: >-
+          !cancelled() && matrix.source == 'gus_bdl' &&
+          steps.publish_bdl.outcome == 'success' &&
+          (github.event_name != 'workflow_dispatch' || inputs.source == 'all' || inputs.source == matrix.source)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/bdl_platform.py --backend drive --allow-production-write --verify-current

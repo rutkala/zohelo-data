@@ -55,7 +55,9 @@ multi-window quota enforcement remains unchanged.
 
 The `Source ingestion campaigns` workflow collects exact public WDI, GUS BDL and Eurostat
 responses into Drive Landing and publishes verified response tables for portal preview and SQL.
-Each source has its own Landing snapshot; the NBP release pointer remains separate.
+Each source has its own Landing snapshot; the NBP release pointer remains separate. GUS BDL
+then continues through its own modeled release step after Landing verification, while WDI and
+Eurostat remain Landing and full-distribution raw publication flows.
 See the canonical [delivery record](deliverables.md) for live evidence and
 [implementation plan](source-expansion-plan.md) for the remaining programme.
 
@@ -168,8 +170,10 @@ continuation. Adding a key does not bypass storage or compute limits.
 Each job prints a JSON summary and writes the Actions step summary. Inspect per-lane successes,
 failed requests, pending retries, next retry, last attempt/success and cumulative bytes. Received
 records can include metadata, repeated representations and explicit missing observations;
-they are not a count of unique analytical facts. `coverage_status: incomplete` and
-`publication_layer: 01_landing` remain explicit. Run summaries retain each attempt failure even if later requests succeed. Fresh verification also
+they are not a count of unique analytical facts. WDI/Eurostat campaign summaries remain explicit
+about `coverage_status: incomplete` and `publication_layer: 01_landing`. BDL's collection summary
+still reports Landing progress, and the later modeled-release step adds separate Bronze/Silver/Gold
+and semantic coverage output. Run summaries retain each attempt failure even if later requests succeed. Fresh verification also
 reports the newest three retained rejection diagnostics without raw object identifiers. The
 verification step runs after partial collection failure, so retained metadata can still be
 verified; the failed collection remains a failed job. Failed requests make the job fail even when other
@@ -241,3 +245,37 @@ The registered profile uses 400 requests/15 minutes, 4,000/12 hours and 40,000/7
 BDL's documented 500/5,000/50,000 registered limits. Existing quota attempts and cooldowns are
 retained when the profile changes. Credentials are not added to saved requests or receipts.
 Other registry entries distinguish prepared account setup from connected runtime adapters.
+
+## BDL modeled Bronze → Silver → Gold → semantic publication
+
+After the `gus_bdl` Landing verification step succeeds, the same workflow runs:
+
+```bash
+python src/bdl_platform.py --backend drive --allow-production-write
+```
+
+This restores the current published BDL Landing snapshot, builds the dbt BDL Bronze/Silver/Gold
+graph, validates the release-bound semantic coverage metrics, writes `business-catalog.json` and
+`ingestion-state.json`, and publishes an immutable `bdl_platform` release. The follow-up fresh
+verification step runs:
+
+```bash
+python src/bdl_platform.py --backend drive --allow-production-write --verify-current
+```
+
+Business users should read the BDL modeled summary separately from the Landing campaign summary:
+
+- Landing answers **what exact BDL API responses were accepted and published**.
+- The modeled release answers **what was typed, deduplicated, promoted to business tables, and
+  semantically approved**.
+- `mart_bdl_coverage` and the BDL semantic metrics expose:
+  - source universe total
+  - discovered total
+  - landed accepted total
+  - modeled total
+  - modeled observation total
+  - discovery and modeled coverage ratios
+
+Inspect the `Build and publish BDL modeled release` step in GitHub Actions for those counters and
+the immutable release ID. Inspect the release artifacts when you need the business catalogue,
+semantic manifest, or ingestion-state evidence for that published BDL snapshot.

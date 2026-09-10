@@ -6,8 +6,11 @@ from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
 
+import duckdb
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from bdl_platform_contract import BDL_PLATFORM_DATASETS, BDL_PLATFORM_DATE_COLUMNS  # noqa: E402
 from release_protocol import (  # noqa: E402
     ReleaseProtocolError,
     publish_release,
@@ -217,6 +220,113 @@ class ReleaseProtocolTests(unittest.TestCase):
             ],
             "inputs": [], "code_sha": "a" * 40, "measurements": {},
             "release_id": self.release_id, "release_scope": "nbp_platform",
+        }
+
+    def _bdl_platform_candidate(self):
+        datasets = []
+        results = []
+        for dataset_id, (layer, model_id) in BDL_PLATFORM_DATASETS.items():
+            model = model_id.rsplit(".", 1)[-1]
+            date_column = BDL_PLATFORM_DATE_COLUMNS[dataset_id]
+            relation = self.directory / f"{dataset_id}.parquet"
+            with duckdb.connect() as connection:
+                relation_path = str(relation).replace("'", "''")
+                if dataset_id == "fact_bdl_observations":
+                    connection.execute(
+                        "create table dataset(period_start_date date, value_numeric double)"
+                    )
+                    connection.execute("insert into dataset values (date '2026-09-10', 11.0)")
+                elif dataset_id == "mart_bdl_coverage":
+                    connection.execute(
+                        """
+                        create table dataset(
+                            snapshot_date date,
+                            latest_retrieved_at_utc timestamp,
+                            source_universe_total bigint,
+                            discovered_total bigint,
+                            landed_accepted_total bigint,
+                            modeled_total bigint,
+                            modeled_observation_total bigint,
+                            discovery_coverage_ratio double,
+                            modeled_coverage_ratio double,
+                            landed_responses_per_discovered_variable_ratio double
+                        )
+                        """
+                    )
+                    connection.execute(
+                        "insert into dataset values (date '2026-09-10', timestamp '2026-09-10 00:00:00', 2, 2, 15, 2, 2, 1.0, 1.0, 7.5)"
+                    )
+                elif date_column is None:
+                    connection.execute("create table dataset(value varchar)")
+                    connection.execute("insert into dataset values ('x')")
+                else:
+                    connection.execute(f'create table dataset("{date_column}" date)')
+                    connection.execute(f'insert into dataset values (date \'2026-09-10\')')
+                connection.execute(f"COPY dataset TO '{relation_path}' (FORMAT PARQUET)")
+            datasets.append({
+                "dataset_id": dataset_id,
+                "layer": layer,
+                "model_name": model,
+                "model_id": model_id,
+                "table_name": dataset_id.removeprefix("bronze_"),
+                "path": str(relation),
+                "row_count": 1,
+                "date_column": date_column,
+                "min_date": None if date_column is None else "2026-09-10",
+                "max_date": None if date_column is None else "2026-09-10",
+                "columns": [{"name": date_column or "value", "type": "date" if date_column else "text"}],
+            })
+            results.extend([
+                {"unique_id": model_id, "status": "success"},
+                {"unique_id": f"test.zohelo_data.not_null_{model}_value", "status": "pass"},
+            ])
+        business_catalog = {
+            "format_version": 1,
+            "code_sha": "a" * 40,
+            "sources": [{
+                "source_id": "gus_bdl",
+                "name": "GUS BDL (Local Data Bank)",
+                "description": "fixture",
+                "status": "published_snapshot",
+                "checked_through": "2026-09-10",
+                "latest_observation_date": "2026-09-10",
+                "last_successful_ingestion_at": "2026-09-10T00:00:00Z",
+                "last_attempt_at": "2026-09-10T00:00:00Z",
+                "raw_response_count": 15,
+            }],
+            "datasets": [{
+                key: value
+                for key, value in dataset.items()
+                if key in {"dataset_id", "table_name", "layer", "model_name", "row_count", "min_date", "max_date", "date_column", "columns"}
+            } for dataset in datasets],
+            "lineage": {"nodes": [], "edges": []},
+            "metrics": [{"name": "bdl_discovered_total", "unique_id": "metric.zohelo_data.bdl_discovered_total", "meta": {"definition_status": "source_defined"}}],
+            "metrics_status": "source_defined",
+        }
+        semantic_manifest = {
+            "metrics": [{"name": "bdl_discovered_total"}],
+            "semantic_models": [{"name": "bdl_coverage", "node_relation": {"schema_name": "04_gold", "alias": "mart_bdl_coverage", "database": "local"}}],
+        }
+        metric_validation = {
+            "status": "verified",
+            "metrics": [{"name": "bdl_discovered_total"}],
+        }
+        return {
+            "datasets": datasets,
+            "artifacts": [
+                {"name": "manifest.json", "path": self._file("bdl-manifest.json", b'{"metadata":{},"nodes":{}}')},
+                {"name": "catalog.json", "path": self._file("bdl-catalog.json", b'{"nodes":{}}')},
+                {"name": "run_results.json", "path": self._file("bdl-run-results.json", json.dumps({"metadata": {"dbt_schema_version": "v6"}, "results": results}).encode())},
+                {"name": "business-catalog.json", "path": self._file("bdl-business-catalog.json", json.dumps(business_catalog).encode())},
+                {"name": "ingestion-state.json", "path": self._file("bdl-ingestion-state.json", json.dumps({"format_version": 1, "source_id": "gus_bdl", "code_sha": "a" * 40, "raw_response_count": 15, "coverage": {"source_universe_total": 2, "discovered_total": 2, "landed_accepted_total": 15, "modeled_total": 2, "modeled_observation_total": 2}, "sources": {"gus_bdl": {"raw_response_count": 15, "coverage": {"source_universe_total": 2, "discovered_total": 2, "landed_accepted_total": 15, "modeled_total": 2, "modeled_observation_total": 2}}}}).encode())},
+                {"name": "semantic_manifest.json", "path": self._file("bdl-semantic-manifest.json", json.dumps(semantic_manifest).encode())},
+                {"name": "metric-validation.json", "path": self._file("bdl-metric-validation.json", json.dumps(metric_validation).encode())},
+            ],
+            "inputs": [{"source_id": "gus_bdl", "id": "landing-fragment-1", "size": 1, "sha256": "a" * 64}],
+            "code_sha": "a" * 40,
+            "measurements": {"coverage": {"modeled_total": 2}},
+            "release_id": self.release_id,
+            "release_scope": "bdl_platform",
         }
 
     def _install_old_pointer(self, store):
@@ -450,6 +560,25 @@ class ReleaseProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseProtocolError, "requires staged content validation"):
             publish_release(store, "root", **self._platform_candidate())
         self.assertEqual(store.writes, 0)
+
+    def test_bdl_platform_scope_is_published_and_restored_with_v2_contract(self):
+        store = MemoryStore()
+        report = publish_release(
+            store,
+            "root",
+            **self._bdl_platform_candidate(),
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
+
+        self.assertEqual(report["manifest"]["format_version"], 2)
+        self.assertEqual(report["manifest"]["release_scope"], "bdl_platform")
+        restored = restore_current_release(store, "root")
+        self.assertEqual(restored["release_scope"], "bdl_platform")
+        self.assertEqual(len(restored["datasets"]), len(BDL_PLATFORM_DATASETS))
+        self.assertEqual(
+            next(item for item in restored["artifacts"] if item["name"] == "business-catalog.json")["name"],
+            "business-catalog.json",
+        )
 
     def test_failed_staged_validation_preserves_current_pointer(self):
         store = MemoryStore()

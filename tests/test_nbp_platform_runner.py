@@ -178,9 +178,12 @@ class PlatformRunnerTests(unittest.TestCase):
                     self.assertEqual(relation["name"], dataset["table_name"])
             configuration = yaml.safe_load((ROOT / "config/sources.yaml").read_text())
             batch_rows = [json.loads(line) for line in batches.read_text().splitlines()]
+            batch_source_ids = {row["source_id"] for row in batch_rows}
             state_sources = {}
             inputs = []
             for source_id in configuration["sources"]:
+                if source_id not in batch_source_ids:
+                    continue
                 source_rows = [row for row in batch_rows if row["source_id"] == source_id]
                 observed_dates = []
                 descriptors = []
