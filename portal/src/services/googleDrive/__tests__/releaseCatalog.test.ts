@@ -371,3 +371,355 @@ describe("complete platform release catalogue", () => {
     );
   });
 });
+
+const bdlDatasetIds = [
+  "bronze_bdl_variables",
+  "bronze_bdl_subjects",
+  "bronze_bdl_units",
+  "bronze_bdl_dictionary_entries",
+  "bronze_bdl_years",
+  "bronze_bdl_observations",
+  "bdl_variables",
+  "bdl_subjects",
+  "bdl_units",
+  "bdl_dictionary_entries",
+  "bdl_observation_revisions",
+  "bdl_observations",
+  "dim_bdl_period",
+  "dim_bdl_subject",
+  "dim_bdl_variable",
+  "dim_bdl_unit",
+  "fact_bdl_observations",
+  "mart_bdl_coverage",
+] as const;
+
+const bdlLayer = (id: string) =>
+  id.startsWith("bronze_") ? "02_bronze" : id.startsWith("bdl_") ? "03_silver" : "04_gold";
+
+const bdlDated = new Set(["dim_bdl_period", "fact_bdl_observations", "mart_bdl_coverage"]);
+
+async function bdlPlatformFixture(
+  manifestOverride: Record<string, unknown> = {},
+  catalogueOverride: Record<string, unknown> = {}
+) {
+  const releaseId = "223e4567-e89b-42d3-a456-426614174000";
+  const codeSha = "c".repeat(40);
+  const catalogue = {
+    format_version: 1,
+    code_sha: codeSha,
+    sources: [
+      {
+        source_id: "gus_bdl",
+        name: "GUS BDL (Local Data Bank)",
+        description: "Local Data Bank published by Statistics Poland.",
+        status: "published",
+        checked_through: "2026-09-10",
+        latest_observation_date: "2026-09-10",
+        last_successful_ingestion_at: "2026-09-10T01:00:00Z",
+        last_attempt_at: "2026-09-10T01:00:00Z",
+        raw_response_count: 5,
+      },
+    ],
+    lineage: {
+      nodes: [
+        {
+          id: "source",
+          label: "GUS BDL",
+          kind: "source",
+          layer: "01_landing",
+          description: "Source response",
+        },
+        {
+          id: "silver",
+          label: "Variables",
+          kind: "model",
+          layer: "03_silver",
+          description: "Validated variables",
+        },
+      ],
+      edges: [{ from: "source", to: "silver" }],
+    },
+    metrics: [{ name: "bdl_source_universe_total" }],
+    ...catalogueOverride,
+  };
+  const catalogueBytes = bytes(catalogue);
+  const manifest = {
+    format_version: 2,
+    release_id: releaseId,
+    release_scope: "bdl_platform",
+    status: "validated",
+    code_sha: codeSha,
+    created_at_utc: "2026-09-10T00:00:00Z",
+    datasets: bdlDatasetIds.map((dataset_id) => {
+      const isDated = bdlDated.has(dataset_id);
+      return {
+        dataset_id,
+        layer: bdlLayer(dataset_id),
+        table_name: dataset_id.replace(/^bronze_/, ""),
+        row_count: 1,
+        min_date: isDated ? "2026-09-01" : null,
+        max_date: isDated ? "2026-09-10" : null,
+        columns: [{ name: isDated ? "period_start_date" : "id", type: isDated ? "DATE" : "VARCHAR" }],
+        files: [
+          {
+            id: `${dataset_id}-file`,
+            name: `${dataset_id}.parquet`,
+            size: 1,
+            sha256: "d".repeat(64),
+          },
+        ],
+      };
+    }),
+    artifacts: [
+      {
+        id: "manifest-id",
+        name: "manifest.json",
+        size: 1,
+        sha256: "e".repeat(64),
+      },
+      {
+        id: "catalog-id",
+        name: "catalog.json",
+        size: 1,
+        sha256: "e".repeat(64),
+      },
+      {
+        id: "run-results-id",
+        name: "run_results.json",
+        size: 1,
+        sha256: "e".repeat(64),
+      },
+      {
+        id: "ingestion-state-id",
+        name: "ingestion-state.json",
+        size: 1,
+        sha256: "e".repeat(64),
+      },
+      {
+        id: "business-catalogue-id",
+        name: "business-catalog.json",
+        size: catalogueBytes.byteLength,
+        sha256: await sha256Hex(catalogueBytes),
+      },
+    ],
+    inputs: [],
+    tests: { passed: true },
+    ...manifestOverride,
+  };
+  const manifestBytes = bytes(manifest);
+  const pointerBytes = bytes({
+    format_version: 1,
+    release_id: releaseId,
+    manifest_file_id: "bdl-manifest-id",
+    manifest_sha256: await sha256Hex(manifestBytes),
+    updated_at_utc: "2026-09-10T00:01:00Z",
+  });
+
+  vi.mocked(findFoldersByName).mockImplementation(async (name) => {
+    if (name === "zohelo-data") return [{ id: "root-id", name: "zohelo-data" }];
+    if (name === "bdl-platform") return [{ id: "bdl-folder-id", name: "bdl-platform" }];
+    return [];
+  });
+  vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+    if (parentId === "bdl-folder-id" && name === "current-release.json") {
+      return [{ id: "bdl-pointer-id", name: "current-release.json", size: pointerBytes.byteLength }];
+    }
+    return [];
+  });
+  vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+    id: "bdl-manifest-id",
+    name: "release.json",
+    size: manifestBytes.byteLength,
+  });
+  vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) => {
+    if (id === "bdl-pointer-id") return pointerBytes;
+    if (id === "business-catalogue-id") return catalogueBytes;
+    return manifestBytes;
+  });
+}
+
+describe("BDL platform release resolution", () => {
+  it("resolves all eighteen BDL datasets and their business catalogue from bdl-platform folder", async () => {
+    await bdlPlatformFixture();
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog).toMatchObject({ kind: "release" });
+    expect(catalog.kind === "release" && catalog.manifest).toMatchObject({
+      format_version: 2,
+      release_scope: "bdl_platform",
+    });
+    expect(catalog.kind === "release" && catalog.manifest.datasets).toHaveLength(18);
+    expect(
+      catalog.kind === "release" && catalog.businessCatalogue?.sources[0].source_id
+    ).toBe("gus_bdl");
+    expect(catalog.kind === "release" && catalog.releases).toHaveLength(1);
+  });
+
+  it("rejects BDL dataset that omits date bounds on a dated dataset", async () => {
+    await bdlPlatformFixture({
+      datasets: bdlDatasetIds.map((dataset_id) => ({
+        dataset_id,
+        layer: bdlLayer(dataset_id),
+        table_name: dataset_id.replace(/^bronze_/, ""),
+        row_count: 1,
+        min_date: null,
+        max_date: null,
+        columns: [{ name: "id", type: "VARCHAR" }],
+        files: [{ id: "file-id", name: "f.parquet", size: 1, sha256: "a".repeat(64) }],
+      })),
+    });
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /dim_bdl_period.*may not omit date bounds/
+    );
+  });
+
+  it("rejects BDL dataset that declares date bounds on a non-dated dataset", async () => {
+    await bdlPlatformFixture({
+      datasets: bdlDatasetIds.map((dataset_id) => ({
+        dataset_id,
+        layer: bdlLayer(dataset_id),
+        table_name: dataset_id.replace(/^bronze_/, ""),
+        row_count: 1,
+        min_date: "2026-09-01",
+        max_date: "2026-09-10",
+        columns: [{ name: "id", type: "VARCHAR" }],
+        files: [{ id: "file-id", name: "f.parquet", size: 1, sha256: "a".repeat(64) }],
+      })),
+    });
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /bronze_bdl_variables.*must not declare date bounds/
+    );
+  });
+
+  it("resolves both NBP and BDL releases when both pointers exist", async () => {
+    const nbpReleaseId = "123e4567-e89b-42d3-a456-426614174000";
+    const bdlReleaseId = "223e4567-e89b-42d3-a456-426614174000";
+
+    const nbpCatalogueBytes = bytes({
+      format_version: 1,
+      code_sha: "b".repeat(40),
+      sources: [{ source_id: "nbp_table_a", name: "NBP Table A", description: "Daily NBP exchange rates.", status: "published", checked_through: null, latest_observation_date: null, last_successful_ingestion_at: null, last_attempt_at: null, raw_response_count: 0 }],
+      lineage: { nodes: [], edges: [] },
+      metrics: [],
+    });
+    const nbpManifestBytes = bytes({
+      format_version: 2,
+      release_id: nbpReleaseId,
+      release_scope: "nbp_platform",
+      status: "validated",
+      code_sha: "b".repeat(40),
+      created_at_utc: "2026-09-06T00:00:00Z",
+      datasets: platformDatasetIds.map((dataset_id) => ({
+        dataset_id,
+        layer: platformLayer(dataset_id),
+        table_name: dataset_id,
+        row_count: dataset_id === "nbp_change_events" ? 0 : 1,
+        min_date: dataset_id === "dim_currency" || dataset_id === "dim_source_table" || dataset_id === "dim_commodity" || dataset_id === "nbp_change_events" ? null : "2024-01-01",
+        max_date: dataset_id === "dim_currency" || dataset_id === "dim_source_table" || dataset_id === "dim_commodity" || dataset_id === "nbp_change_events" ? null : "2024-01-01",
+        columns: [{ name: "id", type: "INTEGER" }],
+        files: [{ id: `nbp-${dataset_id}-file`, name: `${dataset_id}.parquet`, size: 1, sha256: "a".repeat(64) }],
+      })),
+      artifacts: [
+        { id: "nbp-manifest-art", name: "manifest.json", size: 1, sha256: "a".repeat(64) },
+        { id: "nbp-catalog-art", name: "catalog.json", size: 1, sha256: "a".repeat(64) },
+        { id: "nbp-results-art", name: "run_results.json", size: 1, sha256: "a".repeat(64) },
+        { id: "nbp-state-art", name: "ingestion-state.json", size: 1, sha256: "a".repeat(64) },
+        { id: "nbp-business-art", name: "business-catalog.json", size: nbpCatalogueBytes.byteLength, sha256: await sha256Hex(nbpCatalogueBytes) },
+      ],
+      inputs: [],
+      tests: { passed: true },
+    });
+    const nbpPointerBytes = bytes({
+      format_version: 1,
+      release_id: nbpReleaseId,
+      manifest_file_id: "nbp-manifest-file-id",
+      manifest_sha256: await sha256Hex(nbpManifestBytes),
+      updated_at_utc: "2026-09-06T00:01:00Z",
+    });
+
+    const bdlCatalogueBytes = bytes({
+      format_version: 1,
+      code_sha: "c".repeat(40),
+      sources: [{ source_id: "gus_bdl", name: "GUS BDL", description: "Local Data Bank.", status: "published", checked_through: null, latest_observation_date: null, last_successful_ingestion_at: null, last_attempt_at: null, raw_response_count: 0 }],
+      lineage: { nodes: [], edges: [] },
+      metrics: [],
+    });
+    const bdlManifestBytes = bytes({
+      format_version: 2,
+      release_id: bdlReleaseId,
+      release_scope: "bdl_platform",
+      status: "validated",
+      code_sha: "c".repeat(40),
+      created_at_utc: "2026-09-10T00:00:00Z",
+      datasets: bdlDatasetIds.map((dataset_id) => {
+        const isDated = bdlDated.has(dataset_id);
+        return {
+          dataset_id,
+          layer: bdlLayer(dataset_id),
+          table_name: dataset_id.replace(/^bronze_/, ""),
+          row_count: 1,
+          min_date: isDated ? "2026-09-01" : null,
+          max_date: isDated ? "2026-09-10" : null,
+          columns: [{ name: "id", type: "VARCHAR" }],
+          files: [{ id: `bdl-${dataset_id}-file`, name: `${dataset_id}.parquet`, size: 1, sha256: "b".repeat(64) }],
+        };
+      }),
+      artifacts: [
+        { id: "bdl-manifest-art", name: "manifest.json", size: 1, sha256: "b".repeat(64) },
+        { id: "bdl-catalog-art", name: "catalog.json", size: 1, sha256: "b".repeat(64) },
+        { id: "bdl-results-art", name: "run_results.json", size: 1, sha256: "b".repeat(64) },
+        { id: "bdl-state-art", name: "ingestion-state.json", size: 1, sha256: "b".repeat(64) },
+        { id: "bdl-business-art", name: "business-catalog.json", size: bdlCatalogueBytes.byteLength, sha256: await sha256Hex(bdlCatalogueBytes) },
+      ],
+      inputs: [],
+      tests: { passed: true },
+    });
+    const bdlPointerBytes = bytes({
+      format_version: 1,
+      release_id: bdlReleaseId,
+      manifest_file_id: "bdl-manifest-file-id",
+      manifest_sha256: await sha256Hex(bdlManifestBytes),
+      updated_at_utc: "2026-09-10T00:01:00Z",
+    });
+
+    vi.mocked(findFoldersByName).mockImplementation(async (name) => {
+      if (name === "zohelo-data") return [{ id: "root-id", name: "zohelo-data" }];
+      if (name === "bdl-platform") return [{ id: "bdl-folder-id", name: "bdl-platform" }];
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+      if (parentId === "root-id" && name === "current-release.json") {
+        return [{ id: "nbp-pointer-id", name: "current-release.json", size: nbpPointerBytes.byteLength }];
+      }
+      if (parentId === "bdl-folder-id" && name === "current-release.json") {
+        return [{ id: "bdl-pointer-id", name: "current-release.json", size: bdlPointerBytes.byteLength }];
+      }
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolderById).mockImplementation(async (id) => {
+      if (id === "nbp-manifest-file-id") {
+        return { id: "nbp-manifest-file-id", name: "release.json", size: nbpManifestBytes.byteLength };
+      }
+      if (id === "bdl-manifest-file-id") {
+        return { id: "bdl-manifest-file-id", name: "release.json", size: bdlManifestBytes.byteLength };
+      }
+      return null;
+    });
+    vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) => {
+      if (id === "nbp-pointer-id") return nbpPointerBytes;
+      if (id === "nbp-manifest-file-id") return nbpManifestBytes;
+      if (id === "nbp-business-art") return nbpCatalogueBytes;
+      if (id === "bdl-pointer-id") return bdlPointerBytes;
+      if (id === "bdl-manifest-file-id") return bdlManifestBytes;
+      if (id === "bdl-business-art") return bdlCatalogueBytes;
+      throw new Error(`Unexpected fetch for ${id}`);
+    });
+
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog).toMatchObject({ kind: "release" });
+    if (catalog.kind !== "release") throw new Error();
+    expect(catalog.releases).toHaveLength(2);
+    expect(catalog.releases![0].manifest.release_scope).toBe("nbp_platform");
+    expect(catalog.releases![1].manifest.release_scope).toBe("bdl_platform");
+    expect(catalog.fingerprint).toContain(";");
+  });
+});

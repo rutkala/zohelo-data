@@ -1,7 +1,12 @@
 /** Release-bound dbt Docs artifacts and display-only metadata projection. */
 import { fetchDriveFileBuffer } from "./driveApi";
 import { createDriveDownloadBudget, DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
-import type { BusinessCatalogueSource, ReleaseArtifact, ReleaseCatalogResolution } from "./types";
+import type {
+  BusinessCatalogueSource,
+  ReleaseArtifact,
+  ReleaseCatalogResolution,
+  SingleReleaseResolution,
+} from "./types";
 
 export const DBT_DOCUMENTATION_LIMIT_BYTES = 16 * 1024 * 1024;
 
@@ -12,6 +17,15 @@ const BRONZE_MODELS: Record<string, string> = {
   nbp_exchange_rates_table_c: "model.zohelo_data.br_nbp_table_c",
   nbp_gold_prices: "model.zohelo_data.br_nbp_gold_prices",
 };
+
+const BDL_BRONZE_MODELS: readonly string[] = [
+  "model.zohelo_data.br_bdl_variables",
+  "model.zohelo_data.br_bdl_subjects",
+  "model.zohelo_data.br_bdl_units",
+  "model.zohelo_data.br_bdl_dictionary_entries",
+  "model.zohelo_data.br_bdl_years",
+  "model.zohelo_data.br_bdl_observations",
+];
 
 type JsonRecord = Record<string, unknown>;
 
@@ -43,10 +57,12 @@ const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 function artifactFor(
-  resolution: Extract<ReleaseCatalogResolution, { kind: "release" }>,
+  release:
+    | Extract<ReleaseCatalogResolution, { kind: "release" }>
+    | SingleReleaseResolution,
   name: DbtArtifactName
 ): ReleaseArtifact {
-  const matches = resolution.manifest.artifacts.filter((artifact) => artifact.name === name);
+  const matches = release.manifest.artifacts.filter((artifact) => artifact.name === name);
   if (matches.length !== 1) {
     throw new Error(`The selected release must contain exactly one ${name} artifact.`);
   }
@@ -144,16 +160,46 @@ export async function loadReleaseDbtArtifacts(
   if (resolution.kind !== "release") {
     throw new Error("The connected data has no immutable release with dbt artifacts.");
   }
-  const manifestArtifact = artifactFor(resolution, "manifest.json");
-  const catalogArtifact = artifactFor(resolution, "catalog.json");
-  if (manifestArtifact.size + catalogArtifact.size > DBT_DOCUMENTATION_LIMIT_BYTES) {
+  const releases =
+    resolution.releases && resolution.releases.length > 0
+      ? resolution.releases
+      : [resolution];
+
+  const totalSize = releases.reduce(
+    (sum, r) =>
+      sum + artifactFor(r, "manifest.json").size + artifactFor(r, "catalog.json").size,
+    0
+  );
+  if (totalSize > DBT_DOCUMENTATION_LIMIT_BYTES) {
     throw new Error("This release exceeds the 16 MiB browser documentation limit.");
   }
-  const [manifestBytes, catalogBytes] = await Promise.all([
-    downloadArtifact(manifestArtifact, token, budget, fetchArtifact),
-    downloadArtifact(catalogArtifact, token, budget, fetchArtifact),
-  ]);
-  return parseDbtArtifacts(manifestBytes, catalogBytes);
+
+  const loaded = await Promise.all(
+    releases.map(async (r) => {
+      const manifestArtifact = artifactFor(r, "manifest.json");
+      const catalogArtifact = artifactFor(r, "catalog.json");
+      const [manifestBytes, catalogBytes] = await Promise.all([
+        downloadArtifact(manifestArtifact, token, budget, fetchArtifact),
+        downloadArtifact(catalogArtifact, token, budget, fetchArtifact),
+      ]);
+      return parseDbtArtifacts(manifestBytes, catalogBytes);
+    })
+  );
+
+  if (loaded.length === 1) return loaded[0];
+
+  const mergedManifest: DbtManifest = {
+    ...loaded[0].manifest,
+    nodes: Object.assign({}, ...loaded.map((a) => a.manifest.nodes)),
+    sources: Object.assign({}, ...loaded.map((a) => a.manifest.sources)),
+    docs: Object.assign({}, ...loaded.map((a) => a.manifest.docs ?? {})),
+  };
+  const mergedCatalog: DbtCatalog = {
+    ...loaded[0].catalog,
+    nodes: Object.assign({}, ...loaded.map((a) => a.catalog.nodes)),
+    sources: Object.assign({}, ...loaded.map((a) => a.catalog.sources)),
+  };
+  return { manifest: mergedManifest, catalog: mergedCatalog };
 }
 
 function cloneManifest(manifest: DbtManifest): DbtManifest {
@@ -218,26 +264,58 @@ export function prepareDbtManifest(
   resolution: ReleaseCatalogResolution
 ): DbtManifest {
   const prepared = cloneManifest(manifest);
-  if (resolution.kind !== "release" || resolution.manifest.format_version !== 2) return prepared;
-  const businessCatalogue = resolution.businessCatalogue;
-  if (!businessCatalogue) return prepared;
-  const sources = businessCatalogue.sources;
-  const byId = new Map(sources.map((source) => [source.source_id, source]));
-  const releasedSources = Object.entries(BRONZE_MODELS).map(([sourceId, modelId]) => ({
-    source: byId.get(sourceId),
-    modelId,
-  }));
-  if (releasedSources.some(({ source }) => source === undefined)) return prepared;
+  if (resolution.kind !== "release") return prepared;
+  const releases =
+    resolution.releases && resolution.releases.length > 0
+      ? resolution.releases
+      : [resolution];
+  const validReleases = releases.filter(
+    (r) => r.manifest.format_version === 2 && r.businessCatalogue
+  );
+  if (validReleases.length === 0) return prepared;
 
-  for (const { source, modelId } of releasedSources) {
-    const node = prepared.nodes[modelId];
-    if (!node || !source) return prepared;
-    prepared.nodes[modelId] = writeIngestionMeta(node, source);
+  const releasedStatusLines: string[] = [];
+  let totalMetrics = 0;
+  const releaseHeaders: string[] = [];
+
+  for (const rel of validReleases) {
+    const businessCatalogue = rel.businessCatalogue!;
+    totalMetrics += businessCatalogue.metrics.length;
+    releaseHeaders.push(
+      `Release ID: \`${rel.manifest.release_id}\`  \nData producer SHA: \`${rel.manifest.code_sha}\``
+    );
+    const byId = new Map(businessCatalogue.sources.map((source) => [source.source_id, source]));
+
+    if (rel.manifest.release_scope === "nbp_platform") {
+      const releasedSources = Object.entries(BRONZE_MODELS).map(([sourceId, modelId]) => ({
+        source: byId.get(sourceId),
+        modelId,
+      }));
+      if (releasedSources.some(({ source }) => source === undefined)) return prepared;
+
+      for (const { source, modelId } of releasedSources) {
+        const node = prepared.nodes[modelId];
+        if (!node || !source) return prepared;
+        prepared.nodes[modelId] = writeIngestionMeta(node, source);
+        releasedStatusLines.push(statusLine(source, modelId));
+      }
+    } else if (rel.manifest.release_scope === "bdl_platform") {
+      const bdlSource = byId.get("gus_bdl");
+      if (!bdlSource) return prepared;
+      for (const modelId of BDL_BRONZE_MODELS) {
+        const node = prepared.nodes[modelId];
+        if (node) {
+          prepared.nodes[modelId] = writeIngestionMeta(node, bdlSource);
+        }
+      }
+      releasedStatusLines.push(statusLine(bdlSource, BDL_BRONZE_MODELS[0]));
+    }
   }
+
+  if (releasedStatusLines.length === 0) return prepared;
 
   const projectName =
     asString(prepared.metadata.project_name) ??
-    asString(prepared.nodes[releasedSources[0].modelId]?.package_name) ??
     "zohelo_data";
   const docs = { ...(prepared.docs ?? {}) };
   const existing = overviewEntry(prepared, projectName);
@@ -245,23 +323,20 @@ export function prepareDbtManifest(
   const releaseContents = [
     "## Connected data release",
     "",
-    `Release ID: \`${resolution.manifest.release_id}\`  `,
-    `Data producer SHA: \`${resolution.manifest.code_sha}\``,
+    ...releaseHeaders,
     "",
     "### Released source status",
     "",
-    ...releasedSources.map(({ source, modelId }) => statusLine(source!, modelId)),
+    ...releasedStatusLines,
     "",
     "### Metrics",
     "",
-    businessCatalogue.metrics.length === 0
+    totalMetrics === 0
       ? "No approved metric definitions are published for this release."
-      : `${businessCatalogue.metrics.length} governed metric definition${
-          businessCatalogue.metrics.length === 1 ? " is" : "s are"
+      : `${totalMetrics} governed metric definition${
+          totalMetrics === 1 ? " is" : "s are"
         } published for this release.`,
   ].join("\n");
-  // dbt's bundled OverviewCtrl selects a document by name and package_name.
-  // The conventional manifest key uses metadata.project_name, not a project ID.
   const id = existing?.[0] ?? `doc.${projectName}.__overview__`;
   docs[id] = {
     ...(existing?.[1] ?? {

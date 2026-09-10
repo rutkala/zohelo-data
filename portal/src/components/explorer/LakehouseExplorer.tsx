@@ -248,16 +248,18 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
         </div>
 
         <div className="flex items-center gap-1 min-w-0">
-          {lakehouseRelease?.kind === "release" && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
-              title={`${lakehouseRelease.manifest.release_id} / ${lakehouseRelease.manifest.release_scope} / ${lakehouseRelease.manifest.status}`}
-            >
-              {lakehouseRelease.manifest.release_id} / {lakehouseRelease.manifest.release_scope} /{" "}
-              {lakehouseRelease.manifest.status}
-            </Badge>
-          )}
+          {lakehouseRelease?.kind === "release" &&
+            (lakehouseRelease.releases ?? [lakehouseRelease]).map((rel) => (
+              <Badge
+                key={rel.manifest.release_id}
+                variant="secondary"
+                className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
+                title={`${rel.manifest.release_id} / ${rel.manifest.release_scope} / ${rel.manifest.status}`}
+              >
+                {rel.manifest.release_id} / {rel.manifest.release_scope} /{" "}
+                {rel.manifest.status}
+              </Badge>
+            ))}
           {lakehouseRelease?.kind === "legacy" && (
             <Badge variant="secondary" className="text-[10px] h-4 font-mono px-1.5 shrink-0">
               legacy / unversioned

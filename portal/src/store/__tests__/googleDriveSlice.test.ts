@@ -440,6 +440,113 @@ describe("immutable release selection", () => {
       /fresh DuckDB session/
     );
   });
+
+  it("populates lakehouseCatalog with tables from multiple releases across bronze, silver, and gold", async () => {
+    const store = makeStore();
+    const nbpRel = release("nbp-release-1");
+    const bdlRel = {
+      kind: "release" as const,
+      pointer: {
+        format_version: 1 as const,
+        release_id: "bdl-release-1",
+        manifest_file_id: "bdl-manifest",
+        manifest_sha256: "b".repeat(64),
+        updated_at_utc: "2026-09-10T00:00:00Z",
+      },
+      manifestFileId: "bdl-manifest",
+      fingerprint: `bdl-release-1:bdl-manifest:${"b".repeat(64)}`,
+      manifest: {
+        format_version: 2 as const,
+        release_id: "bdl-release-1",
+        release_scope: "bdl_platform" as const,
+        status: "validated" as const,
+        code_sha: "bdl-code",
+        created_at_utc: "2026-09-10T00:00:00Z",
+        artifacts: [],
+        inputs: [],
+        tests: { passed: true as const },
+        datasets: [
+          {
+            dataset_id: "bronze_bdl_variables",
+            layer: "02_bronze" as const,
+            table_name: "bdl_variables",
+            row_count: 10,
+            min_date: null,
+            max_date: null,
+            columns: [{ name: "id", type: "INTEGER" }],
+            files: [
+              {
+                id: "bdl-br-file",
+                name: "bdl_variables.parquet",
+                size: 10,
+                sha256: "c".repeat(64),
+                tableName: "bdl_variables",
+                layer: "02_bronze" as const,
+              },
+            ],
+          },
+          {
+            dataset_id: "bdl_variables",
+            layer: "03_silver" as const,
+            table_name: "bdl_variables",
+            row_count: 10,
+            min_date: null,
+            max_date: null,
+            columns: [{ name: "id", type: "INTEGER" }],
+            files: [
+              {
+                id: "bdl-si-file",
+                name: "bdl_variables.parquet",
+                size: 10,
+                sha256: "c".repeat(64),
+                tableName: "bdl_variables",
+                layer: "03_silver" as const,
+              },
+            ],
+          },
+          {
+            dataset_id: "dim_bdl_variable",
+            layer: "04_gold" as const,
+            table_name: "dim_bdl_variable",
+            row_count: 10,
+            min_date: null,
+            max_date: null,
+            columns: [{ name: "id", type: "INTEGER" }],
+            files: [
+              {
+                id: "bdl-gd-file",
+                name: "dim_bdl_variable.parquet",
+                size: 10,
+                sha256: "c".repeat(64),
+                tableName: "dim_bdl_variable",
+                layer: "04_gold" as const,
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const multiRelease = {
+      ...nbpRel,
+      releases: [nbpRel, bdlRel],
+    };
+
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(multiRelease);
+    await store.getState().refreshLakehouseCatalog();
+
+    const catalog = store.getState().lakehouseCatalog;
+    const bronzeLayer = catalog.find((l) => l.name === "02_bronze");
+    const silverLayer = catalog.find((l) => l.name === "03_silver");
+    const goldLayer = catalog.find((l) => l.name === "04_gold");
+
+    expect(bronzeLayer?.children.map((t) => t.name)).toContain("bdl_variables");
+    expect(silverLayer?.children.map((t) => t.name)).toContain("nbp_exchange_rates_table_a");
+    expect(silverLayer?.children.map((t) => t.name)).toContain("bdl_variables");
+    expect(goldLayer?.children.map((t) => t.name)).toContain("dim_bdl_variable");
+    expect(store.getState().lakehouseStatusMessage).toContain("nbp_silver");
+    expect(store.getState().lakehouseStatusMessage).toContain("bdl_platform");
+  });
 });
 
 describe("preparing a multi-table SQL query", () => {
