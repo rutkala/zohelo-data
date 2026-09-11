@@ -132,6 +132,7 @@ paid-account access and unresolved consequential business definitions remain con
 - `Eurostat` (`.github/workflows/source-eurostat.yml`): Hourly schedule (`12 * * * *`) for bulk distributions and API collection.
 - `World Bank WDI` (`.github/workflows/source-world-bank.yml`): 6-hour schedule (`25 */6 * * *`) for bulk CSV and API indicators.
 - `OpenData.org` (`.github/workflows/source-opendata.yml`): Dedicated streaming loader workflow (`src/ingestion/sources/opendata_bronze_loader.py`) that reads the 21.38 GB Senzing archive via seekable HTTP Range streams on Google Drive, flattens entity features into typed Parquet (`br_opendata_organizations`, `br_opendata_locations`, `br_opendata_people`), and writes to `02_bronze/opendata_org/` with zero disk extraction in Codespaces/CI. Checkpointing is tracked in `06_control/source_campaigns/opendata_org_bronze/checkpoint.json`.
+  - **OpenData Bronze Portal Availability (Verified 11 September):** Published 867,322 organizations across 5 Parquet files (48.4 MB total) to Google Drive in `02_bronze/opendata_org/organizations/` with manifest `manifest-0bfcf711-973c-4562-bbcd-fc267a8b7cd2.json` and pointer `06_control/source_campaigns/opendata_org_bronze/current-landing.json`. Integrated into Portal Lakehouse Explorer under the `02_bronze` folder with DuckDB WASM view registration (`"02_bronze"."br_opendata_organizations"`). Deployed to production (`https://data.zohelo.com`).
 - All four decoupled pipelines launched concurrently in production via serialized execution.
 
 ## Evidence
