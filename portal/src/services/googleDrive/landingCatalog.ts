@@ -466,7 +466,7 @@ export async function resolveLandingCatalog(
   const snapshots: LandingSnapshotResolution[] = [];
   const issues: LandingCatalogIssue[] = [];
   // Keep this sequential: all metadata and future table downloads share one
-  // per-engine 64 MiB budget, and auth failure must stop immediately.
+  // per-engine 512 MiB budget, and auth failure must stop immediately.
   for (const sourceId of LANDING_SOURCE_IDS) {
     try {
       const snapshot = await resolveSource(sourceId, campaigns[0].id, token, budget);

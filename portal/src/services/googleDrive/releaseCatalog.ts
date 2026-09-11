@@ -23,7 +23,7 @@ import type {
   SingleReleaseResolution,
 } from "./types";
 
-export const DRIVE_DOWNLOAD_LIMIT_BYTES = 64 * 1024 * 1024;
+export const DRIVE_DOWNLOAD_LIMIT_BYTES = 512 * 1024 * 1024;
 export const POINTER_MAX_BYTES = 64 * 1024;
 export const MANIFEST_MAX_BYTES = 4 * 1024 * 1024;
 export const BUSINESS_CATALOGUE_MAX_BYTES = 4 * 1024 * 1024;
@@ -95,11 +95,11 @@ export class DriveDownloadBudget {
       throw new Error(`Drive did not provide a valid size for ${label}.`);
     }
     if (bytes > DRIVE_DOWNLOAD_LIMIT_BYTES) {
-      throw new Error(`${label} exceeds the per-file download limit of 64 MiB.`);
+      throw new Error(`${label} exceeds the per-file download limit of 512 MiB.`);
     }
     if (this.planned + bytes > DRIVE_DOWNLOAD_LIMIT_BYTES) {
       throw new Error(
-        "The selected release exceeds the 64 MiB browser download limit for this session."
+        "The selected release exceeds the 512 MiB browser download limit for this session."
       );
     }
     this.planned += bytes;
@@ -107,11 +107,11 @@ export class DriveDownloadBudget {
 
   consume(bytes: number, label: string) {
     if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > DRIVE_DOWNLOAD_LIMIT_BYTES) {
-      throw new Error(`${label} exceeded the per-file download limit of 64 MiB.`);
+      throw new Error(`${label} exceeded the per-file download limit of 512 MiB.`);
     }
     if (this.consumed + bytes > DRIVE_DOWNLOAD_LIMIT_BYTES) {
       throw new Error(
-        "Drive downloads exceeded the 64 MiB browser download limit for this session."
+        "Drive downloads exceeded the 512 MiB browser download limit for this session."
       );
     }
     this.consumed += bytes;
