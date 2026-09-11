@@ -88,6 +88,7 @@ def validate_staged_bdl_release(store: Any, pointer: dict[str, Any]) -> dict[str
         validation = _json_object(artifacts["metric-validation.json"], "metric-validation.json")
         metric_names = {item.get("name") for item in metrics if isinstance(item, dict)}
         semantic_names = {item.get("name") for item in semantic.get("metrics", []) if isinstance(item, dict)}
+        validated_names = {item.get("name") for item in validation.get("metrics", []) if isinstance(item, dict)}
         if (
             validation.get("status") != "verified"
             or not metric_names.issubset(semantic_names)
