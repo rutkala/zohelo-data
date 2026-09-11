@@ -9,6 +9,7 @@ import {
 } from "./driveApi";
 import { POINTER_MAX_BYTES, DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
 import type {
+  BulkLandingSourceId,
   LandingCatalogIssue,
   LandingCatalogResolution,
   LandingSnapshotManifest,
@@ -24,6 +25,7 @@ export const LANDING_SOURCE_IDS = [
   "eurostat",
   "world_bank_wdi_bulk",
   "eurostat_bulk",
+  "opendata_org_bulk",
 ] as const;
 
 const LANDING_COLUMNS = [
@@ -115,7 +117,7 @@ const BULK_MANIFEST_FIELDS = new Set([
 
 const isBulkSource = (
   sourceId: LandingSourceId
-): sourceId is "world_bank_wdi_bulk" | "eurostat_bulk" => sourceId.endsWith("_bulk");
+): sourceId is BulkLandingSourceId => sourceId.endsWith("_bulk");
 
 const tableNameForSource = (sourceId: LandingSourceId): string =>
   isBulkSource(sourceId)
@@ -345,7 +347,7 @@ function parseManifest(
       ...common,
       format_version: 2,
       kind: "full_distribution_index",
-      source_id: pointer.source_id as "world_bank_wdi_bulk" | "eurostat_bulk",
+      source_id: pointer.source_id as BulkLandingSourceId,
       coverage_status: raw.coverage_status as "incomplete" | "complete_current_catalogue",
       accepted_distribution_count: accepted,
       published_distribution_count: published,

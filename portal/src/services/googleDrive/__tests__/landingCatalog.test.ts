@@ -177,6 +177,7 @@ describe("source-scoped Landing catalog", () => {
     expect(findFoldersByName).toHaveBeenCalledWith("eurostat", "campaigns-id", "token");
     expect(findFoldersByName).toHaveBeenCalledWith("world_bank_wdi_bulk", "campaigns-id", "token");
     expect(findFoldersByName).toHaveBeenCalledWith("eurostat_bulk", "campaigns-id", "token");
+    expect(findFoldersByName).toHaveBeenCalledWith("opendata_org_bulk", "campaigns-id", "token");
   });
 
   it("discovers a strict metadata-only full-distribution index", async () => {

@@ -134,7 +134,7 @@ export type ReleaseManifest =
   | BdlPlatformReleaseManifest;
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
-export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk";
+export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
 export type LandingSourceId = LandingResponseSourceId | BulkLandingSourceId;
 
 export interface LandingSnapshotPointer {
