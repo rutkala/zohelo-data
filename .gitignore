@@ -17,3 +17,4 @@ dbt_packages/
 portal/public/docs/
 campaign-summary.json
 *-summary.json
+data/

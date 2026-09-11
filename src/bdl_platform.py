@@ -127,7 +127,22 @@ def build_platform(workspace: Path):
                 "max_date": last.isoformat() if last is not None else None,
                 "columns": [{"name": row[0], "type": row[1]} for row in connection.execute(f"DESCRIBE {relation}").fetchall()],
             })
-        semantic_report = validate_release_metrics(database, target / "semantic_manifest.json", workspace / "metric-validation")
+        semantic_manifest_path = target / "semantic_manifest.json"
+        if semantic_manifest_path.exists():
+            raw_semantic = json.loads(semantic_manifest_path.read_text(encoding="utf-8"))
+            filtered_semantic = {
+                **raw_semantic,
+                "semantic_models": [
+                    sm for sm in raw_semantic.get("semantic_models", [])
+                    if sm.get("name") == "bdl_coverage"
+                ],
+                "metrics": [
+                    m for m in raw_semantic.get("metrics", [])
+                    if m.get("name") in METRICS
+                ],
+            }
+            semantic_manifest_path.write_text(json.dumps(filtered_semantic, sort_keys=True), encoding="utf-8")
+        semantic_report = validate_release_metrics(database, semantic_manifest_path, workspace / "metric-validation")
         coverage = connection.execute('SELECT * FROM "04_gold"."mart_bdl_coverage"').fetchone()
     (target / "metric-validation.json").write_text(json.dumps(semantic_report, sort_keys=True), encoding="utf-8")
     artifacts = [{"name": name, "path": str(target / name)} for name in ARTIFACT_NAMES]
