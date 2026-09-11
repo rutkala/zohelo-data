@@ -84,11 +84,15 @@ class DriveReleaseStore:
             ).execute(num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES)
             if created.get("id") != file_id:
                 raise ValueError("Drive returned an unexpected release object ID")
-        except Exception:
+        except Exception as original_exc:
             # A timed-out request may already have created the reserved object.
             # Resolve only that identity; never search/delete by filename.
-            if self.read(file_id) != data:
-                raise
+            try:
+                if self.read(file_id) == data:
+                    return file_id
+            except Exception:
+                pass
+            raise original_exc
         return file_id
 
     def replace(self, file_id, data):

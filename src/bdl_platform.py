@@ -23,7 +23,7 @@ from bdl_platform_contract import (
     BDL_SOURCE_ID,
 )
 from bdl_release_validation import validate_staged_bdl_release
-from bdl_semantic import validate_release_metrics
+from bdl_semantic import METRICS, validate_release_metrics
 from drive_release_store import DriveReleaseStore
 from ingestion.landing_publication import verify_landing
 from ingestion.source_campaign_store import DriveCampaignStore

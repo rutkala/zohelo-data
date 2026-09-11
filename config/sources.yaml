@@ -104,3 +104,26 @@ sources:
       quote_unit: "Source-owned measure units vary by variable; preserve source unit IDs and labels."
       methodology_notes: "Preserve BDL variable, unit, period and attrId semantics exactly; modeled metrics expose coverage/accountability totals rather than aggregating heterogeneous observation values."
       description: "Statistics Poland Local Data Bank metadata and observation responses retained from the BDL API."
+
+  # ==========================================
+  # SOURCE 6: OpenData.org (Entity Resolution)
+  # ==========================================
+  opendata_org:
+    metadata:
+      domain: "business_registries"
+      category: "entity_resolution"
+      geography: "global"
+      provider_type: "public_open_data"
+      display_name: "OpenData.org"
+      source_name: "OpenData.org (BrightQuery Inc.)"
+      provider_url: "https://opendata.org/"
+      documentation_url: "https://opendata.org/"
+      publication_schedule_url: "https://opendata.org/"
+      frequency: "snapshot_distribution"
+      coverage_start: "2026-03-05"
+      reuse_terms_url: "https://opendata.org/terms"
+      reuse_summary: "Open data download available; commercial redistribution requires agreement with BrightQuery Inc."
+      quote_unit: "Entity records in Senzing format (organizations, locations, people)"
+      methodology_notes: "Senzing JSON entity-resolved graphs linking global organizations, executives, digital identifiers, and geographic locations."
+      description: "OpenData.org global business entity resolution dataset in native Senzing ZIP format."
+

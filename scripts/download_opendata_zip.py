@@ -54,11 +54,18 @@ class RemoteSeekableStream(io.RawIOBase):
             return 0
         end = min(self.pos + len(b) - 1, self.total_length - 1)
         req = urllib.request.Request(self.url, headers={"Range": f"bytes={self.pos}-{end}"})
-        with urllib.request.urlopen(req) as resp:
-            data = resp.read()
-            b[:len(data)] = data
-            self.pos += len(data)
-            return len(data)
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(req, timeout=60) as resp:
+                    data = resp.read()
+                    b[:len(data)] = data
+                    self.pos += len(data)
+                    return len(data)
+            except Exception as err:
+                if attempt == 4:
+                    raise
+                time.sleep(2 ** attempt)
+        return 0
 
 
 def main():
@@ -66,17 +73,20 @@ def main():
     parser.add_argument("--allow-production-write", action="store_true", help="Authorize writes to zohelo-data Drive root")
     args = parser.parse_args()
 
-    sm = StorageManager()
+    if args.allow_production_write:
+        os.environ["ZOHELO_ALLOW_PRODUCTION_WRITES"] = "true"
+
+    sm = StorageManager(allow_interactive_auth=False)
     if args.allow_production_write:
         sm.authorize_writes()
 
     root_id = sm.resolve_root(create=False)
     print(f"Resolved Drive Root ID: {root_id}")
 
-    # Target folder: 05_archive / opendata
-    archive_root = sm.resolve_zone("archive", create=True)
-    target_folder_id = sm.get_or_create_nested_folder(["opendata"], root_id=archive_root)
-    print(f"Target Drive folder (05_archive/opendata): {target_folder_id}")
+    # Target folder: 01_landing / opendata_org
+    landing_root = sm.resolve_zone("landing", create=True)
+    target_folder_id = sm.get_or_create_nested_folder(["opendata_org"], root_id=landing_root)
+    print(f"Target Drive folder (01_landing/opendata_org): {target_folder_id}")
 
     # Check if file already exists in target folder
     svc = sm.drive_service
@@ -84,13 +94,13 @@ def main():
     existing = svc.files().list(q=q, fields="files(id, name, size)").execute().get("files", [])
     if existing:
         f = existing[0]
-        print(f"Archive already exists on Drive: ID={f['id']}, Size={int(f.get('size', 0))/(1024**3):.2f} GB")
+        print(f"Archive already exists in Landing: ID={f['id']}, Size={int(f.get('size', 0))/(1024**3):.2f} GB")
         return 0
 
-    print(f"Starting cloud-to-cloud streaming transfer:")
+    print(f"Starting cloud-to-cloud streaming transfer into Landing layer:")
     print(f"  • Source: GCS ({OPENDATA_URL})")
     print(f"  • Total size: {TOTAL_SIZE_BYTES / (1024**3):.2f} GB ({TOTAL_SIZE_BYTES:,} bytes)")
-    print(f"  • Destination: Google Drive 05_archive/opendata/{ARCHIVE_FILENAME}")
+    print(f"  • Destination: Google Drive 01_landing/opendata_org/{ARCHIVE_FILENAME}")
     print(f"  • Local disk used: 0 bytes (in-memory streaming)")
 
     stream = RemoteSeekableStream(OPENDATA_URL, TOTAL_SIZE_BYTES)
@@ -104,7 +114,7 @@ def main():
     file_metadata = {
         "name": ARCHIVE_FILENAME,
         "parents": [target_folder_id],
-        "description": "Full OpenData.org Senzing entity resolution archive (2026-03-05 snapshot)"
+        "description": "Full OpenData.org Senzing entity resolution native archive (2026-03-05 snapshot)"
     }
 
     request = svc.files().create(body=file_metadata, media_body=media, fields="id, name, size")
@@ -112,7 +122,13 @@ def main():
     start_time = time.time()
     response = None
     while response is None:
-        status, response = request.next_chunk()
+        try:
+            status, response = request.next_chunk(num_retries=5)
+        except Exception as e:
+            print(f"Transient error during chunk upload: {e}, retrying in 5s...", flush=True)
+            time.sleep(5)
+            continue
+
         if status:
             progress = status.progress() * 100
             uploaded_mb = (status.resumable_progress or 0) / (1024 ** 2)
@@ -122,9 +138,42 @@ def main():
             print(f"Uploaded: {uploaded_mb:>8.1f} MB / {total_mb:.1f} MB ({progress:5.1f}%) @ {speed_mb:4.1f} MB/s", flush=True)
 
     elapsed_total = time.time() - start_time
-    print(f"\nTransfer complete in {elapsed_total / 60:.1f} minutes!")
-    print(f"File ID: {response.get('id')}")
+    file_id = response.get("id")
+    print(f"\nTransfer to Landing complete in {elapsed_total / 60:.1f} minutes!")
+    print(f"File ID: {file_id}")
     print(f"File Name: {response.get('name')}")
+
+    # Write Landing snapshot receipt
+    import json
+    landing_manifest = {
+        "source_id": "opendata_org",
+        "snapshot_id": "opendata_org-20260305",
+        "status": "landing_published",
+        "format": "native_zip",
+        "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "table_name": "landing_opendata_org_native",
+        "files": [
+            {
+                "id": file_id,
+                "name": ARCHIVE_FILENAME,
+                "size": TOTAL_SIZE_BYTES,
+                "url": OPENDATA_URL,
+                "inner_members": [
+                    {"name": "organization.json", "format": "senzing_jsonl"},
+                    {"name": "locations.json", "format": "senzing_jsonl"},
+                    {"name": "peoplebusiness.json", "format": "senzing_jsonl"},
+                ],
+            }
+        ],
+    }
+    manifest_bytes = json.dumps(landing_manifest, indent=2).encode("utf-8")
+    manifest_media = MediaIoBaseUpload(io.BytesIO(manifest_bytes), mimetype="application/json")
+    svc.files().create(
+        body={"name": "landing-snapshot.json", "parents": [target_folder_id], "mimeType": "application/json"},
+        media_body=manifest_media,
+        fields="id, name"
+    ).execute()
+    print("Published landing-snapshot.json to 01_landing/opendata_org/")
     return 0
 
 

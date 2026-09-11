@@ -55,3 +55,11 @@ sources:
     target_scope: Every distribution in the official complete inventory, all supplied dimensions, geographies and periods, with catalogue change refreshes; retain source notices for downstream reuse controls.
     contract: docs/contracts/eurostat.md
     permitted_operation: Public distributions retained in the owner's private Drive with source attribution and notices; commercial redistribution restrictions remain downstream publication controls.
+  opendata_org:
+    adapter: ingestion.sources.opendata
+    research_id: GL-006
+    timezone: UTC
+    target_scope: Full OpenData.org Senzing entity resolution distribution (organizations, locations, people/business) in native ZIP archive.
+    contract: docs/contracts/opendata-org.md
+    permitted_operation: Public open data collection into private Drive Landing in native format; commercial redistribution requires agreement with BrightQuery Inc.
+
