@@ -28,6 +28,8 @@ export const LANDING_SOURCE_IDS = [
   "eurostat_bulk",
   "opendata_org_bulk",
   "opendata_org_bronze",
+  "opendata_org_locations_bronze",
+  "opendata_org_people_bronze",
 ] as const;
 
 const LANDING_COLUMNS = [
@@ -169,6 +171,8 @@ const isBronzeSource = (
 
 const tableNameForSource = (sourceId: LandingSourceId): string => {
   if (sourceId === "opendata_org_bronze") return "br_opendata_organizations";
+  if (sourceId === "opendata_org_locations_bronze") return "br_opendata_locations";
+  if (sourceId === "opendata_org_people_bronze") return "br_opendata_people";
   if (isBulkSource(sourceId)) return `${sourceId.slice(0, -"_bulk".length)}_distributions`;
   return `${sourceId}_responses`;
 };

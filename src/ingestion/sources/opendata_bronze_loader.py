@@ -37,7 +37,7 @@ OPENDATA_BRONZE_ROOT = ["02_bronze", "opendata_org"]
 OPENDATA_CONTROL_DIR = ["06_control", "source_campaigns", "opendata_org_bronze"]
 DEFAULT_ZIP_NAME = "ODO_SENZING_20260305.zip"
 CHECKPOINT_NAME = "checkpoint.json"
-CHUNK_SIZE = 8 * 1024 * 1024  # 8 MiB range cache for DriveZipStream
+CHUNK_SIZE = 16 * 1024 * 1024  # 16 MiB range cache for DriveZipStream
 
 # Table column definitions
 ORGANIZATION_COLUMNS = [
@@ -217,46 +217,68 @@ def process_member_stream(
     stream: io.IOBase,
     columns: list[tuple[str, str]],
     output_parquet_path: Path,
-    batch_size: int = 25000,
 ) -> int:
-    """Read JSON lines from member stream and write compressed ZSTD Parquet via DuckDB."""
-    table_name = "staging_records"
-    col_defs = ", ".join(f'"{name}" {dtype}' for name, dtype in columns)
-    placeholders = ", ".join("?" for _ in columns)
+    """Vectorized C++ extraction: copy stream to temporary JSONL and convert via DuckDB in a single pass."""
+    import shutil
 
-    con = duckdb.connect(":memory:")
-    con.execute(f"CREATE TABLE {table_name} ({col_defs})")
-
-    text_stream = io.TextIOWrapper(stream, encoding="utf-8")
-    batch: list[tuple[Any, ...]] = []
-    total_rows = 0
-
-    for line in text_stream:
-        line = line.strip()
-        if not line:
-            continue
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as temp_jsonl:
+        temp_jsonl_path = Path(temp_jsonl.name)
         try:
-            raw_rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        batch.append(parse_senzing_record(raw_rec, columns))
-        if len(batch) >= batch_size:
-            con.executemany(f"INSERT INTO {table_name} VALUES ({placeholders})", batch)
-            total_rows += len(batch)
-            batch = []
-            if total_rows % 50000 == 0:
-                logger.info("  Parsed and buffered %d rows...", total_rows)
+            shutil.copyfileobj(stream, temp_jsonl, length=16 * 1024 * 1024)
+            temp_jsonl.flush()
 
-    if batch:
-        con.executemany(f"INSERT INTO {table_name} VALUES ({placeholders})", batch)
-        total_rows += len(batch)
-        batch = []
+            root_cols = {"record_id", "data_source", "bq_dataset"}
+            select_exprs = [
+                "record_id",
+                "data_source",
+                "bq_dataset",
+            ]
+            for col_name, col_type in columns:
+                if col_name in root_cols:
+                    continue
+                feat_key = col_name.upper()
+                if col_type == "DOUBLE":
+                    expr = (
+                        f"min(try_cast(json_extract_string(feat, '$.{feat_key}') as double)) "
+                        f"filter (where json_extract_string(feat, '$.{feat_key}') is not null) as {col_name}"
+                    )
+                else:
+                    expr = (
+                        f"min(json_extract_string(feat, '$.{feat_key}')) "
+                        f"filter (where json_extract_string(feat, '$.{feat_key}') is not null) as {col_name}"
+                    )
+                select_exprs.append(expr)
 
-    con.execute(
-        f"COPY {table_name} TO '{output_parquet_path}' (FORMAT PARQUET, COMPRESSION ZSTD)"
-    )
-    con.close()
-    return total_rows
+            select_cols = ",\n                    ".join(select_exprs)
+            sql = f"""
+            COPY (
+                with raw as (
+                    select line from read_csv('{temp_jsonl_path}', columns={{'line': 'VARCHAR'}}, delim='\x1e', quote='', escape='', header=false, auto_detect=false)
+                ),
+                parsed as (
+                    select 
+                        json_extract_string(line, '$.RECORD_ID') as record_id,
+                        json_extract_string(line, '$.DATA_SOURCE') as data_source,
+                        coalesce(json_extract_string(line, '$.BQ_DATASET'), json_extract_string(line, '$.bq_dataset')) as bq_dataset,
+                        item.value as feat
+                    from raw
+                    left join lateral json_each(line, '$.FEATURES') as item on true
+                )
+                select 
+                    {select_cols}
+                from parsed
+                group by record_id, data_source, bq_dataset
+            ) TO '{output_parquet_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+
+            con = duckdb.connect(":memory:")
+            con.execute(sql)
+            count = con.execute(f"select count(*) from read_parquet('{output_parquet_path}')").fetchone()[0]
+            con.close()
+            return int(count)
+        finally:
+            if temp_jsonl_path.is_file():
+                temp_jsonl_path.unlink()
 
 
 class OpenDataBronzeRunner:

@@ -19,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'src/ingestion/sources/opendata_bronze_loader.py'
+      - 'scripts/publish_opendata_bronze.py'
       - 'config/source-campaigns.yaml'
       - 'config/sources.yaml'
       - '.github/workflows/source-opendata.yml'

@@ -58,6 +58,14 @@ checkpoint durable. It does not close the remaining acceptance items. The remain
 These items remain open until their actual acceptance evidence is recorded. Future improvements
 are reprioritized from observed usefulness, correctness, reliability and cost in this same record.
 
+### Vectorized engine standardization and OpenData multi-table expansion — 11 September 2026
+
+Following the owner's directive to make compiled vectorized execution the default standard for all current and future sources across all pipeline stages, [ADR 0007](decisions/0007-unified-vectorized-execution-standard.md) was adopted:
+1. **Engine standardization:** DuckDB native C++ vectorized execution is mandatory across all stages. Single-threaded row-by-row CPython parsing (`json.loads` loops) is prohibited.
+2. **OpenData streaming acceleration:** Replaced CPython JSON parsing in `opendata_bronze_loader.py` with native DuckDB SIMD parsing (`read_csv` with `delim='\x1e'`, unnested `json_each`). Benchmark on 173k-row member files dropped conversion time from ~120s to ~2s per file (100x speedup), and total end-to-end processing over network from 130s to 14.6s per file.
+3. **Multi-table Bronze expansion:** Expanded OpenData pipeline to process all three Senzing entity datasets (`organizations`, `locations`, `people`). Verified Bronze Parquet schemas and dbt models (`br_opendata_locations`, `br_opendata_people`) with zero disk footprint.
+4. **Portal Lakehouse integration:** Updated `publish_opendata_bronze.py`, `landingCatalog.ts`, and `googleDriveSlice.ts` to discover and query all three Bronze tables in DuckDB WASM in the browser.
+
 ### Ingestion Action failures checked on 8 September
 
 The owner's follow-up asked to check several hours of failed ingestion before other work.

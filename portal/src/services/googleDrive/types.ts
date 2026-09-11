@@ -135,7 +135,10 @@ export type ReleaseManifest =
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
-export type BronzeCampaignSourceId = "opendata_org_bronze";
+export type BronzeCampaignSourceId =
+  | "opendata_org_bronze"
+  | "opendata_org_locations_bronze"
+  | "opendata_org_people_bronze";
 export type LandingSourceId =
   | LandingResponseSourceId
   | BulkLandingSourceId

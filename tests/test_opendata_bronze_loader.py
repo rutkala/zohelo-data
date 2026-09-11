@@ -137,6 +137,74 @@ class OpenDataBronzeLoaderTests(unittest.TestCase):
             self.assertEqual(res[0][0], 100)
             self.assertAlmostEqual(res[0][2], 52.23)
 
+    def test_process_member_stream_with_pipe_and_special_chars(self):
+        records = [
+            {
+                "DATA_SOURCE": "BRIGHTQUERY",
+                "RECORD_ID": "PIPE_01",
+                "bq_dataset": "COMPANY",
+                "FEATURES": [
+                    {"NAME_ORG": "ACME | CONSULTING | GROUP, LLC", "NAME_TYPE": "PRIMARY"},
+                    {"ADDR_CITY": "New York, NY", "ADDR_COUNTRY": "USA"},
+                ],
+            }
+        ]
+        jsonl_data = "\n".join(json.dumps(r) for r in records).encode("utf-8")
+        stream = io.BytesIO(jsonl_data)
+
+        with tempfile.TemporaryDirectory() as td:
+            parquet_path = Path(td) / "test_pipe.parquet"
+            total = process_member_stream(stream, ORGANIZATION_COLUMNS, parquet_path)
+            self.assertEqual(total, 1)
+
+            con = duckdb.connect(":memory:")
+            res = con.execute(f"SELECT name_org, addr_city FROM '{parquet_path}'").fetchall()
+            self.assertEqual(res[0][0], "ACME | CONSULTING | GROUP, LLC")
+            self.assertEqual(res[0][1], "New York, NY")
+
+    def test_process_member_stream_locations_and_people(self):
+        loc_record = {
+            "DATA_SOURCE": "BRIGHTQUERY",
+            "RECORD_ID": "LOC_1",
+            "bq_dataset": "LOCATION",
+            "FEATURES": [
+                {"NAME_FULL": "BRANCH 101"},
+                {"ADDR_CITY": "Krakow", "ADDR_COUNTRY": "PL"},
+                {"GEO_LATITUDE": "50.06", "GEO_LONGITUDE": "19.94"},
+            ],
+        }
+        loc_stream = io.BytesIO(json.dumps(loc_record).encode("utf-8"))
+
+        people_record = {
+            "DATA_SOURCE": "BRIGHTQUERY",
+            "RECORD_ID": "P_1",
+            "bq_dataset": "PEOPLE_BUSINESS",
+            "FEATURES": [
+                {"NAME_FULL": "Jan Kowalski", "NAME_FIRST": "Jan", "NAME_LAST": "Kowalski"},
+                {"LINKEDIN": "https://linkedin.com/in/jankowalski"},
+            ],
+        }
+        people_stream = io.BytesIO(json.dumps(people_record).encode("utf-8"))
+
+        with tempfile.TemporaryDirectory() as td:
+            loc_parquet = Path(td) / "test_loc.parquet"
+            total_loc = process_member_stream(loc_stream, LOCATION_COLUMNS, loc_parquet)
+            self.assertEqual(total_loc, 1)
+
+            people_parquet = Path(td) / "test_people.parquet"
+            total_p = process_member_stream(people_stream, PEOPLE_COLUMNS, people_parquet)
+            self.assertEqual(total_p, 1)
+
+            con = duckdb.connect(":memory:")
+            res_loc = con.execute(f"SELECT name_full, addr_city, geo_latitude FROM '{loc_parquet}'").fetchall()
+            self.assertEqual(res_loc[0][0], "BRANCH 101")
+            self.assertEqual(res_loc[0][1], "Krakow")
+            self.assertAlmostEqual(res_loc[0][2], 50.06)
+
+            res_p = con.execute(f"SELECT name_full, linkedin FROM '{people_parquet}'").fetchall()
+            self.assertEqual(res_p[0][0], "Jan Kowalski")
+            self.assertEqual(res_p[0][1], "https://linkedin.com/in/jankowalski")
+
     def test_drive_zip_stream_with_mock_drive_service(self):
         # Create a synthetic ZIP in memory
         zip_buf = io.BytesIO()

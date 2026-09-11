@@ -39,3 +39,13 @@ sources:
         meta:
           formatter: template
           external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/opendata_org/organizations/*.parquet', union_by_name = true, filename = true)"
+      - name: locations
+        description: "Bronze OpenData locations streamed directly from Senzing JSONL bulk archives."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/opendata_org/locations/*.parquet', union_by_name = true, filename = true)"
+      - name: people
+        description: "Bronze OpenData people and business executives streamed directly from Senzing JSONL bulk archives."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/opendata_org/people/*.parquet', union_by_name = true, filename = true)"

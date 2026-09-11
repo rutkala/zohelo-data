@@ -688,14 +688,18 @@ export const createGoogleDriveSlice: StateCreator<
               if (selected?.fingerprint === loadedFingerprint) continue;
               const targetLayer =
                 selected?.manifest.layer ??
-                (sourceId === "opendata_org_bronze" ? "02_bronze" : "01_landing");
+                (sourceId.endsWith("_bronze") ? "02_bronze" : "01_landing");
               const tableName =
                 selected?.manifest.table_name ??
                 (sourceId === "opendata_org_bronze"
                   ? "br_opendata_organizations"
-                  : sourceId.endsWith("_bulk")
-                    ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
-                    : `${sourceId}_responses`);
+                  : sourceId === "opendata_org_locations_bronze"
+                    ? "br_opendata_locations"
+                    : sourceId === "opendata_org_people_bronze"
+                      ? "br_opendata_people"
+                      : sourceId.endsWith("_bulk")
+                        ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
+                        : `${sourceId}_responses`);
               await local.connection.query(
                 `DROP VIEW IF EXISTS "${targetLayer}"."${tableName}";`
               );
