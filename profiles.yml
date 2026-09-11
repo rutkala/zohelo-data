@@ -8,3 +8,5 @@ zohelo_data:
       # explicitly so schema DDL is checkpointed before a fresh consumer opens it.
       threads: 1
       keep_open: false
+      settings:
+        preserve_insertion_order: false
