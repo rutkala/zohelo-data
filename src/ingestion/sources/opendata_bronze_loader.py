@@ -230,49 +230,37 @@ def process_member_stream(
 
             root_cols = {"record_id", "data_source", "bq_dataset"}
             select_exprs = [
-                "record_id",
-                "data_source",
-                "bq_dataset",
+                "json_extract_string(line, '$.RECORD_ID') as record_id",
+                "json_extract_string(line, '$.DATA_SOURCE') as data_source",
+                "coalesce(json_extract_string(line, '$.BQ_DATASET'), json_extract_string(line, '$.bq_dataset')) as bq_dataset",
             ]
             for col_name, col_type in columns:
                 if col_name in root_cols:
                     continue
                 feat_key = col_name.upper()
                 if col_type == "DOUBLE":
-                    expr = (
-                        f"min(try_cast(json_extract_string(feat, '$.{feat_key}') as double)) "
-                        f"filter (where json_extract_string(feat, '$.{feat_key}') is not null) as {col_name}"
-                    )
+                    expr = f"try_cast(json_extract_string(line, '$.FEATURES[*].{feat_key}')[1] as double) as {col_name}"
                 else:
-                    expr = (
-                        f"min(json_extract_string(feat, '$.{feat_key}')) "
-                        f"filter (where json_extract_string(feat, '$.{feat_key}') is not null) as {col_name}"
-                    )
+                    expr = f"json_extract_string(line, '$.FEATURES[*].{feat_key}')[1] as {col_name}"
                 select_exprs.append(expr)
 
             select_cols = ",\n                    ".join(select_exprs)
             sql = f"""
             COPY (
                 with raw as (
-                    select line from read_csv('{temp_jsonl_path}', columns={{'line': 'VARCHAR'}}, delim='\x1e', quote='', escape='', header=false, auto_detect=false)
-                ),
-                parsed as (
-                    select 
-                        json_extract_string(line, '$.RECORD_ID') as record_id,
-                        json_extract_string(line, '$.DATA_SOURCE') as data_source,
-                        coalesce(json_extract_string(line, '$.BQ_DATASET'), json_extract_string(line, '$.bq_dataset')) as bq_dataset,
-                        item.value as feat
-                    from raw
-                    left join lateral json_each(line, '$.FEATURES') as item on true
+                    select line from read_csv('{temp_jsonl_path}', columns={{'line': 'VARCHAR'}}, delim='\\x1e', quote='', escape='', header=false, auto_detect=false)
                 )
                 select 
                     {select_cols}
-                from parsed
-                group by record_id, data_source, bq_dataset
+                from raw
             ) TO '{output_parquet_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
             """
 
-            con = duckdb.connect(":memory:")
+            con = duckdb.connect()
+            con.execute("SET enable_progress_bar = false;")
+            con.execute("SET preserve_insertion_order = false;")
+            con.execute(f"SET temp_directory = '{output_parquet_path.parent}';")
+            con.execute("SET max_memory = '4GB';")
             con.execute(sql)
             count = con.execute(f"select count(*) from read_parquet('{output_parquet_path}')").fetchone()[0]
             con.close()
