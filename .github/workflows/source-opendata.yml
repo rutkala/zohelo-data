@@ -60,6 +60,12 @@ jobs:
             --category "$OPENDATA_CATEGORY" \
             --max-files "$OPENDATA_MAX_FILES" \
             --allow-production-write
+      - name: Publish Bronze manifest and pointer for Portal availability
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python scripts/publish_opendata_bronze.py --allow-production-write
       - name: Verify bronze checkpoint status in fresh process
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
