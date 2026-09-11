@@ -1,7 +1,7 @@
 schema_version: 1
 # Operator budgets below are conservative platform limits, not claims about vendor quotas.
 # Batch limits limit one execution, never the eventual source catalogue or history.
-# pipeline_trigger: 2026-09-11-all-sources
+# pipeline_trigger: 2026-09-11-bdl-mathematical-fresh-start
 defaults:
   enabled: true
   max_requests: 12
