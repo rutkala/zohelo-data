@@ -125,7 +125,7 @@ and discovery of additional sources for gaps. [ADR 0004](decisions/0004-autonomo
 records this authorization. There is no source-by-source review gate. New paid services,
 paid-account access and unresolved consequential business definitions remain concrete future prerequisites. [ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds free-account onboarding and a secure key setup path; free opportunities must be researched rather than deferred without action.
 
-**Q-ACCESS-001 — optional BDL capacity activation:** the free registered BDL profile is implemented, but the accepted production run used anonymous access. Follow the [account setup guide](source-accounts.md) and save the emailed key as `GUS_BDL_API_KEY` in [encrypted Actions secrets](https://github.com/rutkala/zohelo-data/settings/secrets/actions). Collection continues without this key. Other researched accounts remain source-specific onboarding work; no account or credential acquisition is claimed.
+**Q-ACCESS-001 is resolved:** on 11 September 2026 the owner supplied and configured `GUS_BDL_API_KEY` in Actions secrets. The registered BDL profile is active with expanded 4x rate limits (400 requests/15m, 40,000/week) and X-ClientId transport headers.
 
 ## Evidence
 
