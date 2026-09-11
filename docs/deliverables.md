@@ -127,6 +127,12 @@ paid-account access and unresolved consequential business definitions remain con
 
 **Q-ACCESS-001 is resolved:** on 11 September 2026 the owner supplied and configured `GUS_BDL_API_KEY` in Actions secrets. The registered BDL profile is active with expanded 4x rate limits (400 requests/15m, 40,000/week) and X-ClientId transport headers.
 
+**Decoupled per-source pipelines & ADF-style orchestration, 11 September:** Decomposed monolithic matrix into independent source-tailored pipelines:
+- `GUS BDL` (`.github/workflows/source-gus-bdl.yml`): Runs every 15 minutes (`*/15 * * * *`) with up to 360 requests/run (6 cycles of 60 requests) to maximize collection under the registered 400 req/15m window. Features ADF-style chained stages (`ingest_landing` -> `platform_transform_and_release`), with support for on-demand `transform_only` execution without re-ingesting.
+- `Eurostat` (`.github/workflows/source-eurostat.yml`): Hourly schedule (`12 * * * *`) for bulk distributions and API collection.
+- `World Bank WDI` (`.github/workflows/source-world-bank.yml`): 6-hour schedule (`25 */6 * * *`) for bulk CSV and API indicators.
+- `OpenData.org` (`.github/workflows/source-opendata.yml`): Dedicated streaming loader workflow (`src/ingestion/sources/opendata_bronze_loader.py`) that reads the 21.38 GB Senzing archive via seekable HTTP Range streams on Google Drive, flattens entity features into typed Parquet (`br_opendata_organizations`, `br_opendata_locations`, `br_opendata_people`), and writes to `02_bronze/opendata_org/` with zero disk extraction in Codespaces/CI. Checkpointing is tracked in `06_control/source_campaigns/opendata_org_bronze/checkpoint.json`.
+
 ## Evidence
 
 **Complete-source correction deployed; backfills in progress, 8 September:** the owner rejected the partial

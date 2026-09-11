@@ -106,6 +106,8 @@ def effective_source_settings(
         effective["quota_windows"] = [
             dict(window) for window in _REGISTERED_BDL_QUOTA_WINDOWS
         ]
+        if "registered_max_requests" in settings:
+            effective["max_requests"] = int(settings["registered_max_requests"])
     return effective
 
 

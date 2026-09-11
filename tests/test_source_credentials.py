@@ -86,6 +86,16 @@ class SourceCredentialTests(unittest.TestCase):
         self.assertNotIn(SECRET, repr(effective))
         self.assertNotIn(SECRET, repr(status))
 
+    def test_registered_bdl_respects_registered_max_requests_when_configured(self):
+        environ = {"GUS_BDL_API_KEY": SECRET}
+        settings = {**ANONYMOUS_SETTINGS, "registered_max_requests": 60}
+        effective = source_credentials.effective_source_settings(
+            "gus_bdl", settings, environ=environ
+        )
+        self.assertEqual(effective["max_requests"], 60)
+        self.assertEqual(effective["min_request_interval_seconds"], 1)
+        self.assertEqual(effective["quota_windows"][0]["requests"], 400)
+
     def test_malformed_credentials_fail_without_echoing_secret(self):
         malformed = (" leading", "trailing ", "line\nbreak", "café", "x" * 513)
         for value in malformed:

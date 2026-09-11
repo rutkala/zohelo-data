@@ -42,8 +42,9 @@ sources:
     target_scope: All discoverable BDL variables, units, localities, metadata and available years; exhaustive resumable pagination under the effective anonymous or registered quota.
     contract: docs/contracts/gus-bdl.md
     permitted_operation: Public BDL API collection under CC BY 4.0; retain source metadata and attribution.
-    # Below public 5/s, 100/15m, 1000/12h and 10000/7d ceilings.
-    min_request_interval_seconds: 3
+    min_request_interval_seconds: 1
+    max_requests: 12
+    registered_max_requests: 60
     quota_windows:
       - {seconds: 900, requests: 80}
       - {seconds: 43200, requests: 800}

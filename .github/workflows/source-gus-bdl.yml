@@ -1,0 +1,137 @@
+name: GUS BDL data pipeline
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Pipeline stage to execute'
+        type: choice
+        default: all
+        options: [all, ingest_only, transform_only]
+      cycles:
+        description: 'Consecutive collect-and-publish batches (registered BDL uses up to 60 req/cycle)'
+        type: choice
+        default: '6'
+        options: ['1', '3', '6']
+      pause_history:
+        description: 'Collect recent data and metadata while leaving historical tasks checkpointed'
+        type: boolean
+        default: false
+      retry_validation:
+        description: 'Retry HTTP-200 parser rejections from older code; preserve provider backoff and quotas'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'src/source_campaign.py'
+      - 'src/bdl_platform.py'
+      - 'src/bdl_release_validation.py'
+      - 'src/bdl_business_catalog.py'
+      - 'src/bdl_semantic.py'
+      - 'src/bdl_platform_contract.py'
+      - 'src/drive_release_store.py'
+      - 'src/release_protocol.py'
+      - 'src/storage_manager.py'
+      - 'src/ingestion/sources/gus_bdl.py'
+      - 'src/ingestion/source_campaign.py'
+      - 'src/ingestion/source_campaign_store.py'
+      - 'src/ingestion/source_credentials.py'
+      - 'models/marts/bdl/**'
+      - 'models/staging/bdl/**'
+      - 'config/source-campaigns.yaml'
+      - 'config/source-access.yaml'
+      - 'config/sources.yaml'
+      - '.github/workflows/source-gus-bdl.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-pipeline-gus_bdl
+  cancel-in-progress: false
+
+jobs:
+  ingest_landing:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_dispatch' || inputs.stage == 'all' || inputs.stage == 'ingest_only') &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-source-campaigns]') || contains(github.event.head_commit.message, '[run-bdl]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Ingest GUS BDL Landing batch (max throughput under registered quota)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GUS_BDL_API_KEY: ${{ secrets.GUS_BDL_API_KEY }}
+          CAMPAIGN_CYCLES: ${{ inputs.cycles || '6' }}
+          CAMPAIGN_PAUSE_HISTORY: ${{ inputs.pause_history || 'false' }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
+        run: |
+          args=(--source gus_bdl --backend drive --allow-production-write --summary campaign-summary.json --cycles "$CAMPAIGN_CYCLES")
+          if [[ "$CAMPAIGN_PAUSE_HISTORY" == "true" ]]; then
+            args+=(--pause-history)
+          fi
+          if [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
+          fi
+          python src/source_campaign.py "${args[@]}"
+      - name: Restore accepted evidence in fresh process
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/source_campaign.py --source gus_bdl --backend drive --allow-production-write --verify-current
+      - name: Restore and query published Landing in fresh process
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/source_campaign.py --source gus_bdl --backend drive --allow-production-write --verify-landing
+
+  platform_transform_and_release:
+    needs: [ingest_landing]
+    if: >-
+      always() && !cancelled() &&
+      github.ref == 'refs/heads/main' &&
+      (inputs.stage == 'transform_only' || needs.ingest_landing.result == 'success') &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-source-campaigns]') || contains(github.event.head_commit.message, '[run-bdl]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Build, model, and publish BDL platform release (Bronze -> Silver -> Gold -> Semantic)
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/bdl_platform.py --backend drive --allow-production-write
+      - name: Verify current BDL modeled release in fresh process
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/bdl_platform.py --backend drive --allow-production-write --verify-current

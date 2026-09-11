@@ -1,0 +1,170 @@
+name: World Bank WDI data pipeline
+
+on:
+  schedule:
+    - cron: '25 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      pause_history:
+        description: 'Collect recent data and metadata while leaving historical tasks checkpointed'
+        type: boolean
+        default: false
+      retry_validation:
+        description: 'Retry HTTP-200 parser rejections from older code; preserve provider backoff and quotas'
+        type: boolean
+        default: false
+      cycles:
+        description: 'Consecutive collect-and-publish batches, within the 15-minute session budget'
+        type: choice
+        default: '3'
+        options: ['1', '3', '6']
+      publish_only:
+        description: 'Publish already-collected accepted responses without calling source APIs'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - 'src/source_campaign.py'
+      - 'src/full_source_campaign.py'
+      - 'src/ingestion/sources/world_bank.py'
+      - 'src/ingestion/full_source_adapters.py'
+      - 'src/ingestion/bulk_transport.py'
+      - 'src/ingestion/bulk_publication.py'
+      - 'config/source-campaigns.yaml'
+      - 'config/sources.yaml'
+      - '.github/workflows/source-world-bank.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-pipeline-world_bank_wdi
+  cancel-in-progress: false
+
+jobs:
+  collect_and_publish:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-source-campaigns]') || contains(github.event.head_commit.message, '[run-world-bank]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Collect initial Landing batch
+        id: initial_api
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CAMPAIGN_CYCLES: ${{ inputs.cycles || '3' }}
+          CAMPAIGN_PUBLISH_ONLY: ${{ inputs.publish_only || 'false' }}
+          CAMPAIGN_PAUSE_HISTORY: ${{ inputs.pause_history || 'false' }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
+        run: |
+          started_at=$(date +%s)
+          api_cycles="$CAMPAIGN_CYCLES"
+          split_full_path=false
+          if [[ "$CAMPAIGN_PUBLISH_ONLY" != "true" && "$CAMPAIGN_PAUSE_HISTORY" != "true" ]]; then
+            api_cycles=1
+            split_full_path=true
+          fi
+          args=(--source world_bank_wdi --backend drive --allow-production-write --summary campaign-summary.json --cycles "$api_cycles")
+          if [[ "$CAMPAIGN_PAUSE_HISTORY" == "true" ]]; then
+            args+=(--pause-history)
+          fi
+          if [[ "$CAMPAIGN_PUBLISH_ONLY" == "true" ]]; then
+            args+=(--publish-only)
+          elif [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
+          fi
+          status=0
+          python src/source_campaign.py "${args[@]}" || status=$?
+          elapsed_seconds=$(( $(date +%s) - started_at ))
+          remaining_seconds=$(( 900 - elapsed_seconds ))
+          if (( remaining_seconds < 0 )); then
+            remaining_seconds=0
+          fi
+          remaining_cycles=0
+          continue_api=false
+          if [[ "$split_full_path" == "true" ]]; then
+            remaining_cycles=$(( CAMPAIGN_CYCLES - 1 ))
+            if (( remaining_cycles > 0 && remaining_seconds >= 60 )); then
+              continue_api=true
+            fi
+          fi
+          echo "remaining_seconds=$remaining_seconds" >> "$GITHUB_OUTPUT"
+          echo "remaining_cycles=$remaining_cycles" >> "$GITHUB_OUTPUT"
+          echo "continue_api=$continue_api" >> "$GITHUB_OUTPUT"
+          exit "$status"
+      - name: Restore provider ledger before the full-distribution writer
+        id: restored_provider_ledger
+        if: >-
+          !cancelled() && inputs.publish_only != true && inputs.pause_history != true
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --verify-state
+      - name: Collect complete official distributions and checkpoint remaining catalogue
+        id: full_bulk
+        if: >-
+          !cancelled() && steps.restored_provider_ledger.outcome == 'success' &&
+          inputs.publish_only != true && inputs.pause_history != true
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/full_source_campaign.py --source world_bank_wdi --allow-production-write
+      - name: Restore a full distribution in a fresh process
+        id: restored_full
+        if: >-
+          !cancelled() && steps.full_bulk.outcome == 'success' &&
+          inputs.publish_only != true && inputs.pause_history != true
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/full_source_campaign.py --source world_bank_wdi --allow-production-write --verify-current
+      - name: Continue remaining Landing API batches within the original budget
+        if: >-
+          !cancelled() && steps.initial_api.outcome == 'success' &&
+          steps.full_bulk.outcome == 'success' && steps.restored_full.outcome == 'success' &&
+          steps.initial_api.outputs.continue_api == 'true' &&
+          inputs.publish_only != true && inputs.pause_history != true
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          CAMPAIGN_REMAINING_CYCLES: ${{ steps.initial_api.outputs.remaining_cycles }}
+          CAMPAIGN_REMAINING_SECONDS: ${{ steps.initial_api.outputs.remaining_seconds }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || contains(github.event.head_commit.message, '[retry-source-validation]') || 'false' }}
+        run: |
+          args=(--source world_bank_wdi --backend drive --allow-production-write --summary campaign-summary.json --cycles "$CAMPAIGN_REMAINING_CYCLES" --session-seconds "$CAMPAIGN_REMAINING_SECONDS")
+          if [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
+          fi
+          python src/source_campaign.py "${args[@]}"
+      - name: Restore accepted evidence in a fresh process
+        if: ${{ !cancelled() }}
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --verify-current
+      - name: Restore and query published Landing in a fresh process
+        if: ${{ !cancelled() }}
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --verify-landing
