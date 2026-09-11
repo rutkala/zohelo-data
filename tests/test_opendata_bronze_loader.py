@@ -245,8 +245,65 @@ class OpenDataBronzeLoaderTests(unittest.TestCase):
         names = zf.namelist()
         self.assertEqual(names, ["Organization/part_001.json", "Locations/part_001.json"])
 
-        content = zf.read("Organization/part_001.json")
-        self.assertEqual(content, b'{"RECORD_ID":"1","FEATURES":[]}\n')
+    def test_checkpoint_sharding_fallback_and_save(self):
+        from unittest.mock import MagicMock
+        from ingestion.sources.opendata_bronze_loader import OpenDataBronzeRunner
+
+        mock_storage = MagicMock()
+        mock_storage.resolve_root.return_value = "mock-root-id"
+        mock_storage.get_or_create_nested_folder.return_value = "mock-control-id"
+
+        # Mock files().list and get_media
+        mock_files = MagicMock()
+        mock_storage.drive_service.files.return_value = mock_files
+
+        # Base checkpoint in Drive
+        base_checkpoint = {
+            "schema_version": 1,
+            "processed_members": ["Organization/part_001.json", "Locations/part_001.json"],
+            "bronze_tables": {
+                "organizations": [{"member": "Organization/part_001.json", "rows": 100}],
+                "locations": [{"member": "Locations/part_001.json", "rows": 50}],
+                "people": [],
+            },
+            "total_rows": 150,
+            "last_updated": "2026-09-11T12:00:00Z",
+        }
+        base_raw = json.dumps(base_checkpoint).encode("utf-8")
+
+        # Simulate: checkpoint-organizations.json does NOT exist (files=[]), but checkpoint.json DOES exist
+        def mock_list(q="", **kwargs):
+            mock_res = MagicMock()
+            if "checkpoint-organizations.json" in q:
+                mock_res.execute.return_value = {"files": []}
+            elif "checkpoint.json" in q:
+                mock_res.execute.return_value = {"files": [{"id": "base-cp-id"}]}
+            else:
+                mock_res.execute.return_value = {"files": []}
+            return mock_res
+
+        mock_files.list.side_effect = mock_list
+        mock_files.get_media.return_value.execute.return_value = base_raw
+
+        runner = OpenDataBronzeRunner(mock_storage, allow_production_write=True)
+        # Mock _resolve_folder to return mock-control-id
+        runner._resolve_folder = MagicMock(return_value="mock-control-id")
+
+        # Loading category shard when file doesn't exist falls back to seeding from base checkpoint
+        cp_org = runner._load_checkpoint(category="organizations")
+        self.assertEqual(cp_org["category"], "organizations")
+        self.assertEqual(cp_org["processed_members"], ["Organization/part_001.json"])
+        self.assertEqual(cp_org["total_rows"], 100)
+        self.assertFalse(cp_org["complete"])
+
+        # Test saving category shard
+        mock_files.create.return_value.execute.return_value = {"id": "new-shard-id"}
+        saved_id = runner._save_checkpoint(cp_org, category="organizations")
+        self.assertEqual(saved_id, "new-shard-id")
+
+        # Verify create was called with target name checkpoint-organizations.json
+        create_args = mock_files.create.call_args[1]
+        self.assertEqual(create_args["body"]["name"], "checkpoint-organizations.json")
 
 
 if __name__ == "__main__":

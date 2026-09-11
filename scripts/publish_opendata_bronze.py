@@ -92,9 +92,11 @@ def publish_category(
         fname = entry["parquet_name"]
         frows = entry["rows"]
         fbytes = entry["bytes"]
-        print(f"Verifying {fname} (ID: {fid}, size: {fbytes:,} bytes)...")
-        data = svc.files().get_media(fileId=fid).execute()
-        f_sha = sha256_hex(data)
+        f_sha = entry.get("sha256")
+        if not f_sha:
+            print(f"Downloading {fname} to compute SHA-256 (ID: {fid}, size: {fbytes:,} bytes)...")
+            data = svc.files().get_media(fileId=fid).execute()
+            f_sha = sha256_hex(data)
         file_descriptors.append({
             "id": fid,
             "name": fname,
@@ -105,6 +107,8 @@ def publish_category(
     snapshot_id = str(uuid4())
     now_utc = datetime.now(timezone.utc)
     columns_meta = [{"name": name, "type": dtype} for name, dtype in columns]
+    is_complete = checkpoint.get("complete", False)
+    coverage_status = "complete_current_catalogue" if is_complete else "incomplete"
 
     manifest_name = f"manifest-{snapshot_id}.json"
     manifest = {
@@ -118,7 +122,7 @@ def publish_category(
         "layer": "02_bronze",
         "table_name": table_name,
         "row_count": total_rows,
-        "coverage_status": "incomplete",
+        "coverage_status": coverage_status,
         "files": file_descriptors,
         "columns": columns_meta,
         "accepted_file_count": len(file_descriptors),
@@ -176,6 +180,23 @@ def publish_category(
     return True
 
 
+def load_checkpoint_for_category(svc: Any, control_id: str, category: str) -> tuple[bytes, dict[str, Any]] | None:
+    target_name = f"checkpoint-{category}.json"
+    cp_q = f"'{control_id}' in parents and name = '{target_name}' and trashed = false"
+    cp_files = svc.files().list(q=cp_q, fields="files(id, name)").execute().get("files", [])
+    if cp_files:
+        cp_raw = svc.files().get_media(fileId=cp_files[0]["id"]).execute()
+        return cp_raw, json.loads(cp_raw.decode("utf-8"))
+
+    # Fallback to checkpoint.json
+    cp_q = f"'{control_id}' in parents and name = 'checkpoint.json' and trashed = false"
+    cp_files = svc.files().list(q=cp_q, fields="files(id, name)").execute().get("files", [])
+    if cp_files:
+        cp_raw = svc.files().get_media(fileId=cp_files[0]["id"]).execute()
+        return cp_raw, json.loads(cp_raw.decode("utf-8"))
+    return None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Publish OpenData Bronze campaign to Google Drive")
     parser.add_argument(
@@ -198,15 +219,6 @@ def main() -> int:
     # Locate checkpoint folder: 06_control / source_campaigns / opendata_org_bronze
     control_id = sm.get_or_create_nested_folder(CHECKPOINT_CONTROL_DIR, root_id=root_id)
 
-    # Read checkpoint.json
-    cp_q = f"'{control_id}' in parents and name = 'checkpoint.json' and trashed = false"
-    cp_files = svc.files().list(q=cp_q, fields="files(id, name)").execute().get("files", [])
-    if not cp_files:
-        print("ERROR: checkpoint.json not found in opendata_org_bronze control folder.")
-        return 1
-    cp_raw = svc.files().get_media(fileId=cp_files[0]["id"]).execute()
-    checkpoint = json.loads(cp_raw.decode("utf-8"))
-
     code_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).decode().strip()
 
     categories_to_publish = (
@@ -217,6 +229,11 @@ def main() -> int:
 
     published_count = 0
     for cat in categories_to_publish:
+        cp_data = load_checkpoint_for_category(svc, control_id, cat)
+        if not cp_data:
+            print(f"WARNING: No checkpoint found for category '{cat}'. Skipping.")
+            continue
+        cp_raw, checkpoint = cp_data
         published = publish_category(
             sm=sm,
             svc=svc,

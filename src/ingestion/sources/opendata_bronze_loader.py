@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import io
 import json
 import logging
@@ -316,38 +317,74 @@ class OpenDataBronzeRunner:
             raise FileNotFoundError(f"Landing archive {zip_name} not found in {OPENDATA_LANDING_DIR}")
         return files[0]["id"], int(files[0]["size"])
 
-    def _load_checkpoint(self) -> dict[str, Any]:
+    def _load_checkpoint(self, category: str | None = None) -> dict[str, Any]:
         control_folder_id = self._resolve_folder(OPENDATA_CONTROL_DIR)
+        empty_cp = {
+            "schema_version": 1,
+            "processed_members": [],
+            "bronze_tables": {cat: [] for cat in CATEGORIES},
+            "total_rows": 0,
+            "last_updated": None,
+            "complete": False,
+        }
         if not control_folder_id:
-            return {
-                "schema_version": 1,
-                "processed_members": [],
-                "bronze_tables": {cat: [] for cat in CATEGORIES},
-                "total_rows": 0,
-                "last_updated": None,
-            }
+            return empty_cp
+
+        target_name = f"checkpoint-{category}.json" if category in CATEGORIES else CHECKPOINT_NAME
         res = (
             self.storage.drive_service.files()
             .list(
-                q=f"name='{CHECKPOINT_NAME}' and '{control_folder_id}' in parents and trashed=false",
+                q=f"name='{target_name}' and '{control_folder_id}' in parents and trashed=false",
                 fields="files(id)",
                 spaces="drive",
             )
             .execute()
         )
         files = res.get("files", [])
-        if not files:
-            return {
-                "schema_version": 1,
-                "processed_members": [],
-                "bronze_tables": {cat: [] for cat in CATEGORIES},
-                "total_rows": 0,
-                "last_updated": None,
-            }
-        data = self.storage.drive_service.files().get_media(fileId=files[0]["id"]).execute()
-        return json.loads(data.decode("utf-8"))
+        if files:
+            data = self.storage.drive_service.files().get_media(fileId=files[0]["id"]).execute()
+            loaded = json.loads(data.decode("utf-8"))
+            if "complete" not in loaded:
+                loaded["complete"] = False
+            return loaded
 
-    def _save_checkpoint(self, checkpoint: dict[str, Any]) -> str:
+        if target_name != CHECKPOINT_NAME:
+            res = (
+                self.storage.drive_service.files()
+                .list(
+                    q=f"name='{CHECKPOINT_NAME}' and '{control_folder_id}' in parents and trashed=false",
+                    fields="files(id)",
+                    spaces="drive",
+                )
+                .execute()
+            )
+            files = res.get("files", [])
+            if files:
+                data = self.storage.drive_service.files().get_media(fileId=files[0]["id"]).execute()
+                base_cp = json.loads(data.decode("utf-8"))
+                cat_tables = base_cp.get("bronze_tables", {}).get(category, [])
+                cat_prefix = CATEGORIES[category]["prefix"]
+                cat_members = [
+                    m for m in base_cp.get("processed_members", [])
+                    if m.startswith(cat_prefix)
+                ]
+                for t in cat_tables:
+                    if t.get("member") and t["member"] not in cat_members:
+                        cat_members.append(t["member"])
+                cat_rows = sum(t.get("rows", 0) for t in cat_tables)
+                return {
+                    "schema_version": 1,
+                    "category": category,
+                    "processed_members": cat_members,
+                    "bronze_tables": {cat: (cat_tables if cat == category else []) for cat in CATEGORIES},
+                    "total_rows": cat_rows,
+                    "last_updated": base_cp.get("last_updated"),
+                    "complete": False,
+                }
+
+        return empty_cp
+
+    def _save_checkpoint(self, checkpoint: dict[str, Any], category: str | None = None) -> str:
         if not self.allow_production_write:
             raise PermissionError("Updating checkpoint requires production write authorization")
         self.storage.authorize_writes()
@@ -355,12 +392,13 @@ class OpenDataBronzeRunner:
             OPENDATA_CONTROL_DIR, root_id=self.root_id
         )
         checkpoint["last_updated"] = datetime.now(timezone.utc).isoformat()
+        target_name = f"checkpoint-{category}.json" if category in CATEGORIES else CHECKPOINT_NAME
         payload = json.dumps(checkpoint, indent=2).encode("utf-8")
 
         res = (
             self.storage.drive_service.files()
             .list(
-                q=f"name='{CHECKPOINT_NAME}' and '{control_folder_id}' in parents and trashed=false",
+                q=f"name='{target_name}' and '{control_folder_id}' in parents and trashed=false",
                 fields="files(id)",
                 spaces="drive",
             )
@@ -375,11 +413,11 @@ class OpenDataBronzeRunner:
             ).execute()
             return file_id
         else:
-            meta = {"name": CHECKPOINT_NAME, "parents": [control_folder_id], "mimeType": "application/json"}
+            meta = {"name": target_name, "parents": [control_folder_id], "mimeType": "application/json"}
             created = self.storage.drive_service.files().create(body=meta, media_body=media, fields="id").execute()
             return created["id"]
 
-    def _upload_parquet(self, category: str, file_name: str, local_parquet_path: Path) -> tuple[str, int]:
+    def _upload_parquet(self, category: str, file_name: str, local_parquet_path: Path) -> tuple[str, int, str]:
         if not self.allow_production_write:
             raise PermissionError("Writing Bronze Parquet requires production write authorization")
         self.storage.authorize_writes()
@@ -389,13 +427,14 @@ class OpenDataBronzeRunner:
 
         file_bytes = local_parquet_path.read_bytes()
         file_size = len(file_bytes)
+        file_sha256 = hashlib.sha256(file_bytes).hexdigest()
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/octet-stream", resumable=True)
         meta = {"name": file_name, "parents": [folder_id], "mimeType": "application/octet-stream"}
         created = self.storage.drive_service.files().create(body=meta, media_body=media, fields="id").execute()
-        return created["id"], file_size
+        return created["id"], file_size, file_sha256
 
-    def run(self, category: str = "all", max_files: int = 5, dry_run: bool = False) -> dict[str, Any]:
-        """Process up to max_files member files across specified categories."""
+    def run(self, category: str = "all", max_files: int = 0, dry_run: bool = False) -> dict[str, Any]:
+        """Process up to max_files member files across specified categories (0 or negative for unlimited)."""
         zip_id, zip_size = self._resolve_landing_zip()
         logger.info("Connecting seekable stream to Drive ZIP (ID: %s, Size: %d bytes)", zip_id, zip_size)
 
@@ -403,7 +442,7 @@ class OpenDataBronzeRunner:
         zf = zipfile.ZipFile(stream)
         all_members = zf.namelist()
 
-        checkpoint = self._load_checkpoint()
+        checkpoint = self._load_checkpoint(category=category if category != "all" else None)
         processed_set = set(checkpoint.get("processed_members", []))
 
         target_categories = list(CATEGORIES.keys()) if category == "all" else [category]
@@ -412,6 +451,7 @@ class OpenDataBronzeRunner:
 
         # Collect pending members per category
         category_queues: dict[str, list[str]] = {}
+        total_pending = 0
         for cat in target_categories:
             cat_cfg = CATEGORIES[cat]
             prefix = cat_cfg["prefix"]
@@ -421,12 +461,14 @@ class OpenDataBronzeRunner:
             ]
             cat_members.sort()
             category_queues[cat] = cat_members
-            logger.info("Category '%s': %d pending members found", cat, len(cat_members))
+            total_pending += len(cat_members)
+            logger.info("Category '%s': %d pending members found (already processed: %d)", cat, len(cat_members), len(processed_set))
 
         # Interleave across categories so all active tables make progress in every batch
         interleaved_members: list[tuple[str, str]] = []
         queue_indices = {cat: 0 for cat in target_categories}
-        while len(interleaved_members) < max_files:
+        unlimited = max_files <= 0
+        while unlimited or len(interleaved_members) < max_files:
             added_any = False
             for cat in target_categories:
                 idx = queue_indices[cat]
@@ -435,10 +477,12 @@ class OpenDataBronzeRunner:
                     interleaved_members.append((cat, q[idx]))
                     queue_indices[cat] = idx + 1
                     added_any = True
-                    if len(interleaved_members) >= max_files:
+                    if not unlimited and len(interleaved_members) >= max_files:
                         break
             if not added_any:
                 break
+
+        logger.info("Total members queued for processing: %d (unlimited=%s, total_pending=%d)", len(interleaved_members), unlimited, total_pending)
 
         for cat, member_name in interleaved_members:
             cat_cfg = CATEGORIES[cat]
@@ -454,8 +498,9 @@ class OpenDataBronzeRunner:
                 if dry_run:
                     drive_id = "dry-run-staged"
                     file_bytes = temp_parquet.stat().st_size
+                    file_sha256 = hashlib.sha256(temp_parquet.read_bytes()).hexdigest()
                 else:
-                    drive_id, file_bytes = self._upload_parquet(cat, out_parquet_name, temp_parquet)
+                    drive_id, file_bytes, file_sha256 = self._upload_parquet(cat, out_parquet_name, temp_parquet)
 
             t1 = time.time()
             files_processed += 1
@@ -469,6 +514,7 @@ class OpenDataBronzeRunner:
                 "drive_id": drive_id,
                 "rows": rows,
                 "bytes": file_bytes,
+                "sha256": file_sha256,
                 "elapsed_seconds": round(t1 - t0, 2),
                 "dry_run": dry_run,
             }
@@ -477,9 +523,14 @@ class OpenDataBronzeRunner:
                 checkpoint["processed_members"].append(member_name)
                 checkpoint["bronze_tables"][cat].append(record_info)
                 checkpoint["total_rows"] = checkpoint.get("total_rows", 0) + rows
+                # Persist checkpoint immediately after each file for real-time durability
+                if self.allow_production_write:
+                    self._save_checkpoint(checkpoint, category=category if category != "all" else None)
 
             logger.info(
-                "Processed %s -> %s (%d rows, %d bytes in %.2fs, dry_run=%s)",
+                "[%d/%d] Processed %s -> %s (%d rows, %d bytes in %.2fs, dry_run=%s)",
+                files_processed,
+                len(interleaved_members),
                 member_name,
                 out_parquet_name,
                 rows,
@@ -488,11 +539,24 @@ class OpenDataBronzeRunner:
                 dry_run,
             )
 
+        # Mark complete if all members for target categories are processed
+        all_done = True
+        for cat in target_categories:
+            prefix = CATEGORIES[cat]["prefix"]
+            all_cat_members = [m for m in all_members if m.startswith(prefix) and m.endswith(".json")]
+            cat_done = [m for m in checkpoint["processed_members"] if m.startswith(prefix)]
+            if len(cat_done) < len(all_cat_members):
+                all_done = False
+                break
+
+        checkpoint["complete"] = all_done
+
         if files_processed > 0 and self.allow_production_write and not dry_run:
-            self._save_checkpoint(checkpoint)
+            self._save_checkpoint(checkpoint, category=category if category != "all" else None)
 
         return {
-            "status": "completed",
+            "status": "completed" if all_done else "in_progress",
+            "complete": all_done,
             "files_processed": files_processed,
             "total_processed_members": len(checkpoint["processed_members"]),
             "total_bronze_rows": checkpoint["total_rows"],
@@ -511,8 +575,8 @@ def main():
     parser.add_argument(
         "--max-files",
         type=int,
-        default=5,
-        help="Maximum member files to stream and convert in this batch (default: 5)",
+        default=0,
+        help="Maximum member files to stream and convert (0 for unlimited full dataset)",
     )
     parser.add_argument(
         "--allow-production-write",
@@ -537,7 +601,7 @@ def main():
     runner = OpenDataBronzeRunner(storage, allow_production_write=args.allow_production_write)
 
     if args.verify_checkpoint:
-        cp = runner._load_checkpoint()
+        cp = runner._load_checkpoint(category=args.category if args.category != "all" else None)
         print(json.dumps(cp, indent=2))
         return 0
 

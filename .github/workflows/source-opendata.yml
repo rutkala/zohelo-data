@@ -1,20 +1,17 @@
 name: OpenData.org data pipeline
 
 on:
-  schedule:
-    - cron: '45 3 * * 0'
   workflow_dispatch:
     inputs:
       category:
-        description: 'OpenData Senzing entity category to process into Bronze'
+        description: 'OpenData Senzing entity category to process into Bronze (default: all parallel)'
         type: choice
         default: all
         options: [all, organizations, locations, people]
       max_files:
-        description: 'Maximum member JSON files to stream and convert in this batch'
-        type: choice
-        default: '5'
-        options: ['1', '3', '5', '10', '20']
+        description: 'Maximum member JSON files to convert (0 for unlimited full dataset)'
+        type: string
+        default: '0'
   push:
     branches: [main]
     paths:
@@ -27,17 +24,20 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: zohelo-pipeline-opendata
-  cancel-in-progress: false
-
 jobs:
   stream_to_bronze:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-opendata]'))
+      (github.event_name != 'workflow_dispatch' || inputs.category == 'all' || inputs.category == matrix.category)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        category: [organizations, locations, people]
+    concurrency:
+      group: zohelo-pipeline-opendata-${{ matrix.category }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -54,22 +54,31 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-          OPENDATA_CATEGORY: ${{ inputs.category || 'all' }}
-          OPENDATA_MAX_FILES: ${{ inputs.max_files || '5' }}
+          OPENDATA_CATEGORY: ${{ matrix.category }}
+          OPENDATA_MAX_FILES: ${{ inputs.max_files || '0' }}
         run: |
           python src/ingestion/sources/opendata_bronze_loader.py \
             --category "$OPENDATA_CATEGORY" \
             --max-files "$OPENDATA_MAX_FILES" \
             --allow-production-write
       - name: Publish Bronze manifest and pointer for Portal availability
+        if: always()
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-        run: python scripts/publish_opendata_bronze.py --allow-production-write
+          OPENDATA_CATEGORY: ${{ matrix.category }}
+        run: |
+          python scripts/publish_opendata_bronze.py \
+            --category "$OPENDATA_CATEGORY" \
+            --allow-production-write
       - name: Verify bronze checkpoint status in fresh process
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-        run: python src/ingestion/sources/opendata_bronze_loader.py --verify-checkpoint
+          OPENDATA_CATEGORY: ${{ matrix.category }}
+        run: |
+          python src/ingestion/sources/opendata_bronze_loader.py \
+            --category "$OPENDATA_CATEGORY" \
+            --verify-checkpoint
