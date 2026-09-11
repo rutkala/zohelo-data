@@ -135,7 +135,11 @@ export type ReleaseManifest =
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
-export type LandingSourceId = LandingResponseSourceId | BulkLandingSourceId;
+export type BronzeCampaignSourceId = "opendata_org_bronze";
+export type LandingSourceId =
+  | LandingResponseSourceId
+  | BulkLandingSourceId
+  | BronzeCampaignSourceId;
 
 export interface LandingSnapshotPointer {
   format_version: 1;
@@ -190,8 +194,32 @@ export interface BulkDistributionIndexManifest {
   tests: { passed: true };
 }
 
+/** A verified Bronze campaign snapshot. */
+export interface BronzeCampaignManifest {
+  format_version: 1;
+  kind: "bronze_snapshot";
+  source_id: BronzeCampaignSourceId;
+  snapshot_id: string;
+  created_at_utc: string;
+  code_sha: string;
+  status: "validated";
+  layer: "02_bronze";
+  table_name: string;
+  row_count: number;
+  coverage_status: "incomplete" | "complete_current_catalogue";
+  files: LakehouseFile[];
+  columns: Array<{ name: string; type: string }>;
+  accepted_file_count: number;
+  published_file_count: number;
+  pending_publication_count: number;
+  receipt_checkpoint_sha256: string;
+  tests: { passed: true };
+}
+
 export type LandingSnapshotManifest =
-  LandingResponseSnapshotManifest | BulkDistributionIndexManifest;
+  | LandingResponseSnapshotManifest
+  | BulkDistributionIndexManifest
+  | BronzeCampaignManifest;
 
 export interface LandingSnapshotResolution {
   pointer: LandingSnapshotPointer;

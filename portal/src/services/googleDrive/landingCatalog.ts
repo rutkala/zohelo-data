@@ -9,6 +9,7 @@ import {
 } from "./driveApi";
 import { POINTER_MAX_BYTES, DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
 import type {
+  BronzeCampaignSourceId,
   BulkLandingSourceId,
   LandingCatalogIssue,
   LandingCatalogResolution,
@@ -26,6 +27,7 @@ export const LANDING_SOURCE_IDS = [
   "world_bank_wdi_bulk",
   "eurostat_bulk",
   "opendata_org_bulk",
+  "opendata_org_bronze",
 ] as const;
 
 const LANDING_COLUMNS = [
@@ -57,14 +59,36 @@ const BULK_INDEX_COLUMNS = [
   ["inspection_json", "VARCHAR"],
 ] as const;
 
+const OPENDATA_ORGANIZATION_COLUMNS = [
+  ["record_id", "VARCHAR"],
+  ["data_source", "VARCHAR"],
+  ["bq_dataset", "VARCHAR"],
+  ["name_org", "VARCHAR"],
+  ["name_type", "VARCHAR"],
+  ["record_type", "VARCHAR"],
+  ["addr_line1", "VARCHAR"],
+  ["addr_city", "VARCHAR"],
+  ["addr_state", "VARCHAR"],
+  ["addr_postal_code", "VARCHAR"],
+  ["addr_country", "VARCHAR"],
+  ["addr_type", "VARCHAR"],
+  ["geo_latitude", "DOUBLE"],
+  ["geo_longitude", "DOUBLE"],
+  ["placekey", "VARCHAR"],
+  ["bq_id", "VARCHAR"],
+  ["rel_anchor_domain", "VARCHAR"],
+  ["rel_anchor_key", "VARCHAR"],
+] as const;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODE_SHA_RE = /^[0-9a-f]{40}$/;
 const DRIVE_ID_RE = /^[A-Za-z0-9_-]{1,255}$/;
 const PARQUET_NAME_RE =
-  /^fragment-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.parquet$/;
+  /^(fragment-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|br_[A-Za-z0-9_-]+)\.parquet$/;
 const LANDING_MANIFEST_MAX_BYTES = 1024 * 1024;
 const LANDING_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const BRONZE_FILE_MAX_BYTES = 32 * 1024 * 1024;
 const POINTER_FIELDS = new Set([
   "format_version",
   "source_id",
@@ -114,15 +138,40 @@ const BULK_MANIFEST_FIELDS = new Set([
   "receipt_checkpoint_sha256",
   "tests",
 ]);
+const BRONZE_MANIFEST_FIELDS = new Set([
+  "format_version",
+  "kind",
+  "source_id",
+  "snapshot_id",
+  "created_at_utc",
+  "code_sha",
+  "status",
+  "layer",
+  "table_name",
+  "row_count",
+  "coverage_status",
+  "files",
+  "columns",
+  "accepted_file_count",
+  "published_file_count",
+  "pending_publication_count",
+  "receipt_checkpoint_sha256",
+  "tests",
+]);
 
 const isBulkSource = (
   sourceId: LandingSourceId
 ): sourceId is BulkLandingSourceId => sourceId.endsWith("_bulk");
 
-const tableNameForSource = (sourceId: LandingSourceId): string =>
-  isBulkSource(sourceId)
-    ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
-    : `${sourceId}_responses`;
+const isBronzeSource = (
+  sourceId: LandingSourceId
+): sourceId is BronzeCampaignSourceId => sourceId.endsWith("_bronze");
+
+const tableNameForSource = (sourceId: LandingSourceId): string => {
+  if (sourceId === "opendata_org_bronze") return "br_opendata_organizations";
+  if (isBulkSource(sourceId)) return `${sourceId.slice(0, -"_bulk".length)}_distributions`;
+  return `${sourceId}_responses`;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -234,7 +283,12 @@ function parsePointer(bytes: Uint8Array, sourceId: LandingSourceId): LandingSnap
   };
 }
 
-function parseFile(raw: unknown, tableName: string): LakehouseFile {
+function parseFile(
+  raw: unknown,
+  tableName: string,
+  layer: "01_landing" | "02_bronze" = "01_landing",
+  maxBytes: number = LANDING_FILE_MAX_BYTES
+): LakehouseFile {
   if (!isRecord(raw) || !hasExactFields(raw, new Set(["id", "name", "size", "sha256"]))) {
     throw new Error("Landing manifest has an invalid file.");
   }
@@ -243,8 +297,8 @@ function parseFile(raw: unknown, tableName: string): LakehouseFile {
     throw new Error("Landing snapshot files must be named Parquet files.");
   }
   const size = requiredInteger(raw.size, "file.size", false);
-  if (size > LANDING_FILE_MAX_BYTES) {
-    throw new Error(`Landing file '${name}' exceeds the 8 MiB publication limit.`);
+  if (size > maxBytes) {
+    throw new Error(`Landing file '${name}' exceeds the ${Math.round(maxBytes / (1024 * 1024))} MiB publication limit.`);
   }
   return {
     id: requiredDriveId(raw.id, "file.id"),
@@ -252,7 +306,7 @@ function parseFile(raw: unknown, tableName: string): LakehouseFile {
     size,
     sha256: requiredSha256(raw.sha256, "file.sha256"),
     tableName,
-    layer: "01_landing",
+    layer,
     mimeType: "application/vnd.apache.parquet",
   };
 }
@@ -263,27 +317,34 @@ function parseManifest(
 ): LandingSnapshotManifest {
   const raw = decodeJson(bytes, `${pointer.source_id} Landing manifest`);
   const bulk = isBulkSource(pointer.source_id);
-  const expectedFields = bulk ? BULK_MANIFEST_FIELDS : LANDING_MANIFEST_FIELDS;
+  const bronze = isBronzeSource(pointer.source_id);
+  const expectedFields = bronze
+    ? BRONZE_MANIFEST_FIELDS
+    : bulk
+      ? BULK_MANIFEST_FIELDS
+      : LANDING_MANIFEST_FIELDS;
   if (
     !isRecord(raw) ||
     !hasExactFields(raw, expectedFields) ||
     raw.format_version !== (bulk ? 2 : 1) ||
-    raw.kind !== (bulk ? "full_distribution_index" : "landing_snapshot") ||
+    raw.kind !==
+      (bronze ? "bronze_snapshot" : bulk ? "full_distribution_index" : "landing_snapshot") ||
     raw.source_id !== pointer.source_id ||
     raw.snapshot_id !== pointer.snapshot_id
   ) {
     throw new Error("Landing manifest does not match its source pointer.");
   }
-  if (raw.status !== "validated" || raw.layer !== "01_landing") {
-    throw new Error("Landing manifest is not a validated 01_landing snapshot.");
+  const expectedLayer = bronze ? "02_bronze" : "01_landing";
+  if (raw.status !== "validated" || raw.layer !== expectedLayer) {
+    throw new Error(`Landing manifest is not a validated ${expectedLayer} snapshot.`);
   }
   const expectedTableName = tableNameForSource(pointer.source_id);
   if (raw.table_name !== expectedTableName) {
     throw new Error("Landing manifest has an invalid table_name.");
   }
   if (
-    (!bulk && raw.coverage_status !== "incomplete") ||
-    (bulk &&
+    (!bulk && !bronze && raw.coverage_status !== "incomplete") ||
+    ((bulk || bronze) &&
       raw.coverage_status !== "incomplete" &&
       raw.coverage_status !== "complete_current_catalogue")
   ) {
@@ -294,7 +355,11 @@ function parseManifest(
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
     throw new Error("Landing snapshot does not have passing tests.");
   }
-  const expectedColumns = bulk ? BULK_INDEX_COLUMNS : LANDING_COLUMNS;
+  const expectedColumns = bronze
+    ? OPENDATA_ORGANIZATION_COLUMNS
+    : bulk
+      ? BULK_INDEX_COLUMNS
+      : LANDING_COLUMNS;
   if (!Array.isArray(raw.columns) || raw.columns.length !== expectedColumns.length) {
     throw new Error("Landing manifest has invalid published columns.");
   }
@@ -311,17 +376,26 @@ function parseManifest(
   if (!Array.isArray(raw.files) || raw.files.length === 0) {
     throw new Error("Landing manifest has no Parquet files.");
   }
-  const files = raw.files.map((file) => parseFile(file, expectedTableName));
+  const maxBytes = bronze ? BRONZE_FILE_MAX_BYTES : LANDING_FILE_MAX_BYTES;
+  const files = raw.files.map((file) => parseFile(file, expectedTableName, expectedLayer, maxBytes));
   if (new Set(files.map((file) => file.id)).size !== files.length) {
     throw new Error("Landing manifest reuses a file ID.");
   }
   const rowCount = requiredInteger(raw.row_count, "row_count", false);
-  const acceptedField = bulk ? "accepted_distribution_count" : "accepted_response_count";
-  const publishedField = bulk ? "published_distribution_count" : "published_response_count";
+  const acceptedField = bronze
+    ? "accepted_file_count"
+    : bulk
+      ? "accepted_distribution_count"
+      : "accepted_response_count";
+  const publishedField = bronze
+    ? "published_file_count"
+    : bulk
+      ? "published_distribution_count"
+      : "published_response_count";
   const accepted = requiredInteger(raw[acceptedField], acceptedField);
   const published = requiredInteger(raw[publishedField], publishedField);
   const pending = requiredInteger(raw.pending_publication_count, "pending_publication_count");
-  if (published !== rowCount || accepted !== published + pending) {
+  if (published !== (bronze ? files.length : rowCount) || accepted !== published + pending) {
     throw new Error("Landing manifest publication counts are inconsistent.");
   }
   const common = {
@@ -330,7 +404,6 @@ function parseManifest(
     created_at_utc: requiredTimestamp(raw.created_at_utc, "created_at_utc"),
     code_sha: codeSha,
     status: "validated" as const,
-    layer: "01_landing" as const,
     table_name: expectedTableName,
     row_count: rowCount,
     files,
@@ -342,12 +415,25 @@ function parseManifest(
     ),
     tests: { passed: true as const },
   };
+  if (bronze) {
+    return {
+      ...common,
+      format_version: 1,
+      kind: "bronze_snapshot",
+      source_id: pointer.source_id as BronzeCampaignSourceId,
+      layer: "02_bronze" as const,
+      coverage_status: raw.coverage_status as "incomplete" | "complete_current_catalogue",
+      accepted_file_count: accepted,
+      published_file_count: published,
+    };
+  }
   if (bulk) {
     return {
       ...common,
       format_version: 2,
       kind: "full_distribution_index",
       source_id: pointer.source_id as BulkLandingSourceId,
+      layer: "01_landing" as const,
       coverage_status: raw.coverage_status as "incomplete" | "complete_current_catalogue",
       accepted_distribution_count: accepted,
       published_distribution_count: published,
@@ -358,6 +444,7 @@ function parseManifest(
     format_version: 1,
     kind: "landing_snapshot",
     source_id: pointer.source_id as "world_bank_wdi" | "gus_bdl" | "eurostat",
+    layer: "01_landing" as const,
     coverage_status: "incomplete",
     accepted_response_count: accepted,
     published_response_count: published,

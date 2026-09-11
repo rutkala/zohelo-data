@@ -45,6 +45,29 @@ const bulkColumns = [
   ["request_json", "VARCHAR"],
   ["inspection_json", "VARCHAR"],
 ].map(([name, type]) => ({ name, type }));
+const opendataOrgColumns = [
+  "record_id",
+  "data_source",
+  "bq_dataset",
+  "name_org",
+  "name_type",
+  "record_type",
+  "addr_line1",
+  "addr_city",
+  "addr_state",
+  "addr_postal_code",
+  "addr_country",
+  "addr_type",
+  "geo_latitude",
+  "geo_longitude",
+  "placekey",
+  "bq_id",
+  "rel_anchor_domain",
+  "rel_anchor_key",
+].map((name) => ({
+  name,
+  type: name.startsWith("geo_") ? "DOUBLE" : "VARCHAR",
+}));
 
 async function sourceFixture(sourceId = "world_bank_wdi") {
   const snapshotId = "123e4567-e89b-42d3-a456-426614174000";
@@ -123,6 +146,48 @@ async function bulkFixture(sourceId = "eurostat_bulk") {
     source_id: sourceId,
     snapshot_id: snapshotId,
     manifest_file_id: "eurostat-bulk-manifest-id",
+    manifest_file_name: `manifest-${snapshotId}.json`,
+    manifest_sha256: await sha256Hex(manifestBytes),
+    manifest_size_bytes: manifestBytes.byteLength,
+  };
+  return { manifest, manifestBytes, pointer, pointerBytes: bytes(pointer) };
+}
+
+async function bronzeFixture(sourceId = "opendata_org_bronze") {
+  const snapshotId = "523e4567-e89b-42d3-a456-426614174000";
+  const manifest = {
+    format_version: 1,
+    kind: "bronze_snapshot",
+    source_id: sourceId,
+    snapshot_id: snapshotId,
+    created_at_utc: "2026-09-11T12:00:00Z",
+    code_sha: "c".repeat(40),
+    status: "validated",
+    layer: "02_bronze",
+    table_name: "br_opendata_organizations",
+    row_count: 867322,
+    coverage_status: "incomplete",
+    files: [
+      {
+        id: "opendata-bronze-file-0",
+        name: "br_opendata_organizations_bq_organization_000000000000.parquet",
+        size: 9672157,
+        sha256: "d".repeat(64),
+      },
+    ],
+    columns: opendataOrgColumns,
+    accepted_file_count: 1,
+    published_file_count: 1,
+    pending_publication_count: 0,
+    receipt_checkpoint_sha256: "e".repeat(64),
+    tests: { passed: true },
+  };
+  const manifestBytes = bytes(manifest);
+  const pointer = {
+    format_version: 1,
+    source_id: sourceId,
+    snapshot_id: snapshotId,
+    manifest_file_id: `${sourceId}-manifest-id`,
     manifest_file_name: `manifest-${snapshotId}.json`,
     manifest_sha256: await sha256Hex(manifestBytes),
     manifest_size_bytes: manifestBytes.byteLength,
@@ -322,5 +387,43 @@ describe("source-scoped Landing catalog", () => {
     const result = await resolveLandingCatalog("token", createDriveDownloadBudget());
     expect(result.snapshots).toEqual([]);
     expect(result.issues[0].message).toMatch(/pointer SHA-256/);
+  });
+
+  it("resolves a validated bronze campaign snapshot for opendata_org_bronze", async () => {
+    const fixture = await bronzeFixture();
+    vi.mocked(findFoldersByName).mockImplementation(async (name) => {
+      if (name === "zohelo-data") return [{ id: "root-id", name }];
+      if (name === "06_control") return [{ id: "control-id", name }];
+      if (name === "source_campaigns") return [{ id: "campaigns-id", name }];
+      if (name === "opendata_org_bronze") return [{ id: "bronze-id", name }];
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockResolvedValue([
+      {
+        id: "bronze-pointer-id",
+        name: "current-landing.json",
+        size: fixture.pointerBytes.byteLength,
+      },
+    ]);
+    vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+      id: fixture.pointer.manifest_file_id,
+      name: fixture.pointer.manifest_file_name,
+      size: fixture.manifestBytes.byteLength,
+    });
+    vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) =>
+      id === "bronze-pointer-id" ? fixture.pointerBytes : fixture.manifestBytes
+    );
+
+    const result = await resolveLandingCatalog("token", createDriveDownloadBudget());
+
+    expect(result.snapshots).toHaveLength(1);
+    expect(result.snapshots[0].manifest).toMatchObject({
+      source_id: "opendata_org_bronze",
+      layer: "02_bronze",
+      table_name: "br_opendata_organizations",
+      row_count: 867322,
+    });
+    expect(result.snapshots[0].manifest.files[0].layer).toBe("02_bronze");
+    expect(result.issues).toEqual([]);
   });
 });

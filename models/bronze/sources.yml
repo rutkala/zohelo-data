@@ -27,3 +27,15 @@ sources:
         meta:
           formatter: template
           external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/nbp_gold_prices/*.parquet', union_by_name = true, filename = true)"
+
+  - name: bronze_opendata
+    schema: 02_bronze
+    description: "OpenData.org global entity directory Parquet tables in the 02_bronze storage layer."
+    config:
+      enabled: "{{ var('enable_opendata', false) }}"
+    tables:
+      - name: organizations
+        description: "Bronze OpenData organizations streamed directly from Senzing JSONL bulk archives."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/opendata_org/organizations/*.parquet', union_by_name = true, filename = true)"

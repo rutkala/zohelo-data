@@ -13,6 +13,7 @@ import {
   resolveLandingCatalog,
   resolveReleaseCatalog,
   GoogleDriveAuthError,
+  type LandingSnapshotResolution,
 } from "@/services/googleDrive";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -546,6 +547,68 @@ describe("immutable release selection", () => {
     expect(goldLayer?.children.map((t) => t.name)).toContain("dim_bdl_variable");
     expect(store.getState().lakehouseStatusMessage).toContain("nbp_silver");
     expect(store.getState().lakehouseStatusMessage).toContain("bdl_platform");
+  });
+
+  it("populates lakehouseCatalog with bronze campaign tables in 02_bronze", async () => {
+    const store = makeStore();
+    store.setState({
+      googleAuth: { token: "token", isAuthenticated: true, authSource: "manual", error: null },
+    });
+
+    const bronzeCampaignSnapshot = {
+      pointer: {
+        format_version: 1,
+        source_id: "opendata_org_bronze",
+        snapshot_id: "snap-bronze",
+        manifest_file_id: "man-bronze-id",
+        manifest_file_name: "manifest-snap-bronze.json",
+        manifest_sha256: "sha-bronze",
+        manifest_size_bytes: 1234,
+      },
+      manifest: {
+        format_version: 1,
+        kind: "bronze_snapshot",
+        source_id: "opendata_org_bronze",
+        snapshot_id: "snap-bronze",
+        created_at_utc: "2026-09-11T12:00:00Z",
+        code_sha: "c".repeat(40),
+        status: "validated",
+        layer: "02_bronze",
+        table_name: "br_opendata_organizations",
+        row_count: 867322,
+        coverage_status: "incomplete",
+        files: [
+          {
+            id: "opendata-file-0",
+            name: "br_opendata_organizations_bq_organization_000000000000.parquet",
+            size: 9672157,
+            sha256: "d".repeat(64),
+            tableName: "br_opendata_organizations",
+            layer: "02_bronze",
+          },
+        ],
+        columns: [{ name: "record_id", type: "VARCHAR" }],
+        accepted_file_count: 1,
+        published_file_count: 1,
+        pending_publication_count: 0,
+        receipt_checkpoint_sha256: "e".repeat(64),
+        tests: { passed: true },
+      },
+      fingerprint: "snap-bronze-fingerprint",
+    };
+
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce({
+      snapshots: [bronzeCampaignSnapshot as unknown as LandingSnapshotResolution],
+      issues: [],
+      fingerprint: "bronze-fingerprint",
+    });
+
+    await store.getState().refreshLakehouseCatalog();
+
+    const catalog = store.getState().lakehouseCatalog;
+    const bronzeLayer = catalog.find((l) => l.name === "02_bronze");
+    expect(bronzeLayer?.children.map((t) => t.name)).toContain("br_opendata_organizations");
   });
 });
 

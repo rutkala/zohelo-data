@@ -155,26 +155,31 @@ function mergeLandingIntoTree(
   tree: LakehouseLayer[],
   landing: LandingCatalogResolution
 ): LakehouseLayer[] {
-  const landingTables = landingDatasets(landing).map((dataset) => ({
-    type: "table" as const,
-    name: dataset.table_name,
-    id: null,
-    layer: dataset.layer,
-    expanded: false,
-    loaded: true,
-    children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
-  }));
-  return tree.map((layer) =>
-    layer.name === "01_landing"
-      ? {
-          ...layer,
-          id: null,
-          expanded: landingTables.length > 0 || layer.expanded,
-          loaded: true,
-          children: landingTables,
-        }
-      : layer
-  );
+  const datasets = landingDatasets(landing);
+  return tree.map((layer) => {
+    const matching = datasets
+      .filter((d) => d.layer === layer.name)
+      .map((dataset) => ({
+        type: "table" as const,
+        name: dataset.table_name,
+        id: null,
+        layer: dataset.layer,
+        expanded: false,
+        loaded: true,
+        children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
+      }));
+    if (matching.length === 0) return layer;
+    return {
+      ...layer,
+      id: null,
+      expanded: matching.length > 0 || layer.expanded,
+      loaded: true,
+      children: [
+        ...layer.children.filter((c) => !matching.some((m) => m.name === c.name)),
+        ...matching,
+      ],
+    };
+  });
 }
 
 export const createGoogleDriveSlice: StateCreator<
@@ -681,15 +686,22 @@ export const createGoogleDriveSlice: StateCreator<
                 ({ manifest }) => manifest.source_id === sourceId
               );
               if (selected?.fingerprint === loadedFingerprint) continue;
+              const targetLayer =
+                selected?.manifest.layer ??
+                (sourceId === "opendata_org_bronze" ? "02_bronze" : "01_landing");
               const tableName =
                 selected?.manifest.table_name ??
-                (sourceId.endsWith("_bulk")
-                  ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
-                  : `${sourceId}_responses`);
-              await local.connection.query(`DROP VIEW IF EXISTS "01_landing"."${tableName}";`);
+                (sourceId === "opendata_org_bronze"
+                  ? "br_opendata_organizations"
+                  : sourceId.endsWith("_bulk")
+                    ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
+                    : `${sourceId}_responses`);
+              await local.connection.query(
+                `DROP VIEW IF EXISTS "${targetLayer}"."${tableName}";`
+              );
               loadedLanding.delete(sourceId);
               if (
-                get().activeLakehouseLayer === "01_landing" &&
+                get().activeLakehouseLayer === targetLayer &&
                 get().activeLakehouseDataset === tableName
               ) {
                 set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
