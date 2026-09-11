@@ -1,4 +1,4 @@
-"""Human-operable entrypoint for bounded source ingestion campaigns."""
+"""Human-operable entrypoint for bounded source ingestion campaigns, supporting registered BDL keys."""
 import argparse
 from datetime import datetime
 import importlib
