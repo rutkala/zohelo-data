@@ -410,66 +410,83 @@ class OpenDataBronzeRunner:
         files_processed = 0
         batch_summary: list[dict[str, Any]] = []
 
+        # Collect pending members per category
+        category_queues: dict[str, list[str]] = {}
         for cat in target_categories:
             cat_cfg = CATEGORIES[cat]
             prefix = cat_cfg["prefix"]
-            cat_members = [m for m in all_members if m.startswith(prefix) and m.endswith(".json") and m not in processed_set]
+            cat_members = [
+                m for m in all_members
+                if m.startswith(prefix) and m.endswith(".json") and m not in processed_set
+            ]
             cat_members.sort()
-
+            category_queues[cat] = cat_members
             logger.info("Category '%s': %d pending members found", cat, len(cat_members))
 
-            for member_name in cat_members:
-                if files_processed >= max_files:
-                    break
+        # Interleave across categories so all active tables make progress in every batch
+        interleaved_members: list[tuple[str, str]] = []
+        queue_indices = {cat: 0 for cat in target_categories}
+        while len(interleaved_members) < max_files:
+            added_any = False
+            for cat in target_categories:
+                idx = queue_indices[cat]
+                q = category_queues[cat]
+                if idx < len(q):
+                    interleaved_members.append((cat, q[idx]))
+                    queue_indices[cat] = idx + 1
+                    added_any = True
+                    if len(interleaved_members) >= max_files:
+                        break
+            if not added_any:
+                break
 
-                t0 = time.time()
-                base_name = Path(member_name).stem
-                out_parquet_name = f"br_opendata_{cat}_{base_name}.parquet"
+        for cat, member_name in interleaved_members:
+            cat_cfg = CATEGORIES[cat]
+            t0 = time.time()
+            base_name = Path(member_name).stem
+            out_parquet_name = f"br_opendata_{cat}_{base_name}.parquet"
 
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    temp_parquet = Path(temp_dir) / out_parquet_name
-                    with zf.open(member_name) as member_stream:
-                        rows = process_member_stream(member_stream, cat_cfg["columns"], temp_parquet)
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_parquet = Path(temp_dir) / out_parquet_name
+                with zf.open(member_name) as member_stream:
+                    rows = process_member_stream(member_stream, cat_cfg["columns"], temp_parquet)
 
-                    if dry_run:
-                        drive_id = "dry-run-staged"
-                        file_bytes = temp_parquet.stat().st_size
-                    else:
-                        drive_id, file_bytes = self._upload_parquet(cat, out_parquet_name, temp_parquet)
+                if dry_run:
+                    drive_id = "dry-run-staged"
+                    file_bytes = temp_parquet.stat().st_size
+                else:
+                    drive_id, file_bytes = self._upload_parquet(cat, out_parquet_name, temp_parquet)
 
-                t1 = time.time()
-                files_processed += 1
-                if not dry_run:
-                    processed_set.add(member_name)
+            t1 = time.time()
+            files_processed += 1
+            if not dry_run:
+                processed_set.add(member_name)
 
-                record_info = {
-                    "member": member_name,
-                    "category": cat,
-                    "parquet_name": out_parquet_name,
-                    "drive_id": drive_id,
-                    "rows": rows,
-                    "bytes": file_bytes,
-                    "elapsed_seconds": round(t1 - t0, 2),
-                    "dry_run": dry_run,
-                }
-                batch_summary.append(record_info)
-                if not dry_run:
-                    checkpoint["processed_members"].append(member_name)
-                    checkpoint["bronze_tables"][cat].append(record_info)
-                    checkpoint["total_rows"] = checkpoint.get("total_rows", 0) + rows
+            record_info = {
+                "member": member_name,
+                "category": cat,
+                "parquet_name": out_parquet_name,
+                "drive_id": drive_id,
+                "rows": rows,
+                "bytes": file_bytes,
+                "elapsed_seconds": round(t1 - t0, 2),
+                "dry_run": dry_run,
+            }
+            batch_summary.append(record_info)
+            if not dry_run:
+                checkpoint["processed_members"].append(member_name)
+                checkpoint["bronze_tables"][cat].append(record_info)
+                checkpoint["total_rows"] = checkpoint.get("total_rows", 0) + rows
 
-                logger.info(
-                    "Processed %s -> %s (%d rows, %d bytes in %.2fs, dry_run=%s)",
-                    member_name,
-                    out_parquet_name,
-                    rows,
-                    file_bytes,
-                    t1 - t0,
-                    dry_run,
-                )
-
-                if files_processed >= max_files:
-                    break
+            logger.info(
+                "Processed %s -> %s (%d rows, %d bytes in %.2fs, dry_run=%s)",
+                member_name,
+                out_parquet_name,
+                rows,
+                file_bytes,
+                t1 - t0,
+                dry_run,
+            )
 
         if files_processed > 0 and self.allow_production_write and not dry_run:
             self._save_checkpoint(checkpoint)
