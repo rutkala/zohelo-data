@@ -521,6 +521,74 @@ class GusBdlSourceTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     gus_bdl.request_for(broken)
 
+    def test_mathematical_numerical_sorting_and_leaf_variable_discovery(self):
+        # 1. Verify _parse_id_number helper extracts integer correctly
+        self.assertEqual(gus_bdl._parse_id_number("K1"), 1)
+        self.assertEqual(gus_bdl._parse_id_number("K15"), 15)
+        self.assertEqual(gus_bdl._parse_id_number("G172"), 172)
+        self.assertEqual(gus_bdl._parse_id_number("P1411"), 1411)
+        self.assertEqual(gus_bdl._parse_id_number(72305), 72305)
+
+        # 2. Verify subjects are sorted mathematically, NOT alphabetically (K2 before K15)
+        root_task = task_of(gus_bdl.initial_tasks(TODAY), "subjects", lang="pl")
+        unordered_subjects_payload = {
+            "totalRecords": 4,
+            "page": 0,
+            "pageSize": 20,
+            "results": [
+                {"id": "K15", "name": "CENY", "hasVariables": False, "children": ["G186"], "levels": [3]},
+                {"id": "K2", "name": "SAMORZĄD", "hasVariables": False, "children": ["G10"], "levels": [3]},
+                {"id": "K1", "name": "PODZIAŁ", "hasVariables": False, "children": ["G172"], "levels": [3]},
+                {"id": "K54", "name": "LEŚNICTWO", "hasVariables": False, "children": ["G600"], "levels": [3]},
+            ],
+        }
+        res = gus_bdl.interpret(root_task, json.dumps(unordered_subjects_payload).encode(), TODAY)
+        child_subject_tasks = [t for t in res["next_tasks"] if t["kind"] == "subjects" and t["cursor"]["lang"] == "pl"]
+        emitted_parent_ids = [t["cursor"]["parent_id"] for t in child_subject_tasks]
+        self.assertEqual(emitted_parent_ids, ["K1", "K2", "K15", "K54"])
+
+        # 3. Verify leaf category (hasVariables: True) emits variables discovery task
+        group_task = {
+            "id": "discovery:subjects:pl:G172:p000000",
+            "lane": "discovery",
+            "kind": "subjects",
+            "cursor": {"lang": "pl", "parent_id": "G172", "page": 0, "page_size": 20},
+        }
+        leaf_categories_payload = {
+            "totalRecords": 2,
+            "page": 0,
+            "pageSize": 20,
+            "results": [
+                {"id": "P3912", "parentId": "G172", "name": "Gminy wg grup", "hasVariables": True, "children": [], "levels": [3]},
+                {"id": "P1411", "parentId": "G172", "name": "Sołectwa", "hasVariables": True, "children": [], "levels": [6]},
+            ],
+        }
+        res_group = gus_bdl.interpret(group_task, json.dumps(leaf_categories_payload).encode(), TODAY)
+        var_tasks = [t for t in res_group["next_tasks"] if t["kind"] == "variables" and t["cursor"]["lang"] == "pl"]
+        self.assertEqual([t["cursor"]["subject_id"] for t in var_tasks], ["P1411", "P3912"])
+
+        # 4. Verify request_for formats subject-id correctly for variables
+        req = gus_bdl.request_for(var_tasks[0])
+        self.assertEqual(req["url"], "https://bdl.stat.gov.pl/api/v1/variables")
+        self.assertEqual(req["params"]["subject-id"], "P1411")
+
+        # 5. Verify variables under a leaf category are sorted numerically
+        leaf_var_task = var_tasks[0]
+        variables_payload = {
+            "totalRecords": 3,
+            "page": 0,
+            "pageSize": 100,
+            "results": [
+                {"id": 3635, "subjectId": "P1411", "n1": "var 3635", "level": 6, "measureUnitId": 1},
+                {"id": 3, "subjectId": "P1411", "n1": "var 3", "level": 6, "measureUnitId": 1},
+                {"id": 458769, "subjectId": "P1411", "n1": "var 458769", "level": 6, "measureUnitId": 1},
+            ],
+        }
+        res_vars = gus_bdl.interpret(leaf_var_task, json.dumps(variables_payload).encode(), TODAY)
+        history_tasks = [t for t in res_vars["next_tasks"] if t["kind"] == "data_by_variable" and t["lane"] == "history"]
+        self.assertEqual([t["cursor"]["variable_id"] for t in history_tasks], [3, 3635, 458769])
+
 
 if __name__ == "__main__":
     unittest.main()
+

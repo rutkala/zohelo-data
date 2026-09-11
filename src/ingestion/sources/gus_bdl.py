@@ -48,13 +48,21 @@ _LOCALITY_DISPOSITION_EVIDENCE = (
 _LOCALITY_CONTRACT_REVISION = "gus-bdl-parent-scoped-localities-2026-09-08"
 
 
+def _parse_id_number(val: Any) -> int:
+    """Extract integer component from an identifier for mathematical numerical sorting."""
+    if isinstance(val, int):
+        return val
+    match = re.search(r"\d+", str(val))
+    return int(match.group()) if match else 0
+
+
 def _task_id(lane: str, kind: str, cursor: dict[str, Any]) -> str:
     if kind == "dictionary":
         return f"{lane}:dictionary:{cursor['resource']}:{cursor['lang']}"
     if kind == "years":
         return f"{lane}:years"
     if kind in {"subjects", "units", "localities", "variables"}:
-        parent = cursor.get("parent_id", "root")
+        parent = cursor.get("parent_id") or cursor.get("subject_id", "root")
         return f"{lane}:{kind}:{cursor['lang']}:{parent}:p{cursor['page']:06d}"
     if kind in _DETAIL_KINDS:
         return f"{lane}:{kind}:{cursor['lang']}:{cursor['entity_id']}"
@@ -246,8 +254,10 @@ def request_for(task: dict[str, Any]) -> dict[str, Any]:
                 "sort": "Id",
             }
         )
-        if "parent_id" in cursor:
+        if "parent_id" in cursor and cursor["parent_id"] != "root":
             params["parent-id"] = cursor["parent_id"]
+        if "subject_id" in cursor:
+            params["subject-id"] = cursor["subject_id"]
     elif kind == "localities":
         path = "/units/localities"
         params.update(
@@ -402,7 +412,8 @@ def _interpret_page(
     # data campaigns. English pages still paginate and retain source labels.
     if cursor["lang"] == "pl":
         if kind == "subjects":
-            for item in results:
+            sorted_subjects = sorted(results, key=lambda it: _parse_id_number(it.get("id", "")))
+            for item in sorted_subjects:
                 entity_id = item["id"]
                 for lang in _LANGUAGES:
                     next_tasks.append(
@@ -432,6 +443,20 @@ def _interpret_page(
                                     },
                                 )
                             )
+                if item.get("hasVariables") is True:
+                    for lang in _LANGUAGES:
+                        next_tasks.append(
+                            _task(
+                                "discovery",
+                                "variables",
+                                {
+                                    "lang": lang,
+                                    "subject_id": entity_id,
+                                    "page": 0,
+                                    "page_size": 100,
+                                },
+                            )
+                        )
         elif kind in {"units", "localities"}:
             detail_kind = "unit_detail" if kind == "units" else "locality_detail"
             for item in results:
@@ -459,7 +484,8 @@ def _interpret_page(
                             )
                         )
         elif kind == "variables":
-            for item in results:
+            sorted_vars = sorted(results, key=lambda it: _parse_id_number(it.get("id", 0)))
+            for item in sorted_vars:
                 variable_id = item["id"]
                 next_tasks.append(
                     _task(
@@ -754,8 +780,14 @@ def _validate_task(task: dict[str, Any]) -> None:
         ):
             raise ValueError("GUS BDL localities task shape is invalid")
     elif kind == "variables":
-        if cursor_fields != {"lang", "page", "page_size"} or task["lane"] != "discovery":
+        if cursor_fields not in (
+            {"lang", "page", "page_size"},
+            {"lang", "page", "page_size", "subject_id"},
+        ) or task["lane"] != "discovery":
             raise ValueError(f"GUS BDL {kind} task shape is invalid")
+        subject_id = task["cursor"].get("subject_id")
+        if subject_id is not None and not _matches(_SUBJECT_ID_RE, subject_id):
+            raise ValueError(f"GUS BDL {kind} subject id is invalid")
     elif kind in _DETAIL_KINDS:
         if cursor_fields != {"lang", "entity_id"} or task["lane"] != "discovery":
             raise ValueError(f"GUS BDL {kind} task shape is invalid")

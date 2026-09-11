@@ -46,6 +46,7 @@ sources:
     min_request_interval_seconds: 1
     max_requests: 12
     registered_max_requests: 60
+    discovery_pause_threshold: 40
     quota_windows:
       - {seconds: 900, requests: 80}
       - {seconds: 43200, requests: 800}
