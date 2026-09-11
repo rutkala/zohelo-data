@@ -248,7 +248,7 @@ def process_member_stream(
             sql = f"""
             COPY (
                 with raw as (
-                    select line from read_csv('{temp_jsonl_path}', columns={{'line': 'VARCHAR'}}, delim='\\x1e', quote='', escape='', header=false, auto_detect=false)
+                    select line from read_csv('{temp_jsonl_path}', columns={{'line': 'VARCHAR'}}, delim='\\x1e', quote='', escape='', header=false, auto_detect=false, max_line_size=67108864)
                 )
                 select 
                     {select_cols}
