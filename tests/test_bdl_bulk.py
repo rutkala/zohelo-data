@@ -96,6 +96,22 @@ class BdlBulkPlanTests(unittest.TestCase):
         self.assertEqual("K1", subjects[0]["subject_id"])
         store.read.assert_called_once_with("subjects-file")
 
+    def test_complete_requires_both_subject_catalogue_roots_and_no_pending_pages(self):
+        base = {
+            "pending": [{"id": "child", "lane": "discovery", "kind": "subjects", "cursor": {}}],
+            "completed": {
+                "discovery:subjects:pl:root:p000000": "now",
+                "discovery:subjects:en:root:p000000": "now",
+            },
+        }
+
+        pending = bdl_bulk_plan._subject_discovery_status(base)
+        exhausted = bdl_bulk_plan._subject_discovery_status({**base, "pending": []})
+
+        self.assertFalse(pending["exhausted"])
+        self.assertEqual(1, pending["pending_tasks"])
+        self.assertTrue(exhausted["exhausted"])
+
     def test_partial_snapshot_folder_is_not_a_completion_signal(self):
         storage = Mock()
         storage.FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
@@ -220,6 +236,13 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         )
         self.assertIn("createReadStream(target)", worker)
         self.assertNotIn("fs.readFile(target)", worker)
+        self.assertIn("findNewReadyExport(page, baselineIds)", worker)
+        self.assertNotIn("downloaded_existing_export", worker)
+        self.assertIn("filename does not identify the selected subgroup", worker)
+        workflow = (ROOT / ".github" / "workflows" / "source-gus-bdl.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("downloaded_existing_export", workflow)
 
 
 if __name__ == "__main__":

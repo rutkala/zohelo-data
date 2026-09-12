@@ -84,7 +84,11 @@ same serialized workflow, selects work from the checksum-pinned `dim_bdl_subject
 release instead of restarting a live API traversal, records a final completion marker only after
 archive/Parquet/manifest verification, streams ZIP hashing, and
 uploads summaries only. Invalid, cyclic or incomplete subgroup ancestry is reported as a completion
-blocker rather than silently omitted. These controls are covered by focused regression tests;
+blocker rather than silently omitted. A `complete` plan additionally requires both root subject
+catalogues and every admitted child subject page to be exhausted. Browser downloads are accepted
+only from a new export control created after the current subgroup's successful generation request;
+pre-existing exports are never rebound to the selected subgroup, and the provider filename must
+carry that subgroup's numeric identity. These controls are covered by focused regression tests;
 production coverage changes remain unclaimed until the reviewed code is merged and a fresh
 main-branch run publishes evidence.
 

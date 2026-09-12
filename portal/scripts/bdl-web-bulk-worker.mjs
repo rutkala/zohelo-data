@@ -24,10 +24,10 @@ async function infoCount(page) {
   const match = body.match(/Wybrano\s+([0-9\s]+)\s+informacji/i);
   return match ? Number(match[1].replace(/\s/g, '')) : null;
 }
-async function findReadyExport(page) {
+async function listExports(page) {
   await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(900);
-  const entries = await page.locator('[id$="_Export"]').evaluateAll((els, expected) => els.map((e) => ({
+  return page.locator('[id$="_Export"]').evaluateAll((els, expected) => els.map((e) => ({
     id: e.id,
     text: (e.textContent || '').trim().replace(/\s+/g, ' '),
     href: e.getAttribute('href'),
@@ -36,7 +36,16 @@ async function findReadyExport(page) {
     disabled: 'disabled' in e ? !!e.disabled : false,
     rowText: (e.closest('tr')?.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 2000),
   })).filter((x) => !expected || x.text.includes(expected) || x.rowText.includes(expected)), subgroupName);
-  return entries.find((x) => !/aspNetDisabled/i.test(x.cls) && !x.disabled && (x.href || x.onclick)) || null;
+}
+async function findNewReadyExport(page, baselineIds) {
+  const entries = (await listExports(page)).filter((entry) => (
+    !baselineIds.has(entry.id) &&
+    !/aspNetDisabled/i.test(entry.cls) &&
+    !entry.disabled &&
+    (entry.href || entry.onclick)
+  ));
+  if (entries.length > 1) throw new Error('Generated BDL package matched multiple new Export controls');
+  return entries[0] || null;
 }
 async function captureExport(page, entry) {
   const control = page.locator(`#${entry.id}`);
@@ -45,7 +54,13 @@ async function captureExport(page, entry) {
   await control.evaluate((el) => el.click());
   const download = await downloadPromise;
   if (!download) throw new Error('BDL Export action did not produce a browser download');
-  const suggested = download.suggestedFilename() || `${subgroupId}.zip`;
+  const suggested = download.suggestedFilename();
+  if (!suggested) throw new Error('BDL export did not provide a source filename');
+  const subgroupNumber = subgroupId.slice(1);
+  const escapedNumber = subgroupNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(suggested)) {
+    throw new Error('BDL export filename does not identify the selected subgroup');
+  }
   const filename = suggested.replace(/[^A-Za-z0-9._-]/g, '_');
   const target = path.join(outDir, `download-${filename}`);
   await download.saveAs(target);
@@ -81,57 +96,57 @@ try {
   result.login = !/Użytkownik:\s*Gość/i.test(loginText) && /Użytkownik:/i.test(loginText);
   if (!result.login) throw new Error('BDL web login failed');
 
-  let ready = await findReadyExport(page);
-  if (ready) {
-    result.archive = await captureExport(page, ready);
-    result.status = 'downloaded_existing_export';
-  } else {
-    await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // An export left by an earlier run is not evidence for this subgroup.  Pin
+  // every pre-existing control before requesting a new package and accept only
+  // a new control created after the successful POST below.
+  const baselineIds = new Set((await listExports(page)).map((entry) => entry.id));
+  result.baselineExportControls = baselineIds.size;
+  await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(1200);
+  const clicked = new Set();
+  for (let round = 0; round < 20; round++) {
+    const candidates = await page.locator('[id$="_SelectAll"]').evaluateAll((els) => els.map((e) => ({ id: e.id, visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length), disabled: 'disabled' in e ? !!e.disabled : false })));
+    const next = candidates.filter((item) => item.visible && !item.disabled && !clicked.has(item.id)).sort((a,b) => a.id.localeCompare(b.id))[0];
+    if (!next) break;
+    await page.locator(`#${next.id}`).click();
+    clicked.add(next.id);
     await page.waitForTimeout(1200);
-    const clicked = new Set();
-    for (let round = 0; round < 20; round++) {
-      const candidates = await page.locator('[id$="_SelectAll"]').evaluateAll((els) => els.map((e) => ({ id: e.id, visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length), disabled: 'disabled' in e ? !!e.disabled : false })));
-      const next = candidates.filter((item) => item.visible && !item.disabled && !clicked.has(item.id)).sort((a,b) => a.id.localeCompare(b.id))[0];
-      if (!next) break;
-      await page.locator(`#${next.id}`).click();
-      clicked.add(next.id);
-      await page.waitForTimeout(1200);
-      result.dimensions.push({ id: next.id, selectedInformation: await infoCount(page) });
+    result.dimensions.push({ id: next.id, selectedInformation: await infoCount(page) });
+  }
+  result.selectedInformation = await infoCount(page);
+  if (!Number.isFinite(result.selectedInformation) || result.selectedInformation <= 0) {
+    result.status = 'web_bulk_unsupported';
+    result.detail = 'No positive information selection was produced';
+  } else if (result.selectedInformation <= 3500) {
+    result.status = 'below_bulk_threshold';
+  } else {
+    let downloadButton = null;
+    for (const id of ['ctl00_ContentPlaceHolder_download1', 'ctl00_ContentPlaceHolder_download2']) {
+      const control = page.locator(`#${id}`);
+      if (await control.isVisible().catch(() => false) && await control.isEnabled().catch(() => false)) { downloadButton = control; result.downloadButtonId = id; break; }
     }
-    result.selectedInformation = await infoCount(page);
-    if (!Number.isFinite(result.selectedInformation) || result.selectedInformation <= 0) {
-      result.status = 'web_bulk_unsupported';
-      result.detail = 'No positive information selection was produced';
-    } else if (result.selectedInformation <= 3500) {
-      result.status = 'below_bulk_threshold';
+    if (!downloadButton) {
+      result.status = 'no_bulk_control';
+      result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
     } else {
-      let downloadButton = null;
-      for (const id of ['ctl00_ContentPlaceHolder_download1', 'ctl00_ContentPlaceHolder_download2']) {
-        const control = page.locator(`#${id}`);
-        if (await control.isVisible().catch(() => false) && await control.isEnabled().catch(() => false)) { downloadButton = control; result.downloadButtonId = id; break; }
+      const currentPath = new URL(page.url()).pathname;
+      const started = Date.now();
+      const responsePromise = page.waitForResponse((response) => {
+        try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
+      }, { timeout: 360000 });
+      await downloadButton.click();
+      const response = await responsePromise;
+      result.generation = { status: response.status(), ok: response.ok(), elapsedMs: Date.now() - started };
+      if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
+      let ready = null;
+      for (let attempt = 1; attempt <= 36; attempt++) {
+        ready = await findNewReadyExport(page, baselineIds);
+        if (ready) { result.exportReadyPoll = attempt; break; }
+        if (attempt < 36) await page.waitForTimeout(5000);
       }
-      if (!downloadButton) {
-        result.status = 'no_bulk_control';
-        result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
-      } else {
-        const currentPath = new URL(page.url()).pathname;
-        const started = Date.now();
-        const responsePromise = page.waitForResponse((response) => {
-          try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
-        }, { timeout: 360000 });
-        await downloadButton.click();
-        const response = await responsePromise;
-        result.generation = { status: response.status(), ok: response.ok(), elapsedMs: Date.now() - started };
-        if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
-        for (let attempt = 1; attempt <= 36; attempt++) {
-          ready = await findReadyExport(page);
-          if (ready) { result.exportReadyPoll = attempt; break; }
-          if (attempt < 36) await page.waitForTimeout(5000);
-        }
-        if (!ready) throw new Error('BDL package generated but no ready Export control appeared');
-        result.archive = await captureExport(page, ready);
-        result.status = 'downloaded_generated_export';
-      }
+      if (!ready) throw new Error('BDL package generated but no new bound Export control appeared');
+      result.archive = await captureExport(page, ready);
+      result.status = 'downloaded_generated_export';
     }
   }
   result.completedAt = new Date().toISOString();

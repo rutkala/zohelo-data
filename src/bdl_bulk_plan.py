@@ -15,6 +15,8 @@ import duckdb
 from googleapiclient.http import MediaInMemoryUpload
 
 from drive_release_store import DriveReleaseStore
+from ingestion.source_campaign import validate_state
+from ingestion.source_campaign_store import DriveCampaignStore
 from release_protocol import ReleaseProtocolError, read_current_release_manifest
 from storage_manager import StorageManager
 
@@ -212,17 +214,48 @@ def _catalogue_candidates(subjects: list[dict[str, Any]]) -> tuple[list[dict[str
     return candidates, sorted(invalid, key=lambda value: (_number(value), value))
 
 
+def _subject_discovery_status(state: dict[str, Any]) -> dict[str, Any]:
+    pending_subjects = [
+        task for task in state["pending"]
+        if task.get("lane") == "discovery" and task.get("kind") == "subjects"
+    ]
+    required_roots = {
+        "discovery:subjects:pl:root:p000000",
+        "discovery:subjects:en:root:p000000",
+    }
+    completed_roots = required_roots & set(state["completed"])
+    return {
+        "exhausted": not pending_subjects and completed_roots == required_roots,
+        "pending_tasks": len(pending_subjects),
+        "completed_roots": len(completed_roots),
+        "required_roots": len(required_roots),
+    }
+
+
 def plan() -> dict[str, Any]:
     _require_production_context()
     storage = StorageManager(allow_interactive_auth=False)
     root_id = storage.resolve_root(create=False)
     bulk_id, control_id = _bulk_roots(storage)
     landed, processed = _durable_status(storage, bulk_id, control_id)
+    campaign_state = DriveCampaignStore(storage, "gus_bdl").load()
+    if campaign_state is None:
+        raise RuntimeError("No durable BDL campaign state is available")
+    validate_state(campaign_state, "gus_bdl")
+    discovery = _subject_discovery_status(campaign_state)
     release_id, subjects = _subject_catalogue(storage, root_id)
     candidates, invalid = _catalogue_candidates(subjects)
     remaining = [item for item in candidates if item["subgroup_id"] not in processed]
     candidate = remaining[0] if remaining else None
-    status = "candidate" if candidate else ("catalogue_invalid" if invalid else "complete")
+    status = (
+        "candidate"
+        if candidate
+        else "catalogue_incomplete"
+        if not discovery["exhausted"]
+        else "catalogue_invalid"
+        if invalid
+        else "complete"
+    )
     return {
         "status": status,
         "catalogue_release_id": release_id,
@@ -230,6 +263,10 @@ def plan() -> dict[str, Any]:
         "catalogue_subgroups": len(candidates) + len(invalid),
         "catalogue_valid_subgroups": len(candidates),
         "catalogue_invalid_subgroups": len(invalid),
+        "subject_catalogue_exhausted": discovery["exhausted"],
+        "pending_subject_catalogue_tasks": discovery["pending_tasks"],
+        "completed_subject_catalogue_roots": discovery["completed_roots"],
+        "required_subject_catalogue_roots": discovery["required_roots"],
         "invalid_subgroup_examples": invalid[:20],
         "landed_subgroups": len(landed),
         "web_checked_nonbulk_subgroups": len(processed - landed),

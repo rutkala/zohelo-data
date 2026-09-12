@@ -236,7 +236,7 @@ jobs:
           PY
           )"
           case "$status" in
-            downloaded_existing_export|downloaded_generated_export)
+            downloaded_generated_export)
               archive="$(find test-results/bdl-web-bulk -maxdepth 1 -type f -name 'download-*.zip' -print -quit)"
               test -n "$archive"
               python ../src/bdl_bulk_ingest.py \
