@@ -73,7 +73,9 @@ function validateProviderFilename(suggested, generationStartedAt) {
   );
   const providerStartedAt = providerClockValue(generationStartedAt, 'Europe/Warsaw');
   const providerFinishedAt = providerClockValue(new Date(), 'Europe/Warsaw');
-  const fresh = emitted >= providerStartedAt && emitted <= providerFinishedAt;
+  // Provider filenames have whole-second precision.  The start second is
+  // ambiguous with an older pending export, so fail closed until the next one.
+  const fresh = emitted > providerStartedAt && emitted <= providerFinishedAt;
   if (!fresh) throw new Error('BDL export filename predates the current generation request');
   return timestamp;
 }

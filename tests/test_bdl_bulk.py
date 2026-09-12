@@ -266,7 +266,8 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         self.assertNotIn("downloaded_existing_export", worker)
         self.assertIn("filename does not identify the selected subgroup", worker)
         self.assertIn("filename predates the current generation request", worker)
-        self.assertIn("emitted >= providerStartedAt", worker)
+        self.assertIn("emitted > providerStartedAt", worker)
+        self.assertNotIn("emitted >= providerStartedAt", worker)
         self.assertNotIn("start - 300000", worker)
         self.assertNotIn("const starts = [", worker)
         workflow = (ROOT / ".github" / "workflows" / "source-gus-bdl.yml").read_text(
