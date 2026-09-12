@@ -158,13 +158,19 @@ try {
       result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
     } else {
       const currentPath = new URL(page.url()).pathname;
-      const generationStartedAt = new Date();
+      const requestPromise = page.waitForRequest((request) => {
+        try { const u = new URL(request.url()); return request.method() === 'POST' && u.pathname === currentPath; } catch { return false; }
+      }, { timeout: 360000 });
       const responsePromise = page.waitForResponse((response) => {
         try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
       }, { timeout: 360000 });
       await downloadButton.click();
+      await requestPromise;
+      // Observe the matching request after it is emitted.  Its whole provider
+      // clock second remains ambiguous and is rejected by the filename gate.
+      const generationRequestObservedAt = new Date();
       const response = await responsePromise;
-      result.generation = { startedAt: generationStartedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationStartedAt.getTime() };
+      result.generation = { requestObservedAt: generationRequestObservedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationRequestObservedAt.getTime() };
       if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
       let ready = null;
       for (let attempt = 1; attempt <= 36; attempt++) {
@@ -173,7 +179,7 @@ try {
         if (attempt < 36) await page.waitForTimeout(5000);
       }
       if (!ready) throw new Error('BDL package generated but no new bound Export control appeared');
-      result.archive = await captureExport(page, ready, generationStartedAt);
+      result.archive = await captureExport(page, ready, generationRequestObservedAt);
       result.status = 'downloaded_generated_export';
     }
   }
