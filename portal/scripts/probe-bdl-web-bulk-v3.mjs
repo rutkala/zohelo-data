@@ -43,7 +43,7 @@ try {
 
   // Retrieval only: do not create another export. Find an existing P2695
   // Export control. BDL implements the working control as javascript:..., so
-  // it must be clicked in the browser rather than fetched as an HTTP URL.
+  // its DOM action must be executed in the authenticated browser page.
   let ready = null;
   for (let attempt = 1; attempt <= 20; attempt++) {
     await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
@@ -81,20 +81,23 @@ try {
   result.readyEntry = ready;
 
   const exportControl = page.locator(`#${ready.id}`);
-  if (!await exportControl.isVisible().catch(() => false)) {
-    throw new Error(`BDL export control ${ready.id} is not visible`);
+  if (!await exportControl.count()) {
+    throw new Error(`BDL export control ${ready.id} disappeared from DOM`);
   }
 
-  // This is the critical behavior: use the same browser click a human uses.
+  // The export control is inside a collapsed sidebar and can be non-visible,
+  // even though the browser can execute it. Invoke its native DOM click(),
+  // which executes the javascript:__doPostBack action in the page context.
   const downloadPromise = page.waitForEvent('download', { timeout: 180000 }).catch(() => null);
   const popupPromise = context.waitForEvent('page', { timeout: 10000 }).catch(() => null);
-  await exportControl.click();
+  await exportControl.evaluate((el) => el.click());
 
   const download = await downloadPromise;
   const popup = await popupPromise;
   if (!download) {
     result.popupUrl = popup?.url?.() || null;
-    throw new Error('BDL Export click did not produce a browser download');
+    result.afterClickUrl = page.url();
+    throw new Error('BDL Export DOM click did not produce a browser download');
   }
 
   const suggested = download.suggestedFilename() || 'bdl-P2695-bulk-export.zip';
