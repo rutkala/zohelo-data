@@ -1,0 +1,53 @@
+name: BDL web bulk export probe v2
+
+on:
+  push:
+    branches: [test/bdl-web-bulk-probe]
+    paths:
+      - 'portal/scripts/probe-bdl-web-bulk-v2.mjs'
+      - '.github/workflows/bdl-web-bulk-probe-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Confirm required BDL web secrets are present
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+        run: |
+          test -n "$GUS_BDL_WEB_EMAIL" || { echo 'GUS_BDL_WEB_EMAIL is missing'; exit 1; }
+          test -n "$GUS_BDL_WEB_PASSWORD" || { echo 'GUS_BDL_WEB_PASSWORD is missing'; exit 1; }
+      - name: Install portal dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Probe authenticated BDL bulk-export flow
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+        run: node scripts/probe-bdl-web-bulk-v2.mjs
+      - name: Upload sanitized probe evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bdl-web-bulk-probe-v2-evidence
+          path: portal/test-results/bdl-web-bulk-probe-v2/
+          if-no-files-found: warn
+          retention-days: 3
