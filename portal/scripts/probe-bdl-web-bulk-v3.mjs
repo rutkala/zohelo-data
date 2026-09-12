@@ -48,7 +48,7 @@ async function write(name, data) {
 }
 async function save() {
   await write('result.json', result);
-  await write('network-events.json', events.slice(-15000));
+  await write('network-events.json', events.slice(-20000));
 }
 async function snapshot(name) {
   for (let attempt = 0; attempt < 4; attempt++) {
@@ -64,7 +64,7 @@ async function snapshot(name) {
         disabled: 'disabled' in e ? !!e.disabled : null,
         cls: typeof e.className === 'string' ? e.className : '',
         visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
-      })).filter((x) => /dalej|pobierz|download|pobrane|podgrup|selectall|zaznacz|csv|xlsx?|zip|wym3/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.href} ${x.cls}`)).slice(0, 1600));
+      })).filter((x) => /dalej|pobierz|download|pobrane|podgrup|selectall|zaznacz|csv|xlsx?|zip|export|rlbItem/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.href} ${x.cls}`)).slice(0, 2000));
       await write(`${name}.json`, { url: page.url(), title: await page.title(), body, controls });
       return;
     } catch (error) {
@@ -116,67 +116,47 @@ try {
   const subgroupBody = await page.locator('body').innerText().catch(() => '');
   result.subgroup.loaded = /P2695|Wyniki finansowe wg sekcji PKD 2007/i.test(subgroupBody);
   result.subgroup.pageTitle = await page.title();
-  if (!result.subgroup.loaded) {
-    await snapshot('01-subgroup-unexpected');
-    throw new Error(`P2695 page did not load as expected: ${page.url()}`);
-  }
+  if (!result.subgroup.loaded) throw new Error(`P2695 page did not load as expected: ${page.url()}`);
 
-  // Native callbacks populate the four cascading dimensions.
+  // Populate the first three dimensions using BDL's native callbacks.
   await selectAll('ctl00_ContentPlaceHolder_lata_SelectAll', 'years');
   await selectAll('ctl00_ContentPlaceHolder_wym1_SelectAll', 'periods');
   await selectAll('ctl00_ContentPlaceHolder_wym2_SelectAll', 'subject');
 
-  // Current P2695 has enough combinations that one PKD-section value crosses 3,500.
-  // Ask Telerik for the actual DOM id of the first item, then click it like a user.
-  const finalMeta = await page.evaluate(() => {
-    const c = typeof window.$find === 'function' ? window.$find('ctl00_ContentPlaceHolder_wym3') : null;
-    if (!c) return { found: false };
-    const items = c.get_items?.();
-    const count = items?.get_count?.() ?? 0;
-    return {
-      found: true,
-      count,
-      first: count ? {
-        id: items.getItem(0).get_element?.()?.id || null,
-        text: items.getItem(0).get_text?.() || null,
-      } : null,
-    };
-  });
-  result.dimensions.push({ name: 'sections-meta', ...finalMeta });
-
-  if (finalMeta.found && finalMeta.first?.id) {
-    const firstItem = page.locator(`#${finalMeta.first.id}`);
-    await firstItem.click();
-    await page.waitForTimeout(2200);
-    let state = await infoState();
-    let selectedRows = 1;
-
-    // Be adaptive if current BDL counts change: add final-dimension rows until >3500.
-    while ((state.selectedInformation ?? 0) <= 3500 && selectedRows < finalMeta.count) {
-      const nextMeta = await page.evaluate((idx) => {
-        const c = window.$find?.('ctl00_ContentPlaceHolder_wym3');
-        const item = c?.get_items?.()?.getItem?.(idx);
-        return item ? { id: item.get_element?.()?.id || null, text: item.get_text?.() || null } : null;
-      }, selectedRows);
-      if (!nextMeta?.id) break;
-      await page.locator(`#${nextMeta.id}`).click({ modifiers: ['Control'] });
-      selectedRows++;
-      await page.waitForTimeout(900);
-      state = await infoState();
+  // The final visible Telerik list is the PKD-section dimension. Current counts
+  // are 20 x 4 x 51, so one section should produce 4,080 information items.
+  const visibleLists = page.locator('ul.rlbList:visible');
+  const listCount = await visibleLists.count();
+  result.dimensions.push({ name: 'visible-list-count', count: listCount });
+  let finalSelectionSucceeded = false;
+  if (listCount > 0) {
+    const finalList = visibleLists.nth(listCount - 1);
+    const finalItems = finalList.locator('li.rlbItem:visible');
+    const finalCount = await finalItems.count();
+    result.dimensions.push({ name: 'sections-meta', listCount: finalCount });
+    if (finalCount > 0) {
+      let selectedRows = 0;
+      let state = await infoState();
+      for (let i = 0; i < finalCount && (state.selectedInformation ?? 0) <= 3500; i++) {
+        await finalItems.nth(i).click(i === 0 ? {} : { modifiers: ['Control'] });
+        selectedRows++;
+        await page.waitForTimeout(1400);
+        state = await infoState();
+      }
+      result.dimensions.push({ name: 'sections', action: 'partial-visible-list', selectedRows, state });
+      finalSelectionSucceeded = (state.selectedInformation ?? 0) > 3500;
     }
-    result.dimensions.push({ name: 'sections', action: 'partial', selectedRows, state });
-  } else {
-    // Conservative fallback if Telerik changes its client object shape.
-    await selectAll('ctl00_ContentPlaceHolder_wym3_SelectAll', 'sections');
+  }
+  if (!finalSelectionSucceeded) {
+    // Safe fallback if BDL's list markup changes.
+    await selectAll('ctl00_ContentPlaceHolder_wym3_SelectAll', 'sections-fallback');
   }
 
   result.bulk.beforeDownload = await infoState();
   result.bulk.thresholdExceeded = (result.bulk.beforeDownload.selectedInformation ?? 0) > 3500;
   result.bulk.download1 = await buttonState('ctl00_ContentPlaceHolder_download1');
   result.bulk.download2 = await buttonState('ctl00_ContentPlaceHolder_download2');
-  result.bulk.next1 = await buttonState('ctl00_ContentPlaceHolder_dalej1');
   await snapshot('01-over-limit-selection');
-
   if (!result.bulk.thresholdExceeded) throw new Error(`Could not exceed BDL bulk threshold: ${JSON.stringify(result.bulk.beforeDownload)}`);
 
   let downloadButton = null;
@@ -188,10 +168,9 @@ try {
       break;
     }
   }
-  if (!downloadButton) throw new Error(`BDL Pobierz did not enable above 3500: ${JSON.stringify({ download1: result.bulk.download1, download2: result.bulk.download2 })}`);
+  if (!downloadButton) throw new Error('BDL Pobierz did not enable above 3500');
 
-  // The BDL bulk action is an AJAX POST which can remain in flight while the
-  // server builds the archive. Do not navigate away until it completes.
+  // Wait for the server-side archive-generation POST to finish.
   const currentPath = new URL(page.url()).pathname;
   const generationStarted = Date.now();
   const generationResponsePromise = page.waitForResponse((response) => {
@@ -202,69 +181,76 @@ try {
       return false;
     }
   }, { timeout: 300000 }).catch((error) => ({ timeoutError: String(error) }));
-  const directDownloadPromise = page.waitForEvent('download', { timeout: 300000 }).catch(() => null);
 
   await downloadButton.click();
   result.bulk.generationClickAt = new Date().toISOString();
   const generationResponse = await generationResponsePromise;
   result.bulk.generationElapsedMs = Date.now() - generationStarted;
   if (generationResponse && !generationResponse.timeoutError) {
-    result.bulk.generationResponse = {
-      status: generationResponse.status(),
-      url: generationResponse.url(),
-      ok: generationResponse.ok(),
-    };
+    result.bulk.generationResponse = { status: generationResponse.status(), url: generationResponse.url(), ok: generationResponse.ok() };
   } else {
     result.bulk.generationResponse = generationResponse;
   }
-
-  const directDownload = await Promise.race([
-    directDownloadPromise,
-    page.waitForTimeout(1000).then(() => null),
-  ]);
-  if (directDownload) {
-    const filename = directDownload.suggestedFilename().replace(/[^A-Za-z0-9._-]/g, '_');
-    const target = path.join(outDir, `download-${filename}`);
-    await directDownload.saveAs(target);
-    result.bulk.directDownload = { filename, bytes: (await fs.stat(target)).size };
-  } else {
-    result.bulk.directDownload = null;
-  }
   await snapshot('02-after-generation-response');
 
-  // Now inspect the authenticated start page. Use DOMContentLoaded rather than
-  // networkidle because BDL keeps auxiliary requests alive.
+  // Poll until the generated subgroup's Export link is actually enabled.
   result.bulk.polls = [];
-  for (let attempt = 1; attempt <= 18; attempt++) {
+  let readyExport = null;
+  for (let attempt = 1; attempt <= 30; attempt++) {
     try {
       await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 });
     } catch (error) {
       result.bulk.polls.push({ attempt, navigationError: String(error) });
-      if (attempt < 18) await page.waitForTimeout(10000);
+      if (attempt < 30) await page.waitForTimeout(10000);
       continue;
     }
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(1500);
+
+    const exports = await page.locator('[id$="_Export"]').evaluateAll((els) => els.map((e) => ({
+      id: e.id,
+      text: (e.textContent || '').trim().replace(/\s+/g, ' '),
+      href: e.getAttribute('href'),
+      cls: typeof e.className === 'string' ? e.className : '',
+      disabled: 'disabled' in e ? !!e.disabled : null,
+    })).filter((x) => /Wyniki finansowe wg sekcji PKD 2007/i.test(x.text)));
+
     const body = safe(await page.locator('body').innerText().catch(() => ''));
-    const links = await page.locator('a').evaluateAll((as) => as.map((a) => ({
-      text: (a.textContent || '').trim().replace(/\s+/g, ' '),
-      href: a.href || '',
-      title: a.getAttribute('title'),
-    })).filter((x) => /2695|Wyniki finansowe|pobran|download|\.zip|\.csv|\.xlsx?/i.test(`${x.text} ${x.href} ${x.title || ''}`)).slice(0, 100));
     const hasPanel = /Pobrane podgrupy/i.test(body);
-    const hasSubgroup = /Wyniki finansowe wg sekcji PKD 2007/i.test(body) || links.some((x) => /2695|Wyniki finansowe/i.test(`${x.text} ${x.href}`));
-    result.bulk.polls.push({ attempt, hasPanel, hasSubgroup, links });
-    if (hasSubgroup) {
+    const hasSubgroup = /Wyniki finansowe wg sekcji PKD 2007/i.test(body);
+    const ready = exports.find((x) => x.href && !/aspNetDisabled/i.test(x.cls) && !x.disabled) || null;
+    result.bulk.polls.push({ attempt, hasPanel, hasSubgroup, exports, ready: !!ready });
+    if (ready) {
       result.bulk.generatedEntryDetected = true;
-      result.bulk.generatedEntryPoll = attempt;
-      result.bulk.generatedLinks = links;
-      await snapshot('03-generated-entry');
+      result.bulk.archiveReadyPoll = attempt;
+      result.bulk.readyExport = ready;
+      readyExport = ready;
+      await snapshot('03-archive-ready');
       break;
     }
-    if (attempt < 18) await page.waitForTimeout(10000);
+    if (attempt < 30) await page.waitForTimeout(10000);
   }
-  if (!result.bulk.generatedEntryDetected) {
-    result.bulk.generatedEntryDetected = false;
-    await snapshot('03-start-final');
+
+  if (!readyExport) {
+    result.bulk.generatedEntryDetected = result.bulk.polls.some((x) => x.hasSubgroup);
+    result.bulk.archiveReady = false;
+    await snapshot('03-archive-not-ready');
+  } else {
+    result.bulk.archiveReady = true;
+
+    // Download the actual generated archive and persist it only as CI evidence.
+    const exportControl = page.locator(`#${readyExport.id}`);
+    const downloadPromise = page.waitForEvent('download', { timeout: 120000 }).catch(() => null);
+    await exportControl.click();
+    const download = await downloadPromise;
+    if (download) {
+      const filename = download.suggestedFilename().replace(/[^A-Za-z0-9._-]/g, '_');
+      const target = path.join(outDir, `download-${filename}`);
+      await download.saveAs(target);
+      result.bulk.archiveDownload = { filename, bytes: (await fs.stat(target)).size };
+    } else {
+      result.bulk.archiveDownload = null;
+    }
+    await snapshot('04-after-archive-download');
   }
 
   result.completedAt = new Date().toISOString();
@@ -274,18 +260,14 @@ try {
     subgroupLoaded: result.subgroup.loaded,
     selectedInformation: result.bulk.beforeDownload?.selectedInformation,
     thresholdExceeded: result.bulk.thresholdExceeded,
-    downloadButtonId: result.bulk.downloadButtonId,
     generationResponse: result.bulk.generationResponse,
     generationElapsedMs: result.bulk.generationElapsedMs,
-    directDownload: result.bulk.directDownload,
-    generatedEntryDetected: result.bulk.generatedEntryDetected,
-    generatedEntryPoll: result.bulk.generatedEntryPoll ?? null,
-    generatedLinkCount: result.bulk.generatedLinks?.length ?? 0,
+    archiveReady: result.bulk.archiveReady,
+    archiveReadyPoll: result.bulk.archiveReadyPoll ?? null,
+    archiveDownload: result.bulk.archiveDownload ?? null,
   }, null, 2));
 
-  if (!result.bulk.generationResponse?.ok && !result.bulk.generatedEntryDetected && !result.bulk.directDownload) {
-    process.exitCode = 1;
-  }
+  if (!result.bulk.generationResponse?.ok || !result.bulk.archiveReady || !result.bulk.archiveDownload) process.exitCode = 1;
 } catch (error) {
   result.error = safe(error?.stack || error?.message || error);
   result.failedAt = new Date().toISOString();
