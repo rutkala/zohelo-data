@@ -25,51 +25,35 @@ async function snapshot(name) {
   const widgets = await page.evaluate(() => Array.from(document.querySelectorAll('[id]')).map(el => ({
     id: el.id, tag: el.tagName, cls: typeof el.className === 'string' ? el.className : '',
     role: el.getAttribute('role'), text: (el.textContent || '').trim().replace(/\s+/g,' ').slice(0,300),
-    disabled: 'disabled' in el ? !!el.disabled : null
-  })).filter(x => /RadListBox|listbox|ContentPlaceHolder/i.test(`${x.cls} ${x.role} ${x.id}`)).slice(0,1200));
+    disabled: 'disabled' in el ? !!el.disabled : null,
+    title: el.getAttribute('title'), value: el.getAttribute('value')
+  })).filter(x => /RadListBox|listbox|ContentPlaceHolder/i.test(`${x.cls} ${x.role} ${x.id}`)).slice(0,1500));
   await write(`${name}.json`, {url:page.url(), title:await page.title(), body, widgets});
 }
 async function saveResult() {
   await write('result.json', result);
   await write('network-events.json', events.slice(-5000));
 }
-
-async function getRadListBoxes() {
-  return await page.evaluate(() => {
-    const out = [];
-    for (const el of document.querySelectorAll('.RadListBox[id], [id*="ListBox"], [id*="listBox"], [role="listbox"]')) {
-      const id = el.id;
-      if (!id || out.some(x => x.id === id)) continue;
-      let c = null;
-      try { c = typeof window.$find === 'function' ? window.$find(id) : null; } catch {}
-      let count = null;
-      try { count = c?.get_items?.().get_count?.() ?? null; } catch {}
-      out.push({id, tag:el.tagName, cls:el.className || '', count, clientFound:!!c});
-    }
-    return out;
-  });
+async function bodyState() {
+  const body = await page.locator('body').innerText().catch(()=> '');
+  const total = body.match(/Wybrano\s+([0-9\s]+)\s+informacji/i);
+  const counters = [...body.matchAll(/Zaznaczonych:\s*([0-9]+)\/([0-9]+)/gi)].map(m => ({selected:Number(m[1]), total:Number(m[2])}));
+  return { selectedInformation: total ? Number(total[1].replace(/\s/g,'')) : null, counters };
 }
-
-async function selectAllRadListBox(id) {
-  return await page.evaluate((id) => {
-    const c = typeof window.$find === 'function' ? window.$find(id) : null;
-    if (!c || !c.get_items) return {ok:false, reason:'client component not found'};
-    const items = c.get_items();
-    const count = items.get_count();
-    try { c.trackChanges?.(); } catch {}
-    let selected = 0;
-    for (let i = 0; i < count; i++) {
-      const item = items.getItem(i);
-      try {
-        if (typeof item.select === 'function') item.select();
-        else if (typeof item.set_selected === 'function') item.set_selected(true);
-        selected++;
-      } catch {}
-    }
-    try { c.commitChanges?.(); } catch {}
-    try { c.raise_selectedIndexChanged?.(); } catch {}
-    return {ok:true,count,selected};
-  }, id);
+async function clickAndAwaitDimension(buttonId, nextButtonId = null) {
+  const button = page.locator(`#${buttonId}`);
+  const before = await bodyState();
+  const beforePosts = events.filter(x => x.kind === 'request' && x.method === 'POST').length;
+  if (!await button.isVisible().catch(()=>false)) return {ok:false, reason:'not visible', before};
+  if (!await button.isEnabled().catch(()=>false)) return {ok:false, reason:'disabled', before};
+  await button.click();
+  await page.waitForTimeout(2500);
+  if (nextButtonId) {
+    await page.locator(`#${nextButtonId}`).waitFor({state:'visible', timeout:15000}).catch(()=>{});
+  }
+  const after = await bodyState();
+  const afterPosts = events.filter(x => x.kind === 'request' && x.method === 'POST').length;
+  return {ok:true, before, after, postRequests:afterPosts-beforePosts};
 }
 
 try {
@@ -86,49 +70,50 @@ try {
   await page.goto('https://bdl.stat.gov.pl/bdl/dane/podgrup/wymiary/3/7/1341', {waitUntil:'networkidle',timeout:60000});
   await snapshot('01-subgroup-initial');
 
-  // Cascading list boxes: select the first currently populated dimension, wait for AJAX, then repeat.
-  for (let step = 0; step < 6; step++) {
-    const boxes = await getRadListBoxes();
-    await write(`rad-listboxes-step-${step}.json`, boxes);
-    const already = new Set(result.dimensions.map(x => x.id));
-    const next = boxes.find(x => x.clientFound && (x.count ?? 0) > 0 && !already.has(x.id));
-    if (!next) break;
-    const selection = await selectAllRadListBox(next.id);
-    result.dimensions.push({id:next.id, beforeCount:next.count, selection});
-    await page.waitForTimeout(2500);
-    await snapshot(`02-after-dimension-${step+1}`);
+  const sequence = [
+    ['ctl00_ContentPlaceHolder_lata_SelectAll','ctl00_ContentPlaceHolder_wym1_SelectAll','years'],
+    ['ctl00_ContentPlaceHolder_wym1_SelectAll','ctl00_ContentPlaceHolder_wym2_SelectAll','sex'],
+    ['ctl00_ContentPlaceHolder_wym2_SelectAll',null,'age'],
+  ];
+  for (const [buttonId,nextId,name] of sequence) {
+    const state = await clickAndAwaitDimension(buttonId,nextId);
+    result.dimensions.push({name, buttonId, ...state});
+    await snapshot(`02-after-${name}`);
+    if (!state.ok) break;
   }
 
-  const body = await page.locator('body').innerText().catch(()=>'');
-  const match = body.match(/Wybrano\s+([0-9\s]+)\s+informacji/i);
-  result.bulk.selectedInformation = match ? Number(match[1].replace(/\s/g,'')) : null;
+  const state = await bodyState();
+  result.bulk.selectedInformation = state.selectedInformation;
+  result.bulk.counters = state.counters;
   const download = page.locator('#ctl00_ContentPlaceHolder_download1');
   result.bulk.downloadVisible = await download.isVisible().catch(()=>false);
   result.bulk.downloadEnabled = await download.isEnabled().catch(()=>false);
+  const next = page.locator('#ctl00_ContentPlaceHolder_next1');
+  result.bulk.nextEnabled = await next.isEnabled().catch(()=>false);
   await snapshot('03-before-download');
 
-  if (!result.bulk.downloadEnabled) throw new Error(`Pobierz still disabled after cascading selections; selected=${result.bulk.selectedInformation}`);
-
-  const dlPromise = page.waitForEvent('download', {timeout:45000}).catch(()=>null);
-  await download.click();
-  await page.waitForTimeout(4000);
-  const dl = await dlPromise;
-  if (dl) {
-    const fn = dl.suggestedFilename().replace(/[^A-Za-z0-9._-]/g,'_');
-    const target = path.join(outDir, `download-${fn}`);
-    await dl.saveAs(target);
-    result.bulk.directDownload = {filename:fn, bytes:(await fs.stat(target)).size};
+  if (result.bulk.downloadEnabled) {
+    const dlPromise = page.waitForEvent('download', {timeout:45000}).catch(()=>null);
+    await download.click();
+    await page.waitForTimeout(4000);
+    const dl = await dlPromise;
+    if (dl) {
+      const fn = dl.suggestedFilename().replace(/[^A-Za-z0-9._-]/g,'_');
+      const target = path.join(outDir, `download-${fn}`);
+      await dl.saveAs(target);
+      result.bulk.directDownload = {filename:fn, bytes:(await fs.stat(target)).size};
+    } else result.bulk.directDownload = null;
+    await snapshot('04-after-download');
+  } else if (result.bulk.nextEnabled) {
+    // If BDL requires the geography stage before enabling its bulk package, capture that transition only.
+    const beforeUrl = page.url();
+    await next.click();
+    await page.waitForTimeout(3000);
+    result.bulk.nextTransition = {beforeUrl, afterUrl:page.url()};
+    await snapshot('04-after-next');
   } else {
-    result.bulk.directDownload = null;
+    throw new Error(`Neither Pobierz nor Dalej enabled; selected=${result.bulk.selectedInformation}`);
   }
-  await snapshot('04-after-download');
-
-  await page.goto('https://bdl.stat.gov.pl/bdl/start', {waitUntil:'networkidle',timeout:60000});
-  await page.waitForTimeout(2000);
-  const startBody = safe(await page.locator('body').innerText().catch(() => ''));
-  result.bulk.downloadedSubgroupsVisible = /Pobrane podgrupy/i.test(startBody);
-  result.bulk.populationSubgroupMentioned = /Ludność wg pojedynczych roczników wieku i płci/i.test(startBody);
-  await snapshot('05-start-after-download');
 
   result.completedAt = new Date().toISOString();
   await saveResult();
