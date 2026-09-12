@@ -95,8 +95,16 @@ filename must carry both the subgroup identity and a timestamp within the curren
 provider-clock generation window. The ambiguous whole-second POST boundary is captured from the
 matching request callback at event emission and rejected rather than accepted as a possible prior
 export. These controls are covered by focused regression tests;
-production coverage changes remain unclaimed until the reviewed code is merged and a fresh
-main-branch run publishes evidence.
+[PR 90](https://github.com/rutkala/zohelo-data/pull/90) and its request-boundary correction in
+[PR 91](https://github.com/rutkala/zohelo-data/pull/91) are merged after green portal/data-platform
+checks and review. The first fresh main-branch execution,
+[run 34715218197](https://github.com/rutkala/zohelo-data/actions/runs/34715218197), published and
+verified a BDL release and then returned `catalogue_incomplete`: its checksum-pinned plan recorded
+2,012 accepted/published Landing responses, zero publication backlog, 378 subject-catalogue tasks
+pending, ten currently invalid incomplete-hierarchy subgroups, zero valid candidates and no bulk
+Landing write. The browser and landing steps were therefore skipped rather than treating partial
+catalogue materialization as completion. A corrected-main continuation is serialized behind that
+run; no Web bulk coverage change is claimed until a candidate archive is verified and landed.
 
 The next modeled-release implementation order is WDI first, because its complete current archive
 is already retained and has a stable six-member CSV contract, followed by progressive Eurostat
