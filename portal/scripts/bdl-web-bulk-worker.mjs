@@ -71,10 +71,9 @@ function validateProviderFilename(suggested, generationStartedAt) {
     Number(timestamp.slice(6, 8)), Number(timestamp.slice(8, 10)),
     Number(timestamp.slice(10, 12)), Number(timestamp.slice(12, 14)),
   );
-  const now = new Date();
-  const starts = [generationStartedAt.getTime(), providerClockValue(generationStartedAt, 'Europe/Warsaw')];
-  const ends = [now.getTime(), providerClockValue(now, 'Europe/Warsaw')];
-  const fresh = starts.some((start, index) => emitted >= start - 300000 && emitted <= ends[index] + 300000);
+  const providerStartedAt = providerClockValue(generationStartedAt, 'Europe/Warsaw');
+  const providerFinishedAt = providerClockValue(new Date(), 'Europe/Warsaw');
+  const fresh = emitted >= providerStartedAt && emitted <= providerFinishedAt;
   if (!fresh) throw new Error('BDL export filename predates the current generation request');
   return timestamp;
 }

@@ -91,7 +91,8 @@ Browser downloads are accepted
 only from a new export control created after the current subgroup's successful generation request;
 pre-existing exports are distinguished by stable row-content fingerprints rather than reorderable
 DOM IDs, and the provider filename must carry both the subgroup identity and a timestamp within the
-current generation window. These controls are covered by focused regression tests;
+current Europe/Warsaw provider-clock generation window, with no pre-request tolerance. These
+controls are covered by focused regression tests;
 production coverage changes remain unclaimed until the reviewed code is merged and a fresh
 main-branch run publishes evidence.
 
