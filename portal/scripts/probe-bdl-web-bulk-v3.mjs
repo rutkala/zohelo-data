@@ -124,29 +124,34 @@ try {
 
   const voivodeshipItem = page.locator('.rmItem:visible').filter({ hasText: /^Zaznacz województwa$/ }).first();
   if (!await voivodeshipItem.isVisible().catch(() => false)) throw new Error('Geography "Zaznacz województwa" menu item not found');
-  await voivodeshipItem.click();
+  const voivodeshipLink = voivodeshipItem.locator('a.rmLink').first();
+  if (!await voivodeshipLink.isVisible().catch(() => false)) throw new Error('Geography voivodeship menu link not found');
+  await voivodeshipLink.click();
   await page.waitForTimeout(1000);
   result.geography.afterHighlight = await geoCounts();
   await snapshot('02-geography-voivodeships-highlighted');
 
-  // Telerik RadListBox uses rlbTransferTo for the single-right-arrow transfer button.
-  let transferSelected = page.locator('xpath=//*[contains(concat(" ", normalize-space(@class), " "), " rlbTransferTo ") and not(contains(concat(" ", normalize-space(@class), " "), " rlbTransferAllTo "))]').filter({ visible: true }).first();
+  // In this Telerik pair, rlbTransferFrom is the right-arrow: source list -> selected list.
+  let transferSelected = page.locator('button.rlbTransferFrom:visible').first();
   if (!await transferSelected.isVisible().catch(() => false)) {
-    transferSelected = page.locator('[title*="Dodaj zaznaczone"][title*="wybranych"]:visible').first();
+    transferSelected = page.locator('[class*="rlbTransferFrom"]:visible').first();
   }
   if (!await transferSelected.isVisible().catch(() => false)) {
-    const transferCandidates = await page.locator('[class*="rlbTransfer"]:visible,[title*="wybranych"]:visible').evaluateAll((els) => els.map((e) => ({
+    const transferCandidates = await page.locator('[class*="rlbTransfer"]:visible').evaluateAll((els) => els.map((e) => ({
       id: e.id || null,
       title: e.getAttribute('title'),
       cls: typeof e.className === 'string' ? e.className : '',
       text: (e.textContent || '').trim(),
+      disabled: 'disabled' in e ? !!e.disabled : null,
     })));
     result.geography.transferCandidates = transferCandidates;
-    throw new Error(`Geography transfer-selected (>) control not found: ${JSON.stringify(transferCandidates)}`);
+    throw new Error(`Geography right-arrow transfer control not found: ${JSON.stringify(transferCandidates)}`);
   }
   result.geography.transferId = await transferSelected.getAttribute('id');
   result.geography.transferTitle = await transferSelected.getAttribute('title');
   result.geography.transferClass = await transferSelected.getAttribute('class');
+  result.geography.transferEnabled = await transferSelected.isEnabled().catch(() => false);
+  if (!result.geography.transferEnabled) throw new Error(`Geography right-arrow remained disabled after executing voivodeship menu command: ${JSON.stringify(result.geography.afterHighlight)}`);
   await transferSelected.click();
 
   await page.waitForFunction(() => /Wybranych elementów:\s*16/i.test(document.body?.innerText || ''), null, { timeout: 15000 });
@@ -162,7 +167,6 @@ try {
   result.bulk.afterGeographyUrl = page.url();
   await snapshot('04-after-geography-next');
 
-  // Discover and trigger the resulting bulk-export action.
   const candidates = page.locator('button:visible,input[type="button"]:visible,input[type="submit"]:visible,a:visible');
   result.bulk.exportCandidates = [];
   let exportControl = null;
