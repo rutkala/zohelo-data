@@ -1,0 +1,139 @@
+name: GUS BDL Web bulk backfill
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [feat/bdl-web-bulk-backfill]
+    paths:
+      - 'portal/scripts/bdl-web-bulk-worker.mjs'
+      - 'src/bdl_bulk_ingest.py'
+      - 'src/bdl_bulk_plan.py'
+      - '.github/workflows/source-gus-bdl-bulk.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-bdl-web-bulk
+  cancel-in-progress: false
+
+jobs:
+  backfill_one:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: '.python-version'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Confirm required BDL and Drive secrets are present
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          test -n "$GUS_BDL_WEB_EMAIL"
+          test -n "$GUS_BDL_WEB_PASSWORD"
+          test -n "$GOOGLE_OAUTH_CLIENT_ID"
+          test -n "$GOOGLE_OAUTH_CLIENT_SECRET"
+          test -n "$GOOGLE_OAUTH_REFRESH_TOKEN"
+      - name: Install browser dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+      - name: Install pinned Python dependencies
+        run: python -m pip install -r ../requirements.txt
+      - name: Plan next unprocessed BDL subgroup
+        id: plan
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GUS_BDL_API_KEY: ${{ secrets.GUS_BDL_API_KEY }}
+          PYTHONPATH: ../src
+        run: |
+          mkdir -p test-results/bdl-web-bulk
+          python ../src/bdl_bulk_plan.py plan --output test-results/bdl-web-bulk/plan.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          p = json.load(open('test-results/bdl-web-bulk/plan.json', encoding='utf-8'))
+          c = p.get('candidate')
+          print(f"has_candidate={'true' if c else 'false'}")
+          if c:
+              print(f"subgroup_id={c['subgroup_id']}")
+              print(f"subgroup_url={c['url']}")
+              name = (c.get('subgroup_name') or c['subgroup_id']).replace('\n', ' ').replace('\r', ' ')
+              print(f"subgroup_name={name}")
+          PY
+      - name: Extract BDL subgroup through authenticated Web bulk
+        if: steps.plan.outputs.has_candidate == 'true'
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+          BDL_BULK_SUBGROUP_ID: ${{ steps.plan.outputs.subgroup_id }}
+          BDL_BULK_SUBGROUP_NAME: ${{ steps.plan.outputs.subgroup_name }}
+          BDL_BULK_URL: ${{ steps.plan.outputs.subgroup_url }}
+          BDL_BULK_OUT_DIR: test-results/bdl-web-bulk
+        run: node scripts/bdl-web-bulk-worker.mjs
+      - name: Land downloaded subgroup or checkpoint REST fallback
+        if: steps.plan.outputs.has_candidate == 'true'
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          PYTHONPATH: ../src
+          SUBGROUP_ID: ${{ steps.plan.outputs.subgroup_id }}
+        run: |
+          status="$(python - <<'PY'
+          import json
+          print(json.load(open('test-results/bdl-web-bulk/worker-result.json', encoding='utf-8'))['status'])
+          PY
+          )"
+          case "$status" in
+            downloaded_existing_export|downloaded_generated_export)
+              archive="$(find test-results/bdl-web-bulk -maxdepth 1 -type f -name 'download-*.zip' -print -quit)"
+              test -n "$archive"
+              python ../src/bdl_bulk_ingest.py \
+                --archive "$archive" \
+                --subgroup "$SUBGROUP_ID" \
+                --allow-production-write \
+                --summary test-results/bdl-web-bulk/landing-summary.json
+              ;;
+            below_bulk_threshold|no_bulk_control|web_bulk_unsupported)
+              detail="$(python - <<'PY'
+          import json
+          r = json.load(open('test-results/bdl-web-bulk/worker-result.json', encoding='utf-8'))
+          print((r.get('detail') or f"selectedInformation={r.get('selectedInformation')}").replace('\n', ' '))
+          PY
+              )"
+              python ../src/bdl_bulk_plan.py mark --subgroup "$SUBGROUP_ID" --status "$status" --detail "$detail"
+              ;;
+            *)
+              echo "Unexpected BDL Web bulk status: $status" >&2
+              exit 1
+              ;;
+          esac
+      - name: Upload sanitized backfill evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: bdl-web-bulk-backfill-evidence
+          path: portal/test-results/bdl-web-bulk/
+          if-no-files-found: warn
+          retention-days: 3
