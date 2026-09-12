@@ -172,17 +172,21 @@ try {
       result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
     } else {
       const currentPath = new URL(page.url()).pathname;
+      let generationRequestObservedAt = null;
       const requestPromise = page.waitForRequest((request) => {
-        try { const u = new URL(request.url()); return request.method() === 'POST' && u.pathname === currentPath; } catch { return false; }
+        try {
+          const u = new URL(request.url());
+          const matches = request.method() === 'POST' && u.pathname === currentPath;
+          if (matches && generationRequestObservedAt === null) generationRequestObservedAt = new Date();
+          return matches;
+        } catch { return false; }
       }, { timeout: 360000 });
       const responsePromise = page.waitForResponse((response) => {
         try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
       }, { timeout: 360000 });
       await downloadButton.click();
       await requestPromise;
-      // Observe the matching request after it is emitted.  Its whole provider
-      // clock second remains ambiguous and is rejected by the filename gate.
-      const generationRequestObservedAt = new Date();
+      if (generationRequestObservedAt === null) throw new Error('BDL generation request timestamp was not captured');
       const response = await responsePromise;
       result.generation = { requestObservedAt: generationRequestObservedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationRequestObservedAt.getTime() };
       if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
