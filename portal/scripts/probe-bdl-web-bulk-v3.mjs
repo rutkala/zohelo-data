@@ -45,7 +45,7 @@ async function snapshot(name) {
     url: page.url(),
     title: await page.title(),
     body: safe(await page.locator('body').innerText().catch(() => '')).slice(0, 120000),
-    controls: await page.locator('button,input,a,li').evaluateAll((els) => els.map((e) => ({
+    controls: await page.locator('button,input,a,li,span').evaluateAll((els) => els.map((e) => ({
       id: e.id || null,
       text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 250),
       value: e.getAttribute('value'),
@@ -53,7 +53,7 @@ async function snapshot(name) {
       disabled: 'disabled' in e ? !!e.disabled : null,
       cls: typeof e.className === 'string' ? e.className : '',
       visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
-    })).filter((x) => /dalej|pobierz|download|export|podgrup|zaznacz|wybran|dodaj|menu/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.cls}`)).slice(0, 1000)),
+    })).filter((x) => /dalej|pobierz|download|export|podgrup|zaznacz|wybran|dodaj|transfer|rlb/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.cls}`)).slice(0, 1500)),
   });
 }
 async function dimensionState() {
@@ -81,9 +81,15 @@ async function clickEnabledNext() {
   }
   return null;
 }
+async function geoCounts() {
+  const body = await page.locator('body').innerText().catch(() => '');
+  return {
+    selectedCount: Number(body.match(/Wybranych elementów:\s*([0-9]+)/i)?.[1] || 0),
+    availableCount: Number(body.match(/Elementów do wyboru:\s*([0-9]+)/i)?.[1] || 0),
+  };
+}
 
 try {
-  // Authenticate.
   await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'networkidle', timeout: 60000 });
   await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
   await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
@@ -96,7 +102,7 @@ try {
   };
   if (!result.login.success) throw new Error('BDL login failed');
 
-  // Large subgroup proof: all years x sex x age = 2,790 combinations.
+  // P1341: 31 years x 3 sexes x 30 age values = 2,790 information combinations.
   await page.goto('https://bdl.stat.gov.pl/bdl/dane/podgrup/wymiary/3/7/1341', { waitUntil: 'networkidle', timeout: 60000 });
   result.dimensions.push({ name: 'years', state: await selectDimensionAll('ctl00_ContentPlaceHolder_lata_SelectAll') });
   result.dimensions.push({ name: 'sex', state: await selectDimensionAll('ctl00_ContentPlaceHolder_wym1_SelectAll') });
@@ -105,53 +111,46 @@ try {
   if (!await clickEnabledNext()) throw new Error('Dimension-stage Dalej disabled');
   await page.waitForTimeout(3000);
 
-  // Follow the real geography UI exactly, as confirmed manually:
-  // Zaznacz -> Zaznacz wszystkie -> >> (Dodaj wszystkie do wybranych) -> Dalej.
-  await page.waitForFunction(() => {
-    const text = document.body?.innerText || '';
-    return /Jednostki terytorialne/i.test(text) && /Wybranych elementów:\s*0/i.test(text);
-  }, null, { timeout: 30000 });
+  await page.waitForFunction(() => /Jednostki terytorialne/i.test(document.body?.innerText || ''), null, { timeout: 30000 });
+  result.geography.initial = await geoCounts();
   await snapshot('01-geography-initial');
 
+  // Reproduce the real UI, but keep the proof bounded:
+  // Zaznacz -> Zaznacz województwa -> > (add selected) -> confirm 16 -> Dalej.
   const menuButton = page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton');
   if (!await menuButton.isVisible().catch(() => false)) throw new Error('Geography Zaznacz menu button not found');
   await menuButton.click();
   await page.waitForTimeout(500);
 
-  const selectAllItem = page.getByText('Zaznacz wszystkie', { exact: true }).filter({ visible: true }).first();
-  if (!await selectAllItem.isVisible().catch(() => false)) {
-    const fallback = page.locator('.rmItem:visible').filter({ hasText: /^Zaznacz wszystkie$/ }).first();
-    if (!await fallback.isVisible().catch(() => false)) throw new Error('Geography "Zaznacz wszystkie" menu item not found');
-    await fallback.click();
-  } else {
-    await selectAllItem.click();
-  }
-  await page.waitForTimeout(800);
-  result.geography.afterHighlight = await page.locator('body').innerText().then((body) => ({
-    selectedCount: Number(body.match(/Wybranych elementów:\s*([0-9]+)/i)?.[1] || 0),
-    availableCount: Number(body.match(/Elementów do wyboru:\s*([0-9]+)/i)?.[1] || 0),
-  }));
-  await snapshot('02-geography-highlighted');
+  const voivodeshipItem = page.locator('.rmItem:visible').filter({ hasText: /^Zaznacz województwa$/ }).first();
+  if (!await voivodeshipItem.isVisible().catch(() => false)) throw new Error('Geography "Zaznacz województwa" menu item not found');
+  await voivodeshipItem.click();
+  await page.waitForTimeout(1000);
+  result.geography.afterHighlight = await geoCounts();
+  await snapshot('02-geography-voivodeships-highlighted');
 
-  let transferAll = page.locator('[title="Dodaj wszystkie do wybranych"]:visible').first();
-  if (!await transferAll.isVisible().catch(() => false)) {
-    transferAll = page.locator('button:visible,input:visible,a:visible').filter({ hasText: /^>>$/ }).first();
+  // Telerik RadListBox uses rlbTransferTo for the single-right-arrow transfer button.
+  let transferSelected = page.locator('xpath=//*[contains(concat(" ", normalize-space(@class), " "), " rlbTransferTo ") and not(contains(concat(" ", normalize-space(@class), " "), " rlbTransferAllTo "))]').filter({ visible: true }).first();
+  if (!await transferSelected.isVisible().catch(() => false)) {
+    transferSelected = page.locator('[title*="Dodaj zaznaczone"][title*="wybranych"]:visible').first();
   }
-  if (!await transferAll.isVisible().catch(() => false)) {
-    // Telerik may render the glyph without text; find by title fragment as a final fallback.
-    transferAll = page.locator('[title*="wszystkie"][title*="wybranych"]:visible').first();
+  if (!await transferSelected.isVisible().catch(() => false)) {
+    const transferCandidates = await page.locator('[class*="rlbTransfer"]:visible,[title*="wybranych"]:visible').evaluateAll((els) => els.map((e) => ({
+      id: e.id || null,
+      title: e.getAttribute('title'),
+      cls: typeof e.className === 'string' ? e.className : '',
+      text: (e.textContent || '').trim(),
+    })));
+    result.geography.transferCandidates = transferCandidates;
+    throw new Error(`Geography transfer-selected (>) control not found: ${JSON.stringify(transferCandidates)}`);
   }
-  if (!await transferAll.isVisible().catch(() => false)) throw new Error('Geography transfer-all (>>) control not found');
-  result.geography.transferAllId = await transferAll.getAttribute('id');
-  result.geography.transferAllTitle = await transferAll.getAttribute('title');
-  await transferAll.click();
+  result.geography.transferId = await transferSelected.getAttribute('id');
+  result.geography.transferTitle = await transferSelected.getAttribute('title');
+  result.geography.transferClass = await transferSelected.getAttribute('class');
+  await transferSelected.click();
 
-  await page.waitForFunction(() => /Wybranych elementów:\s*17/i.test(document.body?.innerText || ''), null, { timeout: 15000 });
-  const geoBody = await page.locator('body').innerText();
-  result.geography.afterTransfer = {
-    selectedCount: Number(geoBody.match(/Wybranych elementów:\s*([0-9]+)/i)?.[1] || 0),
-    availableCount: Number(geoBody.match(/Elementów do wyboru:\s*([0-9]+)/i)?.[1] || 0),
-  };
+  await page.waitForFunction(() => /Wybranych elementów:\s*16/i.test(document.body?.innerText || ''), null, { timeout: 15000 });
+  result.geography.afterTransfer = await geoCounts();
   await snapshot('03-geography-transferred');
 
   const beforeGeoNext = page.url();
@@ -197,7 +196,6 @@ try {
     result.bulk.noEnabledExportControl = true;
   }
 
-  // Check whether BDL created an asynchronous saved subgroup export.
   await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'networkidle', timeout: 60000 });
   await page.waitForTimeout(2500);
   const startBody = safe(await page.locator('body').innerText().catch(() => ''));
