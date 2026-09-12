@@ -15,6 +15,7 @@ from release_protocol import (  # noqa: E402
     ReleaseProtocolError,
     publish_release,
     promote_retained_release,
+    read_current_release_manifest,
     restore_current_release,
     restore_release,
 )
@@ -154,6 +155,23 @@ class ReleaseProtocolTests(unittest.TestCase):
             publish_release(store, "root", **self._candidate())
         self.assertEqual(store.writes, writes_before)
         self.assertEqual(restore_current_release(store, "root")["release_id"], published["release_id"])
+
+    def test_manifest_only_reader_does_not_download_release_datasets(self):
+        store = MemoryStore()
+        published = publish_release(
+            store,
+            "root",
+            **self._platform_candidate(),
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
+        store.read_counts = {}
+
+        manifest = read_current_release_manifest(store, "root")
+
+        self.assertEqual(published["release_id"], manifest["release_id"])
+        self.assertEqual(1, store.read_counts["current-release.json"])
+        self.assertEqual(1, store.read_counts["release.json"])
+        self.assertFalse(any(name.endswith(".parquet") for name in store.read_counts))
 
     def _platform_candidate(self):
         specifications = {

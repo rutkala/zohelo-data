@@ -416,6 +416,20 @@ def restore_current_release(store: ReleaseStore, root_id: str) -> dict[str, Any]
     return restore_release(store, pointer["value"])
 
 
+def read_current_release_manifest(store: ReleaseStore, root_id: str) -> dict[str, Any]:
+    """Return the checksum-pinned current manifest without reading every dataset.
+
+    Consumers that need only one large-release dataset can validate that selected
+    file against the returned manifest.  Full restore remains the publication and
+    operational acceptance path.
+    """
+    root_id = _require_id(root_id, "root_id")
+    pointer = _read_pointer(store, root_id)
+    if pointer is None:
+        raise ReleaseProtocolError("no current-release pointer exists")
+    return _read_release_manifest(store, pointer["value"])
+
+
 # Useful, short name for adapters/consumers.
 read_current_release = restore_current_release
 
