@@ -51,3 +51,5 @@ jobs:
           path: portal/test-results/bdl-web-bulk-probe-v3/
           if-no-files-found: warn
           retention-days: 3
+
+# retriggered after the workflow file existed on the probe branch
