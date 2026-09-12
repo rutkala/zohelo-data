@@ -7,16 +7,75 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from googleapiclient.http import MediaInMemoryUpload
 import requests
 
+from ingestion.source_campaign import quota_wait, retry_delay
+from ingestion.source_campaign_store import DriveCampaignStore
+from source_campaign import load_settings
 from storage_manager import StorageManager
 
 _API = "https://bdl.stat.gov.pl/api/v1/subjects"
 _SUBJECT_RE = re.compile(r"^[KGP][0-9]+$")
 _SUBGROUP_RE = re.compile(r"^P[0-9]+$")
+_PROCESSED_STATUSES = {
+    "landed",
+    "below_bulk_threshold",
+    "no_bulk_control",
+    "web_bulk_unsupported",
+}
+
+
+class _QuotaDeferred(RuntimeError):
+    def __init__(self, reason: str, retry_after_seconds: float = 0) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.retry_after_seconds = max(0, retry_after_seconds)
+
+
+class _QuotaAwareSession:
+    """Reserve every Web catalogue request in the shared durable BDL ledger."""
+
+    def __init__(self, session: requests.Session, store: DriveCampaignStore, settings: dict[str, Any]) -> None:
+        state = store.load()
+        if state is None:
+            raise RuntimeError("No shared BDL provider quota ledger is available")
+        self.session = session
+        self.store = store
+        self.settings = settings
+        self.state = state
+        self.requests = 0
+
+    def get(self, *args: Any, **kwargs: Any) -> requests.Response:
+        now = time.time()
+        provider_wait = self.state.get("provider_retry_at", 0) - now
+        if provider_wait > 0:
+            raise _QuotaDeferred("provider_retry_after", provider_wait)
+        if self.requests >= self.settings["max_requests"]:
+            raise _QuotaDeferred("planning_request_budget")
+        wait = quota_wait(self.state, self.settings, now)
+        if wait > self.settings["max_inline_wait_seconds"]:
+            raise _QuotaDeferred("quota_wait", wait)
+        if wait:
+            time.sleep(wait)
+        now = time.time()
+        self.state["quota_attempts"].append(now)
+        self.state["last_attempt_utc"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+        # Persist before transport so a killed worker cannot erase consumption.
+        self.store.save(self.state)
+        self.requests += 1
+        response = self.session.get(*args, **kwargs)
+        if response.status_code == 429:
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            retry_at = time.time() + retry_delay(headers, time.time())
+            self.state["provider_retry_at"] = max(
+                self.state.get("provider_retry_at", 0), retry_at
+            )
+            self.store.save(self.state)
+        return response
 
 
 def _number(identifier: str) -> int:
@@ -34,7 +93,7 @@ def _list_named(storage: StorageManager, parent_id: str, *, mime_type: str | Non
     results: list[dict[str, Any]] = []
     token = None
     while True:
-        args: dict[str, Any] = {"q": query, "spaces": "drive", "fields": "nextPageToken, files(id,name,mimeType,trashed)"}
+        args: dict[str, Any] = {"q": query, "spaces": "drive", "fields": "nextPageToken, files(id,name,mimeType,appProperties,trashed)"}
         if token:
             args["pageToken"] = token
         response = storage.drive_service.files().list(**args).execute(num_retries=4)
@@ -52,11 +111,29 @@ def _bulk_roots(storage: StorageManager) -> tuple[str, str]:
     return bulk, control
 
 
+def _require_production_context() -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REF") != "refs/heads/main":
+        raise PermissionError("BDL bulk planning must run in the main-branch Actions workflow")
+
+
 def _durable_status(storage: StorageManager, bulk_id: str, control_id: str) -> tuple[set[str], set[str]]:
-    folders = _list_named(storage, bulk_id, mime_type=storage.FOLDER_MIME_TYPE)
-    landed = {item["name"] for item in folders if _SUBGROUP_RE.fullmatch(item.get("name", ""))}
     markers = _list_named(storage, control_id)
-    processed = {item["name"].removesuffix(".json") for item in markers if item.get("name", "").endswith(".json") and _SUBGROUP_RE.fullmatch(item["name"].removesuffix(".json"))}
+    statuses = {}
+    for item in markers:
+        name = item.get("name", "")
+        subgroup_id = name.removesuffix(".json") if name.endswith(".json") else ""
+        properties = item.get("appProperties") or {}
+        status = properties.get("status")
+        if (
+            _SUBGROUP_RE.fullmatch(subgroup_id)
+            and properties.get("source_id") == "gus_bdl"
+            and properties.get("transport") == "web_bulk"
+            and properties.get("subgroup_id") == subgroup_id
+            and status in _PROCESSED_STATUSES
+        ):
+            statuses[subgroup_id] = status
+    landed = {subgroup_id for subgroup_id, status in statuses.items() if status == "landed"}
+    processed = set(statuses)
     return landed, processed
 
 
@@ -123,6 +200,7 @@ def _next_subgroup(session: requests.Session, excluded: set[str]) -> dict[str, A
 
 
 def plan() -> dict[str, Any]:
+    _require_production_context()
     storage = StorageManager(allow_interactive_auth=False)
     storage.resolve_root(create=False)
     bulk_id, control_id = _bulk_roots(storage)
@@ -135,14 +213,32 @@ def plan() -> dict[str, Any]:
         headers["X-ClientId"] = api_key
     with requests.Session() as session:
         session.headers.update(headers)
-        candidate = _next_subgroup(session, landed | processed)
-    return {"status": "candidate" if candidate else "complete", "landed_subgroups": len(landed), "web_checked_nonbulk_subgroups": len(processed), "candidate": candidate, "bulk_root_id": bulk_id, "control_root_id": control_id}
+        quota_session = _QuotaAwareSession(
+            session,
+            DriveCampaignStore(storage, "gus_bdl"),
+            load_settings("gus_bdl"),
+        )
+        try:
+            candidate = _next_subgroup(quota_session, landed | processed)
+        except _QuotaDeferred as deferred:
+            return {
+                "status": deferred.reason,
+                "retry_after_seconds": round(deferred.retry_after_seconds, 1),
+                "catalogue_requests": quota_session.requests,
+                "landed_subgroups": len(landed),
+                "web_checked_nonbulk_subgroups": len(processed - landed),
+                "candidate": None,
+                "bulk_root_id": bulk_id,
+                "control_root_id": control_id,
+            }
+    return {"status": "candidate" if candidate else "complete", "catalogue_requests": quota_session.requests, "landed_subgroups": len(landed), "web_checked_nonbulk_subgroups": len(processed - landed), "candidate": candidate, "bulk_root_id": bulk_id, "control_root_id": control_id}
 
 
 def mark(subgroup_id: str, status: str, detail: str | None = None) -> dict[str, Any]:
+    _require_production_context()
     if not _SUBGROUP_RE.fullmatch(subgroup_id):
         raise ValueError("BDL subgroup must use P<digits> identity")
-    allowed = {"below_bulk_threshold", "no_bulk_control", "web_bulk_unsupported"}
+    allowed = _PROCESSED_STATUSES - {"landed"}
     if status not in allowed:
         raise ValueError(f"Unsupported durable BDL bulk marker status: {status}")
     storage = StorageManager(allow_interactive_auth=False)
@@ -156,10 +252,18 @@ def mark(subgroup_id: str, status: str, detail: str | None = None) -> dict[str, 
     media = MediaInMemoryUpload(raw, mimetype="application/json", resumable=False)
     if len(found) > 1:
         raise RuntimeError("Ambiguous BDL bulk status marker")
+    properties = {
+        "source_id": "gus_bdl",
+        "transport": "web_bulk",
+        "subgroup_id": subgroup_id,
+        "status": status,
+    }
     if found:
-        response = storage.drive_service.files().update(fileId=found[0]["id"], media_body=media, fields="id,name,size").execute(num_retries=4)
+        response = storage.drive_service.files().update(fileId=found[0]["id"], body={"appProperties": properties}, media_body=media, fields="id,name,size,appProperties").execute(num_retries=4)
     else:
-        response = storage.drive_service.files().create(body={"name": name, "parents": [control_id]}, media_body=media, fields="id,name,size").execute(num_retries=4)
+        response = storage.drive_service.files().create(body={"name": name, "parents": [control_id], "appProperties": properties}, media_body=media, fields="id,name,size,appProperties").execute(num_retries=4)
+    if (response.get("appProperties") or {}) != properties:
+        raise RuntimeError("BDL bulk status marker metadata did not verify")
     return {"status": "marked", "marker": payload, "file_id": response["id"]}
 
 

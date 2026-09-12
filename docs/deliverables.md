@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 8 September 2026. **The audit and selected NBP product acceptance are complete; full coverage of all four selected sources is not.** NBP has 15 published tables and five verified daily metrics; its latest previously checked daily release contains 429,841 cleaned observations through 7 September. Daily ingestion runs at **02:00 UTC**. The owner has delegated full feasible onboarding across the [182 researched products/families](source-research/README.md), with no source-by-source review gate. [ADR 0006](decisions/0006-complete-selected-source-coverage.md) replaces starter-only scope with complete selected-product coverage. PRs 80–82 and the distribution-index portal are deployed. The fresh [successful run 34252801846](https://github.com/rutkala/zohelo-data/actions/runs/34252801846) verifies the complete WDI archive, 53 of 21,233 current Eurostat distributions, and 278 published BDL responses; the detailed checkpoint and remaining acceptance programme are below. Full Eurostat/BDL coverage and new-source Bronze/Silver/Gold/semantic delivery remain open. Serialized half-hour Actions resume saved ingestion progress, and an enabled daily engineering review now provides separate follow-through. The [secure BDL key setup](source-accounts.md) can activate the free registered quota.
+Updated 12 September 2026. **The audit and selected NBP product acceptance are complete; full coverage of all four selected sources is not.** NBP has 15 published tables and five verified daily metrics; its current verified release is complete through 11 September with 430,141 Gold fact rows. WDI's complete current official archive is retained but remains raw-only. Eurostat has 2,622 of 21,247 current distributions verified and BDL models 41 of 172,576 source variables, so neither is close to full-source acceptance. The owner has delegated full feasible onboarding across the [182 researched products/families](source-research/README.md), with no source-by-source review gate. [ADR 0006](decisions/0006-complete-selected-source-coverage.md) replaces starter-only scope with complete selected-product coverage. Source-specific serialized Actions continue resumable collection; BDL now has live Bronze/Silver/Gold and coverage semantics, while WDI and Eurostat modeled releases remain open. The detailed fresh checkpoint, active continuation and remaining acceptance programme are below. The [registered BDL key](source-accounts.md) is active within its durable provider quota ledger.
 
 This is the single project-status and owner-question record. Research, architecture, runbooks and dated release evidence support it; they are not additional task boards. The portal remains a data tool.
 
@@ -57,6 +57,40 @@ checkpoint durable. It does not close the remaining acceptance items. The remain
 
 These items remain open until their actual acceptance evidence is recorded. Future improvements
 are reprioritized from observed usefulness, correctness, reliability and cost in this same record.
+
+### Production coverage and modeled-delivery checkpoint — 12 September 2026
+
+Fresh Actions jobs were inspected rather than inferring progress from schedules or successful
+starter batches. The current acceptance position is:
+
+| Selected product | Fresh verified evidence | Remaining work |
+| --- | --- | --- |
+| NBP REST A/B/C and gold | [Run 34666809424](https://github.com/rutkala/zohelo-data/actions/runs/34666809424) published release `c4cfcadb-0cd0-4c93-b2b9-f408d082737e`: all four feeds are complete through 11 September, with 426,687 FX fact rows and 3,454 gold fact rows. Capacity remained within its configured bounds. | Continue daily freshness and retained-release checks; no coverage repair is currently indicated. |
+| World Bank WDI | [Run 34694091625](https://github.com/rutkala/zohelo-data/actions/runs/34694091625) freshly verified the one current official bulk archive (`complete_current_catalogue`), 3,096 accepted/published API responses and zero publication backlog. | The bulk data remains `raw_distributions_only`; 1,203 API tasks remain, and the archive still needs source-specific Bronze/Silver/Gold/release/catalogue delivery. |
+| Eurostat | [Run 34707826328](https://github.com/rutkala/zohelo-data/actions/runs/34707826328) verified 2,622 of 21,247 current catalogue distributions (12.34%), 2,991 retained accepted versions, 10,174,633,199 raw bytes, 20,210 pending tasks and zero failed pending tasks. | The resumable catalogue backfill is healthy but incomplete and still `raw_distributions_only`; progressive source-shaped modeling must not imply complete catalogue coverage. |
+| GUS BDL | [Run 34707907610](https://github.com/rutkala/zohelo-data/actions/runs/34707907610) published and freshly verified modeled release `68859181-2fad-4902-b7cf-085fbc687326`, with 2,242,077 current fact rows. It models 41 of 172,576 source variables (0.0238%), from 1,868 accepted Landing responses, with 920 campaign tasks pending. | Bronze/Silver/Gold and coverage semantics are live, but variable/history coverage is far from complete. Continue API batches and the reviewed authenticated Web bulk path until catalogue reconciliation proves completion. |
+
+The active BDL schedule was not restarted: run 34709306304 had completed its Landing stage and
+was already building its modeled release, with a later scheduled run pending under the same
+serialized provider group. The successful predecessor above proves that this was continuation,
+not a persistent platform stall.
+
+[PR 90](https://github.com/rutkala/zohelo-data/pull/90) adds authenticated BDL Web bulk extraction
+for subgroups whose browser export is more efficient than REST paging. Review found that its first
+version could mistake an incomplete folder for completion, bypass the shared quota ledger, buffer
+archives up to 2 GiB in Node, and upload those archives as short-lived Actions evidence. The
+corrected implementation chains the bulk step after the ordinary BDL modeled release inside the
+same serialized workflow, reserves every catalogue call in the durable provider ledger, records a
+final completion marker only after archive/Parquet/manifest verification, streams ZIP hashing, and
+uploads summaries only. These controls are covered by focused regression tests; production
+coverage changes remain unclaimed until the reviewed code is merged and a fresh main-branch run
+publishes evidence.
+
+The next modeled-release implementation order is WDI first, because its complete current archive
+is already retained and has a stable six-member CSV contract, followed by progressive Eurostat
+releases built only from complete verified data/structure units while its much larger catalogue
+continues. Both must reuse source-specific immutable pointers and staged validation; heterogeneous
+values will not be presented as generally additive semantic metrics.
 
 ### Vectorized engine standardization and OpenData multi-table expansion — 11 September 2026
 

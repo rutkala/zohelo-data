@@ -156,17 +156,87 @@ def _upload_file(storage: StorageManager, local_path: Path, *, name: str, parent
 def _upload_manifest(storage: StorageManager, manifest: dict[str, Any], *, parent_id: str) -> dict[str, Any]:
     raw = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = sha256(raw).hexdigest()
+    md5_digest = md5(raw).hexdigest()
     name = f"manifest-{digest}.json"
     existing = _find_exact_file(storage, name, parent_id)
     if len(existing) > 1:
         raise RuntimeError("Ambiguous BDL bulk manifest")
     if existing:
-        return {"id": existing[0]["id"], "name": name, "sha256": digest, "size": len(raw), "reused": True}
+        item = existing[0]
+        properties = item.get("appProperties") or {}
+        if (
+            int(item.get("size", -1)) != len(raw)
+            or item.get("md5Checksum") != md5_digest
+            or properties.get("sha256") != digest
+        ):
+            raise RuntimeError("Existing BDL bulk manifest conflicts with expected bytes")
+        return {"id": item["id"], "name": name, "sha256": digest, "size": len(raw), "reused": True}
     media = MediaInMemoryUpload(raw, mimetype="application/json", resumable=False)
     response = storage.drive_service.files().create(body={"name": name, "parents": [parent_id], "appProperties": {"sha256": digest, "kind": "manifest", "source_id": "gus_bdl", "transport": "web_bulk"}}, media_body=media, fields="id,name,size,md5Checksum,appProperties").execute(num_retries=4)
-    if not response or response.get("name") != name or int(response.get("size", -1)) != len(raw):
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != len(raw)
+        or response.get("md5Checksum") != md5_digest
+        or (response.get("appProperties") or {}).get("sha256") != digest
+    ):
         raise RuntimeError("BDL bulk manifest upload did not verify")
     return {"id": response["id"], "name": name, "sha256": digest, "size": len(raw), "reused": False}
+
+
+def _upload_completion_marker(
+    storage: StorageManager,
+    *,
+    control_id: str,
+    subgroup_id: str,
+    archive_sha: str,
+    row_count: int,
+    manifest_object: dict[str, Any],
+) -> dict[str, Any]:
+    """Publish the final marker only after every immutable snapshot object verifies."""
+
+    payload = {
+        "format_version": 1,
+        "source_id": "gus_bdl",
+        "transport": "web_bulk",
+        "subgroup_id": subgroup_id,
+        "status": "landed",
+        "archive_sha256": archive_sha,
+        "row_count": row_count,
+        "manifest_object": manifest_object,
+        "completed_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    name = f"{subgroup_id}.json"
+    properties = {
+        "source_id": "gus_bdl",
+        "transport": "web_bulk",
+        "subgroup_id": subgroup_id,
+        "status": "landed",
+        "manifest_sha256": manifest_object["sha256"],
+    }
+    existing = _find_exact_file(storage, name, control_id)
+    if len(existing) > 1:
+        raise RuntimeError("Ambiguous BDL bulk completion marker")
+    if existing:
+        item = existing[0]
+        if (item.get("appProperties") or {}) != properties:
+            raise RuntimeError("Existing BDL bulk completion marker conflicts with snapshot")
+        return {"id": item["id"], "name": name, "reused": True}
+    media = MediaInMemoryUpload(raw, mimetype="application/json", resumable=False)
+    response = storage.drive_service.files().create(
+        body={"name": name, "parents": [control_id], "appProperties": properties},
+        media_body=media,
+        fields="id,name,size,appProperties",
+    ).execute(num_retries=4)
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != len(raw)
+        or (response.get("appProperties") or {}) != properties
+    ):
+        raise RuntimeError("BDL bulk completion marker did not verify")
+    return {"id": response["id"], "name": name, "reused": False}
 
 
 def ingest_archive(archive: Path, subgroup_id: str, allow_production_write: bool) -> dict[str, Any]:
@@ -177,8 +247,8 @@ def ingest_archive(archive: Path, subgroup_id: str, allow_production_write: bool
         raise FileNotFoundError(f"BDL bulk archive not found: {archive}")
     if not allow_production_write:
         raise PermissionError("BDL bulk Drive publication requires --allow-production-write")
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise PermissionError("BDL bulk production publication must run in GitHub Actions")
+    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REF") != "refs/heads/main":
+        raise PermissionError("BDL bulk production publication must run in the main-branch Actions workflow")
     archive_sha = _hash_file(archive, "sha256")
     archive_md5 = _hash_file(archive, "md5")
     retrieved_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -192,11 +262,20 @@ def ingest_archive(archive: Path, subgroup_id: str, allow_production_write: bool
         session = storage.begin_write_session()
         landing_root = storage.resolve_zone("landing", create=False)
         snapshot_root = storage.get_or_create_nested_folder(["gus_bdl", "web_bulk", subgroup_id, archive_sha], root_id=landing_root, write_session=session)
+        control_root = storage.get_or_create_nested_folder(["gus_bdl", "web_bulk", "_control"], root_id=landing_root, write_session=session)
         archive_object = _upload_file(storage, archive, name="source.zip", parent_id=snapshot_root, sha256_hex=archive_sha, md5_hex=archive_md5, kind="source_zip")
         parquet_object = _upload_file(storage, parquet_path, name="data.parquet", parent_id=snapshot_root, sha256_hex=converted["parquet_sha256"], md5_hex=converted["parquet_md5"], kind="source_parquet")
         manifest = {"format_version": 1, "source_id": "gus_bdl", "transport": "web_bulk", "subgroup_id": subgroup_id, "retrieved_at_utc": retrieved_at, "archive_original_filename": archive.name, "archive_sha256": archive_sha, "archive_bytes": archive.stat().st_size, **zip_metadata, "row_count": converted["row_count"], "source_columns": converted["source_columns"], "archive_object": archive_object, "parquet_object": parquet_object}
         manifest_object = _upload_manifest(storage, manifest, parent_id=snapshot_root)
-    return {"status": "bdl_web_bulk_landed", "source_id": "gus_bdl", "transport": "web_bulk", "subgroup_id": subgroup_id, "archive_sha256": archive_sha, "archive_bytes": archive.stat().st_size, "row_count": converted["row_count"], "parquet_bytes": converted["parquet_bytes"], "drive_folder_id": snapshot_root, "archive_object": archive_object, "parquet_object": parquet_object, "manifest_object": manifest_object}
+        completion_marker = _upload_completion_marker(
+            storage,
+            control_id=control_root,
+            subgroup_id=subgroup_id,
+            archive_sha=archive_sha,
+            row_count=converted["row_count"],
+            manifest_object=manifest_object,
+        )
+    return {"status": "bdl_web_bulk_landed", "source_id": "gus_bdl", "transport": "web_bulk", "subgroup_id": subgroup_id, "archive_sha256": archive_sha, "archive_bytes": archive.stat().st_size, "row_count": converted["row_count"], "parquet_bytes": converted["parquet_bytes"], "drive_folder_id": snapshot_root, "archive_object": archive_object, "parquet_object": parquet_object, "manifest_object": manifest_object, "completion_marker": completion_marker}
 
 
 def main() -> int:

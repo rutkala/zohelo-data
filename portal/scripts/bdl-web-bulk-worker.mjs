@@ -1,5 +1,6 @@
 import { chromium } from '@playwright/test';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
@@ -48,9 +49,23 @@ async function captureExport(page, entry) {
   const filename = suggested.replace(/[^A-Za-z0-9._-]/g, '_');
   const target = path.join(outDir, `download-${filename}`);
   await download.saveAs(target);
-  const body = await fs.readFile(target);
-  if (body.length < 4 || body[0] !== 0x50 || body[1] !== 0x4b) throw new Error('BDL bulk download is not a ZIP archive');
-  return { filename, suggestedFilename: suggested, bytes: body.length, sha256: crypto.createHash('sha256').update(body).digest('hex'), firstBytesHex: body.subarray(0, 16).toString('hex') };
+  const metadata = await fs.stat(target);
+  const prefix = Buffer.alloc(Math.min(16, metadata.size));
+  const handle = await fs.open(target, 'r');
+  try {
+    await handle.read(prefix, 0, prefix.length, 0);
+  } finally {
+    await handle.close();
+  }
+  if (metadata.size < 4 || prefix[0] !== 0x50 || prefix[1] !== 0x4b) throw new Error('BDL bulk download is not a ZIP archive');
+  const digest = crypto.createHash('sha256');
+  await new Promise((resolve, reject) => {
+    const stream = createReadStream(target);
+    stream.on('data', (chunk) => digest.update(chunk));
+    stream.on('end', resolve);
+    stream.on('error', reject);
+  });
+  return { filename, suggestedFilename: suggested, bytes: metadata.size, sha256: digest.digest('hex'), firstBytesHex: prefix.toString('hex') };
 }
 
 const browser = await chromium.launch({ headless: true });
