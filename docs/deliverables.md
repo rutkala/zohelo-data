@@ -89,10 +89,12 @@ catalogues and every admitted child subject page to be exhausted, plus a zero-ba
 checkpoint whose accepted-response count matches the campaign state embedded in the release.
 Browser downloads are accepted
 only from a new export control created after the current subgroup's successful generation request;
-pre-existing exports are distinguished by stable row-content fingerprints rather than reorderable
-DOM IDs, and the provider filename must carry both the subgroup identity and a timestamp within the
-current Europe/Warsaw provider-clock generation window. The ambiguous whole-second POST boundary is
-rejected rather than accepted as a possible prior export. These controls are covered by focused regression tests;
+pre-existing matching exports must first leave their pending state (or the run fails closed), then
+are distinguished by stable row-content fingerprints rather than reorderable DOM IDs. The provider
+filename must carry both the subgroup identity and a timestamp within the current Europe/Warsaw
+provider-clock generation window. The ambiguous whole-second POST boundary is captured from the
+matching request callback at event emission and rejected rather than accepted as a possible prior
+export. These controls are covered by focused regression tests;
 production coverage changes remain unclaimed until the reviewed code is merged and a fresh
 main-branch run publishes evidence.
 

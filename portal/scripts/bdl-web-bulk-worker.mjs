@@ -40,12 +40,24 @@ async function listExports(page) {
 function exportFingerprint(entry) {
   return crypto.createHash('sha256').update(JSON.stringify([entry.text, entry.rowText])).digest('hex');
 }
+function isReadyExport(entry) {
+  return !/aspNetDisabled/i.test(entry.cls) && !entry.disabled && Boolean(entry.href || entry.onclick);
+}
+async function settlePreexistingExports(page) {
+  let entries = await listExports(page);
+  for (let attempt = 1; attempt <= 36; attempt++) {
+    if (!entries.some((entry) => !isReadyExport(entry))) return entries;
+    if (attempt < 36) {
+      await page.waitForTimeout(5000);
+      entries = await listExports(page);
+    }
+  }
+  throw new Error('Pre-existing BDL exports did not settle before the generation request');
+}
 async function findNewReadyExport(page, baselineFingerprints) {
   const entries = (await listExports(page)).filter((entry) => (
     !baselineFingerprints.has(exportFingerprint(entry)) &&
-    !/aspNetDisabled/i.test(entry.cls) &&
-    !entry.disabled &&
-    (entry.href || entry.onclick)
+    isReadyExport(entry)
   ));
   if (entries.length > 1) throw new Error('Generated BDL package matched multiple new Export controls');
   return entries[0] || null;
@@ -124,10 +136,12 @@ try {
   result.login = !/Użytkownik:\s*Gość/i.test(loginText) && /Użytkownik:/i.test(loginText);
   if (!result.login) throw new Error('BDL web login failed');
 
-  // An export left by an earlier run is not evidence for this subgroup.  Pin
-  // every pre-existing control before requesting a new package and accept only
-  // a new control created after the successful POST below.
-  const baselineFingerprints = new Set((await listExports(page)).map(exportFingerprint));
+  // Do not let an older pending export transition after this run's POST and
+  // masquerade as its result.  Wait for every matching pre-existing control to
+  // settle, then pin the final row content before requesting a new package.
+  const baselineExports = await settlePreexistingExports(page);
+  const baselineFingerprints = new Set(baselineExports.map(exportFingerprint));
+  result.preexistingExportsSettled = true;
   result.baselineExportFingerprints = baselineFingerprints.size;
   await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1200);
@@ -158,13 +172,23 @@ try {
       result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
     } else {
       const currentPath = new URL(page.url()).pathname;
-      const generationStartedAt = new Date();
+      let generationRequestObservedAt = null;
+      const requestPromise = page.waitForRequest((request) => {
+        try {
+          const u = new URL(request.url());
+          const matches = request.method() === 'POST' && u.pathname === currentPath;
+          if (matches && generationRequestObservedAt === null) generationRequestObservedAt = new Date();
+          return matches;
+        } catch { return false; }
+      }, { timeout: 360000 });
       const responsePromise = page.waitForResponse((response) => {
         try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
       }, { timeout: 360000 });
       await downloadButton.click();
+      await requestPromise;
+      if (generationRequestObservedAt === null) throw new Error('BDL generation request timestamp was not captured');
       const response = await responsePromise;
-      result.generation = { startedAt: generationStartedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationStartedAt.getTime() };
+      result.generation = { requestObservedAt: generationRequestObservedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationRequestObservedAt.getTime() };
       if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
       let ready = null;
       for (let attempt = 1; attempt <= 36; attempt++) {
@@ -173,7 +197,7 @@ try {
         if (attempt < 36) await page.waitForTimeout(5000);
       }
       if (!ready) throw new Error('BDL package generated but no new bound Export control appeared');
-      result.archive = await captureExport(page, ready, generationStartedAt);
+      result.archive = await captureExport(page, ready, generationRequestObservedAt);
       result.status = 'downloaded_generated_export';
     }
   }

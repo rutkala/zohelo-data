@@ -270,6 +270,13 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         self.assertNotIn("emitted >= providerStartedAt", worker)
         self.assertNotIn("start - 300000", worker)
         self.assertNotIn("const starts = [", worker)
+        self.assertIn("settlePreexistingExports(page)", worker)
+        self.assertIn("entries.some((entry) => !isReadyExport(entry))", worker)
+        self.assertIn("did not settle before the generation request", worker)
+        self.assertIn("await requestPromise", worker)
+        self.assertIn("generationRequestObservedAt", worker)
+        self.assertIn("if (matches && generationRequestObservedAt === null)", worker)
+        self.assertNotIn("const generationStartedAt = new Date()", worker)
         workflow = (ROOT / ".github" / "workflows" / "source-gus-bdl.yml").read_text(
             encoding="utf-8"
         )
