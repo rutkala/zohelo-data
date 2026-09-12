@@ -196,7 +196,6 @@ jobs:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-          GUS_BDL_API_KEY: ${{ secrets.GUS_BDL_API_KEY }}
           PYTHONPATH: ../src
         run: |
           mkdir -p test-results/bdl-web-bulk

@@ -80,11 +80,13 @@ for subgroups whose browser export is more efficient than REST paging. Review fo
 version could mistake an incomplete folder for completion, bypass the shared quota ledger, buffer
 archives up to 2 GiB in Node, and upload those archives as short-lived Actions evidence. The
 corrected implementation chains the bulk step after the ordinary BDL modeled release inside the
-same serialized workflow, reserves every catalogue call in the durable provider ledger, records a
-final completion marker only after archive/Parquet/manifest verification, streams ZIP hashing, and
-uploads summaries only. These controls are covered by focused regression tests; production
-coverage changes remain unclaimed until the reviewed code is merged and a fresh main-branch run
-publishes evidence.
+same serialized workflow, selects work from the checksum-pinned `dim_bdl_subject` in that immutable
+release instead of restarting a live API traversal, records a final completion marker only after
+archive/Parquet/manifest verification, streams ZIP hashing, and
+uploads summaries only. Invalid, cyclic or incomplete subgroup ancestry is reported as a completion
+blocker rather than silently omitted. These controls are covered by focused regression tests;
+production coverage changes remain unclaimed until the reviewed code is merged and a fresh
+main-branch run publishes evidence.
 
 The next modeled-release implementation order is WDI first, because its complete current archive
 is already retained and has a stable six-member CSV contract, followed by progressive Eurostat

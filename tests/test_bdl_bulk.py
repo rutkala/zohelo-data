@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
+from hashlib import sha256
 import os
 from pathlib import Path
 import sys
@@ -22,70 +22,79 @@ import bdl_bulk_plan
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class _StateStore:
-    def __init__(self, state):
-        self.state = deepcopy(state)
-        self.saved = []
-
-    def load(self):
-        return deepcopy(self.state)
-
-    def save(self, state):
-        self.state = deepcopy(state)
-        self.saved.append(deepcopy(state))
-
-
-class _Response:
-    def __init__(self, status_code=200, headers=None):
-        self.status_code = status_code
-        self.headers = headers or {}
-
-
-class _Session:
-    def __init__(self, response=None):
-        self.response = response or _Response()
-        self.calls = []
-
-    def get(self, *args, **kwargs):
-        self.calls.append((args, kwargs))
-        return self.response
-
-
-def _settings(**overrides):
-    settings = {
-        "max_requests": 3,
-        "max_inline_wait_seconds": 10,
-        "min_request_interval_seconds": 1,
-        "quota_history_seconds": 900,
-        "quota_windows": [{"seconds": 900, "requests": 400}],
-    }
-    settings.update(overrides)
-    return settings
-
-
 class BdlBulkPlanTests(unittest.TestCase):
-    def test_catalogue_request_is_reserved_before_transport(self):
-        store = _StateStore({"quota_attempts": [], "provider_retry_at": 0})
-        transport = _Session()
-        session = bdl_bulk_plan._QuotaAwareSession(transport, store, _settings())
+    def test_catalogue_candidates_use_durable_hierarchy_and_numeric_order(self):
+        subjects = [
+            {"subject_id": "K1", "parent_subject_id": None, "subject_name": "K", "has_variables": False},
+            {"subject_id": "G3", "parent_subject_id": "K1", "subject_name": "G", "has_variables": False},
+            {"subject_id": "P10", "parent_subject_id": "G3", "subject_name": "Ten", "has_variables": True},
+            {"subject_id": "P2", "parent_subject_id": "G3", "subject_name": "Two", "has_variables": True},
+        ]
 
-        with patch.object(bdl_bulk_plan.time, "time", return_value=1_000):
-            response = session.get("https://bdl.stat.gov.pl/api/v1/subjects")
+        candidates, invalid = bdl_bulk_plan._catalogue_candidates(subjects)
 
-        self.assertEqual(200, response.status_code)
-        self.assertEqual([1_000], store.saved[0]["quota_attempts"])
-        self.assertEqual(1, len(transport.calls))
+        self.assertEqual([], invalid)
+        self.assertEqual(["P2", "P10"], [item["subgroup_id"] for item in candidates])
+        self.assertEqual(["K1", "G3", "P2"], candidates[0]["path"])
+        self.assertEqual(
+            "https://bdl.stat.gov.pl/bdl/dane/podgrup/wymiary/1/3/2",
+            candidates[0]["url"],
+        )
 
-    def test_provider_retry_after_is_persisted(self):
-        store = _StateStore({"quota_attempts": [], "provider_retry_at": 0})
-        transport = _Session(_Response(429, {"Retry-After": "120"}))
-        session = bdl_bulk_plan._QuotaAwareSession(transport, store, _settings())
+    def test_invalid_or_cyclic_subgroups_are_explicit_completion_blockers(self):
+        subjects = [
+            {"subject_id": "K1", "parent_subject_id": None},
+            {"subject_id": "G3", "parent_subject_id": "P2"},
+            {"subject_id": "P2", "parent_subject_id": "G3"},
+            {"subject_id": "P10", "parent_subject_id": "G999"},
+        ]
 
-        with patch.object(bdl_bulk_plan.time, "time", return_value=1_000):
-            session.get("https://bdl.stat.gov.pl/api/v1/subjects")
+        candidates, invalid = bdl_bulk_plan._catalogue_candidates(subjects)
 
-        self.assertEqual(1_120, store.state["provider_retry_at"])
-        self.assertGreaterEqual(len(store.saved), 2)
+        self.assertEqual([], candidates)
+        self.assertEqual(["P2", "P10"], invalid)
+
+    def test_subject_catalogue_validates_selected_release_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "subjects.parquet"
+            import duckdb
+
+            with duckdb.connect() as connection:
+                escaped = str(path).replace("'", "''")
+                connection.execute(
+                    """
+                    create table subjects(
+                        subject_key varchar,
+                        parent_subject_id varchar,
+                        subject_name varchar,
+                        has_variables boolean
+                    )
+                    """
+                )
+                connection.execute("insert into subjects values ('K1', null, 'Category', false)")
+                connection.execute(f"copy subjects to '{escaped}' (format parquet)")
+            raw = path.read_bytes()
+            store = Mock()
+            store.read.return_value = raw
+            manifest = {
+                "release_id": "release-1",
+                "release_scope": "bdl_platform",
+                "datasets": [{
+                    "dataset_id": "dim_bdl_subject",
+                    "files": [{"id": "subjects-file", "size": len(raw), "sha256": sha256(raw).hexdigest()}],
+                }],
+            }
+            with (
+                patch.object(bdl_bulk_plan, "DriveReleaseStore", return_value=store),
+                patch.object(bdl_bulk_plan, "read_current_release_manifest", return_value=manifest),
+            ):
+                storage = Mock()
+                storage.get_or_create_nested_folder.return_value = "release-root"
+                release_id, subjects = bdl_bulk_plan._subject_catalogue(storage, "root")
+
+        self.assertEqual("release-1", release_id)
+        self.assertEqual("K1", subjects[0]["subject_id"])
+        store.read.assert_called_once_with("subjects-file")
 
     def test_partial_snapshot_folder_is_not_a_completion_signal(self):
         storage = Mock()
@@ -200,6 +209,10 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         evidence_paths = upload["with"]["path"]
         self.assertNotIn("download-", evidence_paths)
         self.assertNotIn("bdl-web-bulk/\n", evidence_paths)
+        plan_step = next(
+            step for step in job["steps"] if step.get("name") == "Plan next unprocessed BDL subgroup"
+        )
+        self.assertNotIn("GUS_BDL_API_KEY", plan_step.get("env", {}))
 
     def test_worker_hashes_download_as_stream(self):
         worker = (ROOT / "portal" / "scripts" / "bdl-web-bulk-worker.mjs").read_text(
