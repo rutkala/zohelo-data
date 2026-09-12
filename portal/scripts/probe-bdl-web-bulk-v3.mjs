@@ -29,17 +29,17 @@ const page = await context.newPage();
 page.on('request', (r) => {
   try {
     const u = new URL(r.url());
-    if (u.hostname.endsWith('stat.gov.pl')) events.push({ kind: 'request', method: r.method(), path: u.pathname, type: r.resourceType() });
+    if (u.hostname.endsWith('stat.gov.pl')) events.push({ at: new Date().toISOString(), kind: 'request', method: r.method(), path: u.pathname, type: r.resourceType() });
   } catch {}
 });
 page.on('response', (r) => {
   try {
     const u = new URL(r.url());
-    if (u.hostname.endsWith('stat.gov.pl')) events.push({ kind: 'response', status: r.status(), path: u.pathname });
+    if (u.hostname.endsWith('stat.gov.pl')) events.push({ at: new Date().toISOString(), kind: 'response', status: r.status(), path: u.pathname });
   } catch {}
 });
 page.on('dialog', async (d) => {
-  events.push({ kind: 'dialog', type: d.type(), message: safe(d.message()).slice(0, 500) });
+  events.push({ at: new Date().toISOString(), kind: 'dialog', type: d.type(), message: safe(d.message()).slice(0, 500) });
   await d.accept();
 });
 
@@ -64,7 +64,7 @@ async function snapshot(name) {
         disabled: 'disabled' in e ? !!e.disabled : null,
         cls: typeof e.className === 'string' ? e.className : '',
         visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
-      })).filter((x) => /dalej|pobierz|download|pobrane|podgrup|selectall|zaznacz|csv|xlsx?|zip/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.href} ${x.cls}`)).slice(0, 1500));
+      })).filter((x) => /dalej|pobierz|download|pobrane|podgrup|selectall|zaznacz|csv|xlsx?|zip|wym3/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.href} ${x.cls}`)).slice(0, 1600));
       await write(`${name}.json`, { url: page.url(), title: await page.title(), body, controls });
       return;
     } catch (error) {
@@ -102,7 +102,7 @@ async function buttonState(id) {
 }
 
 try {
-  await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'networkidle', timeout: 60000 });
+  await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
   await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
   await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
@@ -111,8 +111,8 @@ try {
   result.login = { success: !/Użytkownik:\s*Gość/i.test(loginBody) && /Użytkownik:/i.test(loginBody), urlAfter: page.url() };
   if (!result.login.success) throw new Error('BDL login failed');
 
-  // Use BDL's own documented over-limit example subgroup P2695.
-  await page.goto(result.subgroup.url, { waitUntil: 'networkidle', timeout: 60000 });
+  await page.goto(result.subgroup.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForTimeout(1800);
   const subgroupBody = await page.locator('body').innerText().catch(() => '');
   result.subgroup.loaded = /P2695|Wyniki finansowe wg sekcji PKD 2007/i.test(subgroupBody);
   result.subgroup.pageTitle = await page.title();
@@ -120,35 +120,54 @@ try {
     await snapshot('01-subgroup-unexpected');
     throw new Error(`P2695 page did not load as expected: ${page.url()}`);
   }
-  await snapshot('01-subgroup-initial');
 
-  // Use native BDL callbacks for the cascading dimensions.
+  // Native callbacks populate the four cascading dimensions.
   await selectAll('ctl00_ContentPlaceHolder_lata_SelectAll', 'years');
-  await selectAll('ctl00_ContentPlaceHolder_wym1_SelectAll', 'dimension-1');
-  await selectAll('ctl00_ContentPlaceHolder_wym2_SelectAll', 'dimension-2');
+  await selectAll('ctl00_ContentPlaceHolder_wym1_SelectAll', 'periods');
+  await selectAll('ctl00_ContentPlaceHolder_wym2_SelectAll', 'subject');
 
-  // Keep the proof reasonably bounded: select only as many values of the last
-  // dimension as needed to cross BDL's 3,500-information threshold.
-  const finalRoot = page.locator('#ctl00_ContentPlaceHolder_wym3');
-  if (!await finalRoot.isVisible().catch(() => false)) {
-    // If the current BDL schema differs from the historic manual, fall back to native select-all.
-    await selectAll('ctl00_ContentPlaceHolder_wym3_SelectAll', 'dimension-3');
-  } else {
-    const items = finalRoot.locator('li.rlbItem');
-    const count = await items.count();
-    if (!count) throw new Error('P2695 final dimension contains no selectable items');
-    for (let i = 0; i < count; i++) {
-      await items.nth(i).click(i === 0 ? {} : { modifiers: ['Control'] });
-      await page.waitForTimeout(350);
-      const state = await infoState();
-      if ((state.selectedInformation ?? 0) > 3500) {
-        result.dimensions.push({ name: 'dimension-3', action: 'partial', selectedRows: i + 1, state });
-        break;
-      }
-      if (i === count - 1) {
-        result.dimensions.push({ name: 'dimension-3', action: 'partial-all', selectedRows: count, state });
-      }
+  // Current P2695 has enough combinations that one PKD-section value crosses 3,500.
+  // Ask Telerik for the actual DOM id of the first item, then click it like a user.
+  const finalMeta = await page.evaluate(() => {
+    const c = typeof window.$find === 'function' ? window.$find('ctl00_ContentPlaceHolder_wym3') : null;
+    if (!c) return { found: false };
+    const items = c.get_items?.();
+    const count = items?.get_count?.() ?? 0;
+    return {
+      found: true,
+      count,
+      first: count ? {
+        id: items.getItem(0).get_element?.()?.id || null,
+        text: items.getItem(0).get_text?.() || null,
+      } : null,
+    };
+  });
+  result.dimensions.push({ name: 'sections-meta', ...finalMeta });
+
+  if (finalMeta.found && finalMeta.first?.id) {
+    const firstItem = page.locator(`#${finalMeta.first.id}`);
+    await firstItem.click();
+    await page.waitForTimeout(2200);
+    let state = await infoState();
+    let selectedRows = 1;
+
+    // Be adaptive if current BDL counts change: add final-dimension rows until >3500.
+    while ((state.selectedInformation ?? 0) <= 3500 && selectedRows < finalMeta.count) {
+      const nextMeta = await page.evaluate((idx) => {
+        const c = window.$find?.('ctl00_ContentPlaceHolder_wym3');
+        const item = c?.get_items?.()?.getItem?.(idx);
+        return item ? { id: item.get_element?.()?.id || null, text: item.get_text?.() || null } : null;
+      }, selectedRows);
+      if (!nextMeta?.id) break;
+      await page.locator(`#${nextMeta.id}`).click({ modifiers: ['Control'] });
+      selectedRows++;
+      await page.waitForTimeout(900);
+      state = await infoState();
     }
+    result.dimensions.push({ name: 'sections', action: 'partial', selectedRows, state });
+  } else {
+    // Conservative fallback if Telerik changes its client object shape.
+    await selectAll('ctl00_ContentPlaceHolder_wym3_SelectAll', 'sections');
   }
 
   result.bulk.beforeDownload = await infoState();
@@ -156,8 +175,7 @@ try {
   result.bulk.download1 = await buttonState('ctl00_ContentPlaceHolder_download1');
   result.bulk.download2 = await buttonState('ctl00_ContentPlaceHolder_download2');
   result.bulk.next1 = await buttonState('ctl00_ContentPlaceHolder_dalej1');
-  result.bulk.next2 = await buttonState('ctl00_ContentPlaceHolder_dalej2');
-  await snapshot('02-over-limit-selection');
+  await snapshot('01-over-limit-selection');
 
   if (!result.bulk.thresholdExceeded) throw new Error(`Could not exceed BDL bulk threshold: ${JSON.stringify(result.bulk.beforeDownload)}`);
 
@@ -172,12 +190,38 @@ try {
   }
   if (!downloadButton) throw new Error(`BDL Pobierz did not enable above 3500: ${JSON.stringify({ download1: result.bulk.download1, download2: result.bulk.download2 })}`);
 
-  const beforeClickUrl = page.url();
-  const directDownloadPromise = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
+  // The BDL bulk action is an AJAX POST which can remain in flight while the
+  // server builds the archive. Do not navigate away until it completes.
+  const currentPath = new URL(page.url()).pathname;
+  const generationStarted = Date.now();
+  const generationResponsePromise = page.waitForResponse((response) => {
+    try {
+      const u = new URL(response.url());
+      return response.request().method() === 'POST' && u.pathname === currentPath;
+    } catch {
+      return false;
+    }
+  }, { timeout: 300000 }).catch((error) => ({ timeoutError: String(error) }));
+  const directDownloadPromise = page.waitForEvent('download', { timeout: 300000 }).catch(() => null);
+
   await downloadButton.click();
-  await page.waitForTimeout(5000);
-  result.bulk.afterDownloadClick = { before: beforeClickUrl, after: page.url() };
-  const directDownload = await directDownloadPromise;
+  result.bulk.generationClickAt = new Date().toISOString();
+  const generationResponse = await generationResponsePromise;
+  result.bulk.generationElapsedMs = Date.now() - generationStarted;
+  if (generationResponse && !generationResponse.timeoutError) {
+    result.bulk.generationResponse = {
+      status: generationResponse.status(),
+      url: generationResponse.url(),
+      ok: generationResponse.ok(),
+    };
+  } else {
+    result.bulk.generationResponse = generationResponse;
+  }
+
+  const directDownload = await Promise.race([
+    directDownloadPromise,
+    page.waitForTimeout(1000).then(() => null),
+  ]);
   if (directDownload) {
     const filename = directDownload.suggestedFilename().replace(/[^A-Za-z0-9._-]/g, '_');
     const target = path.join(outDir, `download-${filename}`);
@@ -186,13 +230,19 @@ try {
   } else {
     result.bulk.directDownload = null;
   }
-  await snapshot('03-after-pobierz');
+  await snapshot('02-after-generation-response');
 
-  // BDL documents bulk packages as appearing under "Pobrane podgrupy".
-  // Poll the authenticated start page for up to 3 minutes for the generated entry.
+  // Now inspect the authenticated start page. Use DOMContentLoaded rather than
+  // networkidle because BDL keeps auxiliary requests alive.
   result.bulk.polls = [];
   for (let attempt = 1; attempt <= 18; attempt++) {
-    await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'networkidle', timeout: 60000 });
+    try {
+      await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    } catch (error) {
+      result.bulk.polls.push({ attempt, navigationError: String(error) });
+      if (attempt < 18) await page.waitForTimeout(10000);
+      continue;
+    }
     await page.waitForTimeout(1200);
     const body = safe(await page.locator('body').innerText().catch(() => ''));
     const links = await page.locator('a').evaluateAll((as) => as.map((a) => ({
@@ -207,14 +257,14 @@ try {
       result.bulk.generatedEntryDetected = true;
       result.bulk.generatedEntryPoll = attempt;
       result.bulk.generatedLinks = links;
-      await snapshot('04-generated-entry');
+      await snapshot('03-generated-entry');
       break;
     }
     if (attempt < 18) await page.waitForTimeout(10000);
   }
   if (!result.bulk.generatedEntryDetected) {
     result.bulk.generatedEntryDetected = false;
-    await snapshot('04-start-final');
+    await snapshot('03-start-final');
   }
 
   result.completedAt = new Date().toISOString();
@@ -225,15 +275,17 @@ try {
     selectedInformation: result.bulk.beforeDownload?.selectedInformation,
     thresholdExceeded: result.bulk.thresholdExceeded,
     downloadButtonId: result.bulk.downloadButtonId,
-    afterDownloadUrl: result.bulk.afterDownloadClick?.after,
+    generationResponse: result.bulk.generationResponse,
+    generationElapsedMs: result.bulk.generationElapsedMs,
     directDownload: result.bulk.directDownload,
     generatedEntryDetected: result.bulk.generatedEntryDetected,
     generatedEntryPoll: result.bulk.generatedEntryPoll ?? null,
     generatedLinkCount: result.bulk.generatedLinks?.length ?? 0,
   }, null, 2));
 
-  // Treat successful triggering as the proof; async generation may legitimately take longer.
-  if (!result.bulk.downloadButtonId) process.exitCode = 1;
+  if (!result.bulk.generationResponse?.ok && !result.bulk.generatedEntryDetected && !result.bulk.directDownload) {
+    process.exitCode = 1;
+  }
 } catch (error) {
   result.error = safe(error?.stack || error?.message || error);
   result.failedAt = new Date().toISOString();
