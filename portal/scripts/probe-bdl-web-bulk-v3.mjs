@@ -53,7 +53,7 @@ async function snapshot(name) {
       disabled: 'disabled' in e ? !!e.disabled : null,
       cls: typeof e.className === 'string' ? e.className : '',
       visible: !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length),
-    })).filter((x) => /dalej|pobierz|download|export|podgrup|zaznacz|wybran|dodaj|transfer|rlb/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.cls}`)).slice(0, 1500)),
+    })).filter((x) => /dalej|pobierz|download|export|podgrup|zaznacz|wybran|dodaj|transfer|rlbButton/i.test(`${x.id} ${x.text} ${x.value} ${x.title} ${x.cls}`)).slice(0, 800)),
   });
 }
 async function dimensionState() {
@@ -96,10 +96,7 @@ try {
   await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
   await page.waitForTimeout(2300);
   const loginBody = safe(await page.locator('body').innerText().catch(() => ''));
-  result.login = {
-    success: !/Użytkownik:\s*Gość/i.test(loginBody) && /Użytkownik:/i.test(loginBody),
-    urlAfter: page.url(),
-  };
+  result.login = { success: !/Użytkownik:\s*Gość/i.test(loginBody) && /Użytkownik:/i.test(loginBody), urlAfter: page.url() };
   if (!result.login.success) throw new Error('BDL login failed');
 
   // P1341: 31 years x 3 sexes x 30 age values = 2,790 information combinations.
@@ -115,43 +112,38 @@ try {
   result.geography.initial = await geoCounts();
   await snapshot('01-geography-initial');
 
-  // Reproduce the real UI, but keep the proof bounded:
-  // Zaznacz -> Zaznacz województwa -> > (add selected) -> confirm 16 -> Dalej.
-  const menuButton = page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton');
-  if (!await menuButton.isVisible().catch(() => false)) throw new Error('Geography Zaznacz menu button not found');
-  await menuButton.click();
-  await page.waitForTimeout(500);
+  // Select the 16 voivodeships exactly as a user can multi-select them in the left list.
+  const voivodeships = [
+    'DOLNOŚLĄSKIE', 'KUJAWSKO-POMORSKIE', 'LUBELSKIE', 'LUBUSKIE', 'ŁÓDZKIE', 'MAŁOPOLSKIE',
+    'MAZOWIECKIE', 'OPOLSKIE', 'PODKARPACKIE', 'PODLASKIE', 'POMORSKIE', 'ŚLĄSKIE',
+    'ŚWIĘTOKRZYSKIE', 'WARMIŃSKO-MAZURSKIE', 'WIELKOPOLSKIE', 'ZACHODNIOPOMORSKIE',
+  ];
+  const sourceList = page.locator('#ctl00_ContentPlaceHolder_terytList_UnitsList');
+  if (!await sourceList.isVisible().catch(() => false)) throw new Error('BDL geography source list not found');
 
-  const voivodeshipItem = page.locator('.rmItem:visible').filter({ hasText: /^Zaznacz województwa$/ }).first();
-  if (!await voivodeshipItem.isVisible().catch(() => false)) throw new Error('Geography "Zaznacz województwa" menu item not found');
-  const voivodeshipLink = voivodeshipItem.locator('a.rmLink').first();
-  if (!await voivodeshipLink.isVisible().catch(() => false)) throw new Error('Geography voivodeship menu link not found');
-  await voivodeshipLink.click();
-  await page.waitForTimeout(1000);
-  result.geography.afterHighlight = await geoCounts();
+  const selectedRows = [];
+  for (let i = 0; i < voivodeships.length; i++) {
+    const name = voivodeships[i];
+    const row = sourceList.locator('li.rlbItem').filter({ hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) }).first();
+    if (!await row.isVisible().catch(() => false)) throw new Error(`Voivodeship row not found: ${name}`);
+    await row.click(i === 0 ? {} : { modifiers: ['Control'] });
+    selectedRows.push(name);
+  }
+  await page.waitForTimeout(700);
+
+  result.geography.highlighted = await page.evaluate(() => {
+    const list = window.$find?.('ctl00_ContentPlaceHolder_terytList_UnitsList');
+    const selected = list?.get_selectedItems?.() || [];
+    return { count: selected.length, names: selected.map((x) => x.get_text?.()) };
+  });
   await snapshot('02-geography-voivodeships-highlighted');
+  if (result.geography.highlighted.count !== 16) throw new Error(`Expected 16 highlighted voivodeships, got ${JSON.stringify(result.geography.highlighted)}`);
 
-  // In this Telerik pair, rlbTransferFrom is the right-arrow: source list -> selected list.
-  let transferSelected = page.locator('button.rlbTransferFrom:visible').first();
-  if (!await transferSelected.isVisible().catch(() => false)) {
-    transferSelected = page.locator('[class*="rlbTransferFrom"]:visible').first();
-  }
-  if (!await transferSelected.isVisible().catch(() => false)) {
-    const transferCandidates = await page.locator('[class*="rlbTransfer"]:visible').evaluateAll((els) => els.map((e) => ({
-      id: e.id || null,
-      title: e.getAttribute('title'),
-      cls: typeof e.className === 'string' ? e.className : '',
-      text: (e.textContent || '').trim(),
-      disabled: 'disabled' in e ? !!e.disabled : null,
-    })));
-    result.geography.transferCandidates = transferCandidates;
-    throw new Error(`Geography right-arrow transfer control not found: ${JSON.stringify(transferCandidates)}`);
-  }
-  result.geography.transferId = await transferSelected.getAttribute('id');
-  result.geography.transferTitle = await transferSelected.getAttribute('title');
+  // Telerik names the right-arrow source->destination action rlbTransferFrom.
+  const transferSelected = page.locator('button.rlbTransferFrom:visible').first();
   result.geography.transferClass = await transferSelected.getAttribute('class');
   result.geography.transferEnabled = await transferSelected.isEnabled().catch(() => false);
-  if (!result.geography.transferEnabled) throw new Error(`Geography right-arrow remained disabled after executing voivodeship menu command: ${JSON.stringify(result.geography.afterHighlight)}`);
+  if (!result.geography.transferEnabled) throw new Error(`Geography right-arrow is disabled despite 16 selected rows: ${JSON.stringify(result.geography.highlighted)}`);
   await transferSelected.click();
 
   await page.waitForFunction(() => /Wybranych elementów:\s*16/i.test(document.body?.innerText || ''), null, { timeout: 15000 });
@@ -167,6 +159,7 @@ try {
   result.bulk.afterGeographyUrl = page.url();
   await snapshot('04-after-geography-next');
 
+  // Discover and trigger the first enabled download/export action on the resulting page.
   const candidates = page.locator('button:visible,input[type="button"]:visible,input[type="submit"]:visible,a:visible');
   result.bulk.exportCandidates = [];
   let exportControl = null;
