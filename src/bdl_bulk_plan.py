@@ -90,7 +90,34 @@ def _durable_status(storage: StorageManager, bulk_id: str, control_id: str) -> t
     return landed, processed
 
 
-def _subject_catalogue(storage: StorageManager, root_id: str) -> tuple[str, list[dict[str, Any]]]:
+def _read_pinned_release_file(
+    store: DriveReleaseStore,
+    descriptor: dict[str, Any],
+    label: str,
+) -> bytes:
+    file_id = descriptor.get("id")
+    expected_size = descriptor.get("size")
+    expected_sha = descriptor.get("sha256")
+    if (
+        not isinstance(file_id, str)
+        or not file_id
+        or not isinstance(expected_size, int)
+        or isinstance(expected_size, bool)
+        or expected_size <= 0
+        or not isinstance(expected_sha, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+    ):
+        raise ReleaseProtocolError(f"{label} release descriptor is invalid")
+    raw = store.read(file_id)
+    if len(raw) != expected_size or sha256(raw).hexdigest() != expected_sha:
+        raise ReleaseProtocolError(f"{label} release file failed checksum validation")
+    return raw
+
+
+def _subject_catalogue(
+    storage: StorageManager,
+    root_id: str,
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Read only the pinned subject dimension from the current BDL release."""
     release_root = storage.get_or_create_nested_folder([_BDL_PLATFORM_FOLDER], root_id=root_id)
     store = DriveReleaseStore(storage, release_root)
@@ -106,23 +133,7 @@ def _subject_catalogue(storage: StorageManager, root_id: str) -> tuple[str, list
     files = matches[0].get("files")
     if not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict):
         raise ReleaseProtocolError("dim_bdl_subject must contain one release file")
-    descriptor = files[0]
-    file_id = descriptor.get("id")
-    expected_size = descriptor.get("size")
-    expected_sha = descriptor.get("sha256")
-    if (
-        not isinstance(file_id, str)
-        or not file_id
-        or not isinstance(expected_size, int)
-        or isinstance(expected_size, bool)
-        or expected_size <= 0
-        or not isinstance(expected_sha, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
-    ):
-        raise ReleaseProtocolError("dim_bdl_subject release descriptor is invalid")
-    raw = store.read(file_id)
-    if len(raw) != expected_size or sha256(raw).hexdigest() != expected_sha:
-        raise ReleaseProtocolError("dim_bdl_subject release file failed checksum validation")
+    raw = _read_pinned_release_file(store, files[0], "dim_bdl_subject")
     with tempfile.NamedTemporaryFile(suffix=".parquet") as handle:
         handle.write(raw)
         handle.flush()
@@ -138,7 +149,20 @@ def _subject_catalogue(storage: StorageManager, root_id: str) -> tuple[str, list
                 """,
                 [handle.name],
             ).fetchall()
-    return manifest["release_id"], [
+    artifacts = [
+        artifact for artifact in manifest.get("artifacts", [])
+        if isinstance(artifact, dict) and artifact.get("name") == "ingestion-state.json"
+    ]
+    if len(artifacts) != 1:
+        raise ReleaseProtocolError("current BDL release must contain one ingestion-state.json artifact")
+    state_raw = _read_pinned_release_file(store, artifacts[0], "ingestion-state.json")
+    try:
+        release_state = json.loads(state_raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReleaseProtocolError("BDL release ingestion state is not valid UTF-8 JSON") from exc
+    if not isinstance(release_state, dict) or release_state.get("source_id") != "gus_bdl":
+        raise ReleaseProtocolError("BDL release ingestion state identity is invalid")
+    subjects = [
         {
             "subject_id": row[0],
             "parent_subject_id": row[1],
@@ -147,6 +171,7 @@ def _subject_catalogue(storage: StorageManager, root_id: str) -> tuple[str, list
         }
         for row in rows
     ]
+    return manifest["release_id"], subjects, release_state
 
 
 def _catalogue_candidates(subjects: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -232,6 +257,30 @@ def _subject_discovery_status(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _release_landing_status(
+    release_state: dict[str, Any],
+    campaign_state: dict[str, Any],
+) -> dict[str, Any]:
+    accepted = release_state.get("accepted_response_count")
+    published = release_state.get("published_response_count")
+    pending = release_state.get("pending_publication_count")
+    current_accepted = campaign_state.get("accepted_responses")
+    values = (accepted, published, pending, current_accepted)
+    valid = all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in values)
+    current = bool(
+        valid
+        and pending == 0
+        and accepted == published
+        and accepted == current_accepted
+        and release_state.get("raw_response_count") == current_accepted
+    )
+    return {
+        "current": current,
+        "accepted_responses": accepted,
+        "published_responses": published,
+        "pending_publication": pending,
+        "campaign_accepted_responses": current_accepted,
+    }
 def plan() -> dict[str, Any]:
     _require_production_context()
     storage = StorageManager(allow_interactive_auth=False)
@@ -243,7 +292,8 @@ def plan() -> dict[str, Any]:
         raise RuntimeError("No durable BDL campaign state is available")
     validate_state(campaign_state, "gus_bdl")
     discovery = _subject_discovery_status(campaign_state)
-    release_id, subjects = _subject_catalogue(storage, root_id)
+    release_id, subjects, release_state = _subject_catalogue(storage, root_id)
+    landing = _release_landing_status(release_state, campaign_state)
     candidates, invalid = _catalogue_candidates(subjects)
     remaining = [item for item in candidates if item["subgroup_id"] not in processed]
     candidate = remaining[0] if remaining else None
@@ -252,6 +302,8 @@ def plan() -> dict[str, Any]:
         if candidate
         else "catalogue_incomplete"
         if not discovery["exhausted"]
+        else "landing_incomplete"
+        if not landing["current"]
         else "catalogue_invalid"
         if invalid
         else "complete"
@@ -267,6 +319,11 @@ def plan() -> dict[str, Any]:
         "pending_subject_catalogue_tasks": discovery["pending_tasks"],
         "completed_subject_catalogue_roots": discovery["completed_roots"],
         "required_subject_catalogue_roots": discovery["required_roots"],
+        "release_landing_current": landing["current"],
+        "release_accepted_responses": landing["accepted_responses"],
+        "release_published_responses": landing["published_responses"],
+        "release_pending_publication": landing["pending_publication"],
+        "campaign_accepted_responses": landing["campaign_accepted_responses"],
         "invalid_subgroup_examples": invalid[:20],
         "landed_subgroups": len(landed),
         "web_checked_nonbulk_subgroups": len(processed - landed),

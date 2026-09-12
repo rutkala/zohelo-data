@@ -85,10 +85,13 @@ release instead of restarting a live API traversal, records a final completion m
 archive/Parquet/manifest verification, streams ZIP hashing, and
 uploads summaries only. Invalid, cyclic or incomplete subgroup ancestry is reported as a completion
 blocker rather than silently omitted. A `complete` plan additionally requires both root subject
-catalogues and every admitted child subject page to be exhausted. Browser downloads are accepted
+catalogues and every admitted child subject page to be exhausted, plus a zero-backlog Landing
+checkpoint whose accepted-response count matches the campaign state embedded in the release.
+Browser downloads are accepted
 only from a new export control created after the current subgroup's successful generation request;
-pre-existing exports are never rebound to the selected subgroup, and the provider filename must
-carry that subgroup's numeric identity. These controls are covered by focused regression tests;
+pre-existing exports are distinguished by stable row-content fingerprints rather than reorderable
+DOM IDs, and the provider filename must carry both the subgroup identity and a timestamp within the
+current generation window. These controls are covered by focused regression tests;
 production coverage changes remain unclaimed until the reviewed code is merged and a fresh
 main-branch run publishes evidence.
 

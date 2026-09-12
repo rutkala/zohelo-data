@@ -37,9 +37,12 @@ async function listExports(page) {
     rowText: (e.closest('tr')?.innerText || '').trim().replace(/\s+/g, ' ').slice(0, 2000),
   })).filter((x) => !expected || x.text.includes(expected) || x.rowText.includes(expected)), subgroupName);
 }
-async function findNewReadyExport(page, baselineIds) {
+function exportFingerprint(entry) {
+  return crypto.createHash('sha256').update(JSON.stringify([entry.text, entry.rowText])).digest('hex');
+}
+async function findNewReadyExport(page, baselineFingerprints) {
   const entries = (await listExports(page)).filter((entry) => (
-    !baselineIds.has(entry.id) &&
+    !baselineFingerprints.has(exportFingerprint(entry)) &&
     !/aspNetDisabled/i.test(entry.cls) &&
     !entry.disabled &&
     (entry.href || entry.onclick)
@@ -47,7 +50,35 @@ async function findNewReadyExport(page, baselineIds) {
   if (entries.length > 1) throw new Error('Generated BDL package matched multiple new Export controls');
   return entries[0] || null;
 }
-async function captureExport(page, entry) {
+function providerClockValue(date, timeZone) {
+  const values = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, Number(part.value)]));
+  return Date.UTC(values.year, values.month - 1, values.day, values.hour, values.minute, values.second);
+}
+function validateProviderFilename(suggested, generationStartedAt) {
+  const subgroupNumber = subgroupId.slice(1);
+  const escapedNumber = subgroupNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(suggested)) {
+    throw new Error('BDL export filename does not identify the selected subgroup');
+  }
+  const timestamp = suggested.match(/_([0-9]{14})\.zip$/i)?.[1];
+  if (!timestamp) throw new Error('BDL export filename does not contain a generation timestamp');
+  const emitted = Date.UTC(
+    Number(timestamp.slice(0, 4)), Number(timestamp.slice(4, 6)) - 1,
+    Number(timestamp.slice(6, 8)), Number(timestamp.slice(8, 10)),
+    Number(timestamp.slice(10, 12)), Number(timestamp.slice(12, 14)),
+  );
+  const now = new Date();
+  const starts = [generationStartedAt.getTime(), providerClockValue(generationStartedAt, 'Europe/Warsaw')];
+  const ends = [now.getTime(), providerClockValue(now, 'Europe/Warsaw')];
+  const fresh = starts.some((start, index) => emitted >= start - 300000 && emitted <= ends[index] + 300000);
+  if (!fresh) throw new Error('BDL export filename predates the current generation request');
+  return timestamp;
+}
+async function captureExport(page, entry, generationStartedAt) {
   const control = page.locator(`#${entry.id}`);
   if (!await control.count()) throw new Error(`Export control disappeared: ${entry.id}`);
   const downloadPromise = page.waitForEvent('download', { timeout: 180000 }).catch(() => null);
@@ -56,11 +87,7 @@ async function captureExport(page, entry) {
   if (!download) throw new Error('BDL Export action did not produce a browser download');
   const suggested = download.suggestedFilename();
   if (!suggested) throw new Error('BDL export did not provide a source filename');
-  const subgroupNumber = subgroupId.slice(1);
-  const escapedNumber = subgroupNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(suggested)) {
-    throw new Error('BDL export filename does not identify the selected subgroup');
-  }
+  const providerGenerationTimestamp = validateProviderFilename(suggested, generationStartedAt);
   const filename = suggested.replace(/[^A-Za-z0-9._-]/g, '_');
   const target = path.join(outDir, `download-${filename}`);
   await download.saveAs(target);
@@ -80,7 +107,7 @@ async function captureExport(page, entry) {
     stream.on('end', resolve);
     stream.on('error', reject);
   });
-  return { filename, suggestedFilename: suggested, bytes: metadata.size, sha256: digest.digest('hex'), firstBytesHex: prefix.toString('hex') };
+  return { filename, suggestedFilename: suggested, providerGenerationTimestamp, bytes: metadata.size, sha256: digest.digest('hex'), firstBytesHex: prefix.toString('hex') };
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -99,8 +126,8 @@ try {
   // An export left by an earlier run is not evidence for this subgroup.  Pin
   // every pre-existing control before requesting a new package and accept only
   // a new control created after the successful POST below.
-  const baselineIds = new Set((await listExports(page)).map((entry) => entry.id));
-  result.baselineExportControls = baselineIds.size;
+  const baselineFingerprints = new Set((await listExports(page)).map(exportFingerprint));
+  result.baselineExportFingerprints = baselineFingerprints.size;
   await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1200);
   const clicked = new Set();
@@ -130,22 +157,22 @@ try {
       result.detail = `Selection ${result.selectedInformation} exceeded threshold but Pobierz did not enable`;
     } else {
       const currentPath = new URL(page.url()).pathname;
-      const started = Date.now();
+      const generationStartedAt = new Date();
       const responsePromise = page.waitForResponse((response) => {
         try { const u = new URL(response.url()); return response.request().method() === 'POST' && u.pathname === currentPath; } catch { return false; }
       }, { timeout: 360000 });
       await downloadButton.click();
       const response = await responsePromise;
-      result.generation = { status: response.status(), ok: response.ok(), elapsedMs: Date.now() - started };
+      result.generation = { startedAt: generationStartedAt.toISOString(), status: response.status(), ok: response.ok(), elapsedMs: Date.now() - generationStartedAt.getTime() };
       if (!response.ok()) throw new Error(`BDL bulk generation returned HTTP ${response.status()}`);
       let ready = null;
       for (let attempt = 1; attempt <= 36; attempt++) {
-        ready = await findNewReadyExport(page, baselineIds);
+        ready = await findNewReadyExport(page, baselineFingerprints);
         if (ready) { result.exportReadyPoll = attempt; break; }
         if (attempt < 36) await page.waitForTimeout(5000);
       }
       if (!ready) throw new Error('BDL package generated but no new bound Export control appeared');
-      result.archive = await captureExport(page, ready);
+      result.archive = await captureExport(page, ready, generationStartedAt);
       result.status = 'downloaded_generated_export';
     }
   }

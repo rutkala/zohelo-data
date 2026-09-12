@@ -83,18 +83,26 @@ class BdlBulkPlanTests(unittest.TestCase):
                     "dataset_id": "dim_bdl_subject",
                     "files": [{"id": "subjects-file", "size": len(raw), "sha256": sha256(raw).hexdigest()}],
                 }],
+                "artifacts": [{
+                    "id": "state-file",
+                    "name": "ingestion-state.json",
+                    "size": len(b'{"source_id":"gus_bdl"}'),
+                    "sha256": sha256(b'{"source_id":"gus_bdl"}').hexdigest(),
+                }],
             }
+            store.read.side_effect = [raw, b'{"source_id":"gus_bdl"}']
             with (
                 patch.object(bdl_bulk_plan, "DriveReleaseStore", return_value=store),
                 patch.object(bdl_bulk_plan, "read_current_release_manifest", return_value=manifest),
             ):
                 storage = Mock()
                 storage.get_or_create_nested_folder.return_value = "release-root"
-                release_id, subjects = bdl_bulk_plan._subject_catalogue(storage, "root")
+                release_id, subjects, release_state = bdl_bulk_plan._subject_catalogue(storage, "root")
 
         self.assertEqual("release-1", release_id)
         self.assertEqual("K1", subjects[0]["subject_id"])
-        store.read.assert_called_once_with("subjects-file")
+        self.assertEqual("gus_bdl", release_state["source_id"])
+        self.assertEqual(["subjects-file", "state-file"], [call.args[0] for call in store.read.call_args_list])
 
     def test_complete_requires_both_subject_catalogue_roots_and_no_pending_pages(self):
         base = {
@@ -111,6 +119,24 @@ class BdlBulkPlanTests(unittest.TestCase):
         self.assertFalse(pending["exhausted"])
         self.assertEqual(1, pending["pending_tasks"])
         self.assertTrue(exhausted["exhausted"])
+
+    def test_complete_requires_release_landing_to_match_current_campaign(self):
+        release = {
+            "accepted_response_count": 10,
+            "published_response_count": 10,
+            "pending_publication_count": 0,
+            "raw_response_count": 10,
+        }
+        current = bdl_bulk_plan._release_landing_status(release, {"accepted_responses": 10})
+        ahead = bdl_bulk_plan._release_landing_status(release, {"accepted_responses": 11})
+        backlog = bdl_bulk_plan._release_landing_status(
+            {**release, "published_response_count": 9, "pending_publication_count": 1},
+            {"accepted_responses": 10},
+        )
+
+        self.assertTrue(current["current"])
+        self.assertFalse(ahead["current"])
+        self.assertFalse(backlog["current"])
 
     def test_partial_snapshot_folder_is_not_a_completion_signal(self):
         storage = Mock()
@@ -236,9 +262,10 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         )
         self.assertIn("createReadStream(target)", worker)
         self.assertNotIn("fs.readFile(target)", worker)
-        self.assertIn("findNewReadyExport(page, baselineIds)", worker)
+        self.assertIn("findNewReadyExport(page, baselineFingerprints)", worker)
         self.assertNotIn("downloaded_existing_export", worker)
         self.assertIn("filename does not identify the selected subgroup", worker)
+        self.assertIn("filename predates the current generation request", worker)
         workflow = (ROOT / ".github" / "workflows" / "source-gus-bdl.yml").read_text(
             encoding="utf-8"
         )
