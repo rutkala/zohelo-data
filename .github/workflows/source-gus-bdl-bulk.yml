@@ -4,13 +4,6 @@ on:
   schedule:
     - cron: '*/10 * * * *'
   workflow_dispatch:
-  push:
-    branches: [feat/bdl-web-bulk-backfill]
-    paths:
-      - 'portal/scripts/bdl-web-bulk-worker.mjs'
-      - 'src/bdl_bulk_ingest.py'
-      - 'src/bdl_bulk_plan.py'
-      - '.github/workflows/source-gus-bdl-bulk.yml'
 
 permissions:
   contents: read
@@ -21,6 +14,7 @@ concurrency:
 
 jobs:
   backfill_one:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
