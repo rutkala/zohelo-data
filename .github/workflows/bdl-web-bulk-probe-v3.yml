@@ -5,6 +5,7 @@ on:
     branches: [test/bdl-web-bulk-probe]
     paths:
       - 'portal/scripts/probe-bdl-web-bulk-v3.mjs'
+      - 'src/bdl_bulk_ingest.py'
       - '.github/workflows/bdl-web-bulk-probe-v3.yml'
   workflow_dispatch:
 
@@ -14,7 +15,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: portal
@@ -27,22 +28,49 @@ jobs:
           node-version-file: '.node-version'
           cache: npm
           cache-dependency-path: portal/package-lock.json
-      - name: Confirm required BDL web secrets are present
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: '../.python-version'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Confirm required BDL web and Drive secrets are present
         env:
           GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
           GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: |
           test -n "$GUS_BDL_WEB_EMAIL"
           test -n "$GUS_BDL_WEB_PASSWORD"
+          test -n "$GOOGLE_OAUTH_CLIENT_ID"
+          test -n "$GOOGLE_OAUTH_CLIENT_SECRET"
+          test -n "$GOOGLE_OAUTH_REFRESH_TOKEN"
       - name: Install portal dependencies
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install Chromium
         run: npx --no-install playwright install --with-deps chromium
-      - name: Probe cascading BDL dimensions and bulk export
+      - name: Retrieve existing BDL bulk export
         env:
           GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
           GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
         run: node scripts/probe-bdl-web-bulk-v3.mjs
+      - name: Install pinned Python dependencies
+        run: python -m pip install -r ../requirements.txt
+      - name: Convert and land P2695 bulk archive
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          PYTHONPATH: ../src
+        run: |
+          archive="$(find test-results/bdl-web-bulk-probe-v3 -maxdepth 1 -type f -name 'download-*.zip' -print -quit)"
+          test -n "$archive"
+          python ../src/bdl_bulk_ingest.py \
+            --archive "$archive" \
+            --subgroup P2695 \
+            --allow-production-write \
+            --summary test-results/bdl-web-bulk-probe-v3/landing-summary.json
       - name: Upload sanitized probe evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -51,5 +79,3 @@ jobs:
           path: portal/test-results/bdl-web-bulk-probe-v3/
           if-no-files-found: warn
           retention-days: 3
-
-# retriggered after the workflow file existed on the probe branch
