@@ -128,21 +128,24 @@ export interface BdlPlatformReleaseManifest extends ReleaseManifestBase {
   release_scope: "bdl_platform";
 }
 
+/** The complete-current-archive WDI platform release. */
+export interface WdiPlatformReleaseManifest extends ReleaseManifestBase {
+  format_version: 2;
+  release_scope: "wdi_platform";
+}
+
 export type ReleaseManifest =
   | SilverReleaseManifest
   | PlatformReleaseManifest
-  | BdlPlatformReleaseManifest;
+  | BdlPlatformReleaseManifest
+  | WdiPlatformReleaseManifest;
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
 export type BronzeCampaignSourceId =
-  | "opendata_org_bronze"
-  | "opendata_org_locations_bronze"
-  | "opendata_org_people_bronze";
+  "opendata_org_bronze" | "opendata_org_locations_bronze" | "opendata_org_people_bronze";
 export type LandingSourceId =
-  | LandingResponseSourceId
-  | BulkLandingSourceId
-  | BronzeCampaignSourceId;
+  LandingResponseSourceId | BulkLandingSourceId | BronzeCampaignSourceId;
 
 export interface LandingSnapshotPointer {
   format_version: 1;
@@ -220,9 +223,7 @@ export interface BronzeCampaignManifest {
 }
 
 export type LandingSnapshotManifest =
-  | LandingResponseSnapshotManifest
-  | BulkDistributionIndexManifest
-  | BronzeCampaignManifest;
+  LandingResponseSnapshotManifest | BulkDistributionIndexManifest | BronzeCampaignManifest;
 
 export interface LandingSnapshotResolution {
   pointer: LandingSnapshotPointer;

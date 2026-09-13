@@ -27,6 +27,15 @@ const BDL_BRONZE_MODELS: readonly string[] = [
   "model.zohelo_data.br_bdl_observations",
 ];
 
+const WDI_BRONZE_MODELS: readonly string[] = [
+  "model.zohelo_data.br_wdi_country",
+  "model.zohelo_data.br_wdi_country_series",
+  "model.zohelo_data.br_wdi_data",
+  "model.zohelo_data.br_wdi_footnote",
+  "model.zohelo_data.br_wdi_series",
+  "model.zohelo_data.br_wdi_series_time",
+];
+
 type JsonRecord = Record<string, unknown>;
 
 export interface DbtManifest extends JsonRecord {
@@ -57,9 +66,7 @@ const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 function artifactFor(
-  release:
-    | Extract<ReleaseCatalogResolution, { kind: "release" }>
-    | SingleReleaseResolution,
+  release: Extract<ReleaseCatalogResolution, { kind: "release" }> | SingleReleaseResolution,
   name: DbtArtifactName
 ): ReleaseArtifact {
   const matches = release.manifest.artifacts.filter((artifact) => artifact.name === name);
@@ -161,13 +168,10 @@ export async function loadReleaseDbtArtifacts(
     throw new Error("The connected data has no immutable release with dbt artifacts.");
   }
   const releases =
-    resolution.releases && resolution.releases.length > 0
-      ? resolution.releases
-      : [resolution];
+    resolution.releases && resolution.releases.length > 0 ? resolution.releases : [resolution];
 
   const totalSize = releases.reduce(
-    (sum, r) =>
-      sum + artifactFor(r, "manifest.json").size + artifactFor(r, "catalog.json").size,
+    (sum, r) => sum + artifactFor(r, "manifest.json").size + artifactFor(r, "catalog.json").size,
     0
   );
   if (totalSize > DBT_DOCUMENTATION_LIMIT_BYTES) {
@@ -266,9 +270,7 @@ export function prepareDbtManifest(
   const prepared = cloneManifest(manifest);
   if (resolution.kind !== "release") return prepared;
   const releases =
-    resolution.releases && resolution.releases.length > 0
-      ? resolution.releases
-      : [resolution];
+    resolution.releases && resolution.releases.length > 0 ? resolution.releases : [resolution];
   const validReleases = releases.filter(
     (r) => r.manifest.format_version === 2 && r.businessCatalogue
   );
@@ -309,14 +311,22 @@ export function prepareDbtManifest(
         }
       }
       releasedStatusLines.push(statusLine(bdlSource, BDL_BRONZE_MODELS[0]));
+    } else if (rel.manifest.release_scope === "wdi_platform") {
+      const wdiSource = byId.get("world_bank_wdi");
+      if (!wdiSource) return prepared;
+      for (const modelId of WDI_BRONZE_MODELS) {
+        const node = prepared.nodes[modelId];
+        if (node) {
+          prepared.nodes[modelId] = writeIngestionMeta(node, wdiSource);
+        }
+      }
+      releasedStatusLines.push(statusLine(wdiSource, WDI_BRONZE_MODELS[0]));
     }
   }
 
   if (releasedStatusLines.length === 0) return prepared;
 
-  const projectName =
-    asString(prepared.metadata.project_name) ??
-    "zohelo_data";
+  const projectName = asString(prepared.metadata.project_name) ?? "zohelo_data";
   const docs = { ...(prepared.docs ?? {}) };
   const existing = overviewEntry(prepared, projectName);
   const existingContents = asString(existing?.[1].block_contents) ?? "";

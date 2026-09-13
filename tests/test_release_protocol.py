@@ -598,6 +598,26 @@ class ReleaseProtocolTests(unittest.TestCase):
             "business-catalog.json",
         )
 
+    def test_platform_dataset_can_publish_multiple_bounded_parquet_parts(self):
+        store = MemoryStore()
+        candidate = self._bdl_platform_candidate()
+        first = candidate["datasets"][0]
+        second_path = self._file("second-bdl-part.parquet", b"second-part")
+        first["paths"] = [first["path"], second_path]
+        published = publish_release(
+            store, "root", **candidate,
+            pre_promote_validator=lambda *_args: None,
+        )
+        first_manifest_dataset = next(
+            item for item in published["manifest"]["datasets"]
+            if item["dataset_id"] == first["dataset_id"]
+        )
+        self.assertEqual(len(first_manifest_dataset["files"]), 2)
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"],
+            published["release_id"],
+        )
+
     def test_failed_staged_validation_preserves_current_pointer(self):
         store = MemoryStore()
         pointer_id, old_pointer, _old_file_id, _old_data = self._install_old_pointer(store)

@@ -18,6 +18,11 @@ from bdl_platform_contract import (
     BDL_PLATFORM_DATASETS,
     BDL_PLATFORM_DATE_COLUMNS,
 )
+from wdi_platform_contract import (
+    WDI_ALLOW_ZERO_ROWS,
+    WDI_PLATFORM_DATASETS,
+    WDI_PLATFORM_DATE_COLUMNS,
+)
 
 
 REQUIRED_DATASETS = frozenset(
@@ -85,6 +90,13 @@ PLATFORM_RELEASES = {
         "required_artifacts": PLATFORM_REQUIRED_ARTIFACTS,
         "allow_zero_rows": frozenset(),
     },
+    "wdi_platform": {
+        "label": "WDI platform",
+        "datasets": WDI_PLATFORM_DATASETS,
+        "date_columns": WDI_PLATFORM_DATE_COLUMNS,
+        "required_artifacts": PLATFORM_REQUIRED_ARTIFACTS,
+        "allow_zero_rows": WDI_ALLOW_ZERO_ROWS,
+    },
 }
 _ALLOWED_RESULT_STATUSES = frozenset({"success", "pass"})
 _MAX_ITEMS = 2_048
@@ -144,7 +156,7 @@ def publish_release(
     )
     if candidate["format_version"] == 2 and pre_promote_validator is None:
         raise ReleaseProtocolError(
-            "NBP platform publication requires staged content validation before promotion"
+            "Platform publication requires staged content validation before promotion"
         )
 
     # A valid old pointer is read before *any* candidate remote write.
@@ -172,18 +184,25 @@ def publish_release(
 
     published_datasets: list[dict[str, Any]] = []
     for dataset in candidate["datasets"]:
-        file_id = _upload_verified(
-            store, release_folder_id, dataset["upload_name"], dataset["data"]
-        )
         metadata = dict(dataset["metadata"])
-        metadata["files"] = [
-            {
-                "id": file_id,
-                "name": dataset["upload_name"],
-                "size": len(dataset["data"]),
-                "sha256": _sha256(dataset["data"]),
-            }
-        ]
+        metadata["files"] = []
+        for upload in dataset["uploads"]:
+            data = _read_local_file(upload["path"], f"dataset upload {upload['upload_name']}")
+            if len(data) != upload["size"] or _sha256(data) != upload["sha256"]:
+                raise ReleaseProtocolError(
+                    f"dataset upload {upload['upload_name']} changed after candidate validation"
+                )
+            file_id = _upload_verified(
+                store, release_folder_id, upload["upload_name"], data
+            )
+            metadata["files"].append(
+                {
+                    "id": file_id,
+                    "name": upload["upload_name"],
+                    "size": upload["size"],
+                    "sha256": upload["sha256"],
+                }
+            )
         published_datasets.append(metadata)
 
     published_artifacts: list[dict[str, Any]] = []
@@ -443,7 +462,9 @@ def _validate_candidate(**kwargs: Any) -> dict[str, Any]:
         return candidate
     if scope in PLATFORM_RELEASES:
         return _validate_platform_candidate(**kwargs)
-    raise ReleaseProtocolError("release_scope must be 'nbp_silver', 'nbp_platform', or 'bdl_platform'")
+    raise ReleaseProtocolError(
+        "release_scope must be 'nbp_silver', 'nbp_platform', 'bdl_platform', or 'wdi_platform'"
+    )
 
 
 def _validate_silver_candidate(**kwargs: Any) -> dict[str, Any]:
@@ -512,8 +533,9 @@ def _validate_silver_candidate(**kwargs: Any) -> dict[str, Any]:
                     or column["name"] in seen_columns):
                 raise ReleaseProtocolError(f"{dataset_id} has duplicate or blank column metadata")
             seen_columns.add(column["name"])
-        data = _read_local_file(raw.get("path"), f"dataset {dataset_id}")
-        source_name = _safe_filename(Path(raw["path"]).name, f"dataset {dataset_id} filename")
+        raw_path = raw.get("path")
+        descriptor = _local_file_descriptor(raw_path, f"dataset {dataset_id}")
+        source_name = _safe_filename(Path(raw_path).name, f"dataset {dataset_id} filename")
         upload_name = _safe_filename(f"{dataset_id}--{source_name}", f"dataset {dataset_id} upload filename")
         if upload_name in names:
             raise ReleaseProtocolError(f"duplicate candidate filename {upload_name}")
@@ -527,7 +549,10 @@ def _validate_silver_candidate(**kwargs: Any) -> dict[str, Any]:
             "max_date": raw["max_date"],
             "columns": [{"name": column["name"], "type": column["type"]} for column in columns],
         }
-        validated_datasets.append({"metadata": metadata, "data": data, "upload_name": upload_name})
+        validated_datasets.append({
+            "metadata": metadata,
+            "uploads": [{**descriptor, "upload_name": upload_name}],
+        })
 
     artifact_by_name: dict[str, dict[str, Any]] = {}
     for raw in artifacts:
@@ -648,7 +673,7 @@ def _validate_platform_candidate(**kwargs: Any) -> dict[str, Any]:
             raise ReleaseProtocolError(f"{dataset_id} has an invalid table_name identifier")
         table_key = (layer, table_name)
         if table_key in table_names:
-            raise ReleaseProtocolError("NBP platform release has duplicate table_name values")
+            raise ReleaseProtocolError("platform release has duplicate table_name values")
         table_names.add(table_key)
         rows = raw.get("row_count")
         allows_zero = dataset_id in allow_zero_rows
@@ -658,19 +683,27 @@ def _validate_platform_candidate(**kwargs: Any) -> dict[str, Any]:
         _validate_platform_dates(dataset_id, raw, rows, date_columns, allow_zero_rows)
         columns = _validate_columns(raw.get("columns"), dataset_id)
         date_column = _validate_platform_date_column(dataset_id, raw.get("date_column"), columns, date_columns)
-        data = _read_local_file(raw.get("path"), f"dataset {dataset_id}")
-        source_name = _safe_filename(Path(raw["path"]).name, f"dataset {dataset_id} filename")
-        upload_name = _safe_filename(f"{dataset_id}--{source_name}", f"dataset {dataset_id} upload filename")
-        if upload_name in names:
-            raise ReleaseProtocolError(f"duplicate candidate filename {upload_name}")
-        names.add(upload_name)
+        raw_paths = raw.get("paths")
+        if raw_paths is None:
+            raw_paths = [raw.get("path")]
+        if not isinstance(raw_paths, list) or not raw_paths or len(raw_paths) > _MAX_ITEMS:
+            raise ReleaseProtocolError(f"dataset {dataset_id} must contain one or more bounded files")
+        uploads = []
+        for index, raw_path in enumerate(raw_paths):
+            descriptor = _local_file_descriptor(raw_path, f"dataset {dataset_id} file {index + 1}")
+            source_name = _safe_filename(Path(raw_path).name, f"dataset {dataset_id} filename")
+            upload_name = _safe_filename(f"{dataset_id}--{source_name}", f"dataset {dataset_id} upload filename")
+            if upload_name in names:
+                raise ReleaseProtocolError(f"duplicate candidate filename {upload_name}")
+            names.add(upload_name)
+            uploads.append({**descriptor, "upload_name": upload_name})
         metadata = {
             "dataset_id": dataset_id, "layer": layer, "model_name": raw["model_name"], "model_id": model_id,
             "table_name": table_name, "row_count": rows,
             "date_column": date_column, "min_date": raw.get("min_date"), "max_date": raw.get("max_date"),
             "columns": columns,
         }
-        validated_datasets.append({"metadata": metadata, "data": data, "upload_name": upload_name})
+        validated_datasets.append({"metadata": metadata, "uploads": uploads})
 
     artifact_by_name: dict[str, dict[str, Any]] = {}
     for raw in artifacts:
@@ -927,9 +960,10 @@ def _verify_platform_manifest_files(store: ReleaseStore, manifest: dict[str, Any
         dataset_ids.add(dataset_id)
         _validate_platform_dataset_metadata(dataset, dataset_id, table_names, dataset_specs, date_columns, allow_zero_rows)
         files = dataset.get("files")
-        if not isinstance(files, list) or len(files) != 1:
+        if not isinstance(files, list) or not files or len(files) > _MAX_ITEMS:
             raise ReleaseProtocolError("platform release manifest has invalid dataset files")
-        file_ids.add(_verify_file_entry(store, files[0], file_ids))
+        for file_entry in files:
+            file_ids.add(_verify_file_entry(store, file_entry, file_ids))
     if dataset_ids != set(dataset_specs):
         raise ReleaseProtocolError("platform release manifest has incomplete platform datasets")
     artifact_data: dict[str, bytes] = {}
@@ -1061,6 +1095,26 @@ def _read_local_file(value: Any, label: str) -> bytes:
     if not data:
         raise ReleaseProtocolError(f"{label} must not be empty")
     return data
+
+
+def _local_file_descriptor(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, str) or not value:
+        raise ReleaseProtocolError(f"{label} path must be a nonempty string")
+    path = Path(value)
+    if path.is_symlink() or not path.is_file():
+        raise ReleaseProtocolError(f"{label} path is not a regular file")
+    digest = sha256()
+    size = 0
+    try:
+        with path.open("rb") as handle:
+            while chunk := handle.read(8 * 1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+    except OSError as exc:
+        raise ReleaseProtocolError(f"could not read {label}") from exc
+    if size <= 0:
+        raise ReleaseProtocolError(f"{label} must not be empty")
+    return {"path": str(path), "size": size, "sha256": digest.hexdigest()}
 
 
 def _safe_filename(value: Any, label: str) -> str:

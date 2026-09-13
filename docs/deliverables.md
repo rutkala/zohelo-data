@@ -4,7 +4,47 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 13 September 2026. **Active priority: Production Google Drive Layout & Publication Audit (Issue #94).** The earlier foundation audit and selected NBP product acceptance are complete; full coverage of all four selected sources remains open. The owner specifically questioned the separate `bdl-platform` folder and release folder proliferation. Under the owner's sequential workflow, this task is the sole active engineering priority. Unrelated engineering is deferred while this audit and clarification are active; existing scheduled ingestion runs continue automatically on Actions.
+Updated 13 September 2026. **Active priority: complete-current-archive WDI modeled delivery.** The
+Drive layout audit was integrated in PR #95 with a recommendation to retain the separate modeled
+release namespaces. NBP product acceptance remains complete; full coverage of all four selected
+sources remains open. Existing serialized ingestion schedules continue while WDI's already-complete
+official archive is advanced through Bronze, Silver, Gold and native coverage semantics.
+
+### Active priority: WDI Bronze → Silver → Gold → semantic release — 13 September 2026
+
+The implementation candidate on `feat/wdi-medallion-release` consumes the freshly verified current
+official WDI CSV archive and fails closed unless campaign evidence is
+`complete_current_catalogue` and the archive contains exactly its six contracted CSV members. It
+publishes six Bronze relations, three Silver relations, three dimensions, an observation fact and
+a Gold coverage mart in a separate immutable `wdi-platform` release. The portal discovers that
+pointer alongside NBP and BDL and exposes its tables, catalogue and lineage through the existing
+Lakehouse interface. Populated annual source cells
+are modeled at geography (including source-published aggregates) × indicator × year grain. Large
+relations are partitioned into bounded Parquet files without reducing scope. Nine native
+MetricFlow metrics report archive/member and source-to-modeled coverage at snapshot grain; source
+indicator values are not treated as generally additive. Unchanged archive bytes under the same
+code SHA reuse the current modeled release rather than creating six-hour duplicate packages.
+
+The candidate is production-gated: every part must be freshly restored, bound to the accepted raw
+archive hash and size, matched to dbt/catalogue artifacts, and reconcile to a modeled-value
+coverage ratio of exactly 1.0 before pointer promotion. `bash scripts/check-data.sh` passes all 416
+tests, including exact six-member extraction, six source-cell-to-six-Gold-row reconciliation,
+native execution of every WDI metric, bounded multi-file release/restore and unchanged NBP release
+behavior. Portal validation passes 696 tests plus typecheck, lint and production build; the focused
+release-catalog fixture proves all fourteen WDI datasets and multiple fact partitions are
+discoverable. Production publication, portal deployment and fresh restore remain pending reviewed merge and successful
+main-branch execution; no live WDI Gold/semantic completion is claimed by this checkpoint.
+
+Fresh orchestration evidence before this change: WDI run 34757536158 retained and freshly verified
+the one current official archive, with 3,186 accepted/published API responses, zero publication
+backlog and 1,207 API tasks remaining. Eurostat run 34771200209 retained 3,565 accepted versions and
+verified 3,060 of 21,247 current distributions (14.40%), with 19,718 pending tasks and zero failed
+pending tasks. BDL run 34769671825 published release
+`cfaf60b3-98a9-4809-bae6-db69eedcb5f0` with 3,639,384 observations while still modeling only 41 of
+172,576 variables (0.0238%), with 909 campaign tasks pending and zero Landing publication backlog.
+The later BDL writer was active and serialized, so it was not restarted. NBP run 34732275848
+freshly verified all 15 datasets and five metrics, with 426,687 FX plus 3,454 gold fact rows and
+current source checks through 11 September (Table B through 9 September).
 
 ### Active Priority: Drive structure and economical delegation (Issue #94) — 13 September 2026
 
