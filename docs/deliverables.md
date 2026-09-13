@@ -4,15 +4,16 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 13 September 2026. **Active priority: complete-current-archive WDI modeled delivery.** The
+Updated 13 September 2026. **The complete current WDI archive is now modeled and published; the
+active priority returns to full Eurostat and BDL coverage.** The
 Drive layout audit was integrated in PR #95 with a recommendation to retain the separate modeled
 release namespaces. NBP product acceptance remains complete; full coverage of all four selected
-sources remains open. Existing serialized ingestion schedules continue while WDI's already-complete
-official archive is advanced through Bronze, Silver, Gold and native coverage semantics.
+sources remains open. Existing serialized ingestion schedules continue the incomplete Eurostat and
+BDL backfills and the separate WDI API reconciliation queue.
 
-### Active priority: WDI Bronze → Silver → Gold → semantic release — 13 September 2026
+### Delivered: WDI Bronze → Silver → Gold → semantic release — 13 September 2026
 
-The implementation candidate on `feat/wdi-medallion-release` consumes the freshly verified current
+The implementation merged in [PR #96](https://github.com/rutkala/zohelo-data/pull/96) consumes the freshly verified current
 official WDI CSV archive and fails closed unless campaign evidence is
 `complete_current_catalogue` and the archive contains exactly its six contracted CSV members. It
 publishes six Bronze relations, three Silver relations, three dimensions, an observation fact and
@@ -25,38 +26,51 @@ MetricFlow metrics report archive/member and source-to-modeled coverage at snaps
 indicator values are not treated as generally additive. Unchanged archive bytes under the same
 code SHA reuse the current modeled release rather than creating six-hour duplicate packages.
 
-The candidate is production-gated: every part must be freshly restored, bound to the accepted raw
+The release is production-gated: every part must be freshly restored, bound to the accepted raw
 archive hash and size, matched to dbt/catalogue artifacts, and reconcile to a modeled-value
-coverage ratio of exactly 1.0 before pointer promotion. `bash scripts/check-data.sh` passes all 416
+coverage ratio of exactly 1.0 before pointer promotion. `bash scripts/check-data.sh` passes all 417
 tests, including exact six-member extraction, six source-cell-to-six-Gold-row reconciliation,
 native execution of every WDI metric, bounded multi-file release/restore and unchanged NBP release
 behavior. Portal validation passes 696 tests plus typecheck, lint and production build; the focused
 release-catalog fixture proves all fourteen WDI datasets and multiple fact partitions are
-discoverable. Production publication, portal deployment and fresh restore remain pending reviewed merge and successful
-main-branch execution; no live WDI Gold/semantic completion is claimed by this checkpoint.
+discoverable. Portal deployment [34776118373](https://github.com/rutkala/zohelo-data/actions/runs/34776118373)
+is green on the WDI-aware build.
 
 Production run [34776118401](https://github.com/rutkala/zohelo-data/actions/runs/34776118401)
 completed the serialized Landing continuation but failed closed before release promotion because
-the reviewed member contract used normalized filenames rather than the official ZIP's exact
+the initial member contract used normalized filenames rather than the official ZIP's exact
 case-sensitive names (`WDICSV.csv`, `WDIcountry-series.csv`, `WDIfootnote.csv` and
 `WDIseries-time.csv`). No partial modeled release was promoted. The corrective delivery now binds
-the models and tests to the exact official member inventory and will resume with a transform-only
-run after reviewed merge, without duplicating the already-successful provider collection.
+the models and tests to the exact official member inventory; [PR #97](https://github.com/rutkala/zohelo-data/pull/97)
+passed 417 tests and a no-findings Codex review before merge.
 
-Fresh orchestration evidence before this change: WDI run 34757536158 retained and freshly verified
-the one current official archive, with 3,186 accepted/published API responses, zero publication
-backlog and 1,207 API tasks remaining. Eurostat run 34771200209 retained 3,565 accepted versions and
-verified 3,060 of 21,247 current distributions (14.40%), with 19,718 pending tasks and zero failed
-pending tasks. BDL run 34769671825 published release
-`cfaf60b3-98a9-4809-bae6-db69eedcb5f0` with 3,639,384 observations while still modeling only 41 of
-172,576 variables (0.0238%), with 909 campaign tasks pending and zero Landing publication backlog.
-The later BDL writer was active and serialized, so it was not restarted. NBP run 34732275848
+The transform-only continuation [34778030623](https://github.com/rutkala/zohelo-data/actions/runs/34778030623)
+then published and freshly restored release `e36ad90a-efd8-42c8-b537-03b6ce46dabc` without repeating
+source collection. Its fourteen datasets cover all six official archive members and all 9,015,914
+populated annual values: 264 of 264 source geographies, 1,498 of 1,498 indicators and observations
+from 1960 through 2025. The Gold fact contains 9,015,914 rows and the measured source-to-modeled
+value ratio is exactly 1.0. The production dbt build passed 47 data tests across eleven table and
+three view models; pre-promotion validation and the subsequent fresh-process restore both passed.
+This accepts the complete current official WDI CSV archive through Gold and semantic coverage, not
+every other World Bank product. WDI values remain heterogeneous and are not generally additive.
+
+Fresh orchestration evidence after WDI acceptance: run 34776118401 left the separate WDI API
+campaign at 3,239 accepted/published responses, zero publication backlog and 1,206 tasks. Eurostat
+run [34777245877](https://github.com/rutkala/zohelo-data/actions/runs/34777245877) retained 3,613
+accepted versions and verified 3,108 of 21,247 current distributions (14.63%), with 19,670 pending
+tasks, zero failed pending tasks and 11,806,124,611 retained raw bytes; it remains raw-only. BDL run
+[34775742467](https://github.com/rutkala/zohelo-data/actions/runs/34775742467) published release
+`95beaad2-7fd1-4393-83e0-0fb1735ca6af` with 3,705,782 observations while still modeling only 41 of
+172,576 variables (0.0238%), with 929 campaign tasks pending. Run
+[34778117985](https://github.com/rutkala/zohelo-data/actions/runs/34778117985) is the current serialized
+BDL continuation and was not duplicated. NBP run 34732275848
 freshly verified all 15 datasets and five metrics, with 426,687 FX plus 3,454 gold fact rows and
 current source checks through 11 September (Table B through 9 September).
 
-### Active Priority: Drive structure and economical delegation (Issue #94) — 13 September 2026
+### Completed: Drive structure and economical delegation (Issue #94) — 13 September 2026
 
-The read-only audit and owner guide are prepared on `agy/drive-structure-94`. This remains the single active engineering task until its review/publication is finished. Existing ingestion schedules continue; unrelated engineering remains deferred.
+The read-only audit and owner guide were integrated through PR #95. Existing ingestion schedules
+continue; this completed audit is retained here as dated evidence rather than an active work item.
 
 - **Owner finding:** `bdl-platform/` is a deliberate independent publication namespace. Both NBP and BDL current pointers passed exact-byte manifest checksum, release identity/scope, and dataset/artifact metadata and parent checks at 09:24 UTC. Keep the two publication locations; no physical migration is proposed by this increment.
 - **Measured release inventory:** 11 NBP directories contain 113,074,252 known bytes; 82 BDL directories contain 19,352,552,889 known bytes. All listed release directories have a manifest, and all enumerated release files have known sizes. Only the current packages received current-pointer/reference validation; older promotion history and full restores are separate.
