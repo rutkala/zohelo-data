@@ -123,7 +123,7 @@ validated catalogue completeness. Retention and reference-safe compaction remain
 The WDI modeled path consumes only the freshly verified current official CSV archive. It fails
 closed unless the archive has exactly the six accepted members and campaign coverage is
 `complete_current_catalogue`. The source members are retained as six Bronze relations; populated
-annual cells in `WDIData.csv` become Silver and Gold observations at geography (economy or
+annual cells in `WDICSV.csv` become Silver and Gold observations at geography (economy or
 source-published aggregate) × indicator × year grain. Geography, indicator and year dimensions,
 the observation fact and a release-coverage mart are published as an independent immutable
 `wdi-platform` release. Large observation relations are partitioned into bounded Parquet files;

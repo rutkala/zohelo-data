@@ -8,12 +8,12 @@ models:
         quote: true
         tests: [not_null, unique]
   - name: br_wdi_country_series
-    description: "Bronze copy of every row and column in WDICountry-Series.csv."
+    description: "Bronze copy of every row and column in WDIcountry-series.csv."
     columns:
       - name: CountryCode
         tests: [not_null]
   - name: br_wdi_data
-    description: "Bronze long-form WDI annual values. Every populated year cell from WDIData.csv is one row at economy or aggregate × indicator × calendar year grain."
+    description: "Bronze long-form WDI annual values. Every populated year cell from WDICSV.csv is one row at economy or aggregate × indicator × calendar year grain."
     columns:
       - name: country_code
         tests: [not_null]
@@ -28,7 +28,7 @@ models:
           arguments:
             combination_of_columns: [country_code, indicator_code, observation_year]
   - name: br_wdi_footnote
-    description: "Bronze copy of every row and column in WDIFootNote.csv."
+    description: "Bronze copy of every row and column in WDIfootnote.csv."
     columns:
       - name: CountryCode
         tests: [not_null]
@@ -39,7 +39,7 @@ models:
         quote: true
         tests: [not_null, unique]
   - name: br_wdi_series_time
-    description: "Bronze copy of every row and column in WDISeries-Time.csv."
+    description: "Bronze copy of every row and column in WDIseries-time.csv."
     columns:
       - name: SeriesCode
         tests: [not_null]

@@ -5,11 +5,11 @@ WDI_RELEASE_SCOPE = "wdi_platform"
 
 WDI_ARCHIVE_MEMBERS = {
     "WDICountry.csv": "ZOHELO_WDI_COUNTRY_CSV",
-    "WDICountry-Series.csv": "ZOHELO_WDI_COUNTRY_SERIES_CSV",
-    "WDIData.csv": "ZOHELO_WDI_DATA_CSV",
-    "WDIFootNote.csv": "ZOHELO_WDI_FOOTNOTE_CSV",
+    "WDIcountry-series.csv": "ZOHELO_WDI_COUNTRY_SERIES_CSV",
+    "WDICSV.csv": "ZOHELO_WDI_DATA_CSV",
+    "WDIfootnote.csv": "ZOHELO_WDI_FOOTNOTE_CSV",
     "WDISeries.csv": "ZOHELO_WDI_SERIES_CSV",
-    "WDISeries-Time.csv": "ZOHELO_WDI_SERIES_TIME_CSV",
+    "WDIseries-time.csv": "ZOHELO_WDI_SERIES_TIME_CSV",
 }
 
 WDI_PLATFORM_DATASETS = {
