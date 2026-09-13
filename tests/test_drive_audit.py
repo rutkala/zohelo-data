@@ -73,6 +73,26 @@ class DriveAuditTests(unittest.TestCase):
         self.mock_drive = MagicMock()
         self.mock_files = self.mock_drive.files()
 
+    def _fixture_reader(self, file_id: str) -> bytes:
+        return self.mock_files.get_media(fileId=file_id).execute(num_retries=0)
+
+    def test_shared_drive_listing_requires_both_api_flags(self):
+        """Regression: production rejects includeItemsFromAllDrives without support."""
+        def checked_list(**kwargs):
+            self.assertIs(kwargs.get("includeItemsFromAllDrives"), True)
+            self.assertIs(kwargs.get("supportsAllDrives"), True)
+            request = MagicMock()
+            request.execute.return_value = {"files": []}
+            return request
+
+        self.mock_files.list.side_effect = checked_list
+        items, complete = list_folder_children(self.mock_files, "root-id", BudgetTracker())
+        self.assertEqual(items, [])
+        self.assertTrue(complete)
+        self.assertEqual(find_child_by_name(self.mock_files, "root-id", "releases", BudgetTracker()), [])
+        report = run_full_drive_audit(self.mock_drive, root_name="zohelo-data")
+        self.assertEqual(report["status"], "root_not_found")
+
     def test_global_budget_shared_across_all_operations(self):
         """BudgetTracker halts further requests and records reason when request limit is reached."""
         budget = BudgetTracker(max_requests=2, max_files=100)
@@ -106,9 +126,32 @@ class DriveAuditTests(unittest.TestCase):
         self.assertEqual(report["status"], "ambiguous_root")
         self.assertEqual(len(report["root_matches"]), 2)
 
+    def test_root_search_paginates_before_resolving(self):
+        """Root lookup must inspect every page before deciding uniqueness."""
+        self.mock_files.list().execute.side_effect = [
+            {"files": [{"id": "root-1", "name": "zohelo-data", "mimeType": FOLDER_MIME_TYPE}], "nextPageToken": "next"},
+            {"files": [{"id": "root-2", "name": "zohelo-data", "mimeType": FOLDER_MIME_TYPE}]},
+        ]
+        report = run_full_drive_audit(self.mock_drive, root_name="zohelo-data")
+        self.assertEqual(report["status"], "ambiguous_root")
+        self.assertEqual(len(report["root_matches"]), 2)
+
+    def test_lookup_does_not_return_items_over_file_budget(self):
+        """Exact-name lookup must stop before appending an unadmitted match."""
+        budget = BudgetTracker(max_files=1)
+        self.mock_files.list().execute.return_value = {
+            "files": [
+                {"id": "ptr-1", "name": "current-release.json"},
+                {"id": "ptr-2", "name": "current-release.json"},
+            ]
+        }
+        matches = find_child_by_name(self.mock_files, "root-id", "current-release.json", budget)
+        self.assertEqual([item["id"] for item in matches], ["ptr-1"])
+        self.assertIn("file_budget_exceeded", budget.incomplete_reasons)
+
     def test_child_and_pointer_ambiguity_reported(self):
         """Duplicate pointer files under publication root must be reported as ambiguous."""
-        budget = BudgetTracker()
+        budget = BudgetTracker(fixture_reader=self._fixture_reader)
         self.mock_files.list().execute.return_value = {
             "files": [
                 {"id": "ptr-1", "name": "current-release.json"},
@@ -121,7 +164,7 @@ class DriveAuditTests(unittest.TestCase):
 
     def test_bounded_media_download_enforces_size_caps(self):
         """Files exceeding metadata limit must be rejected before or during download."""
-        budget = BudgetTracker()
+        budget = BudgetTracker(fixture_reader=self._fixture_reader)
         # Case 1: Declared size > cap
         self.mock_files.get().execute.return_value = {
             "id": "big-file", "name": "big.json", "size": str(MAX_METADATA_BYTES + 100), "trashed": False
@@ -156,7 +199,7 @@ class DriveAuditTests(unittest.TestCase):
         }
         pointer_bytes = json.dumps(pointer_data).encode("utf-8")
 
-        budget = BudgetTracker()
+        budget = BudgetTracker(fixture_reader=self._fixture_reader)
 
         # Mock sequence:
         # 1. find pointer
@@ -175,7 +218,7 @@ class DriveAuditTests(unittest.TestCase):
         ]
         self.mock_files.get().execute.side_effect = [
             {"id": "ptr-id", "name": "current-release.json", "size": "200", "trashed": False},
-            {"id": "manifest-file-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False},
+            {"id": "manifest-file-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False, "parents": [rel_folder_id]},
             # Dataset file
             {"id": "f-parquet-1", "name": "fact_fx_quotes.parquet", "size": "5000", "trashed": False, "parents": [rel_folder_id]},
             # 5 artifacts
@@ -212,7 +255,7 @@ class DriveAuditTests(unittest.TestCase):
         }
         pointer_bytes = json.dumps(pointer_data).encode("utf-8")
 
-        budget = BudgetTracker()
+        budget = BudgetTracker(fixture_reader=self._fixture_reader)
         self.mock_files.list().execute.side_effect = [
             {"files": [{"id": "ptr-id", "name": "current-release.json"}]},
             {"files": [{"id": "releases-dir-id", "name": "releases"}]},
@@ -220,7 +263,7 @@ class DriveAuditTests(unittest.TestCase):
         ]
         self.mock_files.get().execute.side_effect = [
             {"id": "ptr-id", "name": "current-release.json", "size": "200", "trashed": False},
-            {"id": "man-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False},
+            {"id": "man-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False, "parents": [rel_folder_id]},
             # Dataset file has WRONG parent: 'wrong-folder'
             {"id": "f-parquet-1", "name": "fact_fx_quotes.parquet", "size": "5000", "trashed": False, "parents": ["wrong-folder"]},
             # Artifacts
@@ -252,7 +295,7 @@ class DriveAuditTests(unittest.TestCase):
         }
         pointer_bytes = json.dumps(pointer_data).encode("utf-8")
 
-        budget = BudgetTracker()
+        budget = BudgetTracker(fixture_reader=self._fixture_reader)
         self.mock_files.list().execute.side_effect = [
             {"files": [{"id": "ptr-id", "name": "current-release.json"}]},
             {"files": [{"id": "releases-dir-id", "name": "releases"}]},
@@ -260,7 +303,7 @@ class DriveAuditTests(unittest.TestCase):
         ]
         self.mock_files.get().execute.side_effect = [
             {"id": "ptr-id", "name": "current-release.json", "size": "200", "trashed": False},
-            {"id": "man-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False},
+            {"id": "man-id", "name": "release.json", "size": str(len(manifest_bytes)), "trashed": False, "parents": ["releases-dir-id"]},
         ]
         self.mock_files.get_media().execute.side_effect = [pointer_bytes, manifest_bytes]
 
@@ -281,10 +324,10 @@ class DriveAuditTests(unittest.TestCase):
                     {"id": "f-cand", "name": "aborted-uuid", "mimeType": FOLDER_MIME_TYPE, "createdTime": "2026-09-13T02:00:00Z"},
                 ]
             },
-            # 2. list contents of f-curr (has release.json)
-            {"files": [{"id": "m1", "name": "release.json", "size": "100"}, {"id": "p1", "name": "t.parquet", "size": "500"}]},
-            # 3. list contents of f-old (has release.json)
+            # 2. sorted order lists f-old first (has release.json)
             {"files": [{"id": "m2", "name": "release.json", "size": "100"}]},
+            # 3. f-curr (has the pointer's release.json)
+            {"files": [{"id": "m1", "name": "release.json", "size": "100"}, {"id": "p1", "name": "t.parquet", "size": "500"}]},
             # 4. list contents of f-cand (no release.json)
             {"files": [{"id": "p2", "name": "temp.parquet", "size": "200"}]},
         ]
@@ -292,6 +335,7 @@ class DriveAuditTests(unittest.TestCase):
         res = audit_release_directories(
             self.mock_files, "releases-id", budget,
             current_release_id=current_id, current_pointer_verified=True,
+            current_manifest_file_id="m1",
         )
         self.assertEqual(res["total_release_folders"], 3)
         self.assertTrue(res["current_folder_found"])

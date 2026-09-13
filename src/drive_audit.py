@@ -100,8 +100,23 @@ def _is_valid_uuid(value: Any) -> bool:
         return False
 
 
+def _is_safe_basename(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value not in {".", ".."}
+        and "/" not in value
+        and "\\" not in value
+        and "\x00" not in value
+    )
+
+
 class BudgetTracker:
-    """Tracks global limits across all Google Drive operations."""
+    """Tracks global limits across Drive operations.
+
+    The elapsed-time limit is cooperative: it is checked before API calls and
+    media chunks. Callers must also enforce an outer process/request timeout.
+    """
 
     def __init__(
         self,
@@ -109,13 +124,18 @@ class BudgetTracker:
         max_requests: int = 250,
         max_seconds: float = 120.0,
         clock: Callable[[], float] = time.monotonic,
+        fixture_reader: Optional[Callable[[str], bytes]] = None,
     ):
         self.max_files = max_files
         self.max_requests = max_requests
         self.max_seconds = max_seconds
         self.clock = clock
+        # Test-only/injected reader. Production callers must use the bounded
+        # MediaIoBaseDownload path below; arbitrary execute() fallback is unsafe.
+        self.fixture_reader = fixture_reader
         self.started_at = clock()
         self.files_inspected = 0
+        self._inspected_file_ids: Set[str] = set()
         self.requests_made = 0
         self.incomplete_reasons: Set[str] = set()
 
@@ -130,12 +150,16 @@ class BudgetTracker:
         self.requests_made += 1
         return True
 
-    def admit_file(self) -> bool:
+    def admit_file(self, file_id: Optional[str] = None) -> bool:
         """Admit one inspected file against file limit. Returns False if limit reached."""
+        if file_id is not None and file_id in self._inspected_file_ids:
+            return True
         if self.files_inspected >= self.max_files:
             self.incomplete_reasons.add("file_budget_exceeded")
             return False
         self.files_inspected += 1
+        if file_id is not None:
+            self._inspected_file_ids.add(file_id)
         return True
 
     @property
@@ -157,6 +181,7 @@ def bounded_read_file_bytes(
     file_id: str,
     budget: BudgetTracker,
     max_bytes: int = MAX_METADATA_BYTES,
+    metadata_out: Optional[Dict[str, Any]] = None,
 ) -> bytes:
     """Read binary file contents from Drive with bounded size cap and streaming buffer.
 
@@ -168,54 +193,63 @@ def bounded_read_file_bytes(
     if not isinstance(file_id, str) or not _ID_RE.fullmatch(file_id):
         raise ValueError(f"Invalid file_id: {file_id}")
 
+    if not budget.admit_file(file_id):
+        raise RuntimeError("File budget exhausted before reading file metadata")
+
     if not budget.record_request():
         raise RuntimeError("Budget exhausted before reading file metadata")
 
     meta = drive_files.get(
-        fileId=file_id, fields="id,name,size,trashed,parents"
-    ).execute(num_retries=2)
+        fileId=file_id,
+        fields="id,name,size,trashed,parents",
+        supportsAllDrives=True,
+    ).execute(num_retries=0)
 
     if meta.get("trashed") is True:
         raise ValueError(f"File '{file_id}' is trashed in Drive")
 
     declared_size = _bytes(meta.get("size"))
-    if declared_size is not None and declared_size > max_bytes:
+    if declared_size is None:
+        raise ValueError(f"File '{file_id}' has no known metadata size")
+    if declared_size > max_bytes:
         raise ValueError(
             f"File '{file_id}' declared size {declared_size} exceeds maximum metadata cap {max_bytes}"
         )
+    if metadata_out is not None:
+        metadata_out.update(meta)
 
-    if not budget.record_request():
-        raise RuntimeError("Budget exhausted before reading file media")
+    if budget.fixture_reader is not None:
+        if not budget.record_request():
+            raise RuntimeError("Budget exhausted before reading file media")
+        data = budget.fixture_reader(file_id)
+        if not isinstance(data, bytes):
+            raise ValueError(f"Fixture reader did not return binary content for file {file_id}")
+        if len(data) > max_bytes:
+            raise ValueError(
+                f"File '{file_id}' downloaded {len(data)} bytes exceeding cap of {max_bytes}"
+            )
+        return data
 
-    request = drive_files.get_media(fileId=file_id)
+    request = drive_files.get_media(fileId=file_id, supportsAllDrives=True)
 
-    # Attempt MediaIoBaseDownload with fixed chunks if request is a real HttpRequest
     try:
         from googleapiclient.http import HttpRequest, MediaIoBaseDownload
-
-        if isinstance(request, HttpRequest):
-            buffer = io.BytesIO()
-            downloader = MediaIoBaseDownload(buffer, request, chunksize=64 * 1024)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk(num_retries=2)
-                if buffer.tell() > max_bytes:
-                    raise ValueError(
-                        f"File '{file_id}' streaming download exceeded cap of {max_bytes} bytes"
-                    )
-            return buffer.getvalue()
-    except (ImportError, TypeError, AttributeError):
-        pass
-
-    # Direct execution fallback (used by mocks and simple clients)
-    data = request.execute(num_retries=2)
-    if not isinstance(data, bytes):
-        raise ValueError(f"Drive did not return binary content for file {file_id}")
-    if len(data) > max_bytes:
-        raise ValueError(
-            f"File '{file_id}' downloaded {len(data)} bytes exceeding cap of {max_bytes}"
-        )
-    return data
+    except ImportError as exc:
+        raise RuntimeError("googleapiclient is required for bounded Drive media reads") from exc
+    if not isinstance(request, HttpRequest):
+        raise TypeError("non-HTTP media clients require an explicit fixture_reader")
+    buffer = io.BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request, chunksize=64 * 1024)
+    done = False
+    while not done:
+        if not budget.record_request():
+            raise RuntimeError("Budget exhausted during media download")
+        _status, done = downloader.next_chunk(num_retries=0)
+        if buffer.tell() > max_bytes:
+            raise ValueError(
+                f"File '{file_id}' streaming download exceeded cap of {max_bytes} bytes"
+            )
+    return buffer.getvalue()
 
 
 def list_folder_children(
@@ -251,6 +285,8 @@ def list_folder_children(
         list_args = {
             "q": query,
             "spaces": "drive",
+            "includeItemsFromAllDrives": True,
+            "supportsAllDrives": True,
             "fields": "nextPageToken,incompleteSearch,files(id,name,mimeType,size,createdTime,modifiedTime,parents)",
             "pageSize": 1000,
         }
@@ -258,7 +294,7 @@ def list_folder_children(
             list_args["pageToken"] = page_token
 
         try:
-            response = drive_files.list(**list_args).execute(num_retries=2)
+            response = drive_files.list(**list_args).execute(num_retries=0)
         except Exception as exc:
             budget.incomplete_reasons.add(f"drive_list_failed:{type(exc).__name__}")
             is_complete = False
@@ -273,7 +309,7 @@ def list_folder_children(
             item_id = item.get("id")
             if not item_id or item_id in seen_ids:
                 continue
-            if not budget.admit_file():
+            if not budget.admit_file(item_id):
                 is_complete = False
                 break
             seen_ids.add(item_id)
@@ -304,6 +340,8 @@ def find_child_by_name(
     mime_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Find exact untrashed children of parent_id matching name."""
+    if not isinstance(parent_id, str) or not _ID_RE.fullmatch(parent_id):
+        raise ValueError(f"Invalid parent_id: {parent_id}")
     escaped_parent = _escape_drive_query_literal(parent_id)
     escaped_name = _escape_drive_query_literal(name)
     query = f"'{escaped_parent}' in parents and name='{escaped_name}' and trashed=false"
@@ -322,20 +360,30 @@ def find_child_by_name(
         list_args = {
             "q": query,
             "spaces": "drive",
+            "includeItemsFromAllDrives": True,
+            "supportsAllDrives": True,
             "fields": "nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime,parents)",
             "pageSize": 100,
         }
         if page_token:
             list_args["pageToken"] = page_token
 
-        response = drive_files.list(**list_args).execute(num_retries=2)
+        try:
+            response = drive_files.list(**list_args).execute(num_retries=0)
+        except Exception as exc:
+            budget.incomplete_reasons.add(f"drive_lookup_failed:{type(exc).__name__}")
+            break
         for item in response.get("files", []):
             if item.get("name") == name:
-                budget.admit_file()
+                if not budget.admit_file(item.get("id")):
+                    break
                 items.append(item)
 
         page_token = response.get("nextPageToken")
-        if not page_token or budget.is_exhausted or page_token in seen_tokens:
+        if not page_token or budget.is_exhausted:
+            break
+        if page_token in seen_tokens:
+            budget.incomplete_reasons.add("repeated_page_token")
             break
         seen_tokens.add(page_token)
 
@@ -419,8 +467,11 @@ def audit_publication_pointer(
         return {"status": "invalid_pointer_schema", "error": "Missing or empty updated_at_utc"}
 
     # 2. Download manifest bytes with bound and verify SHA-256 using original bytes
+    manifest_meta: Dict[str, Any] = {}
     try:
-        manifest_raw_bytes = bounded_read_file_bytes(drive_files, manifest_file_id, budget)
+        manifest_raw_bytes = bounded_read_file_bytes(
+            drive_files, manifest_file_id, budget, metadata_out=manifest_meta
+        )
     except Exception as exc:
         return {
             "status": "missing_manifest_file",
@@ -469,12 +520,21 @@ def audit_publication_pointer(
         return {"status": "invalid_manifest_structure", "error": f"Invalid manifest code_sha: {code_sha}"}
 
     manifest_scope = manifest_json.get("release_scope")
-    if manifest_scope != expected_scope:
-        return {"status": "unexpected_release_scope", "error": f"Manifest release_scope '{manifest_scope}' != expected '{expected_scope}'"}
+    expected_manifest_scope = "nbp_silver" if manifest_json.get("format_version") == 1 else expected_scope
+    if manifest_json.get("format_version") == 1 and expected_scope != "nbp_platform":
+        return {"status": "unexpected_release_scope", "error": "Legacy format-1 manifests are only valid for the NBP publication root"}
+    if manifest_scope != expected_manifest_scope:
+        return {"status": "unexpected_release_scope", "error": f"Manifest release_scope '{manifest_scope}' != expected '{expected_manifest_scope}'"}
 
     # 4. Find the release directory to verify expected parent relationships
     releases_dirs = find_child_by_name(drive_files, publication_root_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
     expected_release_folder_id = None
+    if len(releases_dirs) > 1:
+        return {
+            "status": "ambiguous_releases_folder",
+            "scope_label": scope_label,
+            "error": "Multiple releases folders found under publication root",
+        }
     if releases_dirs:
         rel_folder_matches = find_child_by_name(drive_files, releases_dirs[0]["id"], release_id, budget, mime_type=FOLDER_MIME_TYPE)
         if len(rel_folder_matches) == 1:
@@ -493,6 +553,20 @@ def audit_publication_pointer(
             "error": f"Release directory '{release_id}' not found under publication releases/",
         }
 
+    if manifest_meta.get("name") != "release.json":
+        return {
+            "status": "manifest_parent_or_name_mismatch",
+            "scope_label": scope_label,
+            "error": "Pointer manifest is not named release.json",
+        }
+    if expected_release_folder_id not in (manifest_meta.get("parents") or []):
+        return {
+            "status": "manifest_parent_or_name_mismatch",
+            "scope_label": scope_label,
+            "release_id": release_id,
+            "error": "Pointer manifest is not directly inside its release folder",
+        }
+
     # 5. Manifest-and-metadata verification of dataset and artifact references
     datasets_info = []
     layer_summary: Dict[str, int] = {}
@@ -504,43 +578,71 @@ def audit_publication_pointer(
     if not isinstance(manifest_datasets, list) or not manifest_datasets:
         return {"status": "empty_manifest_datasets", "error": "Manifest declares no datasets"}
 
+    seen_reference_ids: Set[str] = set()
+    seen_dataset_ids: Set[str] = set()
     for ds in manifest_datasets:
+        if not isinstance(ds, dict):
+            return {"status": "invalid_manifest_structure", "error": "Dataset entries must be objects"}
         ds_id = ds.get("dataset_id")
+        if not isinstance(ds_id, str) or not ds_id or ds_id in seen_dataset_ids:
+            return {"status": "invalid_manifest_structure", "error": f"Invalid or duplicate dataset_id: {ds_id}"}
+        seen_dataset_ids.add(ds_id)
         table_name = ds.get("table_name")
         layer = ds.get("layer", "unknown_layer")
         row_count = ds.get("row_count", 0)
-        total_rows += row_count if isinstance(row_count, int) else 0
+        if not isinstance(row_count, int) or isinstance(row_count, bool) or row_count < 0:
+            return {"status": "invalid_manifest_structure", "error": f"Invalid row_count for {ds_id}"}
+        total_rows += row_count
         layer_summary[layer] = layer_summary.get(layer, 0) + 1
 
         files_meta = ds.get("files", [])
+        if not isinstance(files_meta, list):
+            return {"status": "invalid_manifest_structure", "error": f"Dataset files must be a list for {ds_id}"}
         if not files_meta:
             reference_failures.append({"dataset_id": ds_id, "reason": "no_files_declared"})
 
         for f in files_meta:
+            if not isinstance(f, dict):
+                return {"status": "invalid_manifest_structure", "error": f"Dataset file entries must be objects for {ds_id}"}
             f_id = f.get("id")
             f_size = _bytes(f.get("size"))
-            if f_size is not None:
-                total_dataset_bytes += f_size
-            if not f_id:
-                reference_failures.append({"dataset_id": ds_id, "reason": "missing_file_id"})
+            if not isinstance(f_id, str) or not _ID_RE.fullmatch(f_id):
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "invalid_file_id"})
                 continue
+            if f_id in seen_reference_ids:
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "duplicate_file_reference"})
+                continue
+            seen_reference_ids.add(f_id)
+            if f_size is None:
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "invalid_declared_size"})
+            if "name" in f and not _is_safe_basename(f.get("name")):
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "invalid_file_name"})
+            if "sha256" in f and (not isinstance(f.get("sha256"), str) or not _SHA_RE.fullmatch(f.get("sha256"))):
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "invalid_file_sha256"})
 
+            if not budget.admit_file(f_id):
+                reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "file_budget_exhausted"})
+                break
             if not budget.record_request():
                 reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "budget_exhausted"})
                 break
 
             try:
                 f_meta = drive_files.get(
-                    fileId=f_id, fields="id,name,trashed,size,parents"
-                ).execute(num_retries=2)
+                    fileId=f_id, fields="id,name,trashed,size,parents", supportsAllDrives=True
+                ).execute(num_retries=0)
                 if f_meta.get("trashed") is True:
                     reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "file_trashed"})
-                if expected_release_folder_id and expected_release_folder_id not in f_meta.get("parents", []):
+                if expected_release_folder_id and expected_release_folder_id not in (f_meta.get("parents") or []):
                     reference_failures.append({
                         "dataset_id": ds_id, "file_id": f_id,
                         "reason": f"parent_mismatch: expected {expected_release_folder_id} in {f_meta.get('parents')}"
                     })
                 meta_size = _bytes(f_meta.get("size"))
+                if meta_size is None:
+                    reference_failures.append({"dataset_id": ds_id, "file_id": f_id, "reason": "unknown_drive_size"})
+                else:
+                    total_dataset_bytes += meta_size
                 if meta_size is not None and f_size is not None and meta_size != f_size:
                     reference_failures.append({
                         "dataset_id": ds_id, "file_id": f_id,
@@ -560,36 +662,72 @@ def audit_publication_pointer(
 
     # Check required artifacts metadata
     manifest_artifacts = manifest_json.get("artifacts", [])
+    if not isinstance(manifest_artifacts, list):
+        return {"status": "invalid_manifest_structure", "error": "Manifest artifacts must be a list"}
     artifact_names_found = set()
     for art in manifest_artifacts:
+        if not isinstance(art, dict):
+            return {"status": "invalid_manifest_structure", "error": "Artifact entries must be objects"}
         art_name = art.get("name")
         art_id = art.get("id")
         art_size = _bytes(art.get("size"))
+        if art_name in artifact_names_found:
+            reference_failures.append({"artifact_name": art_name, "reason": "duplicate_artifact_name"})
+        if not _is_safe_basename(art_name):
+            reference_failures.append({"artifact_name": art_name, "reason": "invalid_artifact_name"})
+        if not isinstance(art_id, str) or not _ID_RE.fullmatch(art_id):
+            reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "invalid_artifact_id"})
+            continue
+        if art_id in seen_reference_ids:
+            reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "duplicate_file_reference"})
+            continue
+        seen_reference_ids.add(art_id)
+        if art_size is None:
+            reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "invalid_artifact_size"})
+        if "sha256" in art and (not isinstance(art.get("sha256"), str) or not _SHA_RE.fullmatch(art.get("sha256"))):
+            reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "invalid_artifact_sha256"})
         artifact_names_found.add(art_name)
 
-        if not art_id:
-            reference_failures.append({"artifact_name": art_name, "reason": "missing_artifact_id"})
-            continue
-
+        if not budget.admit_file(art_id):
+            reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "file_budget_exhausted"})
+            break
         if not budget.record_request():
             reference_failures.append({"artifact_name": art_name, "reason": "budget_exhausted"})
             break
 
         try:
             art_meta = drive_files.get(
-                fileId=art_id, fields="id,name,trashed,size,parents"
-            ).execute(num_retries=2)
+                fileId=art_id, fields="id,name,trashed,size,parents", supportsAllDrives=True
+            ).execute(num_retries=0)
             if art_meta.get("trashed") is True:
                 reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "artifact_trashed"})
-            if expected_release_folder_id and expected_release_folder_id not in art_meta.get("parents", []):
+            if expected_release_folder_id and expected_release_folder_id not in (art_meta.get("parents") or []):
                 reference_failures.append({
                     "artifact_name": art_name, "file_id": art_id,
                     "reason": f"artifact_parent_mismatch: expected {expected_release_folder_id} in {art_meta.get('parents')}"
                 })
+            if art_meta.get("name") != art_name:
+                reference_failures.append({
+                    "artifact_name": art_name, "file_id": art_id,
+                    "reason": f"name_mismatch: manifest {art_name} vs Drive {art_meta.get('name')}",
+                })
+            meta_size = _bytes(art_meta.get("size"))
+            if meta_size is None:
+                reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": "unknown_drive_size"})
+            elif art_size is not None and meta_size != art_size:
+                reference_failures.append({
+                    "artifact_name": art_name, "file_id": art_id,
+                    "reason": f"size_mismatch: declared {art_size} vs Drive {meta_size}",
+                })
         except Exception as exc:
             reference_failures.append({"artifact_name": art_name, "file_id": art_id, "reason": f"artifact_get_failed:{exc}"})
 
-    missing_required_artifacts = sorted(REQUIRED_ARTIFACT_NAMES - artifact_names_found)
+    required_artifacts = (
+        {"manifest.json", "catalog.json", "run_results.json"}
+        if manifest_json.get("format_version") == 1
+        else REQUIRED_ARTIFACT_NAMES
+    )
+    missing_required_artifacts = sorted(required_artifacts - artifact_names_found)
     if missing_required_artifacts:
         reference_failures.append({"reason": f"missing_required_artifacts:{missing_required_artifacts}"})
 
@@ -635,6 +773,7 @@ def audit_release_directories(
     budget: BudgetTracker,
     current_release_id: Optional[str] = None,
     current_pointer_verified: bool = False,
+    current_manifest_file_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Inspect all release subdirectories under a releases folder.
 
@@ -666,6 +805,8 @@ def audit_release_directories(
 
         # List files inside release folder (bounded)
         rel_files, rel_complete = list_folder_children(drive_files, f_id, budget)
+        if not rel_complete:
+            is_complete = False
         manifest_file = next((rf for rf in rel_files if rf.get("name") == "release.json"), None)
         has_manifest = (manifest_file is not None)
 
@@ -689,7 +830,12 @@ def audit_release_directories(
         # Honest classification
         if not rel_complete:
             classification = "partial"
-        elif is_current and current_pointer_verified:
+        elif (
+            is_current
+            and current_pointer_verified
+            and manifest_file is not None
+            and manifest_file.get("id") == current_manifest_file_id
+        ):
             classification = "current_manifest_and_metadata_verified"
         elif has_manifest:
             classification = "manifest_present_unverified"
@@ -883,7 +1029,9 @@ def audit_physical_storage_map(
             folder_label = name if len(items) == 1 else f"{name} (duplicate #{idx + 1})"
 
             # Count direct child items bounded
-            child_items, _ = list_folder_children(drive_files, folder["id"], budget)
+            child_items, child_complete = list_folder_children(drive_files, folder["id"], budget)
+            if not child_complete:
+                is_complete = False
             dir_child_folders = sum(1 for c in child_items if c.get("mimeType") == FOLDER_MIME_TYPE)
             dir_child_files = sum(1 for c in child_items if c.get("mimeType") != FOLDER_MIME_TYPE)
             dir_known_bytes = sum(_bytes(c.get("size")) or 0 for c in child_items if c.get("mimeType") != FOLDER_MIME_TYPE)
@@ -924,7 +1072,11 @@ def run_full_drive_audit(
     max_seconds: float = 120.0,
     clock: Callable[[], float] = time.monotonic,
 ) -> Dict[str, Any]:
-    """Execute complete read-only audit across Drive storage hierarchy with shared budget."""
+    """Execute a read-only audit with shared cooperative budgets.
+
+    ``max_seconds`` cannot interrupt a blocked HTTP transport; callers must
+    provide an outer timeout in addition to this between-call check.
+    """
     drive_files = drive_service.files()
     budget = BudgetTracker(
         max_files=max_files,
@@ -938,10 +1090,42 @@ def run_full_drive_audit(
     if not resolved_root_id:
         escaped_name = _escape_drive_query_literal(root_name)
         q = f"name='{escaped_name}' and mimeType='{FOLDER_MIME_TYPE}' and trashed=false"
-        if not budget.record_request():
-            return {"status": "audit_incomplete", "incomplete_reasons": ["budget_exceeded_before_root"]}
-        response = drive_files.list(q=q, spaces="drive", fields="files(id,name,mimeType)").execute(num_retries=2)
-        roots = response.get("files", [])
+        roots: List[Dict[str, Any]] = []
+        page_token: Optional[str] = None
+        seen_tokens: Set[str] = set()
+        while True:
+            if not budget.record_request():
+                return {"status": "audit_incomplete", "incomplete_reasons": sorted(budget.incomplete_reasons)}
+            list_args = {
+                "q": q,
+                "spaces": "drive",
+                "includeItemsFromAllDrives": True,
+                "supportsAllDrives": True,
+                "fields": "nextPageToken,incompleteSearch,files(id,name,mimeType)",
+                "pageSize": 100,
+            }
+            if page_token:
+                list_args["pageToken"] = page_token
+            try:
+                response = drive_files.list(**list_args).execute(num_retries=0)
+            except Exception as exc:
+                budget.incomplete_reasons.add(f"drive_root_search_failed:{type(exc).__name__}")
+                return {"status": "audit_incomplete", "incomplete_reasons": sorted(budget.incomplete_reasons)}
+            if response.get("incompleteSearch"):
+                budget.incomplete_reasons.add("incomplete_search_flag")
+            for item in response.get("files", []):
+                if not budget.admit_file(item.get("id")):
+                    break
+                roots.append(item)
+            page_token = response.get("nextPageToken")
+            if not page_token or budget.is_exhausted:
+                break
+            if page_token in seen_tokens:
+                budget.incomplete_reasons.add("repeated_page_token")
+                break
+            seen_tokens.add(page_token)
+        if budget.incomplete_reasons:
+            return {"status": "audit_incomplete", "incomplete_reasons": sorted(budget.incomplete_reasons)}
         if not roots:
             return {
                 "status": "root_not_found",
@@ -980,7 +1164,9 @@ def run_full_drive_audit(
             bdl_is_verified = (bdl_pointer.get("status") == "current_manifest_and_metadata_verified")
             bdl_releases_audit = audit_release_directories(
                 drive_files, bdl_rel_dirs[0]["id"], budget,
-                current_release_id=current_bdl_rel_id, current_pointer_verified=bdl_is_verified,
+                current_release_id=current_bdl_rel_id,
+                current_pointer_verified=bdl_is_verified,
+                current_manifest_file_id=bdl_pointer.get("manifest_file_id") if bdl_pointer else None,
             )
         elif len(bdl_rel_dirs) > 1:
             bdl_releases_audit = {"status": "ambiguous_releases_folder", "count": len(bdl_rel_dirs)}
@@ -997,7 +1183,9 @@ def run_full_drive_audit(
         nbp_is_verified = (nbp_pointer.get("status") == "current_manifest_and_metadata_verified")
         nbp_releases_audit = audit_release_directories(
             drive_files, nbp_rel_dirs[0]["id"], budget,
-            current_release_id=current_nbp_rel_id, current_pointer_verified=nbp_is_verified,
+            current_release_id=current_nbp_rel_id,
+            current_pointer_verified=nbp_is_verified,
+            current_manifest_file_id=nbp_pointer.get("manifest_file_id") if nbp_pointer else None,
         )
     elif len(nbp_rel_dirs) > 1:
         nbp_releases_audit = {"status": "ambiguous_releases_folder", "count": len(nbp_rel_dirs)}
@@ -1021,7 +1209,7 @@ def run_full_drive_audit(
     if has_ambiguity:
         overall_status = "ambiguous_structure"
     elif budget.incomplete_reasons:
-        overall_status = "audit_incomplete_budget_exhausted"
+        overall_status = "audit_incomplete"
     elif nbp_verified and bdl_verified and releases_complete:
         overall_status = "audit_manifest_and_metadata_verified"
     else:

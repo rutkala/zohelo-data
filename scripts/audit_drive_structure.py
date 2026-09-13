@@ -72,7 +72,10 @@ def main() -> int:
         "--max-seconds",
         type=float,
         default=120.0,
-        help="Maximum execution timeout in seconds (default: 120.0)",
+        help=(
+            "Cooperative elapsed budget checked between Drive calls; use an outer "
+            "process timeout for blocked HTTP transports (default: 120.0)"
+        ),
     )
     args = parser.parse_args()
 
