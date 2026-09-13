@@ -35,6 +35,14 @@ release-catalog fixture proves all fourteen WDI datasets and multiple fact parti
 discoverable. Production publication, portal deployment and fresh restore remain pending reviewed merge and successful
 main-branch execution; no live WDI Gold/semantic completion is claimed by this checkpoint.
 
+Production run [34776118401](https://github.com/rutkala/zohelo-data/actions/runs/34776118401)
+completed the serialized Landing continuation but failed closed before release promotion because
+the reviewed member contract used normalized filenames rather than the official ZIP's exact
+case-sensitive names (`WDICSV.csv`, `WDIcountry-series.csv`, `WDIfootnote.csv` and
+`WDIseries-time.csv`). No partial modeled release was promoted. The corrective delivery now binds
+the models and tests to the exact official member inventory and will resume with a transform-only
+run after reviewed merge, without duplicating the already-successful provider collection.
+
 Fresh orchestration evidence before this change: WDI run 34757536158 retained and freshly verified
 the one current official archive, with 3,186 accepted/published API responses, zero publication
 backlog and 1,207 API tasks remaining. Eurostat run 34771200209 retained 3,565 accepted versions and

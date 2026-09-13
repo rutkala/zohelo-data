@@ -71,17 +71,17 @@ class WdiPlatformModelTests(unittest.TestCase):
             ["POL", "Poland", "Poland", "Republic of Poland", "PL", "Polish zloty", "Europe & Central Asia", "High income", "", ""],
             ["WLD", "World", "World", "World", "1W", "", "Aggregates", "", "", "World aggregate"],
         ])
-        cls._write_csv("WDICountry-Series.csv", ["CountryCode", "SeriesCode", "DESCRIPTION"], [
+        cls._write_csv("WDIcountry-series.csv", ["CountryCode", "SeriesCode", "DESCRIPTION"], [
             ["POL", "SP.POP.TOTL", "National source note"],
         ])
-        cls._write_csv("WDIData.csv", [
+        cls._write_csv("WDICSV.csv", [
             "Country Name", "Country Code", "Indicator Name", "Indicator Code", "2020", "2021", "",
         ], [
             ["Poland", "POL", "Population, total", "SP.POP.TOTL", "38000000", "37900000", ""],
             ["World", "WLD", "Population, total", "SP.POP.TOTL", "7800000000", "7880000000", ""],
             ["Poland", "POL", "GDP growth (annual %)", "NY.GDP.MKTP.KD.ZG", "-2.0", "6.9", ""],
         ])
-        cls._write_csv("WDIFootNote.csv", ["CountryCode", "SeriesCode", "Year", "DESCRIPTION"], [
+        cls._write_csv("WDIfootnote.csv", ["CountryCode", "SeriesCode", "Year", "DESCRIPTION"], [
             ["POL", "SP.POP.TOTL", "2021", "Estimate"],
         ])
         cls._write_csv("WDISeries.csv", [
@@ -92,7 +92,7 @@ class WdiPlatformModelTests(unittest.TestCase):
             ["SP.POP.TOTL", "Population", "Population, total", "Population", "Total population", "people", "Annual", "Sum", "World Bank", "CC BY-4.0", ""],
             ["NY.GDP.MKTP.KD.ZG", "Economy", "GDP growth (annual %)", "Growth", "Annual GDP growth", "%", "Annual", "Weighted average", "World Bank", "CC BY-4.0", ""],
         ])
-        cls._write_csv("WDISeries-Time.csv", ["SeriesCode", "Year", "DESCRIPTION"], [
+        cls._write_csv("WDIseries-time.csv", ["SeriesCode", "Year", "DESCRIPTION"], [
             ["SP.POP.TOTL", "2021", "Series note"],
         ])
 
@@ -135,6 +135,12 @@ class WdiPlatformModelTests(unittest.TestCase):
                 'select geography_type from "04_gold"."dim_wdi_geography" where geography_key = ?', ["WLD"]
             ).fetchone()[0]
             self.assertEqual(aggregate, "source_published_aggregate")
+
+    def test_member_contract_matches_the_official_archive_exactly(self):
+        self.assertEqual(set(WDI_ARCHIVE_MEMBERS), {
+            "WDICountry.csv", "WDIcountry-series.csv", "WDICSV.csv",
+            "WDIfootnote.csv", "WDISeries.csv", "WDIseries-time.csv",
+        })
 
     def test_coverage_proves_every_populated_archive_value_is_modeled(self):
         with duckdb.connect(str(self.database), read_only=True) as connection:

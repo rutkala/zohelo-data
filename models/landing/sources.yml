@@ -26,30 +26,30 @@ sources:
           formatter: template
           external_location: "read_csv('{{ env_var('ZOHELO_WDI_COUNTRY_CSV', '/tmp/zohelo_data/01_landing/wdi/WDICountry.csv') }}', header = true, all_varchar = true)"
       - name: country_series
-        description: "Complete WDICountry-Series.csv member."
+        description: "Complete WDIcountry-series.csv member."
         meta:
           formatter: template
-          external_location: "read_csv('{{ env_var('ZOHELO_WDI_COUNTRY_SERIES_CSV', '/tmp/zohelo_data/01_landing/wdi/WDICountry-Series.csv') }}', header = true, all_varchar = true)"
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_COUNTRY_SERIES_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIcountry-series.csv') }}', header = true, all_varchar = true)"
       - name: data
-        description: "Complete WDIData.csv member; the Bronze model normalizes every populated annual value without filtering economies, aggregates, indicators or years."
+        description: "Complete WDICSV.csv member; the Bronze model normalizes every populated annual value without filtering economies, aggregates, indicators or years."
         meta:
           formatter: template
-          external_location: "read_csv('{{ env_var('ZOHELO_WDI_DATA_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIData.csv') }}', header = true, all_varchar = true)"
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_DATA_CSV', '/tmp/zohelo_data/01_landing/wdi/WDICSV.csv') }}', header = true, all_varchar = true)"
       - name: footnote
-        description: "Complete WDIFootNote.csv member."
+        description: "Complete WDIfootnote.csv member."
         meta:
           formatter: template
-          external_location: "read_csv('{{ env_var('ZOHELO_WDI_FOOTNOTE_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIFootNote.csv') }}', header = true, all_varchar = true)"
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_FOOTNOTE_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIfootnote.csv') }}', header = true, all_varchar = true)"
       - name: series
         description: "Complete WDISeries.csv member."
         meta:
           formatter: template
           external_location: "read_csv('{{ env_var('ZOHELO_WDI_SERIES_CSV', '/tmp/zohelo_data/01_landing/wdi/WDISeries.csv') }}', header = true, all_varchar = true)"
       - name: series_time
-        description: "Complete WDISeries-Time.csv member."
+        description: "Complete WDIseries-time.csv member."
         meta:
           formatter: template
-          external_location: "read_csv('{{ env_var('ZOHELO_WDI_SERIES_TIME_CSV', '/tmp/zohelo_data/01_landing/wdi/WDISeries-Time.csv') }}', header = true, all_varchar = true)"
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_SERIES_TIME_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIseries-time.csv') }}', header = true, all_varchar = true)"
       - name: archive_evidence
         description: "Release-build evidence for the exact verified archive, its six-member contract, retrieval time and raw checksum."
         meta:

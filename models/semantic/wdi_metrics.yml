@@ -58,7 +58,7 @@ metrics:
     config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: WDI indicators, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
   - name: wdi_source_value_total
     label: WDI source value total
-    description: Populated annual source cells normalized from WDIData.csv.
+    description: Populated annual source cells normalized from WDICSV.csv.
     type: simple
     type_params: {measure: wdi_source_value_total_measure}
     config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: populated annual values, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
@@ -82,7 +82,7 @@ metrics:
     config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: modeled WDI observations, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
   - name: wdi_modeled_value_coverage_ratio
     label: WDI modeled value coverage ratio
-    description: Modeled observation rows divided by populated annual cells in WDIData.csv.
+    description: Modeled observation rows divided by populated annual cells in WDICSV.csv.
     type: simple
     type_params: {measure: wdi_modeled_value_coverage_ratio_measure}
     config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: ratio, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
