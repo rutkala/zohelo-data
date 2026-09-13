@@ -279,3 +279,31 @@ Business users should read the BDL modeled summary separately from the Landing c
 Inspect the `Build and publish BDL modeled release` step in GitHub Actions for those counters and
 the immutable release ID. Inspect the release artifacts when you need the business catalogue,
 semantic manifest, or ingestion-state evidence for that published BDL snapshot.
+
+## WDI complete-archive Bronze → Silver → Gold → semantic publication
+
+The World Bank workflow runs the modeled stage only after its current official bulk index and a
+fresh archive restore succeed. An operator can run the same production stage, inside the serialized
+main-branch workflow, with:
+
+```bash
+python src/wdi_platform.py --allow-production-write
+```
+
+To rebuild from already-retained raw data without making source requests, dispatch the World Bank
+workflow with `transform_only=true`. The runner requires `complete_current_catalogue`, restores the
+exact accepted archive, verifies the exact six-member CSV contract, builds all WDI models with
+`enable_wdi=true`, validates nine native MetricFlow coverage metrics, and promotes the candidate
+only after a complete staged restore. A fresh process verifies the current immutable package with:
+
+```bash
+python src/wdi_platform.py --allow-production-write --verify-current
+```
+
+The release publishes six Bronze relations, three Silver relations and five Gold relations. The
+large Bronze, Silver-observation and Gold-fact relations are emitted in bounded year partitions;
+all parts belong to one dataset and one immutable release. `mart_wdi_coverage` must report one
+current archive, six members and a modeled-value coverage ratio of exactly 1.0. The archive/API
+campaign summary and modeled release remain separate: completion here means the complete current
+official WDI CSV archive reached Gold and its coverage semantics, while the independent WDI API
+reconciliation queue and other World Bank products remain open.

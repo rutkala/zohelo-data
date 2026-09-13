@@ -119,3 +119,17 @@ contain metadata and raw-file references, so archive size does not force browser
 The indexes do not replace source-specific Bronze/Silver models or establish semantic coverage.
 The repository's delivery record distinguishes implementation, successful collection and
 validated catalogue completeness. Retention and reference-safe compaction remain separate work.
+
+The WDI modeled path consumes only the freshly verified current official CSV archive. It fails
+closed unless the archive has exactly the six accepted members and campaign coverage is
+`complete_current_catalogue`. The source members are retained as six Bronze relations; populated
+annual cells in `WDIData.csv` become Silver and Gold observations at geography (economy or
+source-published aggregate) × indicator × year grain. Geography, indicator and year dimensions,
+the observation fact and a release-coverage mart are published as an independent immutable
+`wdi-platform` release. Large observation relations are partitioned into bounded Parquet files;
+this changes transport size, not source scope. Staged validation restores every part, binds the
+release to the raw archive hash/size and dbt artifacts, and requires modeled observation coverage
+of every populated annual source cell. Nine native MetricFlow metrics expose archive/member and
+modeled-coverage counts at snapshot grain; WDI indicator values are not assumed additive.
+`enable_wdi` is set only by the source-specific build so existing NBP and BDL release manifests
+remain isolated from WDI models and metrics.

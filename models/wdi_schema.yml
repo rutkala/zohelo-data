@@ -1,0 +1,148 @@
+version: 2
+
+models:
+  - name: br_wdi_country
+    description: "Bronze copy of every row and column in WDICountry.csv."
+    columns:
+      - name: Country Code
+        quote: true
+        tests: [not_null, unique]
+  - name: br_wdi_country_series
+    description: "Bronze copy of every row and column in WDICountry-Series.csv."
+    columns:
+      - name: CountryCode
+        tests: [not_null]
+  - name: br_wdi_data
+    description: "Bronze long-form WDI annual values. Every populated year cell from WDIData.csv is one row at economy or aggregate × indicator × calendar year grain."
+    columns:
+      - name: country_code
+        tests: [not_null]
+      - name: indicator_code
+        tests: [not_null]
+      - name: observation_year
+        tests: [not_null]
+      - name: observation_value_text
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [country_code, indicator_code, observation_year]
+  - name: br_wdi_footnote
+    description: "Bronze copy of every row and column in WDIFootNote.csv."
+    columns:
+      - name: CountryCode
+        tests: [not_null]
+  - name: br_wdi_series
+    description: "Bronze copy of every row and column in WDISeries.csv."
+    columns:
+      - name: Series Code
+        quote: true
+        tests: [not_null, unique]
+  - name: br_wdi_series_time
+    description: "Bronze copy of every row and column in WDISeries-Time.csv."
+    columns:
+      - name: SeriesCode
+        tests: [not_null]
+
+  - name: stg_wdi_countries
+    description: "Typed current WDI economy and source-published aggregate metadata. Aggregate identity is preserved from the source Region classification."
+    columns:
+      - name: country_code
+        tests: [not_null, unique]
+  - name: stg_wdi_indicators
+    description: "Typed current WDI indicator definitions, units, source organizations, aggregation methods and licence fields."
+    columns:
+      - name: indicator_code
+        tests: [not_null, unique]
+  - name: stg_wdi_observations
+    description: "Typed WDI annual observations with exact source value text and checksum-pinned archive provenance. Null source cells remain absent, never zero."
+    columns:
+      - name: country_code
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wdi_countries')
+                field: country_code
+      - name: indicator_code
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_wdi_indicators')
+                field: indicator_code
+      - name: observation_year
+        tests: [not_null]
+      - name: observation_value
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [country_code, indicator_code, observation_year]
+
+  - name: dim_wdi_geography
+    description: "Gold WDI economy and source-published aggregate dimension; aggregate observations are not platform-calculated sums."
+    columns:
+      - name: geography_key
+        tests: [not_null, unique]
+  - name: dim_wdi_indicator
+    description: "Gold WDI indicator dimension retaining source definition, unit, periodicity, methodology and aggregation metadata."
+    columns:
+      - name: indicator_key
+        tests: [not_null, unique]
+  - name: dim_wdi_year
+    description: "Calendar-year dimension for available WDI values."
+    columns:
+      - name: year_key
+        tests: [not_null, unique]
+      - name: year_start_date
+        tests: [not_null]
+  - name: fact_wdi_observations
+    description: "Gold WDI fact at source economy or aggregate × indicator × calendar year grain. Values are heterogeneous and have no generic additive aggregation policy."
+    columns:
+      - name: geography_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_wdi_geography')
+                field: geography_key
+      - name: indicator_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_wdi_indicator')
+                field: indicator_key
+      - name: year_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_wdi_year')
+                field: year_key
+      - name: observation_value
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [geography_key, indicator_key, year_key]
+  - name: mart_wdi_coverage
+    description: "One-row release-bound accountability summary for the complete current WDI archive and modeled values."
+    columns:
+      - name: snapshot_date
+        tests: [not_null, unique]
+      - name: current_archive_total
+        tests: [not_null]
+      - name: archive_member_total
+        tests: [not_null]
+      - name: source_geography_total
+        tests: [not_null]
+      - name: source_indicator_total
+        tests: [not_null]
+      - name: source_value_total
+        tests: [not_null]
+      - name: modeled_observation_total
+        tests: [not_null]
+      - name: modeled_value_coverage_ratio
+        tests: [not_null]

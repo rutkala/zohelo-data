@@ -106,7 +106,29 @@ sources:
       description: "Statistics Poland Local Data Bank metadata and observation responses retained from the BDL API."
 
   # ==========================================
-  # SOURCE 6: OpenData.org (Entity Resolution)
+  # SOURCE 6: World Bank WDI
+  # ==========================================
+  world_bank_wdi:
+    metadata:
+      domain: "public_statistics"
+      category: "international_development_indicators"
+      geography: "global"
+      provider_type: "public_governed_official"
+      display_name: "World Development Indicators (WDI)"
+      source_name: "World Bank"
+      provider_url: "https://www.worldbank.org/"
+      documentation_url: "https://datahelpdesk.worldbank.org/knowledgebase/topics/125589-developer-information"
+      publication_schedule_url: "https://datatopics.worldbank.org/world-development-indicators/"
+      frequency: "source-updated annual indicator archive"
+      coverage_start: "1960"
+      reuse_terms_url: "https://datacatalog.worldbank.org/search/dataset/0037712/world-development-indicators"
+      reuse_summary: "WDI catalogue record is public under CC BY 4.0; preserve World Bank attribution and indicator source notes."
+      quote_unit: "Indicator-specific units and scaling are source metadata; values are preserved without generic aggregation."
+      methodology_notes: "Countries and source-published aggregates remain distinct source entities. WDI values are heterogeneous and not exposed as a generic additive measure."
+      description: "Complete World Development Indicators CSV archive with every supplied economy, aggregate, indicator, annual value and metadata member."
+
+  # ==========================================
+  # SOURCE 7: OpenData.org (Entity Resolution)
   # ==========================================
   opendata_org:
     metadata:
@@ -126,4 +148,3 @@ sources:
       quote_unit: "Entity records in Senzing format (organizations, locations, people)"
       methodology_notes: "Senzing JSON entity-resolved graphs linking global organizations, executives, digital identifiers, and geographic locations."
       description: "OpenData.org global business entity resolution dataset in native Senzing ZIP format."
-

@@ -1,0 +1,88 @@
+version: 2
+
+semantic_models:
+  - name: wdi_coverage
+    description: >-
+      Release-bound WDI archive and modeled-value accountability. One row per
+      archive retrieval date reports the complete current official distribution,
+      all six supplied CSV members, source totals and modeled coverage.
+    model: ref('mart_wdi_coverage')
+    config:
+      enabled: "{{ var('enable_wdi', false) }}"
+    defaults:
+      agg_time_dimension: snapshot_date
+    entities:
+      - name: wdi_coverage_snapshot
+        type: primary
+        expr: cast(snapshot_date as varchar)
+    dimensions:
+      - name: snapshot_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - {name: wdi_current_archive_total_measure, agg: max, expr: current_archive_total}
+      - {name: wdi_archive_member_total_measure, agg: max, expr: archive_member_total}
+      - {name: wdi_source_geography_total_measure, agg: max, expr: source_geography_total}
+      - {name: wdi_source_indicator_total_measure, agg: max, expr: source_indicator_total}
+      - {name: wdi_source_value_total_measure, agg: max, expr: source_value_total}
+      - {name: wdi_modeled_geography_total_measure, agg: max, expr: modeled_geography_total}
+      - {name: wdi_modeled_indicator_total_measure, agg: max, expr: modeled_indicator_total}
+      - {name: wdi_modeled_observation_total_measure, agg: max, expr: modeled_observation_total}
+      - {name: wdi_modeled_value_coverage_ratio_measure, agg: max, expr: modeled_value_coverage_ratio}
+
+metrics:
+  - name: wdi_current_archive_total
+    label: WDI current archive total
+    description: Current official WDI CSV distributions represented by this modeled snapshot; expected to be one.
+    type: simple
+    type_params: {measure: wdi_current_archive_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: WDI archives, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_archive_member_total
+    label: WDI archive member total
+    description: CSV members represented from the official WDI bundle; the accepted contract contains six.
+    type: simple
+    type_params: {measure: wdi_archive_member_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: CSV members, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_source_geography_total
+    label: WDI source geography total
+    description: Economies and source-published aggregates in WDICountry.csv.
+    type: simple
+    type_params: {measure: wdi_source_geography_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: WDI geographies, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_source_indicator_total
+    label: WDI source indicator total
+    description: Indicator definitions in WDISeries.csv.
+    type: simple
+    type_params: {measure: wdi_source_indicator_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: WDI indicators, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_source_value_total
+    label: WDI source value total
+    description: Populated annual source cells normalized from WDIData.csv.
+    type: simple
+    type_params: {measure: wdi_source_value_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: populated annual values, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_modeled_geography_total
+    label: WDI modeled geography total
+    description: Distinct economies or source-published aggregates represented by modeled observations.
+    type: simple
+    type_params: {measure: wdi_modeled_geography_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: modeled WDI geographies, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_modeled_indicator_total
+    label: WDI modeled indicator total
+    description: Distinct indicators represented by modeled observations.
+    type: simple
+    type_params: {measure: wdi_modeled_indicator_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: modeled WDI indicators, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_modeled_observation_total
+    label: WDI modeled observation total
+    description: Gold rows at economy or aggregate × indicator × year grain.
+    type: simple
+    type_params: {measure: wdi_modeled_observation_total_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: modeled WDI observations, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: wdi_modeled_value_coverage_ratio
+    label: WDI modeled value coverage ratio
+    description: Modeled observation rows divided by populated annual cells in WDIData.csv.
+    type: simple
+    type_params: {measure: wdi_modeled_value_coverage_ratio_measure}
+    config: {enabled: "{{ var('enable_wdi', false) }}", meta: {definition_status: source_defined, unit: ratio, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
