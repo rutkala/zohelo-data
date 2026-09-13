@@ -45,7 +45,7 @@ flowchart TD
 
 Medallion describes progressively refined data quality; it does not require Spark or a particular storage product. Landing and Archive are additional lifecycle boundaries. [Medallion reference](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion).
 
-Published physical files belong to an immutable release folder. Its manifest assigns logical layers, SQL names, file IDs and checksums. Consumers never infer current data from the most recently modified layer folder.
+Published physical files belong to an immutable release folder. Its manifest assigns logical layers, SQL names, file IDs and checksums. Consumers never infer current data from the most recently modified layer folder. See [the Google Drive structure guide](drive-structure.md) for the physical layout, release pointers, and structural harmonization.
 
 ## Publication and recovery
 

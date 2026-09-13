@@ -1,0 +1,752 @@
+{
+  "checked_at_utc": "2026-09-13T09:35:58.645054+00:00",
+  "method": "Compare sorted dataset IDs and manifest-declared Parquet SHA256/size tuples across every BDL directory in the earlier inventory. File IDs and catalogue/code differences are excluded from the dataset signature. No Parquet bytes downloaded.",
+  "expected_release_count": 82,
+  "scanned_release_count": 82,
+  "complete": true,
+  "distinct_declared_dataset_signatures": 82,
+  "identical_declared_dataset_groups": [],
+  "errors": [],
+  "requests_made": 278,
+  "incomplete_reasons": [],
+  "records": [
+    {
+      "release_id": "ef55f513-77d4-4af4-83ab-6874f71c42b5",
+      "manifest_file_id": "13T7x2c28vZbs1JBZIW8b3om7lgjMWRfq",
+      "manifest_sha256": "8dc47921808db3f8e161b9388c17a5ddc94579cd43256c54737abd440dbbcb82",
+      "dataset_signature": "775eaa53be8132f267d8ca4fcb037061f3b066ff71e1155f5dccd5df485e4612",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 37768458,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "e38641c8-67f6-43c6-abbe-d1f23de2db32",
+      "manifest_file_id": "1efllHP13Xz8kXdMifq9AhsYRzW6Yjf01",
+      "manifest_sha256": "26ad652a8c461d696b2b6f602fa55fbcf09bd568ff307277591f94136e85cffa",
+      "dataset_signature": "c7721df072e25e53300599c8b7cf3eafaf1d0d30c4f68e0efb8ce2b1b1efe513",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 40654787,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "8b1ff27d-05a2-46bd-ae46-4034124ac38b",
+      "manifest_file_id": "1N_WuTERA4DxNtaklfGWirHwyt5TaBA4B",
+      "manifest_sha256": "7b0a783974685b80f4c3ff674166068a44be745f6f9b7d3424140cb054ba9b8a",
+      "dataset_signature": "915940f37cdf608dd145e456a749f378b74a4ac756317b96b73bda5e19721122",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 45155761,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "1a6de222-40a0-4ce6-9c76-a465fcfae219",
+      "manifest_file_id": "1xN8QmGk8Ccu0QggO5yMbL3ZKHXIOfyK0",
+      "manifest_sha256": "f71cb4518e35d5ee48d18c449867e98482fe2aaacc97d0ea1af1d476d22a891f",
+      "dataset_signature": "5c62e852c58133475b0a1dfa68ca9bd1a4d16f838444a3c8a4f09af78ea47c89",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 49370100,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "916b9a22-f12f-4a59-824c-afe3ea43e597",
+      "manifest_file_id": "1NEGNxJtVaT7ZGNc49S83Zdhe5lTE9esM",
+      "manifest_sha256": "ec7f3d149079d0ee0a1c60035c81cc034ae7c6d9e4d529d95c246d29a429b2fa",
+      "dataset_signature": "a7bbb2824204d5a735166335c338ace650cce038d429f0fde6bdb299972e70ab",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 52609535,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d0757630-f0f7-4d8d-8987-0fe47a010d00",
+      "manifest_file_id": "1SXjMYP5cvkeeM6BnolNhm0XKDGN5y4gI",
+      "manifest_sha256": "6a773f32bdfd28e5f36dd5aff519636778a7e27d826d8ec124e71ff6a39f77ff",
+      "dataset_signature": "8147a26ec4a9b370ccb1a22a1f787520ff2af0252a27cd271486fbb225650c4a",
+      "code_sha": "d4efbe3db4f8fdcafa05687a0db913cb7da542be",
+      "retained_bytes": 56763511,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d256ab44-a7e8-4145-9457-32aa0cf76ef7",
+      "manifest_file_id": "1f-m0a2avBu5CY3Inyc3I-K4N4hLemNbf",
+      "manifest_sha256": "e83ce916b2347d727132537c0c1df7ef19bbc5d4123b4596465e6f1446f09514",
+      "dataset_signature": "89bfb2cd0b14878d5926c885864e1c650212622e3ca97c65a42bcba346de0ca6",
+      "code_sha": "cc79f52e5883921e2664aa780821b4cbd302d8e3",
+      "retained_bytes": 60458358,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "202bfbbd-602a-410c-abf4-ca602f77c372",
+      "manifest_file_id": "1pjozvWeDOjiJ94RCnstDsl2B3F6wgvCj",
+      "manifest_sha256": "bf67163e10ba4cb75dc17b7b170454b48ad5a94864faf4c99f5b9fe4e9ac7854",
+      "dataset_signature": "d02b983ee2078e0379ade6b792b3175c917d5880dd564defd7c773e7d18844e3",
+      "code_sha": "7a54f0e9b4d2387b2b1ae132ff20c50ba0d30c9e",
+      "retained_bytes": 63663036,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "48045f55-1ff3-4bf4-98d6-f0d4fd1e218b",
+      "manifest_file_id": "1FQYjHazePwOi88LtjKcOsKR6QY1Pd0jX",
+      "manifest_sha256": "d959b6a7de5e24b9e00a43f9b2b1756049b538d734d577be521547f092a1ddd6",
+      "dataset_signature": "310761ec12bfa5e47825a3b58104cb2c3af1fb54006f67a47f95788b02d18a98",
+      "code_sha": "2a3eb56c89b26621d8a997262c9fdcbf83de9e9d",
+      "retained_bytes": 67052524,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "175f5c90-6e81-49df-8575-e98e43945300",
+      "manifest_file_id": "1oDI1tw0rL_oITsj2zsCLD4IYM9irxZp2",
+      "manifest_sha256": "050e233f96ff82d625d1400e42ef07a9f5ad73a810ead0765838be544787d55b",
+      "dataset_signature": "1dff7ab1c4a96f6a0f2df6dca42c2f85dc559b899825a71bfb8b5c62da1fdb8c",
+      "code_sha": "48cb49b7b80376453a9ae22d7a62106ece79a5fb",
+      "retained_bytes": 70839193,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "0916444f-5d06-4e7d-be0b-133bcc667874",
+      "manifest_file_id": "1e1RNyy904rul_XSce83XG1X9EBHjXSFd",
+      "manifest_sha256": "3279631820cc1a5cf5ec54d049fa876730255b082170b894c7dc6f8c6a63e3ec",
+      "dataset_signature": "041233414cb1d1be54c737a5761f3d270bc91b9c5506a81e2a0e77bf5302293f",
+      "code_sha": "48cb49b7b80376453a9ae22d7a62106ece79a5fb",
+      "retained_bytes": 74677887,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "89b2cb79-df38-481c-ba63-fc7e71eb865a",
+      "manifest_file_id": "1DUiC7LMQmLX7C4b_nsSIaoDFUXWNl7ri",
+      "manifest_sha256": "97f964be86e827738769c7f88c16ead0b99186973c9e6652ec449cd26ebdfe67",
+      "dataset_signature": "c7c1e0c9072f46781ed5510aa596629f4d285f431002a961daaf1d4db05a1662",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 78909664,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "b2a90836-731c-483f-b021-4288562146db",
+      "manifest_file_id": "108J1ge5VQG6L7u6EWCBlFhs7IlLUWwDB",
+      "manifest_sha256": "0be98be142eb7c42710f5e1da68b91c30d6e365680cac0456aa0421539a71ae4",
+      "dataset_signature": "943ba81a67cde1712d4b343543364e795a98f0fdc1a7d7a1c3f1d9b1ffbe2374",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 82457707,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "b9f86227-e7b6-4289-958e-ad7616f4ff92",
+      "manifest_file_id": "1CKG55aa1P8-Mvy3XHVTB0wGFPLbV-f9f",
+      "manifest_sha256": "e20361b2a88c44a7fbaaa737727ab85d701805c37faec4a22c8c47f7b744f868",
+      "dataset_signature": "d692f2f35a311214025ea91679e8375274f6e91344f0f6a2e422cff379d34eb0",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 87279746,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c320ac3b-97bc-47ac-9e6e-2535d4d85a1b",
+      "manifest_file_id": "1A0319edUp_pb18Cs1iTbRBEkyDe0mVhK",
+      "manifest_sha256": "3042b0d834fd76575cbf61bc888c54919b2fa12fc20c4b3b237ffd953cbf8343",
+      "dataset_signature": "0f02d779ea74be57e3b960e5270cf57b058a7208acc813b1ae1164bd9098b348",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 91963923,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "f2b87957-7305-4316-977d-3013b8ce1c35",
+      "manifest_file_id": "1gDWpNz0rxfKZa5EDV9UjFmcv5s6mEQJN",
+      "manifest_sha256": "76168c1e22e33893985a2fbad3941f630c3b9120d66ae3518d2d099cb1ee45b2",
+      "dataset_signature": "0a7f74e45e3c8ba903fcb264269cbec7843d1d5064555e5fd93adfb3a7052c66",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 95568987,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "11c3295e-3cd1-4afa-b4e4-6f24e52dd761",
+      "manifest_file_id": "1znExOH6vYdn0wRbDsjb09h3l9nP4rj2B",
+      "manifest_sha256": "b048fa69caa37f636c48474dbb50bb9fa0764c43f99521b1c2d37c94c7afbbca",
+      "dataset_signature": "ff4aa09d1d26c5a8681eadd02709ba25539207cde3fcc16121e7ef4b4a8bfcbc",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 100225042,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "4cdda626-9574-46fa-96f9-fe5e646fc11d",
+      "manifest_file_id": "12NtHlri-8DgjVkdk6KKUct3MJQyl2DLc",
+      "manifest_sha256": "dec624f2d5e732a1c740aa23ee974ea68127112146d554b402a6627264956ccf",
+      "dataset_signature": "f090893d1c3ad7c6a4ea6b4d20165ebed7c60ac3edb1d5673354ba629894625e",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 104478413,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d19964ee-fef5-42eb-ba18-f17016ea5b69",
+      "manifest_file_id": "1JoyqMYlJuRRxu9Jb3cx8vZkr2q34hu9x",
+      "manifest_sha256": "0cd22f8c68b241744dc73b23effe46479f00f614f080a925843ef9377b6e6f41",
+      "dataset_signature": "45f41038ec6afe398d88da58a7b9bbb4cf8f2fa79aa90d541d4a0994e7864d1f",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 110557354,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "9b790052-c07b-4a99-a9c1-310e5370a090",
+      "manifest_file_id": "12B0fLmc3jPk1L_BrjZ-On8LfYtzu6noN",
+      "manifest_sha256": "e389bd2df53aa48d6c718719307b5d8cd2bfd64193ec7a603ab38b9102e365be",
+      "dataset_signature": "1881a0911efddb91ddb8dc1f0d61fab969444f2b85d862f2ac79187359747ca0",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 114908680,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "bfbeaf33-8189-4073-9e0d-c08dfa0424a9",
+      "manifest_file_id": "1SOwTTLHKavLE3TDatxdxaRrqK9rQjnQl",
+      "manifest_sha256": "726e691b7d55d6810b31cd094f55bef8e2838c1b1473b65e232f080785cb0e07",
+      "dataset_signature": "715a725fbe46a4eec0d84e15cb69f7bd7f366acccf2747056b1a042426bf6922",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 120517762,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "b1ef0944-6b93-4da5-9831-660bc243f0e5",
+      "manifest_file_id": "1RldxFpxDBeqNjNXg5qkpg2-hok23mDcV",
+      "manifest_sha256": "52c8db53aab193289ca49500f2c4eeec8bb4620a060df741ccea0e01ed21ed6a",
+      "dataset_signature": "8b796fc2b88dac8176583f3c20b99f33697f546e931e25d7ebe036af2f79d269",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 126010316,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "8897bc2d-a504-4444-8b8b-4636c670d2e3",
+      "manifest_file_id": "1QeP-514KZmOy7KzFC7Gek1kgPmOcx1V8",
+      "manifest_sha256": "7cdf5a987ef0299ae47666e4e2f7dcb0444b0b4de4106f7178ce9eb04a79fc93",
+      "dataset_signature": "08da45365e40b366200cadaa267ff0cec4e5acdb2852573adc6f7e299285aecf",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 131159572,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "24465e72-7ee4-4ea0-8e16-d6cef6902bbd",
+      "manifest_file_id": "1udTvuLlxGEmUK5Rf2U09lGF8BSNakAq9",
+      "manifest_sha256": "ef4d658d3dcaf2e1ea2cbf550c3264c03a9da984df4375ffef941c4fb68678e0",
+      "dataset_signature": "6b4b5689a442cdf137f554105c986c5643df016f7e9f3b4e8384e5b021dced96",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 135284444,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "a4ab8bdd-89e5-4bde-938f-7d770017b82d",
+      "manifest_file_id": "1cIyQT72qaTa2pspyJxrO8EEcDbo5x_1o",
+      "manifest_sha256": "82f6998e7b1486a09996deb98cbd3102937e9eb1e3286da449176ed14e8e2213",
+      "dataset_signature": "15df5ef10118714f3b3e8c16ed74fc81032903ce35840c07715a5424e5ffbfd5",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 141538448,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "56dac047-c3b5-40a7-8547-d43408f3d98c",
+      "manifest_file_id": "1nRZLZ1p9--QWwsLrrDZFf-V5Bqi5NMQp",
+      "manifest_sha256": "c468c443a5681e1ba435e7f5323e71f1eee97e80ec1107060ab84a90b466f96d",
+      "dataset_signature": "55c3f8a6b563556a0f45b17cfc5385644d22b86bbcaf61e33d12993a0db34b54",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 147111032,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "1c1d45f1-0229-43bb-b792-215d4cbcfb79",
+      "manifest_file_id": "1ulTyLmvM9GT97DxAXIH3EaB0DxwlvuLc",
+      "manifest_sha256": "614557cacb6ff62e75a2d51a93d57be4ef2b636da5c406d7163ecee7c5e9d4fb",
+      "dataset_signature": "208d5ffae8088ee241067289eb731d575712bf269a4037b3c95f98241bb216c1",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 154046668,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "9551ceab-7afc-4de4-a548-ee28530f6b47",
+      "manifest_file_id": "1mM-3ODlb3qTq1MO4Qtr7XQzb8DIudUQX",
+      "manifest_sha256": "e62ce6e9702405d8d3f114b9d54efc3ceee48108cccf0800e89753943412e1e8",
+      "dataset_signature": "fefef78682bc33427f6e941a849fbe417d9cf340ef80bc3f0dba29a21aa77e35",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 160085034,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "3b9f58f6-3d6c-4688-bd7e-7dd1cc7fbeae",
+      "manifest_file_id": "1O0OZbPLhI7FonZcEkvF2KSmQdtg63raR",
+      "manifest_sha256": "09461de3a44cb19877305b1c5a61d0b88767a5bfc94e0f332b23122bbbe70551",
+      "dataset_signature": "cf501f533c29e2d29852ed2d6fed2f68d6cfce23bde37014141469f683ca8b5a",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 165130883,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "404cf2ad-0508-4157-8266-9a4c86648725",
+      "manifest_file_id": "1fQ9KHXkVdNQiG-D5JKDc2wAB9ZogXzov",
+      "manifest_sha256": "2018595c22dcde5da19804017b3dda4337ce1c3cb59c8262590eb201b4df8704",
+      "dataset_signature": "983d4bb912e62afc315aa7ef96f5580ea67fc041a5d2bf24c44b603c34e6d15a",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 171946862,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c888ec76-3961-4260-9c8b-5b66b64b9ca8",
+      "manifest_file_id": "1ndvaGkVfOzWFyg1fgREq0ZGTh9xeq65q",
+      "manifest_sha256": "96706ed79e4b057d35e0fe713462b96d5c103e836674fdb42927cbeb9e77c85b",
+      "dataset_signature": "336803f9567d3f5b75bb5d5b0bf012219ee271b187f0d7809df0b14000d71bab",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 176092137,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "cf9f4b07-36d7-4e5d-ab7a-9c76b5151461",
+      "manifest_file_id": "1sY1Jfx5sCgi-xuVVgAmCt6t3ypGV2Src",
+      "manifest_sha256": "6bb0d4b09d366a8bfb4415ee3e120acea95188936af6abdfde488f922e1fa979",
+      "dataset_signature": "093337d0ea8a30c8ff26326333a29f263cc2ad268a80bd9431a72c48c89c4882",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 181675742,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "6c7708d6-239f-4d8f-9e72-7481a6379c76",
+      "manifest_file_id": "1cz1ngD8kZZWxJmuB1aJ55fomn4i6Rpvk",
+      "manifest_sha256": "a5bc8ced821485f15e440efdcdaa7050de8e45a75f295bb2be2990d6865a387f",
+      "dataset_signature": "8452d7044708c98904efef2ab10beae506ca612d0fe27345e34f32e8c5663351",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 187538571,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "41fd1ea0-6279-4663-925c-c633cb2928ed",
+      "manifest_file_id": "1Wy1wfDhFS9u0VecY3pJz1QFLGFJmRQYM",
+      "manifest_sha256": "d669b67bc77eaa3fbf17975cc6810dbf35cb60242054be5b7e8ab4c728ca40ac",
+      "dataset_signature": "d1b1b710816f0dc44211be614d27286a32156a05cd8b5734d3bf9ee5be77d11e",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 191608983,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "cde86b27-b853-4509-9c34-6136cdb65787",
+      "manifest_file_id": "10yUvGfBmx3C3AEKJRvn8EYfJCRjK7khD",
+      "manifest_sha256": "14a125a11dc33052007b064c326e6fdd6f54654201028af5dbb2505b1cae0370",
+      "dataset_signature": "cf6bf2f4005e88f8bf4084e733ad65878b0d7c3e2c3985c2ad129d3d2dd06e34",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 198048238,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "0bb5fec9-ad03-4486-88c8-3a3539d17258",
+      "manifest_file_id": "10zQ7drkB4YOv-lxaynpBFT3zA-uT634S",
+      "manifest_sha256": "4c7513d22d60ceea822ccea4e8e7985be46f90a7216287a4485d39ba6b27ffe1",
+      "dataset_signature": "b2dbae070e575eb44378bd77bd8e16473ee1a62444945c14d2101402bbf61d87",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 203739385,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "7c03b9c5-5640-4778-b036-cab453d8cefd",
+      "manifest_file_id": "1Qd21pnEeNDoSiRcTQkhpGKFRndqHH_KG",
+      "manifest_sha256": "457b1adc744d473f792cc55e9a6d5a22fccd1cc9a89a2d6ba593f5425d1b8030",
+      "dataset_signature": "f907ffb2e4c7fda46ec2ecca9d8955ce5682dac7f0704ce709b0e2e30ba5959b",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 207819455,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "38723b25-d34e-42a8-b99c-cafa5748d5d0",
+      "manifest_file_id": "1vlVIn_8KJqqjGXsrhHr92lb8Xr7vD0N1",
+      "manifest_sha256": "df763923ca4056a2f5316ed180b1a323ad545897503a17eee4d7aba50d03e92b",
+      "dataset_signature": "ad36e4e78c3dbffd80ee7ecaa90d4b3393839a5b27c7fcae92185488efde62da",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 213843355,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "5a93b5c6-87dc-48ef-97d8-b3d8db76d22d",
+      "manifest_file_id": "1r33D7vHdhnvGbzfcDGFVrGAkUPGQuRl0",
+      "manifest_sha256": "0cb4e20cc06f1bbbd5e3533c4d9ff6fcf2fdf4fd7dfb55d18f0c7f62d829a198",
+      "dataset_signature": "21ebf60f8801b700f6952feba211b21716b765cf4e831b0695fc717af51854c9",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 218710304,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "7a2a262d-dd21-4109-9d99-99eef805b6c5",
+      "manifest_file_id": "1SibEo_1-3Oqh_n_KgnaDHhBGrfrSb0pp",
+      "manifest_sha256": "46ade4812c9411a3ec5ffa6488fe2d54be12295f33571369107b692179ad4ea9",
+      "dataset_signature": "5060d861c7ec0656ff57fb04977ff2004502969928c1d278e029ceaeaabaa35a",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 222806543,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "02d3a1ad-2bf5-4d93-b3d2-7fb7783e994b",
+      "manifest_file_id": "1lJSD0_-zMAMevQkVPFQD_Qs8DkOa-EUP",
+      "manifest_sha256": "24cdad64dfc6dafa082eb66b12d3066acdc4b9a8f84c9a19037798b019b35ae0",
+      "dataset_signature": "eb9f73006a84c5aef7f29bad0dfbfcafc6cf2aec3886346a4ea119cfb4ce5681",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 228738432,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "0a07d4f7-14f7-4d9b-a0b1-d3f792942a7c",
+      "manifest_file_id": "1Dh37nb8ijZ8jSEuHkNSwyEVLftAv43nv",
+      "manifest_sha256": "dde3544c9ab868fc2c61ac4f082c26b432a65f283bd49ccc3bb742f0a019420e",
+      "dataset_signature": "1f6d1d99462a1979d4d86deb19af7360392601af256ebb02fdc677e6a55c26f8",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 232998301,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "671f01e8-49fd-49a6-a410-797426ae96c2",
+      "manifest_file_id": "15CSTd8GpWyAsoHWwMYJzO0Alzic3NUjv",
+      "manifest_sha256": "b8dc6dbda56ee883fa0b48b73436351dc21b5f96fe9be0c152046046a1d625d9",
+      "dataset_signature": "f271a7fbcd5391ff3d8c8ee76de875c09a38cc0bddf5ebcc54593b7d5bd27a3c",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 239377790,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "9e407ba1-a939-4f7d-8bf8-b86f730ea2c0",
+      "manifest_file_id": "1rr4wUJve5wtRwI_cvTHHu9rxBkTkr1sx",
+      "manifest_sha256": "9f24155191b9b62fe53341951cf81c189a55648b8f49403d8c68128e2a357421",
+      "dataset_signature": "a99ebbadc036c48f062bff34fa6a78a13dd4737ea1e48c6588516bd97127d053",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 249624160,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "2dd67382-7b81-4f69-b08d-8300bf23dfa0",
+      "manifest_file_id": "1B8rGjeQL21TMTh6fKZ0TFtyszSqOxfdf",
+      "manifest_sha256": "747acc9d89dc0fd892fdda2e6e64912c456f4d74dbfd237e5bfe9e25acafd587",
+      "dataset_signature": "042ee2cc3689c2f4c675005b328e9375de61e0afc14ffafeeececad5c965f761",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 254465034,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "04c56993-4cab-4538-94ed-ed9985364251",
+      "manifest_file_id": "1MM3oyfwOiSxZp4QaKWslkStUR6CRkxfI",
+      "manifest_sha256": "43fa46aa698825b6ecf46e9dda3a3f6ff7b956a1f2ffc64573a94d3759e5eac9",
+      "dataset_signature": "d6f7b3b7a027164e606eb14b518b320171e30aff332dac48176457a8c7e7364d",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 260467613,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c9dd6e88-1562-48b8-8af6-42c0256df907",
+      "manifest_file_id": "1z8UVrNxyBXz2RD9lXNDAH-lDOlPUCuNo",
+      "manifest_sha256": "6df7f1489d3b4e7e98a70b64aa9ab06080e3a037147ef9e2d573a8c0f4e351c3",
+      "dataset_signature": "21c96f6079dd330a245835352fd53ef4696b8edc417b19eb643c7569d6137e40",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 266314821,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "8c6fa12e-6604-4cb4-85bd-fe5c58447720",
+      "manifest_file_id": "1erxVTJUhmEzSAVfom8ZXz-uEQnuUBcT2",
+      "manifest_sha256": "158d5c12924a67a31536c84c0fad0d2f59bcc35d1d60ca17c67f52f4fd53b44d",
+      "dataset_signature": "63fe9d227fedffee483d1fa56c1431a2636030ed518d18cdac57052054ca009e",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 270873013,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "57369653-af7e-458a-b28a-956b036b18e7",
+      "manifest_file_id": "1D8PoGU5rKbLoYOP7y8LGJgoXCgFRSAGZ",
+      "manifest_sha256": "9a03d83da18c626be606e3836c188651520b3f0e0deb57e3f055dc155476985a",
+      "dataset_signature": "2aa4d8b9dedf64fa39b462ba62ba51b996ee9cea9235a3605f17953e0b4bd592",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 277047586,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c7c42704-1219-4f88-8f05-def2eeba6b11",
+      "manifest_file_id": "1CYzeFdYuCrTrW1hVeKVNYARBvZCSLPKp",
+      "manifest_sha256": "91557c9fe101d05b527bb320d16d59b510413a199022cc3c89410e88ae411edd",
+      "dataset_signature": "1b2c315b506b230743e002ddebc48003997839711199cbe39805267d3fbfd117",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 281399447,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c16ea4e3-ff29-47f3-9325-398a8eee040c",
+      "manifest_file_id": "1eeBh6zq69ROzmzOvNThPQxipcM8poVXA",
+      "manifest_sha256": "089b71589f81efbe22c2056e56ea7edf4651ef046fc082ffd58e5e4db9b9c32e",
+      "dataset_signature": "1c927d1a5745fef58b3deab6dc133f862e5ee9e25598466669023f48838894f8",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 286116269,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "559ff2ce-533d-4aad-8977-46f953f5bdba",
+      "manifest_file_id": "1cqzwLQO2aJRMcEaDwBVsUBb6TBOdkScH",
+      "manifest_sha256": "d7e780888a42f208edc6848340874ac7c19817a3273c77831f8295b54a13b725",
+      "dataset_signature": "d1d91bc9f040a3a46c2a8e77caafbd35c1bd78b876afd0811e8ef020842e3ed0",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 291341994,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "63d2ca17-5169-4d02-8000-f06141c10b38",
+      "manifest_file_id": "13kMkOAcDHeAZykXiz9Irm-bLNmFb7MSs",
+      "manifest_sha256": "d5aa80d4222ff3f59e93f32d488d19f70397698e5524ee63ef46eeb747ac6465",
+      "dataset_signature": "de508c171892cb3ec1a01157d286e17561bf21ca70fc8ce6e864e2f4f44e6c2f",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 297093422,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "99f963db-77f5-4a25-b34d-1f5fa080fbdb",
+      "manifest_file_id": "1B74HSv-EDp0bVYBaoJGbrNvkEIUGoM8p",
+      "manifest_sha256": "ffd58f5f0fe24d0b957f03863d033ebba4b4b8402da04fe3ea48c6a3aa447998",
+      "dataset_signature": "f52c6691e1d4e790175782d71b7a357a7d25132dc863b7ef8ffc19c51c833a15",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 304171623,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "af1c0a7a-75ec-43a0-a74b-af8858cfcd52",
+      "manifest_file_id": "12qam8UAqvAVX85jbu0NbEVG_psS6dY7S",
+      "manifest_sha256": "aea44fcd7e89759f018dd05457cd27d0a90abd2b726250b348fbaa2109d74297",
+      "dataset_signature": "dfa0df00f9e80e374b4a1e464c0fc788abe698fd9361c2f04327d50cafe86de3",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 308879530,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "68859181-2fad-4902-b7cf-085fbc687326",
+      "manifest_file_id": "13U7iaXLP9fPoJqKv51YcZbaBbCwx08nm",
+      "manifest_sha256": "e730b71e7b90a2a3bfc5814bcf94e441985b6e48cab9f1d8e1948b14696e4253",
+      "dataset_signature": "4da8c33745272909e33c352df7397655b8dda3235dc4aa557961944e555eb198",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 316193042,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "bca15f1b-e4fc-4781-b025-2f80fb69283b",
+      "manifest_file_id": "1CF4xLTvaLKFgnDdNiwwLG7BL0pYvwpc_",
+      "manifest_sha256": "cec29319a044c582abf8ede689664da9ef3713a5df32f17e0fdf8baa539ca326",
+      "dataset_signature": "aebafaaac31c364f82f0419a10e5ca2745e931b289c0c407a14d6e9566875124",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 321073520,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "0480e1c5-b915-4f58-ad3f-f4d227bc83ca",
+      "manifest_file_id": "1hlpEJbWMlLjSqZt1sG-VQc4gt6vDKaNS",
+      "manifest_sha256": "c61787d0bfbf02863de972abdd0ef7b7226e0363536193f5d70d09a1e3b0ffea",
+      "dataset_signature": "d3650a8c4dd5ce77d5f3274823d0545c7fe613f42a0ca12321d09ec5953ca024",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 325124237,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "b093c8cb-c505-4a41-a0c5-75d2fe387e5b",
+      "manifest_file_id": "15EA9KlRGxMldHZKu5oOkMSngZ0UxnIBY",
+      "manifest_sha256": "64936f27c1f0eeea1159f121aca68bcb2548792472179e4ba8ed112f9f3e3c77",
+      "dataset_signature": "dbd556fc540bb5a71cf3048fee1d8a361e73805b10ac81b67910c029761dd2a8",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 332244878,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "130cc6cd-75e2-4854-95c2-9d002675625d",
+      "manifest_file_id": "15VIMnwwacbfICpxtbUHBFaw9-QflBOVb",
+      "manifest_sha256": "a06f70885a39c5e03cdabfeafd5476b9eeedda4fe382b317409dae1bb33969a7",
+      "dataset_signature": "dfb040713d01bdd3c086fadc5a770b3b5ce6644ae3396bddb189c4ca400f86f7",
+      "code_sha": "30a57ac6489425e6611cd88968b2d8ff90d9d090",
+      "retained_bytes": 336407068,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "dbf19d62-837b-43fd-be0b-9973bbc54dbc",
+      "manifest_file_id": "1yYdlDkgDLvnXGGCo-zdVjtOz0DsR8263",
+      "manifest_sha256": "4bfe005404330b494e1cec44fc28f2b5d5b4b7e3d1d675c5a8036e0024d3db31",
+      "dataset_signature": "34111652a4db86873809cb5e0363bbeb7ded8096e7f81dfb06e63462e82e83a2",
+      "code_sha": "4d473604e8c259c68ce62529cbf0a324ce6dd522",
+      "retained_bytes": 340346999,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "605e5579-d043-499c-80a9-77da59d5ed45",
+      "manifest_file_id": "1WferAuHvZl7r-8fDGe3sYXuThuvf5Zb2",
+      "manifest_sha256": "1b0103aa958ccf1a258cb06071558a212cb2f2d5e7e7b8804827b2109897b1ad",
+      "dataset_signature": "1cdad7872b14d4ea45c349f08fc0fa39e1946790d02a0abcc21b6a001cc48b5e",
+      "code_sha": "d7ffc4383f39846fe9cb022fa27a9618167e6f37",
+      "retained_bytes": 347199066,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c17748fc-75a7-4cb8-9e83-4b5e2b651c63",
+      "manifest_file_id": "1A1mmKHGKLN4lMHVek7p6jquKuriRuRwy",
+      "manifest_sha256": "1fa2661e39f4b7c4864f001900f4216dfed3fc1c5b7218ae7f6961d83380c0b0",
+      "dataset_signature": "07e7af3b751938eb55fba3c053c2f4e80915ac0991140f0b8f7ad23a9a0455a3",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 352590297,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d1227099-dd28-4ddc-8e64-145a904acc07",
+      "manifest_file_id": "12iETbGRflcIwnGw1KnY3DJhTWVoQ3-FF",
+      "manifest_sha256": "fe80e31ff1e32bd46f7388a4c2ecdfcf9bf1ccc58af341e86cf6cf37ececc866",
+      "dataset_signature": "28b7f47a8a67fd602395f7e5ee4c2ff4e5309dc614b781ac1f4f8d22b7d4db9e",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 359155481,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "c16b5e08-eda4-4415-97a3-f9c26e3d6937",
+      "manifest_file_id": "147I3-6XOtSsRx8Kxe-3LNx-j_-y8uOw3",
+      "manifest_sha256": "32ff6657b0959bb1557c9cb26d1d0c12218131595f175e11c3d853b897e8c22b",
+      "dataset_signature": "27899268591854cea83aa43fbbf72eb88685e57e8b58e6164f075f9ded03c73a",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 364062909,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "99ad4f53-5fb8-46ce-ac36-4a76551c5fbe",
+      "manifest_file_id": "1ZffGWCJG74jzdF3jB_2R7xTBeO59LPKp",
+      "manifest_sha256": "8584b9680d62f1ec9bbb8fe0b21ea3360a3b5b044f129e33c6033cf1b492b1a3",
+      "dataset_signature": "704aa4752e2f81ecfa00862857943e13083e1adad5fe825a85b3e482892d3320",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 370080071,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "75a1a42e-a45e-415c-9835-fb397d520d87",
+      "manifest_file_id": "1GXuUhY1SOzXBe3c41_3kbv655SUatISQ",
+      "manifest_sha256": "80f6ad69bc2093ed3af50a603939d67dd21cb2c4a9df321bf3ee39f8683624c7",
+      "dataset_signature": "ab7f80f0518534c9e8d2d7ac82ee6747b105d52e746c459fd2963ea580ca27f5",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 375484896,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "752cfad2-9692-4968-8b26-2fdf92dac6a5",
+      "manifest_file_id": "1IMA_CeMleVJ7xoVFIvo29waTl3p-xmJ8",
+      "manifest_sha256": "424369ee59f50dc149fd9eed832d3b24bd39186f6da94e13fad6b7c93d979341",
+      "dataset_signature": "6f7a922b7d2e9dd0558b343d12b0b8255d5d174b99e8f180dcebe05849a8ff18",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 378067688,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "11b3bb57-d5a9-481a-b8b4-b2dcf3c8b450",
+      "manifest_file_id": "1TxXmMd2kNLDhGkgy9D_CM61D7D0XRV92",
+      "manifest_sha256": "e9c10aaae7711975b355c9b4e359715020821b8fd264a733dfcc397c89f2cb1d",
+      "dataset_signature": "cd1c7725bb609b1b83a1cab3a384d363bd0a6e5c1d4faf563b6238b1123e316a",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 383909394,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "ee0590bf-f849-4f9e-895f-8538eb38c73c",
+      "manifest_file_id": "1Ete80ZLa_luGyg2r6DKwJ_6XTvcjxnOJ",
+      "manifest_sha256": "4c51a76ae90bab3e3cb22f75c57957692bbf387150e37c63864078a4a7d60993",
+      "dataset_signature": "727678fa02023793ff05014e6c74d7c787b466558491f1721a8f4946cadf0199",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 389131368,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "2f05bc35-7f1f-4231-82b6-f60cfe7d11fb",
+      "manifest_file_id": "1CxjVdRLr3-e4vGSwEr2vVB2hsn1mhTj0",
+      "manifest_sha256": "f7252238b45c6a195cd595b8e401d48cbf750215e3e8f6ddeeabff30dc595e61",
+      "dataset_signature": "76dd80da8836b06334bedbe2748b27c2b7031f05fac3298e8e341e5fbc0209da",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 393217828,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "f290d969-f218-46d4-89aa-cacc7ef0bc49",
+      "manifest_file_id": "1GcvoJfUCb-dNSOhdSxfAr2d9Eya5mNXu",
+      "manifest_sha256": "5e2a3a7015da22b7b7b1478ceffac28063400fed2ab02d7ce488801172984d7b",
+      "dataset_signature": "df5b6357ea2362ed2c86999b517ec4b20c9223638f5a33d87a3f64c8f1da1843",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 399267194,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "8247fe23-a743-4b4f-8088-eb21e2316284",
+      "manifest_file_id": "1kmki-IFywSgk_YcNq0kBwXSUw401snLw",
+      "manifest_sha256": "712b3092988ea599d3d8cb7b62c6494e102bbfda0b1a3548f8be40d245a61903",
+      "dataset_signature": "7aed73f52eb7726ec6ff596eb669f74a9af1d4d3c41ae3e5a64e3cbdafd48eb9",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 404528514,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "acb32a52-f09a-47cd-9aa5-49764a1eb1ad",
+      "manifest_file_id": "1UkXAudpvk_VOCIA-rfwhukUEYFkSGHck",
+      "manifest_sha256": "f30ba21ba2e2594a29dd37902511c6e4f5e5d7da32e96981e82b8e0abe105e85",
+      "dataset_signature": "4d0e02838db898a3455e4aa1e443b071ce8a8469d777ed837438345af457c9fd",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 409914009,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "a95266ab-74a6-4e37-92f1-4f786736933c",
+      "manifest_file_id": "1hx6EUavYDLfN7nvRqClM_hBJOYtBn_r-",
+      "manifest_sha256": "03354369c9e7d640e0beb96993bae1023856a24b075b5760c4de58673f17009d",
+      "dataset_signature": "9617f5c1d08f8c86be9af4cb2d519b12e58c5896cac9b854609baf89447013aa",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 415101326,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "ae583376-f4eb-421a-a318-f37d1e1406a4",
+      "manifest_file_id": "1vkqmDRQLcXfWfoDIT-y9aW9nl1iNIFG-",
+      "manifest_sha256": "5a63707a0a0b354f9f282723cb97220dfd615aa99c7251f4bbb767ec10747441",
+      "dataset_signature": "eb8248f7bf2a5c3ac8a3272cf54bbf02b405778800ad83433312d4244b838631",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 419385638,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d362bcbb-c911-4ea4-bf4f-e5c030b6e3f2",
+      "manifest_file_id": "1EumIPf8o3U85PTKdd5xsFVaIcbZ8Pz_A",
+      "manifest_sha256": "4e3d65af8d50adde28bb7e641733f8d13d1921cf10e96d78c7b2de1798708178",
+      "dataset_signature": "e6dad010da9aa85f82f48637d4525c392b0ccc872cb14c9d479a5bf97fbf61e4",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 425265043,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "611e3a71-14ef-43d2-af08-35398bfa00e7",
+      "manifest_file_id": "1uV4sC5PgpgArER4bzt9cTG0fnbUVhWZR",
+      "manifest_sha256": "0d9fd1b9c04b12d9ac9e6cd6a143fbfa4a9dbf8692fff0e5bb435f6d31ed39c6",
+      "dataset_signature": "59e614ccba70e59569bfbea2fb44d2953e21d041173ab2f7bb03dccc68a5757c",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 431176464,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "668f721c-5f7e-446d-936f-e89745bb95d3",
+      "manifest_file_id": "1dFlNPCYMwQznR7W8Pf_WvGiz13Et-liq",
+      "manifest_sha256": "2f25de6d0d3603d7ee885b471967f7e003c8c2d4a7605f77123a68b2f3c8c588",
+      "dataset_signature": "d4b44055d368417627a9f2cc5ed23d7e3ea0cbd581375981599955f3533fc112",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 435547793,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "d49792fd-ca91-44ee-8a6c-dc5b3b34c89d",
+      "manifest_file_id": "18DjxHQnEBQMaKOnH3U8HwAr2us-LqRm7",
+      "manifest_sha256": "87354bbda276181f382ba98b0254abc6bbf76fb30f56ed1c86a47d6da5e17280",
+      "dataset_signature": "e7d8698277b580d7717782e684b4d751a88a196b4a8dba3b98e0fa63c8ea96b9",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 441228104,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "eca90c0e-1e65-4213-acf0-b03e1e0d751f",
+      "manifest_file_id": "1_QJYljjPlp8R4icwfd5oMPZXeEgII-LF",
+      "manifest_sha256": "73bc55b528c07797cc864a3bd92030d252f01d73e85b4248ea1162a546e82742",
+      "dataset_signature": "f07f181de2ac58af9348b8f89ca2dbc74dcf5796f22d8ea6f168501889a240df",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 446364209,
+      "dataset_count": 18
+    },
+    {
+      "release_id": "32eb0dde-d645-4f4d-93a1-3ddc747f97df",
+      "manifest_file_id": "11FL2N0ZS4AvWWWX1GMnXxeDsksHDYDyY",
+      "manifest_sha256": "e9be8bb703cddd7ed204e4ea1d0b7ab38410a673e16e20ad76a4929ceb34551d",
+      "dataset_signature": "16d966be53a3f0dd24e11b50f15ef4b170c60b3e4ae365f5e872f6f6a926e27e",
+      "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+      "retained_bytes": 451500418,
+      "dataset_count": 18
+    }
+  ]
+}

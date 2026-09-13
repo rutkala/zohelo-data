@@ -1,0 +1,414 @@
+{
+  "status": "audit_manifest_and_metadata_verified",
+  "audited_at_utc": "2026-09-13T09:24:43.928833+00:00",
+  "duration_seconds": 69.1,
+  "read_only": true,
+  "root": {
+    "id": "1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf",
+    "name": "zohelo-data"
+  },
+  "budget_summary": {
+    "duration_seconds": 69.1,
+    "files_inspected": 2485,
+    "incomplete_reasons": [],
+    "max_files": 15000,
+    "max_requests": 450,
+    "max_seconds": 180.0,
+    "requests_made": 188
+  },
+  "physical_storage_map": {
+    "direct_files": [
+      {
+        "id": "1nhFWBxfFc6WHne6K0Zbnc_3NMj3fGwW3",
+        "mimeType": "application/json",
+        "name": "current-release.json",
+        "size": 316
+      }
+    ],
+    "duplicate_folders": [],
+    "status": "complete",
+    "top_level_folders": [
+      {
+        "classification": "active",
+        "consumers": "Bronze loaders, dbt ingestion models, replay/audit verification",
+        "created_time": "2026-08-23T13:14:46.557Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 8,
+        "direct_known_bytes": 0,
+        "id": "18WYAR4yOf-fIRuXJe5IWs1K_L2f64YnM",
+        "is_ambiguous": false,
+        "modified_time": "2026-08-23T13:14:46.557Z",
+        "name": "01_landing",
+        "producer": "Ingestion adapters (NBP, GUS BDL, WDI, Eurostat, OpenData)",
+        "purpose": "Retained raw source inputs, exact HTTP responses, and bulk archives"
+      },
+      {
+        "classification": "active_and_historical",
+        "consumers": "Portal Lakehouse Explorer, dbt staging models",
+        "created_time": "2026-08-23T13:14:47.830Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 5,
+        "direct_known_bytes": 0,
+        "id": "1iJYbUvwYbxFcpes7A6hTpgeU1TalPpTX",
+        "is_ambiguous": false,
+        "modified_time": "2026-08-23T13:14:47.830Z",
+        "name": "02_bronze",
+        "producer": "OpenData bronze loader; legacy NBP runners",
+        "purpose": "Streaming Bronze entity Parquets for OpenData and legacy NBP files"
+      },
+      {
+        "classification": "unresolved_historical",
+        "consumers": "Unresolved pending live evidence; portal reads release packages",
+        "created_time": "2026-08-23T13:14:49.071Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 3,
+        "direct_known_bytes": 0,
+        "id": "1JX698Sf4Nkqzmws-LU2BNQFwtqbeaK99",
+        "is_ambiguous": false,
+        "modified_time": "2026-08-23T13:14:49.071Z",
+        "name": "03_silver",
+        "producer": "Legacy NBP transformation scripts (retired)",
+        "purpose": "Historical prototype folder; current active silver data lives in release directories"
+      },
+      {
+        "classification": "unresolved_historical",
+        "consumers": "Unresolved pending live evidence; portal reads release packages",
+        "created_time": "2026-08-23T13:14:50.213Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 0,
+        "direct_known_bytes": 0,
+        "id": "1NLIafFLNNj4b0_CgetQcTuX3bgIMRfVG",
+        "is_ambiguous": false,
+        "modified_time": "2026-08-23T13:14:50.213Z",
+        "name": "04_gold",
+        "producer": "Legacy NBP transformation scripts (retired)",
+        "purpose": "Historical prototype folder; current active gold data lives in release directories"
+      },
+      {
+        "classification": "retained_historical",
+        "consumers": "Historical audits",
+        "created_time": "2026-08-23T13:14:51.319Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 8,
+        "direct_known_bytes": 0,
+        "id": "1cLXi1sv17KXnkMpzYYXc0cR3upA879F9",
+        "is_ambiguous": false,
+        "modified_time": "2026-08-23T13:14:51.319Z",
+        "name": "05_archive",
+        "producer": "Manual migrations and lifecycle archival scripts",
+        "purpose": "Archived lifecycle material and legacy migrated datasets"
+      },
+      {
+        "classification": "active",
+        "consumers": "Campaign runners, portal landing catalog",
+        "created_time": "2026-09-08T09:57:33.571Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 1,
+        "direct_known_bytes": 0,
+        "id": "1pH1bdJMn4_7Tb094DRfBMxEX5H2bewRs",
+        "is_ambiguous": false,
+        "modified_time": "2026-09-08T09:57:33.571Z",
+        "name": "06_control",
+        "producer": "Campaign runners (src/source_campaign.py, opendata_bronze_loader.py)",
+        "purpose": "Source campaign state shards, quota ledgers, and Landing pointers"
+      },
+      {
+        "classification": "active_asymmetric_root",
+        "consumers": "Portal release catalog (explicitly checks bdl-platform/)",
+        "created_time": "2026-09-10T20:01:12.548Z",
+        "direct_child_file_count": 1,
+        "direct_child_folder_count": 1,
+        "direct_known_bytes": 316,
+        "id": "1bO2R04K72NBWMmOzORkZrUNnD1css2hg",
+        "is_ambiguous": false,
+        "modified_time": "2026-09-10T20:01:12.548Z",
+        "name": "bdl-platform",
+        "producer": "src/bdl_platform.py via _release_root and src/release_protocol.py",
+        "purpose": "BDL publication namespace: immutable release directories and current pointer"
+      },
+      {
+        "classification": "active_nbp_convention",
+        "consumers": "NBP platform runner",
+        "created_time": "2026-09-07T06:12:26.197Z",
+        "direct_child_file_count": 1,
+        "direct_child_folder_count": 3,
+        "direct_known_bytes": 255,
+        "id": "1iulTAw9mzpi05fzLDfuGd-fVgJLi_cpq",
+        "is_ambiguous": false,
+        "modified_time": "2026-09-07T06:12:26.197Z",
+        "name": "ingestion-control",
+        "producer": "src/nbp_platform.py via DriveStateStore",
+        "purpose": "NBP ingestion state snapshots, attempt receipts, and raw references"
+      },
+      {
+        "classification": "active",
+        "consumers": "Portal release catalog, restore_release.py, SQL consumers",
+        "created_time": "2026-09-07T00:29:28.605Z",
+        "direct_child_file_count": 0,
+        "direct_child_folder_count": 11,
+        "direct_known_bytes": 0,
+        "id": "1Usp7ZNNazESuPj3IOmTeBACFJ7MEaQDb",
+        "is_ambiguous": false,
+        "modified_time": "2026-09-07T00:29:28.605Z",
+        "name": "releases",
+        "producer": "src/nbp_platform.py via src/release_protocol.py",
+        "purpose": "NBP publication root: immutable release directories and current pointer"
+      }
+    ]
+  },
+  "diagnostic_source_sha256": "5b482b68c1186faced38a824154dbb73e37881c39a1a292938dc7433e71561a3",
+  "verification_scope": "Pointer checksum, release identity/scope and referenced-file metadata; no full dataset hash, semantic or restore validation. Inventory is not an atomic snapshot while ingestion continues.",
+  "nbp_current_pointer": {
+    "artifact_count": 7,
+    "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+    "created_at_utc": "2026-09-13T02:16:33Z",
+    "dataset_count": 15,
+    "format_version": 1,
+    "layer_counts": {
+      "02_bronze": 4,
+      "03_silver": 5,
+      "04_gold": 6
+    },
+    "manifest_file_id": "10d_neO1JOltDpWK8xGAIeOLHd9M3ynQ1",
+    "manifest_scope": "nbp_platform",
+    "manifest_sha256": "6f2635a745499f7a7e8d67f82e462e253ea00a70b32c7a849f9f10343bc59fd5",
+    "manifest_sha256_verified": true,
+    "pointer_file_id": "1nhFWBxfFc6WHne6K0Zbnc_3NMj3fGwW3",
+    "reference_failures": [],
+    "release_folder_id": "1EUzy-XJI7BjZz468ynZrlhCFJm3X23Mi",
+    "release_id": "e8c025a4-a7c7-432a-84fa-8151c1479c98",
+    "scope_label": "nbp_root",
+    "status": "current_manifest_and_metadata_verified",
+    "total_dataset_bytes": 10400616,
+    "total_rows": 1378830,
+    "updated_at_utc": "2026-09-13T02:16:54Z"
+  },
+  "nbp_releases": {
+    "average_cadence_hours": 14.58,
+    "counts_by_classification": {
+      "current_manifest_and_metadata_verified": 1,
+      "manifest_present_unverified": 10
+    },
+    "current_folder_found": true,
+    "current_release_id": "e8c025a4-a7c7-432a-84fa-8151c1479c98",
+    "signature_comparisons": [
+      {
+        "earlier_release": "a839a389-d737-498a-86af-c092559a5979",
+        "identical_code_sha": false,
+        "identical_dataset_hashes": false,
+        "later_release": "1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea"
+      },
+      {
+        "earlier_release": "1ab2f2f0-4325-42fc-bc92-cf3d9e9d9eea",
+        "identical_code_sha": false,
+        "identical_dataset_hashes": false,
+        "later_release": "5f356b1b-97cd-470d-9d5e-b46ebb37a7d1"
+      }
+    ],
+    "status": "complete",
+    "total_known_bytes": 113074252,
+    "total_release_folders": 11,
+    "total_retained_files": 219,
+    "unknown_size_file_count": 0,
+    "current_folder": {
+      "classification": "current_manifest_and_metadata_verified",
+      "created_time": "2026-09-13T02:15:43.295Z",
+      "file_count": 23,
+      "folder_id": "1EUzy-XJI7BjZz468ynZrlhCFJm3X23Mi",
+      "folder_name": "e8c025a4-a7c7-432a-84fa-8151c1479c98",
+      "is_current": true,
+      "known_bytes": 12174348,
+      "modified_time": "2026-09-13T02:15:43.295Z"
+    }
+  },
+  "bdl_current_pointer": {
+    "artifact_count": 7,
+    "code_sha": "0f68ad2a8d6c2f92fbb367037045ba9731737b38",
+    "created_at_utc": "2026-09-13T09:00:42Z",
+    "dataset_count": 18,
+    "format_version": 1,
+    "layer_counts": {
+      "02_bronze": 6,
+      "03_silver": 6,
+      "04_gold": 6
+    },
+    "manifest_file_id": "11FL2N0ZS4AvWWWX1GMnXxeDsksHDYDyY",
+    "manifest_scope": "bdl_platform",
+    "manifest_sha256": "e9be8bb703cddd7ed204e4ea1d0b7ab38410a673e16e20ad76a4929ceb34551d",
+    "manifest_sha256_verified": true,
+    "pointer_file_id": "1rUK5sCl8SOCUTarAWB-xU48H1Zi1Jjox",
+    "reference_failures": [],
+    "release_folder_id": "1u5NfnvX6fjD0vojW3pNt5somQz5tOeQ9",
+    "release_id": "32eb0dde-d645-4f4d-93a1-3ddc747f97df",
+    "scope_label": "bdl_platform",
+    "status": "current_manifest_and_metadata_verified",
+    "total_dataset_bytes": 450047468,
+    "total_rows": 13175300,
+    "updated_at_utc": "2026-09-13T09:01:32Z"
+  },
+  "bdl_releases": {
+    "average_cadence_hours": 0.49,
+    "counts_by_classification": {
+      "current_manifest_and_metadata_verified": 1,
+      "manifest_present_unverified": 81
+    },
+    "current_folder_found": true,
+    "current_release_id": "32eb0dde-d645-4f4d-93a1-3ddc747f97df",
+    "signature_comparisons": [
+      {
+        "earlier_release": "ef55f513-77d4-4af4-83ab-6874f71c42b5",
+        "identical_code_sha": true,
+        "identical_dataset_hashes": false,
+        "later_release": "e38641c8-67f6-43c6-abbe-d1f23de2db32"
+      },
+      {
+        "earlier_release": "e38641c8-67f6-43c6-abbe-d1f23de2db32",
+        "identical_code_sha": true,
+        "identical_dataset_hashes": false,
+        "later_release": "8b1ff27d-05a2-46bd-ae46-4034124ac38b"
+      }
+    ],
+    "status": "complete",
+    "total_known_bytes": 19352552889,
+    "total_release_folders": 82,
+    "total_retained_files": 2132,
+    "unknown_size_file_count": 0,
+    "current_folder": {
+      "classification": "current_manifest_and_metadata_verified",
+      "created_time": "2026-09-13T08:59:31.638Z",
+      "file_count": 26,
+      "folder_id": "1u5NfnvX6fjD0vojW3pNt5somQz5tOeQ9",
+      "folder_name": "32eb0dde-d645-4f4d-93a1-3ddc747f97df",
+      "is_current": true,
+      "known_bytes": 451500418,
+      "modified_time": "2026-09-13T08:59:31.638Z"
+    }
+  },
+  "structural_details": {
+    "checked_at_utc": "2026-09-13T09:28:21.489113+00:00",
+    "folders": {
+      "02_bronze": {
+        "complete": true,
+        "children": [
+          {
+            "id": "1hH1kLWy25AUq38sfK8HNUugW9AH6S0De",
+            "name": "opendata_org",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-09-11T13:47:53.929Z"
+          },
+          {
+            "id": "1nQRtBD14_zbOtMAdtbVjQioduYOAQm6z",
+            "name": "nbp_exchange_rates_table_a",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-26T14:57:21.845Z"
+          },
+          {
+            "id": "1sqVRjdf0ER1xMCru5EbQDHGwNW5kx9l5",
+            "name": "nbp_exchange_rates_table_b",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-26T14:50:57.179Z"
+          },
+          {
+            "id": "1FFzuhTYK04moN1u745RNvTdttOicYchx",
+            "name": "nbp_exchange_rates_table_c",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-26T14:45:02.035Z"
+          },
+          {
+            "id": "1a6FaHv2FTMYPg-ndBeWXcLdZW47m0kyo",
+            "name": "nbp_gold_prices",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-26T14:41:49.029Z"
+          }
+        ]
+      },
+      "03_silver": {
+        "complete": true,
+        "children": [
+          {
+            "id": "1hZ2qcL8j9iEdy3rxZurllr9EEw1PZMa-",
+            "name": "nbp_exchange_rates_table_c",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-27T12:50:36.335Z",
+            "direct_item_count": 1,
+            "complete": true,
+            "latest_child_modified": "2026-08-31T02:18:34.515Z"
+          },
+          {
+            "id": "154EUIDtBhNPhVFVJ8nj_S1PnLpvnAQWG",
+            "name": "nbp_exchange_rates_table_b",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-27T12:50:33.047Z",
+            "direct_item_count": 1,
+            "complete": true,
+            "latest_child_modified": "2026-08-31T02:18:32.090Z"
+          },
+          {
+            "id": "1muH33ACY_iWk6McMUJbYkwWmthu8RFBQ",
+            "name": "nbp_exchange_rates_table_a",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-27T12:19:24.069Z",
+            "direct_item_count": 1,
+            "complete": true,
+            "latest_child_modified": "2026-08-31T02:18:29.594Z"
+          }
+        ]
+      },
+      "05_archive": {
+        "complete": true,
+        "children": [
+          {
+            "id": "1w4f0eD9eprPuE9G5VWngTafCPk7gj2EJ",
+            "name": "opendata",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-09-11T09:29:17.893Z"
+          },
+          {
+            "id": "1vxupSNGfPJwgVPj-hDMwrHhLlf-CeTuw",
+            "name": "2026-09-07",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-09-07T02:15:08.961Z"
+          },
+          {
+            "id": "1hSRcidGJ16M3cLKWnnScwilZb80KIRly",
+            "name": "2026-08-31",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-31T02:14:53.288Z"
+          },
+          {
+            "id": "1Wi_dz0eMI8DDrJ80vMV2059E3e1bkfhL",
+            "name": "2026-08-30",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-30T02:13:57.939Z"
+          },
+          {
+            "id": "1tRmyY1gil1GQX5q1T_K1XG8oVu_Y6FBu",
+            "name": "2026-08-29",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-29T02:12:18.556Z"
+          },
+          {
+            "id": "1DZNwiRCujnsu6DkKK1BPRhWop16Tg_Ec",
+            "name": "2026-08-28",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-28T04:42:56.309Z"
+          },
+          {
+            "id": "1fEtu3MKiovRBujPsWouTvypH-lF8a2O3",
+            "name": "2026-08-27",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-27T03:45:39.000Z"
+          },
+          {
+            "id": "1ZVSd7LCtlohiUAyQtxTt02P7uiyCycbb",
+            "name": "2026-08-26",
+            "mimeType": "application/vnd.google-apps.folder",
+            "modifiedTime": "2026-08-26T14:41:51.848Z"
+          }
+        ]
+      }
+    },
+    "incomplete_reasons": []
+  },
+  "annotation_scope": "Folder purpose/producer/consumer/classification fields are code-based annotations; counts, IDs, dates and byte sizes are observed Drive metadata."
+}
