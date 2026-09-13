@@ -17,6 +17,26 @@ class _ReleaseStore:
 
 
 class WdiPlatformRunnerTests(unittest.TestCase):
+    def test_unchanged_archive_and_code_reuse_current_release(self):
+        release_store = _ReleaseStore()
+        manifest = {
+            "release_id": "release-1",
+            "release_scope": "wdi_platform",
+            "code_sha": "b" * 40,
+            "inputs": [{
+                "source_id": "world_bank_wdi",
+                "sha256": "a" * 64,
+                "size": 123,
+            }],
+        }
+        receipt = {"raw": {"sha256": "a" * 64, "size_bytes": 123}}
+        with patch.object(wdi_platform, "read_current_release_manifest", return_value=manifest):
+            self.assertIs(
+                wdi_platform._unchanged_release(release_store, "b" * 40, receipt),
+                manifest,
+            )
+            self.assertIsNone(wdi_platform._unchanged_release(release_store, "c" * 40, receipt))
+
     def test_extract_archive_requires_and_streams_all_six_members(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -115,6 +135,7 @@ class WdiPlatformRunnerTests(unittest.TestCase):
                  patch.object(wdi_platform, "_extract_archive", side_effect=fake_extract), \
                  patch.object(wdi_platform, "build_platform", side_effect=fake_build), \
                  patch.object(wdi_platform, "_code_sha", return_value="b" * 40), \
+                 patch.object(wdi_platform, "read_current_release_manifest", side_effect=wdi_platform.ReleaseProtocolError("no current-release pointer exists")), \
                  patch.object(wdi_platform, "publish_release", side_effect=fake_publish):
                 report = wdi_platform.run_platform(allow_production_write=True)
 

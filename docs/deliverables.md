@@ -16,18 +16,23 @@ The implementation candidate on `feat/wdi-medallion-release` consumes the freshl
 official WDI CSV archive and fails closed unless campaign evidence is
 `complete_current_catalogue` and the archive contains exactly its six contracted CSV members. It
 publishes six Bronze relations, three Silver relations, three dimensions, an observation fact and
-a Gold coverage mart in a separate immutable `wdi-platform` release. Populated annual source cells
+a Gold coverage mart in a separate immutable `wdi-platform` release. The portal discovers that
+pointer alongside NBP and BDL and exposes its tables, catalogue and lineage through the existing
+Lakehouse interface. Populated annual source cells
 are modeled at geography (including source-published aggregates) × indicator × year grain. Large
 relations are partitioned into bounded Parquet files without reducing scope. Nine native
 MetricFlow metrics report archive/member and source-to-modeled coverage at snapshot grain; source
-indicator values are not treated as generally additive.
+indicator values are not treated as generally additive. Unchanged archive bytes under the same
+code SHA reuse the current modeled release rather than creating six-hour duplicate packages.
 
 The candidate is production-gated: every part must be freshly restored, bound to the accepted raw
 archive hash and size, matched to dbt/catalogue artifacts, and reconcile to a modeled-value
-coverage ratio of exactly 1.0 before pointer promotion. `bash scripts/check-data.sh` passes all 415
+coverage ratio of exactly 1.0 before pointer promotion. `bash scripts/check-data.sh` passes all 416
 tests, including exact six-member extraction, six source-cell-to-six-Gold-row reconciliation,
 native execution of every WDI metric, bounded multi-file release/restore and unchanged NBP release
-behavior. Production publication and fresh restore remain pending reviewed merge and successful
+behavior. Portal validation passes 696 tests plus typecheck, lint and production build; the focused
+release-catalog fixture proves all fourteen WDI datasets and multiple fact partitions are
+discoverable. Production publication, portal deployment and fresh restore remain pending reviewed merge and successful
 main-branch execution; no live WDI Gold/semantic completion is claimed by this checkpoint.
 
 Fresh orchestration evidence before this change: WDI run 34757536158 retained and freshly verified

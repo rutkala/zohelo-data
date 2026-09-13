@@ -24,7 +24,12 @@ from ingestion.drive_state_store import DriveStateStore
 from ingestion.full_source_adapters import inspect_distribution
 from ingestion.full_source_campaign import coverage as bulk_coverage
 from ingestion.source_campaign_store import _CampaignStore
-from release_protocol import publish_release, restore_current_release
+from release_protocol import (
+    publish_release,
+    read_current_release_manifest,
+    restore_current_release,
+    ReleaseProtocolError,
+)
 from runtime_metadata import _code_sha
 from storage_manager import StorageManager
 from wdi_business_catalog import build_wdi_business_catalog
@@ -80,6 +85,32 @@ def _stores(allow_production_write: bool):
     raw_store = BulkDriveRawStore(storage, WDI_SOURCE_ID, responses_root_id=raw_root)
     release_store = DriveReleaseStore(storage, _release_root(storage, root_id))
     return campaign_store, raw_store, release_store
+
+
+def _unchanged_release(release_store, code_sha: str, receipt: dict):
+    """Return an existing release when code and current archive bytes are unchanged."""
+    try:
+        manifest = read_current_release_manifest(release_store, release_store.root_id)
+    except ReleaseProtocolError as exc:
+        if "no current-release pointer exists" in str(exc):
+            return None
+        raise
+    inputs = manifest.get("inputs")
+    if (
+        manifest.get("release_scope") != WDI_RELEASE_SCOPE
+        or manifest.get("code_sha") != code_sha
+        or not isinstance(inputs, list)
+        or len(inputs) != 1
+    ):
+        return None
+    release_input = inputs[0]
+    if (
+        release_input.get("source_id") != WDI_SOURCE_ID
+        or release_input.get("sha256") != receipt["raw"]["sha256"]
+        or release_input.get("size") != receipt["raw"]["size_bytes"]
+    ):
+        return None
+    return manifest
 
 
 def _current_archive(campaign_store, raw_store, workspace: Path):
@@ -283,6 +314,17 @@ def run_platform(*, allow_production_write: bool = False, verify_current: bool =
     with tempfile.TemporaryDirectory(prefix="zohelo-wdi-platform-") as temporary:
         workspace = Path(temporary)
         state, full_coverage, receipt, archive, inspection, index = _current_archive(campaign_store, raw_store, workspace)
+        existing = _unchanged_release(release_store, code_sha, receipt)
+        if existing is not None:
+            report = {
+                "status": "wdi_platform_unchanged",
+                "release_id": existing["release_id"],
+                "source_id": WDI_SOURCE_ID,
+                "archive_sha256": receipt["raw"]["sha256"],
+                "reason": "current archive bytes and modeled code SHA already have a published release",
+            }
+            print(json.dumps(report, indent=2, sort_keys=True), flush=True)
+            return report
         members = _extract_archive(archive, inspection, workspace / "members")
         evidence = {
             "source_id": WDI_SOURCE_ID,

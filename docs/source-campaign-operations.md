@@ -300,6 +300,11 @@ only after a complete staged restore. A fresh process verifies the current immut
 python src/wdi_platform.py --allow-production-write --verify-current
 ```
 
+Before building, the runner reads the checksum-pinned current modeled manifest. When both the
+accepted archive content hash/size and WDI code SHA match, it reports `wdi_platform_unchanged` and
+reuses the package instead of uploading another immutable copy. The subsequent fresh verification
+still checks every published release file.
+
 The release publishes six Bronze relations, three Silver relations and five Gold relations. The
 large Bronze, Silver-observation and Gold-fact relations are emitted in bounded year partitions;
 all parts belong to one dataset and one immutable release. `mart_wdi_coverage` must report one

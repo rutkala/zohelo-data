@@ -133,3 +133,8 @@ of every populated annual source cell. Nine native MetricFlow metrics expose arc
 modeled-coverage counts at snapshot grain; WDI indicator values are not assumed additive.
 `enable_wdi` is set only by the source-specific build so existing NBP and BDL release manifests
 remain isolated from WDI models and metrics.
+The portal resolves `wdi-platform/current-release.json` alongside NBP and BDL, validates all
+fourteen dataset contracts and their bounded file descriptors, and merges the WDI dbt catalogue
+and lineage into the existing Lakehouse experience. Browser queries retain the shared 512 MiB
+session budget; partitioning avoids a single oversized transfer but does not make the browser an
+unlimited archive reader.
