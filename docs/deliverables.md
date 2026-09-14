@@ -45,10 +45,11 @@ BDL
 3,996 accepted/published responses with zero publication backlog and 2,409 API tasks pending; its
 modeled job hit its configured 25-minute timeout during the build. This is not data loss, but the
 current transform timeout is shorter than the observed end-to-end build and fresh-restore path.
-Current BDL continuation
-[run 34885171452](https://github.com/rutkala/zohelo-data/actions/runs/34885171452) was active and was
-not duplicated. The separate authenticated Web-bulk route still has no accepted bulk archive and
-BDL remains far from the 172,576-variable full scope.
+[Run 34885171452](https://github.com/rutkala/zohelo-data/actions/runs/34885171452) reproduced the same
+limit: Landing succeeded, all 68 dbt build/tests passed, and the job was then cancelled at the
+25-minute limit before release completion or fresh verification. No replacement writer was started.
+The separate authenticated Web-bulk route still has no accepted bulk archive and BDL remains far
+from the 172,576-variable full scope.
 
 NBP [run 34732275848](https://github.com/rutkala/zohelo-data/actions/runs/34732275848) remains the
 latest successful daily acceptance: all four REST feeds report complete coverage through the
