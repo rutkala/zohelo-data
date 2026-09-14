@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. Implementation on branch `feat/drive-layout-100` (PR #101) is complete; live cutover is awaiting verification and lead review.**
+Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. Implementation is under review and has not passed the full data gate; live cutover remains awaiting deployment, verification and lead review.**
 The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
 
 ### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026
@@ -27,10 +27,10 @@ review, integration and communication. Work proceeds one engineering task at a t
 AGY uses only the personal Gemini subscription and one reusable Codespace with a separate
 feature branch/worktree per task. See the [working agreement](collaboration.md#delegation-and-cost-policy).
 
-This records the agreed policy, not completed end-to-end automation. The earlier AGY
-pilot demonstrated execution with a cached account session; a subsequent read-only CLI
-check verified version 1.2.2. Before another model task, verify the account owning that
-session and disable credit overages. Direct CLI/SSH dispatch from the Work runtime
+This records the agreed policy, not completed end-to-end automation. Copilot could not
+start because its account had no credits. The personal Google AI Pro account and the
+disabled overage setting were verified before AGY used the cached Codespace session;
+after AGY stopped, implementation ownership transferred to the internal fallback. Direct CLI/SSH dispatch from the Work runtime
 remains unconfigured; do not claim a worker has started without its actual dispatch
 receipt. No Cloud model access was enabled, and recording this decision launches no
 engineering worker or duplicate ingestion run.

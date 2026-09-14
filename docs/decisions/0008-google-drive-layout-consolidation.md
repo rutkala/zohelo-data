@@ -40,4 +40,4 @@ Consolidate Google Drive into a single, consistent, physical architecture:
 ## Tooling and Accounts Record
 
 - Personal Google AI Pro account verified (`useG1Credits: false`).
-- GitHub Copilot startup blocked by insufficient credits; implementation ownership executed via Antigravity environment.
+- GitHub Copilot startup blocked by insufficient credits; AGY completed the initial Antigravity pass and implementation ownership then transferred to the internal fallback for review corrections and validation.
