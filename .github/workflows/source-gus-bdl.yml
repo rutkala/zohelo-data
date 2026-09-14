@@ -112,6 +112,9 @@ jobs:
         run: python src/source_campaign.py --source gus_bdl --backend drive --allow-production-write --verify-landing
 
   platform_transform_and_release:
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
     needs: [ingest_landing]
     if: >-
       always() && !cancelled() &&

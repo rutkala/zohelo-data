@@ -12,6 +12,7 @@ import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drive_release_store import DriveReleaseStore
+from layout_resolution import resolve_source_release_root
 from local_release import CachedReadStore, quoted_identifier, restore_local_release
 from release_protocol import restore_current_release
 from semantic_query import validate_release_metrics
@@ -113,8 +114,9 @@ def check_current():
     started = time.monotonic()
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     root = storage.resolve_root(create=False)
-    store = CachedReadStore(DriveReleaseStore(storage, root))
-    manifest = restore_current_release(store, root)
+    release_root, _ = resolve_source_release_root(storage, root, "nbp", is_writer=False)
+    store = CachedReadStore(DriveReleaseStore(storage, release_root))
+    manifest = restore_current_release(store, release_root)
     expected_release = os.environ.get("ZOHELO_EXPECTED_RELEASE_ID")
     if expected_release and manifest["release_id"] != expected_release:
         raise ValueError("Current release differs from the expected publication")
@@ -123,7 +125,7 @@ def check_current():
         directory = Path(temporary)
         if manifest["release_scope"] == "nbp_platform":
             restored_directory = directory / "release"
-            restored = restore_local_release(store, root, restored_directory)
+            restored = restore_local_release(store, release_root, restored_directory)
             restored_manifest = json.loads(
                 (restored_directory / "release.json").read_text(encoding="utf-8")
             )

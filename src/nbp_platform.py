@@ -24,6 +24,7 @@ from ingestion.nbp_http import fetch_response
 from ingestion.nbp_state import (LoadedState, commit_response, list_successful_response_descriptors,
                                  load_state, plan_requests, response_envelope,
                                  ingestion_config_from_config, validate_non_regressive_cutoff)
+from layout_resolution import resolve_nbp_control_root, resolve_source_release_root
 from release_protocol import publish_release
 from release_validation import validate_staged_release
 from semantic_query import validate_release_metrics
@@ -65,7 +66,7 @@ def coverage_complete(state, cutoff):
 def ingest(storage, *, specs, settings, cutoff, mode, code_sha, max_requests=512):
     """Persist after each dated response; a failed/capped run never publishes."""
     root = storage.resolve_root(create=False)
-    control = storage.get_or_create_nested_folder(["ingestion-control"], root_id=root)
+    control = resolve_nbp_control_root(storage, root, is_writer=True)
     store = DriveStateStore(storage, root, control)
     loaded = load_state(store, control, specs)
     validate_non_regressive_cutoff(loaded.state, cutoff)
@@ -290,9 +291,14 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
                         "process_memory": process_memory_report()}
         check_portal_compatibility()
         print(json.dumps({"stage": "publication", "status": "started", "datasets": len(datasets)}), flush=True)
-        result = publish_release(DriveReleaseStore(storage, store.root_id), store.root_id, datasets=datasets,
+        release_root, direct_releases = resolve_source_release_root(storage, store.root_id, "nbp", is_writer=True)
+        result = publish_release(DriveReleaseStore(storage, release_root), release_root, datasets=datasets,
                                  artifacts=artifacts, inputs=inputs, code_sha=sha, measurements=measurements,
-                                 release_scope="nbp_platform", pre_promote_validator=validate_staged_release)
+                                 release_scope="nbp_platform", pre_promote_validator=validate_staged_release,
+                                 direct_releases=direct_releases)
+        if direct_releases:
+            from medallion_navigation import sync_source_medallion_navigation
+            sync_source_medallion_navigation(storage, store.root_id, "nbp", result["manifest"])
         report = {"status": "nbp_platform_published", "release_id": result["release_id"], "code_sha": sha,
                   "cutoff": cutoff.isoformat(), "coverage": catalogue_state["sources"],
                   "datasets": [{key: item[key] for key in ("dataset_id", "row_count", "min_date", "max_date")}

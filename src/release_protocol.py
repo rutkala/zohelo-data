@@ -136,6 +136,7 @@ def publish_release(
     release_id: str | None = None,
     release_scope: str = "nbp_silver",
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
 
@@ -168,18 +169,21 @@ def publish_release(
         if previous_manifest["format_version"] == 2 and candidate["release_scope"] == "nbp_silver":
             raise ReleaseProtocolError("A legacy silver candidate cannot replace a platform release")
 
-    releases_ids = store.find("releases", root_id)
-    if len(releases_ids) > 1:
-        raise ReleaseProtocolError("ambiguous releases folders under publication root")
-    if releases_ids:
-        releases_id = _require_id(releases_ids[0], "releases folder id")
+    if direct_releases:
+        release_container_id = root_id
     else:
-        releases_id = _require_id(store.mkdir("releases", root_id), "releases folder id")
+        releases_ids = store.find("releases", root_id)
+        if len(releases_ids) > 1:
+            raise ReleaseProtocolError("ambiguous releases folders under publication root")
+        if releases_ids:
+            release_container_id = _require_id(releases_ids[0], "releases folder id")
+        else:
+            release_container_id = _require_id(store.mkdir("releases", root_id), "releases folder id")
 
-    if store.find(candidate["release_id"], releases_id):
+    if store.find(candidate["release_id"], release_container_id):
         raise ReleaseProtocolError(f"release folder already exists: {candidate['release_id']}")
     release_folder_id = _require_id(
-        store.mkdir(candidate["release_id"], releases_id), "release folder id"
+        store.mkdir(candidate["release_id"], release_container_id), "release folder id"
     )
 
     published_datasets: list[dict[str, Any]] = []
@@ -281,6 +285,7 @@ def promote_retained_release(
     target_release_id: str,
     expected_current_release_id: str,
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
+    direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Promote one retained, fully verified release behind an exact current pin.
 
@@ -305,14 +310,20 @@ def promote_retained_release(
     # Pin and verify the current manifest itself, then fully validate the target.
     current_manifest = _read_release_manifest(store, current["value"])
 
-    releases_ids = store.find("releases", root_id)
-    if len(releases_ids) != 1:
-        raise ReleaseProtocolError("releases folder is missing or ambiguous")
-    releases_id = _require_id(releases_ids[0], "releases folder id")
-    target_folders = store.find(target_release_id, releases_id)
-    if len(target_folders) != 1:
-        raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
-    target_folder_id = _require_id(target_folders[0], "target release folder id")
+    if direct_releases:
+        target_folders = store.find(target_release_id, root_id)
+        if len(target_folders) != 1:
+            raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
+        target_folder_id = _require_id(target_folders[0], "target release folder id")
+    else:
+        releases_ids = store.find("releases", root_id)
+        if len(releases_ids) != 1:
+            raise ReleaseProtocolError("releases folder is missing or ambiguous")
+        releases_id = _require_id(releases_ids[0], "releases folder id")
+        target_folders = store.find(target_release_id, releases_id)
+        if len(target_folders) != 1:
+            raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
+        target_folder_id = _require_id(target_folders[0], "target release folder id")
     manifest_ids = store.find("release.json", target_folder_id)
     if len(manifest_ids) != 1:
         raise ReleaseProtocolError("target retained release manifest is missing or ambiguous")

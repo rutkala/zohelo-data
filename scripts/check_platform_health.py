@@ -31,13 +31,11 @@ def read_drive_health(*, storage_factory=None, max_files=10_000):
     # Keep local-state review independent of Google clients/authentication.
     from ingestion.drive_state_store import DriveStateStore
     from ingestion.nbp_state import load_state, source_specs_from_config
+    from layout_resolution import resolve_nbp_control_root
     from storage_manager import StorageManager
     manager = (storage_factory or StorageManager)(backend="gdrive", allow_interactive_auth=False)
     root = manager.resolve_root(create=False)
-    folders = manager._list_exact_folders("ingestion-control", parent_id=root)
-    if len(folders) != 1:
-        raise ValueError("Exactly one existing ingestion-control folder is required")
-    control = folders[0]["id"]
+    control = resolve_nbp_control_root(manager, root, is_writer=False)
     store = DriveStateStore(manager, root, control)
     loaded = load_state(store, control, source_specs_from_config(ROOT / "config/nbp-platform.yaml"))
     if loaded.snapshot_file_id is None:

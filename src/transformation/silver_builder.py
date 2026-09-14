@@ -176,8 +176,8 @@ def process_silver():
     started = time.monotonic()
     sha = _code_sha()
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
-    root_id = storage.resolve_root(create=False)
-    if DriveReleaseStore(storage, root_id).find("ingestion-control", root_id):
+    release_finder = DriveReleaseStore(storage, root_id)
+    if release_finder.find("ingestion-control", root_id) or release_finder.find("06_control", root_id):
         raise RuntimeError("Verified ingestion is active. Use src/nbp_platform.py; legacy publication is disabled.")
     storage.authorize_writes()
     with tempfile.TemporaryDirectory(prefix="zohelo-silver-") as temporary:

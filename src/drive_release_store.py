@@ -111,3 +111,18 @@ class DriveReleaseStore:
             raise ValueError("Only the owned current-release pointer may be replaced")
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/json", resumable=False)
         self.files.update(fileId=file_id, media_body=media, fields="id").execute(num_retries=2)
+
+    def create_shortcut(self, name: str, target_id: str, parent_id: str) -> str:
+        self._authorize_parent(parent_id)
+        body = {
+            "name": name,
+            "mimeType": "application/vnd.google-apps.shortcut",
+            "shortcutDetails": {"targetId": target_id},
+            "parents": [parent_id],
+        }
+        res = self.files.create(
+            body=body,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute(num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES)
+        return res["id"]

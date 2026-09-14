@@ -701,6 +701,39 @@ export async function resolveReleaseCatalog(
     throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in Google Drive root.`);
   }
   const rootId = roots[0].id;
+  // 1. Canonical layout under releases/
+  const releasesFolders = (await findFoldersByName("releases", rootId, token)).filter(
+    (folder) => folder.name === "releases"
+  );
+  if (releasesFolders.length > 1) {
+    throw new Error("Folder 'releases' is ambiguous in Google Drive root.");
+  }
+  const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
+
+  const findCanonicalPointer = async (sourceName: string) => {
+    if (!releasesFolderId) return undefined;
+    const folders = (await findFoldersByName(sourceName, releasesFolderId, token)).filter(
+      (folder) => folder.name === sourceName
+    );
+    if (folders.length > 1) {
+      throw new Error(`Folder 'releases/${sourceName}' is ambiguous; refusing to select a release.`);
+    }
+    if (folders.length === 0) return undefined;
+    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
+    if (pointerFiles.length > 1) {
+      throw new Error(`releases/${sourceName}/current-release.json is ambiguous; refusing to select a release.`);
+    }
+    return pointerFiles.length === 1 &&
+      pointerFiles[0].mimeType !== "application/vnd.google-apps.folder"
+      ? pointerFiles[0]
+      : undefined;
+  };
+
+  const canonicalNbpPointer = await findCanonicalPointer("nbp");
+  const canonicalBdlPointer = await findCanonicalPointer("bdl");
+  const canonicalWdiPointer = await findCanonicalPointer("wdi");
+
+  // 2. Legacy pointers
   const rootPointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
   if (
     rootPointerFiles.length > 1 ||
@@ -711,6 +744,7 @@ export async function resolveReleaseCatalog(
       "current-release.json is ambiguous or not a file; refusing to select a release."
     );
   }
+  const legacyNbpPointer = rootPointerFiles.length === 1 ? rootPointerFiles[0] : undefined;
 
   const findPlatformPointer = async (folderName: "bdl-platform" | "wdi-platform") => {
     const folders = (await findFoldersByName(folderName, rootId, token)).filter(
@@ -731,27 +765,56 @@ export async function resolveReleaseCatalog(
       ? pointerFiles[0]
       : undefined;
   };
-  const bdlPointerFile = await findPlatformPointer("bdl-platform");
-  const wdiPointerFile = await findPlatformPointer("wdi-platform");
+  const legacyBdlPointer = await findPlatformPointer("bdl-platform");
+  const legacyWdiPointer = await findPlatformPointer("wdi-platform");
 
-  if (rootPointerFiles.length === 0 && !bdlPointerFile && !wdiPointerFile) {
+  // Fail closed on conflicting pointers
+  if (canonicalNbpPointer && legacyNbpPointer) {
+    throw new Error("Conflicting current-release pointers found for NBP in both releases/nbp and root.");
+  }
+  if (canonicalBdlPointer && legacyBdlPointer) {
+    throw new Error("Conflicting current-release pointers found for BDL in both releases/bdl and bdl-platform.");
+  }
+  if (canonicalWdiPointer && legacyWdiPointer) {
+    throw new Error("Conflicting current-release pointers found for WDI in both releases/wdi and wdi-platform.");
+  }
+
+  const effectiveNbp = canonicalNbpPointer
+    ? { file: canonicalNbpPointer, label: "releases/nbp/current-release.json" }
+    : legacyNbpPointer
+    ? { file: legacyNbpPointer, label: "current-release.json" }
+    : undefined;
+
+  const effectiveBdl = canonicalBdlPointer
+    ? { file: canonicalBdlPointer, label: "releases/bdl/current-release.json" }
+    : legacyBdlPointer
+    ? { file: legacyBdlPointer, label: "bdl-platform/current-release.json" }
+    : undefined;
+
+  const effectiveWdi = canonicalWdiPointer
+    ? { file: canonicalWdiPointer, label: "releases/wdi/current-release.json" }
+    : legacyWdiPointer
+    ? { file: legacyWdiPointer, label: "wdi-platform/current-release.json" }
+    : undefined;
+
+  if (!effectiveNbp && !effectiveBdl && !effectiveWdi) {
     return { kind: "legacy" };
   }
 
   const releases: SingleReleaseResolution[] = [];
-  if (rootPointerFiles.length === 1) {
+  if (effectiveNbp) {
     releases.push(
-      await resolveSingleRelease(rootPointerFiles[0], "current-release.json", token, budget)
+      await resolveSingleRelease(effectiveNbp.file, effectiveNbp.label, token, budget)
     );
   }
-  if (bdlPointerFile) {
+  if (effectiveBdl) {
     releases.push(
-      await resolveSingleRelease(bdlPointerFile, "bdl-platform/current-release.json", token, budget)
+      await resolveSingleRelease(effectiveBdl.file, effectiveBdl.label, token, budget)
     );
   }
-  if (wdiPointerFile) {
+  if (effectiveWdi) {
     releases.push(
-      await resolveSingleRelease(wdiPointerFile, "wdi-platform/current-release.json", token, budget)
+      await resolveSingleRelease(effectiveWdi.file, effectiveWdi.label, token, budget)
     );
   }
 

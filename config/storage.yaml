@@ -11,3 +11,4 @@ storage:
     bronze: "02_bronze"
     silver: "03_silver"
     gold: "04_gold"
+    control: "06_control"

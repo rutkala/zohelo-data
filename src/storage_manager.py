@@ -42,6 +42,7 @@ class StorageManager:
         "bronze": ("02_bronze",),
         "silver": ("03_silver",),
         "gold": ("04_gold",),
+        "control": ("06_control",),
     }
 
     def __init__(self, backend="gdrive", *, allow_interactive_auth=True,

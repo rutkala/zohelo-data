@@ -185,6 +185,9 @@ jobs:
         run: python src/source_campaign.py --source world_bank_wdi --backend drive --allow-production-write --verify-landing
 
   platform_transform_and_release:
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
     needs: collect_and_publish
     if: >-
       always() && github.ref == 'refs/heads/main' &&

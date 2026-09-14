@@ -12,23 +12,47 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from bdl_release_validation import validate_staged_bdl_release  # noqa: E402
 from drive_release_store import DriveReleaseStore  # noqa: E402
-from release_protocol import promote_retained_release  # noqa: E402
+from layout_resolution import resolve_source_release_root  # noqa: E402
+from medallion_navigation import sync_source_medallion_navigation  # noqa: E402
+from release_protocol import promote_retained_release, read_release_manifest  # noqa: E402
 from release_validation import validate_staged_release  # noqa: E402
 from storage_manager import StorageManager  # noqa: E402
+from wdi_release_validation import validate_staged_wdi_release  # noqa: E402
 
 
-def promote(*, target_release_id: str, expected_current_release_id: str) -> dict:
+def _get_validator(source: str):
+    if source == "nbp":
+        return validate_staged_release
+    elif source == "bdl":
+        return validate_staged_bdl_release
+    elif source == "wdi":
+        return validate_staged_wdi_release
+    raise ValueError(f"Unknown source '{source}'; expected nbp, bdl, or wdi")
+
+
+def promote(*, target_release_id: str, expected_current_release_id: str, source: str = "nbp") -> dict:
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     storage.authorize_writes()
     root_id = storage.resolve_root(create=False)
+    release_root, direct_releases = resolve_source_release_root(
+        storage, root_id, source, is_writer=True
+    )
+    validator = _get_validator(source)
+    release_store = DriveReleaseStore(storage, release_root)
     result = promote_retained_release(
-        DriveReleaseStore(storage, root_id),
-        root_id,
+        release_store,
+        release_root,
         target_release_id=target_release_id,
         expected_current_release_id=expected_current_release_id,
-        pre_promote_validator=validate_staged_release,
+        pre_promote_validator=validator,
+        direct_releases=direct_releases,
     )
+    if direct_releases:
+        manifest = read_release_manifest(release_store, target_release_id)
+        sync_source_medallion_navigation(storage, root_id, source, manifest)
+
     report = {
         key: result[key]
         for key in (
@@ -49,6 +73,7 @@ def promote(*, target_release_id: str, expected_current_release_id: str) -> dict
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", choices=["nbp", "bdl", "wdi"], default="nbp")
     parser.add_argument("--target-release-id", required=True)
     parser.add_argument("--expected-current-release-id", required=True)
     return parser.parse_args()
@@ -61,6 +86,7 @@ if __name__ == "__main__":
         promote(
             target_release_id=arguments.target_release_id,
             expected_current_release_id=arguments.expected_current_release_id,
+            source=arguments.source,
         )
     except Exception as exc:
         print(json.dumps({

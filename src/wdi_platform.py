@@ -24,6 +24,8 @@ from ingestion.drive_state_store import DriveStateStore
 from ingestion.full_source_adapters import inspect_distribution
 from ingestion.full_source_campaign import coverage as bulk_coverage
 from ingestion.source_campaign_store import _CampaignStore
+from layout_resolution import resolve_source_release_root
+from medallion_navigation import sync_source_medallion_navigation
 from release_protocol import (
     publish_release,
     read_current_release_manifest,
@@ -60,8 +62,8 @@ MAX_RELEASE_PART_BYTES = 120 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 8 * 1024 * 1024 * 1024
 
 
-def _release_root(storage: StorageManager, root_id: str) -> str:
-    return storage.get_or_create_nested_folder(["wdi-platform"], root_id=root_id)
+def _release_root(storage: StorageManager, root_id: str, is_writer: bool = False) -> tuple[str, bool]:
+    return resolve_source_release_root(storage, root_id, "wdi", is_writer=is_writer)
 
 
 def _stores(allow_production_write: bool):
@@ -83,8 +85,9 @@ def _stores(allow_production_write: bool):
         transport, f"{WDI_SOURCE_ID}_bulk", control, raw_root
     )
     raw_store = BulkDriveRawStore(storage, WDI_SOURCE_ID, responses_root_id=raw_root)
-    release_store = DriveReleaseStore(storage, _release_root(storage, root_id))
-    return campaign_store, raw_store, release_store
+    release_root_id, direct_releases = _release_root(storage, root_id, is_writer=True)
+    release_store = DriveReleaseStore(storage, release_root_id)
+    return campaign_store, raw_store, release_store, direct_releases, root_id, storage
 
 
 def _unchanged_release(release_store, code_sha: str, receipt: dict):
@@ -303,7 +306,7 @@ def build_platform(workspace: Path, member_paths: dict[str, Path], evidence_path
 
 def run_platform(*, allow_production_write: bool = False, verify_current: bool = False):
     started = time.monotonic()
-    campaign_store, raw_store, release_store = _stores(allow_production_write)
+    campaign_store, raw_store, release_store, direct_releases, root_id, storage = _stores(allow_production_write)
     if verify_current:
         manifest = restore_current_release(release_store, release_store.root_id)
         if manifest.get("release_scope") != WDI_RELEASE_SCOPE:
@@ -316,6 +319,8 @@ def run_platform(*, allow_production_write: bool = False, verify_current: bool =
         state, full_coverage, receipt, archive, inspection, index = _current_archive(campaign_store, raw_store, workspace)
         existing = _unchanged_release(release_store, code_sha, receipt)
         if existing is not None:
+            if direct_releases:
+                sync_source_medallion_navigation(storage, root_id, "wdi", existing)
             report = {
                 "status": "wdi_platform_unchanged",
                 "release_id": existing["release_id"],
@@ -393,7 +398,10 @@ def run_platform(*, allow_production_write: bool = False, verify_current: bool =
             },
             release_scope=WDI_RELEASE_SCOPE,
             pre_promote_validator=validate_staged_wdi_release,
+            direct_releases=direct_releases,
         )
+        if direct_releases:
+            sync_source_medallion_navigation(storage, root_id, "wdi", result["manifest"])
         report = {
             "status": "wdi_platform_published", "release_id": result["release_id"],
             "source_id": WDI_SOURCE_ID, "coverage": modeled_coverage,
