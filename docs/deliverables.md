@@ -4,20 +4,28 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. The implementation passed the full data and portal gates and final review is underway; live cutover remains awaiting merge, deployment and verification.**
+Updated 14 September 2026. **The owner-approved Google Drive consolidation is live and independently verified.** Implementation [PR #101](https://github.com/rutkala/zohelo-data/pull/101) merged, the compatible portal was deployed, and [apply run 34871823795](https://github.com/rutkala/zohelo-data/actions/runs/34871823795) completed successfully. Independent verification passed at 17:21 UTC.
 The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
 
 ### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026
 
-The owner approved physical consolidation into one consistent architecture:
-- Canonical layout: `releases/nbp/`, `releases/bdl/`, `releases/wdi/`, each containing its `current-release.json` pointer and UUID release packages directly.
-- Ingestion state consolidated under `06_control/nbp` and `06_control/source_campaigns` with exact identities preserved.
-- Medallion layer navigation shortcuts and indexes under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`), supporting single-file and multi-file datasets (such as WDI multi-part tables).
-- Reversible archival of legacy wrappers `bdl-platform` and `wdi-platform` into `05_archive/`.
-- Concurrency protection under shared group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`.
-- Live cutover status: **Awaiting verification.** All production Drive writes remain strictly gated behind reviewed main workflow dispatch after lead review.
-- Tooling and account verification: Personal Google AI Pro account verified (`useG1Credits: false`); GitHub Copilot blocked by insufficient credits.
+The approved layout is now in place:
 
+- Canonical releases: `releases/nbp/`, `releases/bdl/`, and `releases/wdi/`, each with its existing current pointer and immutable UUID release packages directly beneath it.
+- Ingestion control: the former `ingestion-control/` folder is now `06_control/nbp/`, preserving its ID and contents. `06_control/source_campaigns/` retains its identity.
+- Medallion browsing: 65 shortcuts and nine verified navigation indexes cover all 47 current tables across Bronze, Silver and Gold, including multipart WDI tables.
+- The old `bdl-platform` and `wdi-platform` wrappers are retained under `05_archive/`. Their release packages are under the common release root.
+- Production writers and migration operations share `zohelo-production-data` concurrency with `cancel-in-progress: false` and `queue: max`.
+
+**Execution evidence:** The [read-only plan run 34870571745](https://github.com/rutkala/zohelo-data/actions/runs/34870571745) and successful apply ran on reviewed commit `f05e22da1c876d51ccce4380ac03efee6cbe2765`. The plan passed 368 independent checks before dispatch. Its 110 operations moved 20 existing objects and created 90 navigation objects (16 folders, 65 shortcuts and nine indexes). Main stayed at the reviewed commit through apply and independent verification. The deployed [portal compatibility marker](https://data.zohelo.com/portal-build.json) advertised canonical layout support, and the cutover guard found no old or unverified publisher blocking the operation.
+
+**Independent acceptance:** All 3,673 baseline objects passed checks of identity, expected names/parents, non-trash state, ownership, exact sharing permissions and available size/checksum fields. All 90 new objects passed target/content checks; nine indexes reported `current_verified`. Exact bytes were unchanged for the three current pointers, their three manifests, the NBP ingestion-state pointer and its pinned snapshot. Hash-verified Gold Parquet samples were queried for NBP (`dim_source_table`, 3 rows), BDL (`dim_bdl_period`, 31 rows) and WDI (`dim_wdi_year`, 66 rows). Verification reported no failures.
+
+The retained data comparison used Drive metadata and available checksums; it did not redownload every retained dataset. SQL checks covered the three named samples, and this cutover did not include an authenticated portal UI test. The detailed [sanitized receipt](releases/2026-09-14-drive-layout.json) records the scope and limits. Full plan, journal and apply receipts remain in the Actions artifacts and durable Drive journal; the independent baseline and verifier are retained in `/workspaces/zohelo-drive-cutover-100/` in the reusable Codespace.
+
+Implementation validation was already completed for PR #101: the full [data](https://github.com/rutkala/zohelo-data/actions/runs/34822943346) and [portal](https://github.com/rutkala/zohelo-data/actions/runs/34822943447) gates passed, along with 220 apply and 220 rollback fault cases. [Portal deployment 34823799131](https://github.com/rutkala/zohelo-data/actions/runs/34823799131) succeeded on the reviewed commit. This final follow-up changes documentation and records only.
+
+See the [folder guide](drive-structure.md) and [migration runbook](operations/drive-migration.md) for the layout and future recovery constraints.
 
 ### Delegation policy agreed — 14 September 2026
 
@@ -27,13 +35,22 @@ review, integration and communication. Work proceeds one engineering task at a t
 AGY uses only the personal Gemini subscription and one reusable Codespace with a separate
 feature branch/worktree per task. See the [working agreement](collaboration.md#delegation-and-cost-policy).
 
-This records the agreed policy, not completed end-to-end automation. Copilot could not
-start because its account had no credits. The personal Google AI Pro account and the
-disabled overage setting were verified before AGY used the cached Codespace session;
-after AGY stopped, implementation ownership transferred to the internal fallback. Direct CLI/SSH dispatch from the Work runtime
-remains unconfigured; do not claim a worker has started without its actual dispatch
-receipt. No Cloud model access was enabled, and recording this decision launches no
-engineering worker or duplicate ingestion run.
+The initial implementation used AGY and then an internal fallback after Copilot could not start.
+The final documentation follow-up tested the agreed external-first route: Copilot CLI authenticated
+and passed a small smoke request, but the actual documentation task failed with **monthly quota
+exceeded**. Its authentication success does not mean capacity is available. Ownership then passed
+to AGY, which completed the three-file documentation task using the verified personal Google AI Pro
+account, **Gemini 3.8 Flash**, and `useG1Credits: false`. The lead reviewed the output and added the
+verified operational status and evidence. No Cloud model billing, BYOK model credentials or credit
+overages were enabled.
+
+The saved GitHub CLI login was verified as `rutkala` with `repo`, `workflow` and `codespace`
+scopes. It successfully dispatched the reviewed plan and apply workflows. In Codespaces, injected
+`GH_TOKEN` / `GITHUB_TOKEN` can override saved CLI credentials; these operations used
+`env -u GH_TOKEN -u GITHUB_TOKEN gh ...` to select the saved login without reading token values.
+Execution took place in the reusable Codespace terminal. Direct SSH dispatch from the Work
+runtime remains unconfigured. This records a verified manual delegation cycle; it does not claim
+unattended orchestration or measured subscription savings.
 
 ### Delivered: WDI Bronze → Silver → Gold → semantic release — 13 September 2026
 

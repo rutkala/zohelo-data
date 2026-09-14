@@ -3,7 +3,7 @@
 This runbook defines the operational procedure for executing, resuming, verifying, or rolling back the physical Google Drive consolidation for `zohelo-data`.
 
 > [!IMPORTANT]
-> **Owner Approval (14 September 2026):** The owner approved the physical consolidation. Live cutover is awaiting verification. All production Drive mutations must be executed strictly through the reviewed GitHub Actions workflow on `main` after lead review.
+> **Completed and verified (14 September 2026):** The owner-approved physical consolidation completed in [apply run 34871823795](https://github.com/rutkala/zohelo-data/actions/runs/34871823795). Independent preservation and navigation checks passed at 17:21 UTC. See the [delivery record](../deliverables.md) and [verification receipt](../releases/2026-09-14-drive-layout.json). Production Drive mutations use the reviewed GitHub Actions workflow on `main`.
 
 ---
 
@@ -19,117 +19,132 @@ This runbook defines the operational procedure for executing, resuming, verifyin
      queue: max
    ```
 4. **Pre-Cutover Drain & Compatibility Guard:**
-   Before applying mutations, execute the automated cutover guard:
+   Before applying mutations, the workflow executes the automated cutover guard:
    ```bash
    python scripts/check_cutover_preconditions.py \
      --repo rutkala/zohelo-data \
-     --portal-url https://rutkala.github.io/zohelo-data/portal-build.json
+     --portal-url https://data.zohelo.com/portal-build.json \
+     --compatibility-commit <40-char-commit-sha>
    ```
    This confirms:
-   - The deployed portal site is compatible with release format 2 and direct releases.
-   - No legacy publisher workflow runs (`source-gus-bdl`, `source-world-bank`, `daily-ingestion`) are active or queued in GitHub Actions.
+   - The deployed portal site (`https://data.zohelo.com/portal-build.json`) advertises canonical release roots (`canonical-release-roots-v1`) and runs the reviewed compatibility commit or a verified descendant. The receipt also records its supported release formats.
+   - Active publisher workflows (`source-gus-bdl.yml`, `source-world-bank.yml`, `daily-ingestion.yml`, `deploy.yml`) are inspected: compatible current publishers run under the shared concurrency group and are serialized; old or unverified publishers block cutover until drained.
+5. **Existing Services & Secret Protections:** Use the existing GitHub Actions and Drive configuration. Do not enable additional paid services or model credit overages, and never echo credential values to logs.
 
 ---
 
-## 2. Migration Execution Steps
+## 2. Production Actions Workflow Procedure
 
-### Step 1: Generate & Inspect Migration Plan
-Generate the read-only migration plan and examine the planned steps and pins:
-```bash
-python scripts/migrate_drive_layout.py \
-  --operation plan \
-  --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf
-```
-Receipt `plan.json` is generated locally containing:
-- Pinned pointer identities, hashes, manifest identities, and NBP state snapshot references.
-- Exact planned Drive API moves (`addParents`/`removeParents`).
+Production Drive mutations are performed exclusively through the main-branch GitHub Actions workflow: **Migrate Google Drive layout** (`.github/workflows/migrate-drive-layout.yml`). Never execute unreviewed local mutations or force-move `main`.
+
+### Operation Input Requirements
+
+| Input Parameter | `plan` | `verify` | `apply` | `resume` | `rollback` |
+| --- | --- | --- | --- | --- | --- |
+| `operation` | `plan` | `verify` | `apply` | `resume` | `rollback` |
+| `expected_root_id` | `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf` | `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf` | `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf` | `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf` | `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf` |
+| `confirm` | `false` | `false` | `true` | `true` | `true` |
+| `compatibility_commit` | *(optional)* | *(optional)* | Required (40-char SHA) | Required (40-char SHA) | Required (40-char SHA) |
+| `plan_run_id` | *(optional)* | *(optional)* | Required (positive integer) | Required (positive integer) | Required (positive integer) |
+| `plan_id` | *(optional)* | *(optional)* | Required (`plan-...`) | Required (`plan-...`) | Required (`plan-...`) |
+| `plan_sha256` | *(optional)* | *(optional)* | Required (64-char hex) | Required (64-char hex) | Required (64-char hex) |
+
+### Step 1: Run Read-Only Plan Workflow
+1. Navigate to **Actions** → **Migrate Google Drive layout**.
+2. Click **Run workflow** on `main`:
+   - `operation`: `plan`
+   - `expected_root_id`: `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
+   - `confirm`: `false`
+3. When the workflow completes successfully, inspect the summary and download the `migration-plan` artifact:
+   - `plan.json`: Contains planned Drive operations, pins, and canonical digest.
+   - `plan-identity.json`: Contains `format_version`, `repository`, `workflow_run_id`, `workflow_commit`, `plan_id`, and `plan_sha256`.
+4. Note the workflow run ID (`plan_run_id`), `plan_id`, and canonical `plan_sha256`.
 
 ### Step 2: Apply Migration
-Execute migration with explicit confirmation:
-```bash
-python scripts/migrate_drive_layout.py \
-  --operation apply \
-  --confirm \
-  --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf \
-  --plan-file plan.json
-```
-During execution:
-- Pre-mutation drift checks verify all pins.
-- Journal is written to `06_control/migration-journal.json`.
-- Each step is executed atomically, verified via readback, and checkpointed in the journal.
-- Post-migration validation verifies canonical layout mode, source release roots, and medallion navigation links.
+1. Ensure the executing commit on `main` is unchanged from the plan run. If `main` has advanced, old plan artifacts cannot be executed; a new plan must be generated on the current commit.
+2. Click **Run workflow** on `main`:
+   - `operation`: `apply`
+   - `expected_root_id`: `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
+   - `confirm`: `true`
+   - `compatibility_commit`: Reviewed 40-character commit SHA (e.g. `f05e22da1c876d51ccce4380ac03efee6cbe2765`)
+   - `plan_run_id`: Run ID of the successful plan workflow run
+   - `plan_id`: Value from `plan-identity.json`
+   - `plan_sha256`: Value from `plan-identity.json`
+3. The workflow validates dispatch parameters, downloads and verifies plan provenance and cutover preconditions, executes moves idempotently, and publishes `migration-receipts`.
 
 ### Step 3: Verify Canonical Layout
-Inspect layout without mutations:
-```bash
-python scripts/migrate_drive_layout.py \
-  --operation verify \
-  --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf
-```
+1. Click **Run workflow** on `main`:
+   - `operation`: `verify`
+   - `expected_root_id`: `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
+   - `confirm`: `false`
+2. Download and inspect `verification.json` from `migration-receipts` to verify that all source release roots and medallion shortcut structures are sound.
 
 ---
 
 ## 3. Failure & Recovery Procedures
 
+Google Drive does not offer atomic multi-resource transactions. Changes are sequenced and tracked via a durable journal in `06_control/migration-journal.json`.
+
 ### Resuming an Interrupted Migration
-If a runner crashes or times out mid-migration, the durable journal in `06_control/migration-journal.json` persists the exact step progress.
-To resume:
-```bash
-python scripts/migrate_drive_layout.py \
-  --operation resume \
-  --confirm \
-  --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf
-```
-The engine:
-- Rehydrates destination folder mappings from the journal.
-- Verifies drift (accounting for already-moved items).
-- Idempotently verifies previously completed steps and executes remaining steps.
+If a runner times out or fails mid-migration:
+1. Identify the original plan's `plan_run_id`, `plan_id`, and `plan_sha256`.
+2. Ensure `main` has not advanced.
+3. Dispatch **Migrate Google Drive layout** on `main`:
+   - `operation`: `resume`
+   - `expected_root_id`: `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
+   - `confirm`: `true`
+   - `compatibility_commit`: Reviewed 40-character commit SHA
+   - `plan_run_id`: Run ID of the original plan workflow run
+   - `plan_id`: Original plan ID
+   - `plan_sha256`: Original plan SHA-256
+4. The workflow validates the journal's pinned plan digest against `plan_sha256`, rehydrates folder mappings, idempotently verifies completed steps, and executes remaining operations.
 
 ### Rolling Back to Legacy Layout
-If rollback is required:
+If migration must be reverted, first confirm that `main` still matches the original plan commit and that the journal remains applicable:
+1. Dispatch **Migrate Google Drive layout** on `main`:
+   - `operation`: `rollback`
+   - `expected_root_id`: `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
+   - `confirm`: `true`
+   - `compatibility_commit`: Reviewed 40-character commit SHA
+   - `plan_run_id`: Run ID of the original plan workflow run
+   - `plan_id`: Original plan ID
+   - `plan_sha256`: Original plan SHA-256
+2. The workflow verifies the remote journal hash, reverses completed moves in reverse order, restores original folder names and parents, and prunes newly created navigation shortcuts.
+
+---
+
+## 4. Local Diagnostics & Verification (Read-Only)
+
+Diagnostic inspections may be run locally. Production writes are restricted to reviewed main Actions workflows.
+
 ```bash
+# Read-only verification
 python scripts/migrate_drive_layout.py \
-  --operation rollback \
-  --confirm \
+  --operation verify \
   --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf
+
+# Read-only cutover precondition check
+python scripts/check_cutover_preconditions.py \
+  --repo rutkala/zohelo-data \
+  --portal-url https://data.zohelo.com/portal-build.json \
+  --compatibility-commit f05e22da1c876d51ccce4380ac03efee6cbe2765
 ```
-The engine:
-- Reverses completed moves in reverse order using the durable journal.
-- Restores original folder names and parents.
-- Prunes newly created navigation shortcuts and empty migration folders.
-- Verifies that legacy layout mode is restored.
 
 ---
 
-## 4. Environment & Account Record
+## 5. Reviewed-Plan Provenance and Receipts
 
-- **Personal Google AI Pro Account:** Verified, `useG1Credits: false`.
-- **GitHub Copilot:** Blocked by insufficient credits.
-- **Repository Permissions:** GHA workflow scoped to `contents: read`, `actions: read`.
+Run plan through the main-branch **Migrate Google Drive layout** workflow. Review both `plan.json` and `plan-identity.json` from its `migration-plan` artifact. Every `apply`, `resume`, or `rollback` dispatch must supply the same `plan_id`, decimal `plan_run_id`, and exact 64-character `plan_sha256` from that artifact.
 
----
+Before credentials are used, the workflow verifies that:
+- The referenced run belongs to this repository (`rutkala/zohelo-data`).
+- The run executed `.github/workflows/migrate-drive-layout.yml` triggered via `workflow_dispatch` on `main`.
+- The run concluded successfully (`success`).
+- The executing workflow commit exactly matches the plan run commit and artifact commit (`github.sha`).
+- The root pins, plan ID, and canonical plan digest (`plan_sha256`) match.
 
-## 5. Reviewed-plan provenance and recovery
+A failed or stale run cannot authorize a mutation. Keep `main` at the reviewed plan commit until cutover verification and any required recovery are complete. After acceptance, normal development may advance `main`, but the old plan no longer authorizes mutations from that newer commit. Before a new migration, create and review a fresh plan. Recovery of an existing journal after `main` advances needs a newly reviewed recovery procedure; generating a fresh plan alone does not make the old journal resumable. Never bypass provenance or force-move `main`.
 
-Run plan through the main-branch **Migrate Google Drive layout** workflow. Review both
-plan.json and plan-identity.json from its migration-plan artifact. Every apply,
-resume, or rollback dispatch must use the same plan_id, decimal plan_run_id, and
-exact 64-character plan_sha256 from that artifact.
+Download the `migration-receipts` artifact after each workflow execution when it is produced. Depending on the operation and how far it progressed, it contains `dispatch-preconditions.json`, `plan-provenance.json`, `cutover-preconditions.json`, `operation-result.json`, `journal.json`, and/or `verification.json`; failures may also produce `migration-error.json`. In particular, `verification.json` is produced by the separate read-only `verify` operation and is not an apply receipt.
 
-Before credentials are used, the workflow verifies that the referenced run belongs to this
-repository, used .github/workflows/migrate-drive-layout.yml, was a workflow_dispatch on
-main, completed successfully, and has the same commit as both the artifact and the executing
-workflow. The plan ID, root pins, and canonical plan digest must also match. A failed or stale
-run cannot authorize a mutation.
-
-The durable journal remains in 06_control and retains the original reviewed plan hash.
-Resume and rollback reject a different hash. Download migration-receipts after every run;
-it includes dispatch, plan-provenance, cutover-precondition, operation, error, verification,
-and local journal receipts that were produced.
-
-Navigation indexes use pending before any release pointer update. Preparation checks every
-expected shortcut target and the complete multipart subtree while keeping the indexes pending.
-Only after the current pointer is written and its exact bytes are read back does publication
-record current_verified. A pointer-write or finalization failure leaves pending navigation for
-the next publisher retry to reconcile. Foreign navigation children stop reconciliation and are
-preserved.
+Navigation indexes are written as pending prior to release pointer updates. Exact pointer readback must confirm bytes before final verification. For current delivery status, see [docs/deliverables.md](../deliverables.md). For agent collaboration policies, see [docs/collaboration.md](../collaboration.md).
