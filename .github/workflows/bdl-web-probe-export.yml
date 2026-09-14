@@ -71,13 +71,17 @@ jobs:
             await page.locator('#ctl00_ContentPlaceHolder_dalej1').click();
             await page.waitForTimeout(1100);
             await page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton').click();
-            const selectAll=page.locator('span.rmText',{hasText:'Zaznacz wszystkie'}).first();
+            const selectAll=page.locator('li.rmItem').filter({hasText:'Zaznacz wszystkie'}).first().locator('.rmLink');
             if(!await selectAll.isVisible()) throw new Error('Select-all territorial menu action not visible');
             await selectAll.click();
-            await page.waitForTimeout(1400);
             const next=page.locator('#ctl00_ContentPlaceHolder_dalej1');
-            if(!await next.isEnabled()) throw new Error('Dalej remained disabled after selecting all territories');
-            console.log('EXPORT_SELECTED_TERRITORIES=' + ((await page.locator('body').innerText()).match(/Wybranych elementów:\s*([0-9\s]+)/i)?.[1]?.replace(/\s/g,'') || 'unknown'));
+            for(let attempt=0;attempt<20 && !(await next.isEnabled());attempt++) await page.waitForTimeout(500);
+            const selectedBody=await page.locator('body').innerText();
+            console.log('EXPORT_SELECTED_TERRITORIES=' + (selectedBody.match(/Wybranych elementów:\s*([0-9\s]+)/i)?.[1]?.replace(/\s/g,'') || 'unknown'));
+            if(!await next.isEnabled()){
+              await controls('AFTER_SELECT_ALL');
+              throw new Error('Dalej remained disabled after selecting all territories');
+            }
             await next.click();
             await page.waitForTimeout(2000);
             console.log('EXPORT_TABLE_URL='+page.url());
