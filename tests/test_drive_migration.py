@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import unittest
+import tempfile
 import httplib2
 from googleapiclient.errors import HttpError
 from unittest.mock import MagicMock, patch
@@ -666,6 +667,25 @@ class DriveMigrationTests(unittest.TestCase):
         self.assertEqual(resumed["journal"]["plan"], immutable_plan)
         self.assertEqual(resumed["journal"]["plan_sha256"], immutable_digest)
         self.assertNotIn("plan", resumed["journal"]["plan"])
+
+
+    def test_local_ahead_journal_recovers_when_remote_receipt_lags(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, _ = make_storage_manager_mock(files, "prod-root-123")
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt = Path(tmp) / "journal.json"
+            engine = DriveMigrationEngine(
+                storage, expected_root_id="prod-root-123", journal_local_path=receipt
+            )
+            engine.apply(engine.plan(), confirmed=True, stop_after_step=0)
+            local = json.loads(receipt.read_text())
+            local["steps"][0]["status"] = "started"
+            local["steps"][0]["started_at_utc"] = "2026-09-14T00:00:00+00:00"
+            receipt.write_text(json.dumps(local))
+            recovered = DriveMigrationEngine(
+                storage, expected_root_id="prod-root-123", journal_local_path=receipt
+            )._load_journal()
+            self.assertEqual(recovered["steps"][0]["status"], "started")
 
 if __name__ == "__main__":
     unittest.main()
