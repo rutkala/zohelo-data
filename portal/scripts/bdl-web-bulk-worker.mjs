@@ -83,20 +83,13 @@ function providerClockValue(date, timeZone) {
 function validateProviderFilename(suggested, generationStartedAt) {
   const subgroupNumber = subgroupId.slice(1);
   const escapedNumber = subgroupNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(suggested)) {
-    throw new Error('BDL export filename does not identify the selected subgroup');
-  }
+  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(suggested)) throw new Error('BDL export filename does not identify the selected subgroup');
   const timestamp = suggested.match(/_([0-9]{14})\.zip$/i)?.[1];
   if (!timestamp) throw new Error('BDL export filename does not contain a generation timestamp');
-  const emitted = Date.UTC(
-    Number(timestamp.slice(0, 4)), Number(timestamp.slice(4, 6)) - 1,
-    Number(timestamp.slice(6, 8)), Number(timestamp.slice(8, 10)),
-    Number(timestamp.slice(10, 12)), Number(timestamp.slice(12, 14)),
-  );
+  const emitted = Date.UTC(Number(timestamp.slice(0, 4)), Number(timestamp.slice(4, 6)) - 1, Number(timestamp.slice(6, 8)), Number(timestamp.slice(8, 10)), Number(timestamp.slice(10, 12)), Number(timestamp.slice(12, 14)));
   const providerStartedAt = providerClockValue(generationStartedAt, 'Europe/Warsaw');
   const providerFinishedAt = providerClockValue(new Date(), 'Europe/Warsaw');
-  const fresh = emitted > providerStartedAt && emitted <= providerFinishedAt;
-  if (!fresh) throw new Error('BDL export filename predates the current generation request');
+  if (!(emitted > providerStartedAt && emitted <= providerFinishedAt)) throw new Error('BDL export filename predates the current generation request');
   return timestamp;
 }
 async function persistZipDownload(download, generationStartedAt = null) {
@@ -110,11 +103,7 @@ async function persistZipDownload(download, generationStartedAt = null) {
   const metadata = await fs.stat(target);
   const prefix = Buffer.alloc(Math.min(16, metadata.size));
   const handle = await fs.open(target, 'r');
-  try {
-    await handle.read(prefix, 0, prefix.length, 0);
-  } finally {
-    await handle.close();
-  }
+  try { await handle.read(prefix, 0, prefix.length, 0); } finally { await handle.close(); }
   if (metadata.size < 4 || prefix[0] !== 0x50 || prefix[1] !== 0x4b) throw new Error('BDL Web download is not a ZIP archive');
   const digest = crypto.createHash('sha256');
   await new Promise((resolve, reject) => {
@@ -138,9 +127,7 @@ async function captureRelationalExport(page) {
   let csvOption = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
   if (!(await csvOption.count()) || !(await csvOption.isVisible().catch(() => false))) {
     const exportButton = page.getByText(/^(?:Eksport|Export)$/i).first();
-    if (!(await exportButton.count()) || !(await exportButton.isVisible().catch(() => false))) {
-      throw new Error('BDL result table has no visible Export control');
-    }
+    if (!(await exportButton.count()) || !(await exportButton.isVisible().catch(() => false))) throw new Error('BDL result table has no visible Export control');
     await exportButton.click();
     await page.waitForTimeout(500);
     csvOption = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
@@ -169,10 +156,6 @@ try {
   result.login = !/Użytkownik:\s*Gość/i.test(loginText) && /Użytkownik:/i.test(loginText);
   if (!result.login) throw new Error('BDL web login failed');
 
-  const baselineExports = await settlePreexistingExports(page);
-  const baselineFingerprints = new Set(baselineExports.map(exportFingerprint));
-  result.preexistingExportsSettled = true;
-  result.baselineExportFingerprints = baselineFingerprints.size;
   await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1200);
   const clicked = new Set();
@@ -208,12 +191,21 @@ try {
     const body = await page.locator('body').innerText().catch(() => '');
     const selectedMatch = body.match(/Wybranych elementów:\s*([0-9\s]+)/i);
     result.selectedTerritorialUnits = selectedMatch ? Number(selectedMatch[1].replace(/\s/g, '')) : null;
+    const territoryPath = new URL(page.url()).pathname;
+    const navigation = page.waitForURL((url) => url.pathname !== territoryPath, { timeout: 60000 });
     await next.click();
-    await page.waitForTimeout(1800);
+    await navigation;
+    await page.waitForTimeout(800);
     result.tableUrl = page.url();
     result.archive = await captureRelationalExport(page);
     result.status = 'downloaded_relational_export';
   } else {
+    const baselineExports = await settlePreexistingExports(page);
+    const baselineFingerprints = new Set(baselineExports.map(exportFingerprint));
+    result.preexistingExportsSettled = true;
+    result.baselineExportFingerprints = baselineFingerprints.size;
+    await page.goto(subgroupUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(800);
     let downloadButton = null;
     for (const id of ['ctl00_ContentPlaceHolder_download1', 'ctl00_ContentPlaceHolder_download2']) {
       const control = page.locator(`#${id}`);
