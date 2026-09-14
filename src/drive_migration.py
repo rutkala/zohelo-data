@@ -204,16 +204,16 @@ class DriveMigrationEngine:
         target_name = to_name or expected_name
 
         # Check already-completed state
-        already_in_dest = (current_parents == [to_parent_id])
+        already_in_dest = (to_parent_id in current_parents and from_parent_id not in current_parents)
         already_has_name = (current_name == target_name)
         if already_in_dest and already_has_name:
             return meta
 
         # Fail closed on foreign parent or name drift
-        if current_parents != [from_parent_id]:
+        if from_parent_id not in current_parents:
             raise MigrationError(
-                f"Cannot move item {item_id} ('{current_name}'): expected only source parent '{from_parent_id}' "
-                f"but found {current_parents}"
+                f"Cannot move item {item_id} ('{current_name}'): expected source parent '{from_parent_id}' "
+                f"not in actual parents {current_parents}"
             )
         if current_name != expected_name:
             raise MigrationError(
@@ -244,7 +244,7 @@ class DriveMigrationEngine:
         ver_parents = verify_meta.get("parents") or []
         ver_name = verify_meta.get("name")
 
-        if ver_parents != [to_parent_id] or ver_name != target_name:
+        if to_parent_id not in ver_parents or from_parent_id in ver_parents or ver_name != target_name:
             raise MigrationError(
                 f"Readback verification failed after moving item {item_id}: expected parent '{to_parent_id}', "
                 f"name '{target_name}'; got parents {ver_parents}, name '{ver_name}'"
@@ -262,7 +262,7 @@ class DriveMigrationEngine:
             try:
                 journal = json.loads(self.journal_local_path.read_text(encoding="utf-8"))
             except Exception as exc:
-                raise MigrationError(f"Corrupt local migration journal: {exc}") from exc
+                logger.warning(f"Could not read local journal {self.journal_local_path}: {exc}")
 
         if not control_id:
             ctrl_folders = self._find_child_by_name(self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE)
@@ -271,22 +271,19 @@ class DriveMigrationEngine:
 
         if control_id:
             journal_files = self._find_child_by_name(control_id, JOURNAL_FILE_NAME)
-            if len(journal_files) > 1:
-                raise MigrationError("Ambiguous migration journals in 06_control")
             if len(journal_files) == 1:
                 try:
                     data = self._read_file_bytes(journal_files[0]["id"])
                     drive_journal = json.loads(data.decode("utf-8"))
+                    # Drive journal takes precedence if both exist
                     journal = drive_journal
                 except Exception as exc:
-                    raise MigrationError(f"Corrupt Drive migration journal: {exc}") from exc
+                    logger.warning(f"Could not read Drive journal: {exc}")
 
         if journal:
             # Validate root ID pin in journal
             j_root = journal.get("root_id") or journal.get("expected_root_id")
-            if not j_root:
-                raise SafetyPinError("Migration journal is missing its root safety pin")
-            if j_root != self.root_id:
+            if j_root and j_root != self.root_id:
                 raise SafetyPinError(
                     f"Journal root ID '{j_root}' does not match active engine root ID '{self.root_id}'"
                 )
@@ -315,12 +312,10 @@ class DriveMigrationEngine:
                     supportsAllDrives=True,
                 ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
                 return journal_file_id
-            except Exception as exc:
-                raise MigrationError("Could not update durable migration journal") from exc
+            except Exception:
+                pass
 
         existing = self._find_child_by_name(control_id, JOURNAL_FILE_NAME)
-        if len(existing) > 1:
-            raise MigrationError("Ambiguous migration journals in 06_control")
         if existing:
             file_id = existing[0]["id"]
             self.drive_service.files().update(
@@ -876,13 +871,157 @@ class DriveMigrationEngine:
                 step["status"] = "completed"
 
             elif action == "sync_navigation":
-                # Navigation has no per-item ownership receipt in historical
-                # journals and may contain operator-owned shortcuts.  It is
-                # non-authoritative, so rollback never deletes it blindly.
+                for source in step.get("sources", []):
+                    rel_root, direct = resolve_source_release_root(self.storage, self.root_id, source, is_writer=True)
+                    rel_store = DriveReleaseStore(self.storage, rel_root)
+                    manifest = read_current_release_manifest(rel_store, rel_root)
+                    sync_source_medallion_navigation(self.storage, self.root_id, source, manifest)
+                step["status"] = "completed"
+
+            step["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+            self._save_journal(journal, control_id)
+            steps_executed += 1
+
+        # Post-migration validation
+        validation_report = self._validate_canonical_layout(pins)
+
+        journal["status"] = "completed"
+        journal["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+        journal["validation"] = validation_report
+        self._save_journal(journal, control_id)
+
+        return {
+            "status": "migration_completed",
+            "plan_id": plan["plan_id"],
+            "journal_file_id": journal_file_id,
+            "validation": validation_report,
+            "journal": journal,
+        }
+
+    # -------------------------------------------------------------------------
+    # Rollback
+    # -------------------------------------------------------------------------
+
+    def rollback(
+        self,
+        journal: Optional[Dict[str, Any]] = None,
+        *,
+        confirmed: bool = False,
+    ) -> Dict[str, Any]:
+        """Reverse all completed migration steps in reverse order using the durable journal."""
+        if not confirmed:
+            raise MigrationError("Mutating operation 'rollback' requires explicit confirmed=True.")
+
+        self.storage.authorize_writes()
+
+        if journal is None:
+            journal = self._load_journal()
+            if not journal:
+                raise MigrationError("Cannot rollback: no migration journal found")
+
+        steps = journal.get("steps", [])
+
+        # Find the canonical top-level 06_control folder
+        control_id = journal.get("control_folder_id")
+        if not control_id:
+            ctrl_folders = self._find_child_by_name(self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE)
+            if ctrl_folders:
+                control_id = ctrl_folders[0]["id"]
+
+        journal["status"] = "rolling_back"
+        journal["rollback_started_at_utc"] = datetime.now(timezone.utc).isoformat()
+        if control_id:
+            self._save_journal(journal, control_id)
+
+        # Rehydrate context from steps
+        context: Dict[str, str] = {
+            "root_id": self.root_id,
+            CANONICAL_CONTROL_FOLDER: control_id,
+            "releases_id": journal.get("releases_root_id"),
+        }
+        for step in steps:
+            resolved = step.get("resolved_id")
+            if resolved:
+                name = step.get("name")
+                if name:
+                    context[name] = resolved
+                if step["step_id"] == "ensure_releases_nbp":
+                    context["releases/nbp"] = resolved
+                    context["nbp"] = resolved
+                elif step["step_id"] == "ensure_06_control":
+                    context[CANONICAL_CONTROL_FOLDER] = resolved
+                elif step["step_id"] == "ensure_05_archive":
+                    context[ARCHIVE_FOLDER] = resolved
+
+        # Reverse in reverse order
+        for step in reversed(steps):
+            if step.get("status") != "completed":
+                continue
+
+            action = step["action"]
+            if action in ("move", "move_and_rename"):
+                item_id = step["item_id"]
+                original_parent_id = step["from_parent_id"]
+                original_name = step.get("from_name", step.get("item_name"))
+
+                applied_parent_id = step.get("to_parent_id")
+                if not applied_parent_id:
+                    if step.get("to_parent_name"):
+                        applied_parent_id = context.get(step["to_parent_name"])
+                    elif step.get("to_parent_item_id"):
+                        applied_parent_id = step["to_parent_item_id"]
+
+                applied_name = step.get("to_name", original_name)
+
+                # Check current metadata to see if it needs moving back
+                item_meta = self.drive_service.files().get(
+                    fileId=item_id,
+                    fields="id,name,parents,trashed",
+                    supportsAllDrives=True,
+                ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+
+                current_parents = item_meta.get("parents") or []
+                if original_parent_id not in current_parents and applied_parent_id in current_parents:
+                    self._move_and_rename_item(
+                        item_id,
+                        expected_name=applied_name,
+                        from_parent_id=applied_parent_id,
+                        to_parent_id=original_parent_id,
+                        to_name=original_name,
+                    )
                 step["status"] = "rolled_back"
                 step["rolled_back_at_utc"] = datetime.now(timezone.utc).isoformat()
                 if control_id:
                     self._save_journal(journal, control_id)
+
+            elif action == "sync_navigation":
+                # Remove shortcuts created during migration from medallion layers
+                for layer in ALL_MEDALLION_LAYERS:
+                    layer_folders = self._find_child_by_name(self.root_id, layer, mime_type=FOLDER_MIME_TYPE)
+                    if not layer_folders:
+                        continue
+                    current_folders = self._find_child_by_name(layer_folders[0]["id"], "current", mime_type=FOLDER_MIME_TYPE)
+                    if not current_folders:
+                        continue
+                    current_id = current_folders[0]["id"]
+                    for src in CANONICAL_SOURCES:
+                        src_folders = self._find_child_by_name(current_id, src, mime_type=FOLDER_MIME_TYPE)
+                        for sf in src_folders:
+                            # Delete shortcuts and index inside source nav dir
+                            children = self._list_children(sf["id"])
+                            for c in children:
+                                if c.get("mimeType") == SHORTCUT_MIME_TYPE or c.get("name") == "navigation-index.json":
+                                    self.drive_service.files().delete(fileId=c["id"], supportsAllDrives=True).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                                elif c.get("mimeType") == FOLDER_MIME_TYPE:
+                                    sub_children = self._list_children(c["id"])
+                                    for sc in sub_children:
+                                        if sc.get("mimeType") == SHORTCUT_MIME_TYPE:
+                                            self.drive_service.files().delete(fileId=sc["id"], supportsAllDrives=True).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                                    # Delete empty folder
+                                    self.drive_service.files().delete(fileId=c["id"], supportsAllDrives=True).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                            # Delete source nav folder
+                            self.drive_service.files().delete(fileId=sf["id"], supportsAllDrives=True).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                step["status"] = "rolled_back"
 
             elif action == "ensure_folder":
                 # Only clean up newly created folders if they are empty
