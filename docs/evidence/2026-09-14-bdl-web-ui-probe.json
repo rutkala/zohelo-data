@@ -1,0 +1,24 @@
+{
+  "kind": "web_ui_route_inspection",
+  "production_ingestion_started": false,
+  "provider_displayed_data_date": "2026-09-11",
+  "subgroup_id": "P3415",
+  "years": [
+    2013,
+    2025
+  ],
+  "year_count": 13,
+  "category_count": 7,
+  "selection_information_count": 91,
+  "statistical_geography_selection_count": 41,
+  "administrative_geography_selection_count": 17,
+  "generated_bulk_button_enabled": false,
+  "relational_csv_zip_export_available": true,
+  "required_followup": [
+    "Complete catalogue/year/dimension/geography enumeration via web UI.",
+    "Include normal-table exports for small selections and generated large packages; skip markers do not prove completion.",
+    "Map source metadata to shared web/API medallion tables.",
+    "API increments follow accepted full bulk; no API historical acquisition."
+  ],
+  "recorded_at_utc": "2026-09-14T19:50:37.403429+00:00"
+}

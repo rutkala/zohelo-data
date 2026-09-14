@@ -1,0 +1,55 @@
+{
+  "inventory_objects": 36329,
+  "duration_seconds": 59.1,
+  "bdl_roots": [
+    {
+      "path": "/01_landing/gus_bdl",
+      "objects_including_root": 3730,
+      "known_bytes": 248235695,
+      "shortcuts": 0
+    },
+    {
+      "path": "/06_control/source_campaigns/gus_bdl",
+      "objects_including_root": 29300,
+      "known_bytes": 2229831906,
+      "shortcuts": 0
+    },
+    {
+      "path": "/releases/bdl",
+      "objects_including_root": 3274,
+      "known_bytes": 41550334976,
+      "shortcuts": 0
+    },
+    {
+      "path": "/05_archive/bdl-platform",
+      "objects_including_root": 1,
+      "known_bytes": 0,
+      "shortcuts": 0
+    },
+    {
+      "path": "/02_bronze/current/bdl",
+      "objects_including_root": 8,
+      "known_bytes": 2695,
+      "shortcuts": 6
+    },
+    {
+      "path": "/03_silver/current/bdl",
+      "objects_including_root": 8,
+      "known_bytes": 2730,
+      "shortcuts": 6
+    },
+    {
+      "path": "/04_gold/current/bdl",
+      "objects_including_root": 8,
+      "known_bytes": 2719,
+      "shortcuts": 6
+    }
+  ],
+  "schema_version": 1,
+  "kind": "read_only_bdl_inventory_evidence",
+  "finished_at_utc": "2026-09-14T19:26:49.132353+00:00",
+  "inventory_sha256": "28cd83ee699bcbf7f30cfc1be8c09eb33af3e659df2bc0f4399954f2ee28580b",
+  "known_total_bytes": 44028410721,
+  "apply_authorization": false,
+  "consistency": "Complete scoped traversal while producer was active; advisory only. Re-enumeration after producer exclusion is required for reset apply."
+}

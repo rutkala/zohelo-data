@@ -1,0 +1,13 @@
+{
+  "row_count": 2843760,
+  "unit_code_count": 41,
+  "first_year": 2007,
+  "last_year": 2026,
+  "year_count": 20,
+  "subgroup_id": "P2695",
+  "transport": "web_bulk",
+  "verification": "manifest and Parquet bytes/sha256 verified; SQL counts recomputed",
+  "coverage": "single subgroup; not complete source ingestion; not integrated in modeled tables",
+  "nonempty_value_rows": 2398377,
+  "numeric_value_rows": 2398377
+}

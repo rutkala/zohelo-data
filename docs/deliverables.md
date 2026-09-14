@@ -4,8 +4,37 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 14 September 2026. **The owner-approved Google Drive consolidation is live and independently verified.** Implementation [PR #101](https://github.com/rutkala/zohelo-data/pull/101) merged, the compatible portal was deployed, and [apply run 34871823795](https://github.com/rutkala/zohelo-data/actions/runs/34871823795) completed successfully. Independent verification passed at 17:21 UTC.
-The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
+Updated 14 September 2026. **Owner directive: GUS BDL-only bulk-first reset prerequisite and historical baseline established (Draft under review, incomplete; no reset or bulk started).**
+The owner issued an explicit requirement for GUS BDL: remove all old BDL data from all layers (`01_landing/gus_bdl`, `06_control/source_campaigns/gus_bdl`, `releases/bdl`, `05_archive/bdl-platform` if present, legacy root `bdl-platform` if present, and BDL navigation under `02_bronze`, `03_silver`, `04_gold` including `current/gus_bdl` and `current/bdl`), then extract all historical data via BDL Web UI ONLY, and stream API increments into the SAME common medallion tables (`br_bdl_*`, `stg_bdl_*`, `dim_bdl_*`, `fact_bdl_*`, `mart_bdl_*`). Full distributions and starter samples are not interchangeable.
+This task delivers the safe, reviewable reset mechanism and test suite only; it accurately keeps the overall BDL delivery goal incomplete until full web bulk collection and incremental ingestion are evidenced. See [ADR 0009](decisions/0009-bdl-historical-web-bulk-and-incremental-common-tables.md).
+
+### GUS BDL-only reset prerequisite and verified operational evidence — 14 September 2026
+
+- **Draft status:** Reset implementation draft is under active review on branch `agy/bdl-reset-20260914` (commit `eec73fa` and follow-up corrections). Incomplete; no reset or bulk extraction has started. No safeguards are claimed complete before lead execution and verified checks.
+- **Owner directive & architecture:** [ADR 0009](decisions/0009-bdl-historical-web-bulk-and-incremental-common-tables.md) defines the two-stage model: Web-only historical bulk extraction followed by API increments into the same medallion relations.
+- **Actual read-only Drive inventory (36,329 BDL objects):**
+  - `/01_landing/gus_bdl`: 3,730 objects (248,235,695 bytes)
+  - `/06_control/source_campaigns/gus_bdl`: 29,300 objects (2,229,831,906 bytes)
+  - `/releases/bdl`: 3,274 objects (41,550,334,976 bytes)
+  - `/05_archive/bdl-platform`: 1 object (empty folder)
+  - `/02_bronze/current/bdl`: 8 objects (including 6 shortcuts)
+  - `/03_silver/current/bdl`: 8 objects (including 6 shortcuts)
+  - `/04_gold/current/bdl`: 8 objects (including 6 shortcuts)
+- **Verified coverage & production evidence:**
+  - Ingestion run [34879372531](https://github.com/rutkala/zohelo-data/actions/runs/34879372531): Landing fresh restore with 3,996 accepted/published responses (at 18:39 UTC), 2,409 pending tasks, zero pending retries or backlog, and 207,957,488 raw bytes; run was cancelled at 25-minute timeout with bulk collection skipped.
+  - Earlier run [34870987579](https://github.com/rutkala/zohelo-data/actions/runs/34870987579) failed on Drive `TimeoutError` writing state.
+  - Fresh Drive verification found modeled release `b0e1a4b6-a9bc-4d63-9ff0-38e43fe0aea7` with hash-verified coverage Parquet: 41 / 172,576 variables (0.02376%) and 4,331,822 modeled observations from 3,862 inputs (retrieval cutoff 14:14:46 UTC). Latest Landing (3,996 responses) is newer than that modeled release.
+  - No reset or bulk start has executed in production.
+- **Operational boundary & review block:** Automatic approval review blocked disabling the current `source-gus-bdl.yml` workflow and cancelling queued run `34883169715`. Recorded approval-review blocking pause/cancel without claiming it executed; neither workflow was disabled nor was any run cancelled by the assistant. Lead will handle live approval, workflow pause/cancellation, and reviewed dispatch. Implementation code and fixture tests are delivered in worktree `/workspaces/zohelo-bdl-reset-20260914`.
+- **Safe reset design & Google Drive trash retention policy:**
+  - Mutation strategy targets ONLY the 7 known non-overlapping BDL root folders via recoverable Google Drive trash (`trashed=true`), never 36,329 individual descendants. Drive v3 inherits `trashed=true` down the entire subtree, while `explicitlyTrashed=true` marks roots.
+  - Sourced Google Drive v3 retention policy: items in Google Drive trash are automatically purged permanently by Google after 30 days. Trashing root folders allows full subtree recovery by setting `trashed=false` on the 7 roots within this 30-day window. Beyond 30 days, Google Drive permanently deletes trashed items; no retention guarantee exists after 30 days without external archiving.
+  - Durable write-ahead journaling is maintained under `06_control/bdl_resets/<plan_id>/` before first mutation; provider quota attempts (15m, 12h, 7d windows) are preserved in an explicit fresh ledger with `coverage_status='awaiting_web_bulk'` and `gate='awaiting_web_bulk'` with zero prior tasks. See [operational runbook](operations/bdl-reset.md).
+- **Next web discovery & integration blockers:**
+  1. *Subgroup hierarchy discovery:* Exhaustive discovery and tree validation of all BDL Web UI subject/subgroup export endpoints without orphaned or invalid nodes.
+  2. *Worker execution limits:* Memory, timeout, and session bounds for Playwright browser downloads in GitHub Actions without buffering multi-gigabyte archives.
+  3. *DuckDB normalized ingestion:* Streaming conversion of downloaded bulk ZIP CSVs into the common medallion schema matching existing API models.
+  4. *Project management boundary:* No new project task board is created; status remains in this canonical delivery record.
 
 ### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026
 
