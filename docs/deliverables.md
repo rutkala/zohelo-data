@@ -11,6 +11,22 @@ release namespaces. NBP product acceptance remains complete; full coverage of al
 sources remains open. Existing serialized ingestion schedules continue the incomplete Eurostat and
 BDL backfills and the separate WDI API reconciliation queue.
 
+### Delegation policy agreed — 14 September 2026
+
+The owner approved Copilot Pro or Codespace AGY as the first execution tier, with internal
+agents used only when needed. The lead retains planning, architecture, acceptance,
+review, integration and communication. Work proceeds one engineering task at a time.
+AGY uses only the personal Gemini subscription and one reusable Codespace with a separate
+feature branch/worktree per task. See the [working agreement](collaboration.md#delegation-and-cost-policy).
+
+This records the agreed policy, not completed end-to-end automation. The earlier AGY
+pilot demonstrated execution with a cached account session; a subsequent read-only CLI
+check verified version 1.2.2. Before another model task, verify the account owning that
+session and disable credit overages. Direct CLI/SSH dispatch from the Work runtime
+remains unconfigured; do not claim a worker has started without its actual dispatch
+receipt. No Cloud model access was enabled, and recording this decision launches no
+engineering worker or duplicate ingestion run.
+
 ### Delivered: WDI Bronze → Silver → Gold → semantic release — 13 September 2026
 
 The implementation merged in [PR #96](https://github.com/rutkala/zohelo-data/pull/96) consumes the freshly verified current
