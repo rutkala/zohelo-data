@@ -47,11 +47,13 @@ def promote(*, target_release_id: str, expected_current_release_id: str, source:
         target_release_id=target_release_id,
         expected_current_release_id=expected_current_release_id,
         pre_promote_validator=validator,
+        before_pointer_write=(
+            lambda store, pointer: sync_source_medallion_navigation(
+                storage, root_id, source, read_release_manifest(store, pointer)
+            )
+        ) if direct_releases else None,
         direct_releases=direct_releases,
     )
-    if direct_releases:
-        manifest = result.get("manifest") or read_release_manifest(release_store, target_release_id)
-        sync_source_medallion_navigation(storage, root_id, source, manifest)
 
     report = {
         key: result[key]

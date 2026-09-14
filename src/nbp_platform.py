@@ -25,7 +25,8 @@ from ingestion.nbp_state import (LoadedState, commit_response, list_successful_r
                                  load_state, plan_requests, response_envelope,
                                  ingestion_config_from_config, validate_non_regressive_cutoff)
 from layout_resolution import resolve_nbp_control_root, resolve_source_release_root
-from release_protocol import publish_release
+from medallion_navigation import sync_source_medallion_navigation
+from release_protocol import publish_release, read_release_manifest
 from release_validation import validate_staged_release
 from semantic_query import validate_release_metrics
 from storage_manager import StorageManager
@@ -295,10 +296,13 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
         result = publish_release(DriveReleaseStore(storage, release_root), release_root, datasets=datasets,
                                  artifacts=artifacts, inputs=inputs, code_sha=sha, measurements=measurements,
                                  release_scope="nbp_platform", pre_promote_validator=validate_staged_release,
+                                 before_pointer_write=(
+                                     lambda release_store, pointer: sync_source_medallion_navigation(
+                                         storage, store.root_id, "nbp",
+                                         read_release_manifest(release_store, pointer),
+                                     )
+                                 ) if direct_releases else None,
                                  direct_releases=direct_releases)
-        if direct_releases:
-            from medallion_navigation import sync_source_medallion_navigation
-            sync_source_medallion_navigation(storage, store.root_id, "nbp", result["manifest"])
         report = {"status": "nbp_platform_published", "release_id": result["release_id"], "code_sha": sha,
                   "cutoff": cutoff.isoformat(), "coverage": catalogue_state["sources"],
                   "datasets": [{key: item[key] for key in ("dataset_id", "row_count", "min_date", "max_date")}

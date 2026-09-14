@@ -17,6 +17,9 @@ on:
       plan_run_id:
         type: string
         required: false
+      plan_id:
+        type: string
+        required: false
       plan_sha256:
         type: string
         required: false
@@ -51,14 +54,19 @@ jobs:
           OPERATION: ${{ inputs.operation }}
           COMPATIBILITY_COMMIT: ${{ inputs.compatibility_commit }}
           PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          PLAN_ID: ${{ inputs.plan_id }}
           PLAN_SHA256: ${{ inputs.plan_sha256 }}
           CONFIRMED: ${{ inputs.confirm }}
         run: |
-          if [[ "$OPERATION" =~ ^(apply|resume|rollback)$ && "$CONFIRMED" != "true" ]]; then exit 1; fi
-          if [[ "$OPERATION" =~ ^(apply|resume|rollback)$ && -z "$COMPATIBILITY_COMMIT" ]]; then exit 1; fi
-          if [[ "$OPERATION" == "apply" && ( -z "$PLAN_RUN_ID" || -z "$PLAN_SHA256" ) ]]; then exit 1; fi
+          python scripts/validate_migration_dispatch.py \
+            --operation "$OPERATION" \
+            --confirmed "$CONFIRMED" \
+            --compatibility-commit "$COMPATIBILITY_COMMIT" \
+            --plan-run-id "$PLAN_RUN_ID" \
+            --plan-id "$PLAN_ID" \
+            --plan-sha256 "$PLAN_SHA256"
       - name: Download reviewed plan artifact
-        if: inputs.operation == 'apply'
+        if: inputs.operation == 'apply' || inputs.operation == 'resume' || inputs.operation == 'rollback'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: migration-plan
@@ -66,6 +74,26 @@ jobs:
           run-id: ${{ inputs.plan_run_id }}
           repository: ${{ github.repository }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify reviewed plan provenance
+        if: inputs.operation == 'apply' || inputs.operation == 'resume' || inputs.operation == 'rollback'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          EXPECTED_ROOT_ID: ${{ inputs.expected_root_id }}
+          PLAN_ID: ${{ inputs.plan_id }}
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+          REPOSITORY: ${{ github.repository }}
+          EXECUTING_COMMIT: ${{ github.sha }}
+        run: |
+          python scripts/verify_migration_plan.py \
+            --plan reviewed-plan/plan.json \
+            --identity reviewed-plan/plan-identity.json \
+            --run-id "$PLAN_RUN_ID" \
+            --expected-root-id "$EXPECTED_ROOT_ID" \
+            --expected-plan-id "$PLAN_ID" \
+            --expected-plan-sha256 "$PLAN_SHA256" \
+            --repository "$REPOSITORY" \
+            --executing-commit "$EXECUTING_COMMIT"
       - name: Verify cutover preconditions
         if: inputs.operation == 'apply' || inputs.operation == 'resume' || inputs.operation == 'rollback'
         env:
@@ -85,14 +113,19 @@ jobs:
         run: |
           args=(--operation "$OPERATION" --expected-root-id "$EXPECTED_ROOT_ID")
           if [[ "$CONFIRMED" == "true" ]]; then args+=(--confirm); fi
-          if [[ "$OPERATION" == "apply" ]]; then args+=(--plan-file reviewed-plan/plan.json --plan-sha256 "$PLAN_SHA256"); fi
+          if [[ "$OPERATION" == "apply" ]]; then args+=(--plan-file reviewed-plan/plan.json); fi
+          if [[ "$OPERATION" =~ ^(apply|resume|rollback)$ ]]; then args+=(--plan-sha256 "$PLAN_SHA256"); fi
           python scripts/migrate_drive_layout.py "${args[@]}"
       - name: Record plan identity
-        if: always() && inputs.operation == 'plan'
+        if: success() && inputs.operation == 'plan'
         run: |
-          python -c 'import json; p=json.load(open("plan.json")); open("plan-identity.json","w").write(json.dumps({"workflow_commit":"${{ github.sha }}","plan_id":p.get("plan_id"),"plan_sha256":p.get("plan_sha256"),"root_id":p.get("root_id")},indent=2)+"\n")'
+          python scripts/record_migration_plan_identity.py \
+            --plan plan.json \
+            --repository "${{ github.repository }}" \
+            --run-id "${{ github.run_id }}" \
+            --workflow-commit "${{ github.sha }}"
       - name: Upload reviewed plan
-        if: always() && inputs.operation == 'plan'
+        if: success() && inputs.operation == 'plan'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: migration-plan
@@ -112,4 +145,6 @@ jobs:
             operation-result.json
             migration-error.json
             cutover-preconditions.json
+            plan-provenance.json
+            dispatch-preconditions.json
           if-no-files-found: ignore

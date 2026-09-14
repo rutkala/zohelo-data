@@ -37,6 +37,42 @@ def _get_drive_service(store_or_storage: Any) -> Any:
     )
 
 
+def _paged_items(store_or_storage: Any, *, query: str, fields: str) -> list[dict[str, Any]]:
+    drive_service = _get_drive_service(store_or_storage)
+    if drive_service is None:
+        return []
+    result: list[dict[str, Any]] = []
+    token = None
+    seen_tokens: set[str] = set()
+    for _ in range(100):
+        response = drive_service.files().list(
+            q=query,
+            fields=f"nextPageToken,incompleteSearch,files({fields})",
+            pageSize=100,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            pageToken=token,
+        ).execute()
+        if not isinstance(response, dict):
+            raise NavigationError("Drive navigation listing returned a malformed response")
+        if response.get("incompleteSearch") not in (None, False):
+            raise NavigationError("Drive navigation listing was incomplete")
+        items = response.get("files")
+        if not isinstance(items, list):
+            raise NavigationError("Drive navigation listing omitted its files array")
+        if any(not isinstance(item, dict) or not item.get("id") for item in items):
+            raise NavigationError("Drive navigation listing returned malformed file metadata")
+        result.extend(items)
+        next_token = response.get("nextPageToken")
+        if next_token in (None, ""):
+            return result
+        if not isinstance(next_token, str) or next_token in seen_tokens:
+            raise NavigationError("Drive navigation listing returned a malformed or repeated page token")
+        seen_tokens.add(next_token)
+        token = next_token
+    raise NavigationError("Drive navigation listing exceeded the page limit")
+
+
 def _find_item(
     store_or_storage: Any,
     name: str,
@@ -47,25 +83,15 @@ def _find_item(
     drive_service = _get_drive_service(store_or_storage)
     if drive_service is not None:
         escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
-        q = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
-        if mime_type:
-            q += f" and mimeType='{mime_type}'"
-        result = []
-        token = None
-        while True:
-            resp = drive_service.files().list(
-                q=q,
-                fields="nextPageToken,files(id,mimeType)",
-                pageSize=50,
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-                pageToken=token,
-            ).execute()
-            result.extend([f["id"] for f in resp.get("files", [])])
-            token = resp.get("nextPageToken")
-            if not token:
-                break
-        return result
+        query = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
+        items = _paged_items(
+            store_or_storage,
+            query=query,
+            fields="id,name,mimeType,parents,shortcutDetails",
+        )
+        if mime_type is not None:
+            items = [item for item in items if item.get("mimeType") == mime_type]
+        return [item["id"] for item in items]
     if hasattr(store_or_storage, "find"):
         return list(store_or_storage.find(name, parent_id))
     if hasattr(store_or_storage, "_list_exact_folders"):
@@ -75,26 +101,37 @@ def _find_item(
 
 
 def _list_children(store_or_storage: Any, parent_id: str) -> list[dict[str, Any]]:
-    drive_service = _get_drive_service(store_or_storage)
-    if drive_service is not None:
-        q = f"'{parent_id}' in parents and trashed=false"
-        result = []
-        token = None
-        while True:
-            resp = drive_service.files().list(
-                q=q,
-                fields="nextPageToken,files(id,name,mimeType,shortcutDetails)",
-                pageSize=100,
-                supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-                pageToken=token,
-            ).execute()
-            result.extend(resp.get("files", []))
-            token = resp.get("nextPageToken")
-            if not token:
-                break
-        return result
-    return []
+    if _get_drive_service(store_or_storage) is None:
+        return []
+    return _paged_items(
+        store_or_storage,
+        query=f"'{parent_id}' in parents and trashed=false",
+        fields="id,name,mimeType,parents,shortcutDetails",
+    )
+
+
+def _unique_child(
+    store_or_storage: Any,
+    parent_id: str,
+    name: str,
+    mime_type: str,
+    *,
+    required: bool,
+) -> dict[str, Any] | None:
+    matches = [item for item in _list_children(store_or_storage, parent_id) if item.get("name") == name]
+    if len(matches) > 1:
+        raise NavigationError(f"Drive item '{name}' is duplicated under parent {parent_id}")
+    if not matches:
+        if required:
+            raise NavigationError(f"Drive item '{name}' is missing under parent {parent_id}")
+        return None
+    item = matches[0]
+    if item.get("mimeType") != mime_type:
+        raise NavigationError(
+            f"Drive item '{name}' under parent {parent_id} has MIME {item.get('mimeType')!r}, "
+            f"expected {mime_type!r}"
+        )
+    return item
 
 
 def _mkdir(store_or_storage: Any, name: str, parent_id: str) -> str:
@@ -221,172 +258,389 @@ def _read_file_bytes(store_or_storage: Any, file_id: str) -> bytes:
     raise TypeError(f"Unsupported store: {type(store_or_storage)}")
 
 
+def _manifest_layers(source_id: str, manifest: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("release_id"), str):
+        raise NavigationError("Navigation requires a manifest with a release ID")
+    if manifest.get("status") != "validated" or manifest.get("tests") != {"passed": True}:
+        raise NavigationError("Navigation requires a validated manifest with passing tests")
+    datasets = manifest.get("datasets")
+    if not isinstance(datasets, list):
+        raise NavigationError("Navigation manifest datasets must be a list")
+    by_layer: dict[str, list[dict[str, Any]]] = {layer: [] for layer in ALL_MEDALLION_LAYERS}
+    seen: set[tuple[str, str]] = set()
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            raise NavigationError("Navigation manifest contains malformed dataset metadata")
+        layer = dataset.get("layer")
+        if layer not in by_layer:
+            continue
+        table_name = dataset.get("table_name")
+        files = dataset.get("files")
+        if not isinstance(table_name, str) or not table_name or not isinstance(files, list) or not files:
+            raise NavigationError("Navigation dataset requires a table name and at least one file")
+        key = (layer, table_name)
+        if key in seen:
+            raise NavigationError(f"Duplicate navigation table key {layer}/{table_name}")
+        seen.add(key)
+        names: set[str] = set()
+        for index, item in enumerate(files):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                raise NavigationError(f"Navigation table {layer}/{table_name} has malformed file metadata")
+            name = item.get("name", f"{table_name}--part-{index}.parquet")
+            if not isinstance(name, str) or not name or name in names:
+                raise NavigationError(f"Navigation table {layer}/{table_name} has duplicate part names")
+            names.add(name)
+        by_layer[layer].append(dataset)
+    return by_layer
+
+
+def _read_index(store_or_storage: Any, item: dict[str, Any] | None) -> dict[str, Any] | None:
+    if item is None:
+        return None
+    try:
+        value = json.loads(_read_file_bytes(store_or_storage, item["id"]).decode("utf-8"))
+    except Exception as exc:
+        raise NavigationError("Navigation index is corrupt") from exc
+    if not isinstance(value, dict):
+        raise NavigationError("Navigation index is not a JSON object")
+    return value
+
+
+def _index_owned_ids(index_doc: dict[str, Any] | None) -> set[str]:
+    if not index_doc:
+        return set()
+    owned = {
+        value for value in index_doc.get("previous_managed_ids", [])
+        if isinstance(value, str) and value
+    }
+    tables = index_doc.get("tables", {})
+    if isinstance(tables, dict):
+        for table in tables.values():
+            if not isinstance(table, dict):
+                continue
+            container_id = table.get("container_id")
+            if isinstance(container_id, str) and container_id:
+                owned.add(container_id)
+            shortcuts = table.get("shortcuts", [])
+            if isinstance(shortcuts, list):
+                for shortcut in shortcuts:
+                    if isinstance(shortcut, dict):
+                        shortcut_id = shortcut.get("shortcut_id")
+                        if isinstance(shortcut_id, str) and shortcut_id:
+                            owned.add(shortcut_id)
+    return owned
+
+
+def _desired_tables(datasets: list[dict[str, Any]]) -> dict[str, Any]:
+    tables: dict[str, Any] = {}
+    for dataset in datasets:
+        table_name = dataset["table_name"]
+        files = dataset["files"]
+        shortcuts = []
+        for index, item in enumerate(files):
+            name = (
+                f"{table_name}.parquet"
+                if len(files) == 1
+                else item.get("name", f"{table_name}--part-{index}.parquet")
+            )
+            shortcuts.append({
+                "name": name,
+                "target_id": item["id"],
+                "size": item.get("size", 0),
+                "sha256": item.get("sha256", ""),
+            })
+        tables[table_name] = {
+            "is_multi_part": len(files) > 1,
+            "file_count": len(files),
+            "shortcuts": shortcuts,
+        }
+    return tables
+
+
+def _sync_owned_shortcut(
+    store_or_storage: Any,
+    parent_id: str,
+    desired: dict[str, Any],
+    owned: set[str],
+    *,
+    recovering_pending: bool,
+) -> str:
+    children = _list_children(store_or_storage, parent_id)
+    matches = [item for item in children if item.get("name") == desired["name"]]
+    if any(item.get("mimeType") != SHORTCUT_MIME_TYPE for item in matches):
+        raise NavigationError(f"Navigation name collision for shortcut {desired['name']!r}")
+    foreign = [item for item in matches if item["id"] not in owned]
+    exact = [
+        item for item in matches
+        if (item.get("shortcutDetails") or {}).get("targetId") == desired["target_id"]
+    ]
+    if foreign and not (
+        recovering_pending and len(matches) == 1 and len(exact) == 1
+    ):
+        raise NavigationError(f"Refusing to replace unowned shortcut {desired['name']!r}")
+    if len(matches) == 1 and len(exact) == 1:
+        owned.add(matches[0]["id"])
+        return matches[0]["id"]
+    for item in matches:
+        if item["id"] not in owned:
+            raise NavigationError(f"Refusing to delete unowned shortcut {desired['name']!r}")
+        _delete_item(store_or_storage, item["id"])
+        owned.discard(item["id"])
+    shortcut_id = _create_shortcut(
+        store_or_storage, desired["name"], desired["target_id"], parent_id
+    )
+    owned.add(shortcut_id)
+    return shortcut_id
+
+
+def _remove_owned_tree(
+    store_or_storage: Any, item: dict[str, Any], owned: set[str]
+) -> None:
+    item_id = item["id"]
+    if item_id not in owned:
+        raise NavigationError(f"Refusing to prune unowned navigation item {item_id}")
+    if item.get("mimeType") == FOLDER_MIME_TYPE:
+        for child in _list_children(store_or_storage, item_id):
+            _remove_owned_tree(store_or_storage, child, owned)
+    _delete_item(store_or_storage, item_id)
+    owned.discard(item_id)
+
+
 def sync_source_medallion_navigation(
     store_or_storage: Any,
     root_id: str,
     source_id: str,
     manifest: dict[str, Any],
 ) -> dict[str, Any]:
-    """Sync navigation shortcuts and index in 02_bronze, 03_silver, 04_gold for source_id.
-
-    Derived strictly from verified manifest. Never copies Parquet bytes.
-    Covers multi-file datasets by grouping parts in a dataset folder.
-    Prunes obsolete shortcuts across all layers (including layers becoming empty).
-    """
+    """Durably reconcile canonical shortcuts before a release pointer changes."""
+    by_layer = _manifest_layers(source_id, manifest)
     release_id = manifest["release_id"]
-    receipts: dict[str, Any] = {"source_id": source_id, "release_id": release_id, "layers": {}}
-
-    # Group datasets by layer
-    by_layer: dict[str, list[dict[str, Any]]] = {l: [] for l in ALL_MEDALLION_LAYERS}
-    for dataset in manifest.get("datasets", []):
-        layer = dataset.get("layer")
-        if layer in by_layer:
-            by_layer[layer].append(dataset)
-
+    states: list[dict[str, Any]] = []
     for layer in ALL_MEDALLION_LAYERS:
         datasets = by_layer[layer]
-        layer_folders = _find_item(store_or_storage, layer, root_id, mime_type=FOLDER_MIME_TYPE)
-        if len(layer_folders) != 1:
-            raise NavigationError(f"Medallion layer folder '{layer}' missing or ambiguous")
-        layer_id = layer_folders[0]
-
-        # Check if current/ exists; if no datasets in this layer and current/ does not exist, nothing to do
-        current_folders = _find_item(store_or_storage, CURRENT_NAV_DIR, layer_id, mime_type=FOLDER_MIME_TYPE)
-        if not datasets and not current_folders:
+        layer_item = _unique_child(
+            store_or_storage, root_id, layer, FOLDER_MIME_TYPE, required=True
+        )
+        current_item = _unique_child(
+            store_or_storage, layer_item["id"], CURRENT_NAV_DIR, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if current_item is None:
             continue
-
-        if not current_folders:
-            current_id = _mkdir(store_or_storage, CURRENT_NAV_DIR, layer_id)
-        else:
-            current_id = current_folders[0]
-
-        # Check if current/<source_id>/ exists
-        source_folders = _find_item(store_or_storage, source_id, current_id, mime_type=FOLDER_MIME_TYPE)
-        if not datasets and not source_folders:
+        source_item = _unique_child(
+            store_or_storage, current_item["id"], source_id, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if source_item is None:
             continue
-
-        if not source_folders:
-            source_nav_id = _mkdir(store_or_storage, source_id, current_id)
-        else:
-            source_nav_id = source_folders[0]
-
-        expected_top_level_shortcuts: set[str] = set()
-        expected_dataset_folders: dict[str, set[str]] = {}
-        table_receipts = {}
-
-        for dataset in datasets:
-            table_name = dataset["table_name"]
-            files = dataset.get("files", [])
-            if not files:
+        index_item = _unique_child(
+            store_or_storage, source_item["id"], "navigation-index.json",
+            "application/json", required=False,
+        )
+        old_index = _read_index(store_or_storage, index_item)
+        recovering_pending = bool(old_index and old_index.get("status") == "pending")
+        if old_index:
+            if old_index.get("format_version") != 1:
+                raise NavigationError("Navigation index has unsupported format version")
+            if old_index.get("source_id") != source_id or old_index.get("layer") != layer:
+                raise NavigationError("Navigation index identity does not match its folder")
+            if old_index.get("status") not in {"pending", "current_verified"}:
+                raise NavigationError("Navigation index has unsupported status")
+        owned = _index_owned_ids(old_index)
+        desired = _desired_tables(datasets)
+        pending_tables = (old_index or {}).get("tables", {}) if recovering_pending else {}
+        if recovering_pending and not isinstance(pending_tables, dict):
+            raise NavigationError("Pending navigation tables are malformed")
+        expected_names = {
+            shortcut["name"]
+            for table in desired.values()
+            if not table["is_multi_part"]
+            for shortcut in table["shortcuts"]
+        } | {
+            name for name, table in desired.items() if table["is_multi_part"]
+        } | {
+            shortcut["name"]
+            for table in pending_tables.values()
+            if isinstance(table, dict) and not table.get("is_multi_part")
+            for shortcut in table.get("shortcuts", [])
+            if isinstance(shortcut, dict) and isinstance(shortcut.get("name"), str)
+        } | {
+            name for name, table in pending_tables.items()
+            if isinstance(name, str) and isinstance(table, dict) and table.get("is_multi_part")
+        }
+        for child in _list_children(store_or_storage, source_item["id"]):
+            if index_item and child["id"] == index_item["id"]:
                 continue
-
-            if len(files) == 1:
-                # Single-file dataset: direct shortcut <table_name>.parquet
-                file_entry = files[0]
-                shortcut_name = f"{table_name}.parquet"
-                expected_top_level_shortcuts.add(shortcut_name)
-                sc_id = _sync_shortcut(
-                    store_or_storage, shortcut_name, file_entry["id"], source_nav_id
-                )
-                table_receipts[table_name] = {
-                    "is_multi_part": False,
-                    "file_count": 1,
-                    "shortcuts": [
-                        {
-                            "name": shortcut_name,
-                            "shortcut_id": sc_id,
-                            "target_id": file_entry["id"],
-                            "size": file_entry.get("size", 0),
-                            "sha256": file_entry.get("sha256", ""),
-                        }
-                    ],
-                }
-            else:
-                # Multi-file dataset: dataset subfolder containing part shortcuts
-                ds_folders = _find_item(store_or_storage, table_name, source_nav_id, mime_type=FOLDER_MIME_TYPE)
-                ds_folder_id = ds_folders[0] if ds_folders else _mkdir(
-                    store_or_storage, table_name, source_nav_id
-                )
-                part_shortcuts = []
-                part_names: set[str] = set()
-                for part_idx, file_entry in enumerate(files):
-                    part_name = file_entry.get("name", f"{table_name}--part-{part_idx}.parquet")
-                    part_names.add(part_name)
-                    sc_id = _sync_shortcut(
-                        store_or_storage, part_name, file_entry["id"], ds_folder_id
+            if child["id"] in owned:
+                if child.get("mimeType") == FOLDER_MIME_TYPE:
+                    candidate_tables = [
+                        table for table in (desired.get(child.get("name")), pending_tables.get(child.get("name")))
+                        if isinstance(table, dict) and table.get("is_multi_part")
+                    ]
+                    wanted = {
+                        (part.get("name"), part.get("target_id"))
+                        for table in candidate_tables
+                        for part in table.get("shortcuts", [])
+                        if isinstance(part, dict)
+                    }
+                    for part in _list_children(store_or_storage, child["id"]):
+                        identity = (
+                            part.get("name"),
+                            (part.get("shortcutDetails") or {}).get("targetId"),
+                        )
+                        if part["id"] not in owned:
+                            if recovering_pending and part.get("mimeType") == SHORTCUT_MIME_TYPE and identity in wanted:
+                                owned.add(part["id"])
+                            else:
+                                raise NavigationError("Managed navigation folder contains unowned content")
+                continue
+            if recovering_pending and child.get("name") in expected_names:
+                if child.get("mimeType") == FOLDER_MIME_TYPE:
+                    candidate_tables = [
+                        table for table in (desired.get(child.get("name")), pending_tables.get(child.get("name")))
+                        if isinstance(table, dict) and table.get("is_multi_part")
+                    ]
+                    if not candidate_tables:
+                        raise NavigationError("Pending navigation folder does not match the target")
+                    wanted = {
+                        (part.get("name"), part.get("target_id"))
+                        for table in candidate_tables
+                        for part in table.get("shortcuts", [])
+                        if isinstance(part, dict)
+                    }
+                    for part in _list_children(store_or_storage, child["id"]):
+                        identity = (part.get("name"), (part.get("shortcutDetails") or {}).get("targetId"))
+                        if part.get("mimeType") != SHORTCUT_MIME_TYPE or identity not in wanted:
+                            raise NavigationError("Pending navigation contains unowned content")
+                        owned.add(part["id"])
+                    owned.add(child["id"])
+                elif (
+                    child.get("mimeType") == SHORTCUT_MIME_TYPE
+                    and any(
+                        shortcut["name"] == child.get("name")
+                        and shortcut["target_id"]
+                        == (child.get("shortcutDetails") or {}).get("targetId")
+                        for table in list(pending_tables.values()) + list(desired.values())
+                        if isinstance(table, dict)
+                        for shortcut in table.get("shortcuts", [])
+                        if isinstance(shortcut, dict)
                     )
-                    part_shortcuts.append(
-                        {
-                            "name": part_name,
-                            "shortcut_id": sc_id,
-                            "target_id": file_entry["id"],
-                            "size": file_entry.get("size", 0),
-                            "sha256": file_entry.get("sha256", ""),
-                        }
-                    )
-                expected_dataset_folders[table_name] = part_names
-                table_receipts[table_name] = {
-                    "is_multi_part": True,
-                    "file_count": len(files),
-                    "container_id": ds_folder_id,
-                    "shortcuts": part_shortcuts,
-                }
-
-        # ---------------------------------------------------------------------
-        # Pruning obsolete shortcuts in source_nav_id
-        # ---------------------------------------------------------------------
-        existing_children = _list_children(store_or_storage, source_nav_id)
-        for child in existing_children:
-            c_name = child.get("name", "")
-            c_mime = child.get("mimeType", "")
-            c_id = child["id"]
-
-            if c_mime == SHORTCUT_MIME_TYPE:
-                if c_name not in expected_top_level_shortcuts:
-                    logger.info(f"Pruning obsolete shortcut '{c_name}' in {layer}/{source_id}")
-                    _delete_item(store_or_storage, c_id)
-
-            elif c_mime == FOLDER_MIME_TYPE:
-                if c_name in expected_dataset_folders:
-                    # Prune surplus parts inside expected multi-file folder
-                    expected_parts = expected_dataset_folders[c_name]
-                    folder_children = _list_children(store_or_storage, c_id)
-                    for f_child in folder_children:
-                        if f_child.get("mimeType") == SHORTCUT_MIME_TYPE and f_child.get("name") not in expected_parts:
-                            logger.info(f"Pruning obsolete part shortcut '{f_child.get('name')}' in {layer}/{source_id}/{c_name}")
-                            _delete_item(store_or_storage, f_child["id"])
+                ):
+                    owned.add(child["id"])
                 else:
-                    # Obsolete dataset folder (e.g. dataset removed or converted to single-file)
-                    folder_children = _list_children(store_or_storage, c_id)
-                    for f_child in folder_children:
-                        if f_child.get("mimeType") == SHORTCUT_MIME_TYPE:
-                            _delete_item(store_or_storage, f_child["id"])
-                    # Check if empty now
-                    remaining = _list_children(store_or_storage, c_id)
-                    if not remaining:
-                        logger.info(f"Pruning obsolete empty dataset folder '{c_name}' in {layer}/{source_id}")
-                        _delete_item(store_or_storage, c_id)
-
-        # Write or update navigation-index.json
-        index_doc = {
+                    raise NavigationError("Pending navigation item does not match the target")
+            else:
+                raise NavigationError(
+                    f"Unowned item {child.get('name')!r} exists in {layer}/current/{source_id}"
+                )
+        pending = {
             "format_version": 1,
             "source_id": source_id,
             "layer": layer,
             "release_id": release_id,
             "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-            "status": "current_verified",
-            "tables": table_receipts,
+            "status": "pending",
+            "previous_managed_ids": sorted(owned),
+            "tables": desired,
         }
-        index_bytes = _json_bytes(index_doc)
-        index_id = _create_or_replace_file(
-            store_or_storage, "navigation-index.json", index_bytes, source_nav_id
+        states.append({
+            "layer": layer,
+            "source_id": source_item["id"],
+            "index_id": index_item["id"] if index_item else None,
+            "owned": owned,
+            "desired": desired,
+            "pending": pending,
+            "recovering": recovering_pending,
+        })
+    # Every applicable layer records intent before shortcut mutation.
+    for state in states:
+        state["index_id"] = _create_or_replace_file(
+            store_or_storage, "navigation-index.json",
+            _json_bytes(state["pending"]), state["source_id"],
         )
-        receipts["layers"][layer] = {
-            "source_nav_id": source_nav_id,
-            "index_file_id": index_id,
-            "tables": table_receipts,
+    for state in states:
+        owned = state["owned"]
+        actual_tables: dict[str, Any] = {}
+        expected_top_ids: set[str] = set()
+        for table_name, table in state["desired"].items():
+            actual = {
+                "is_multi_part": table["is_multi_part"],
+                "file_count": table["file_count"],
+                "shortcuts": [],
+            }
+            if table["is_multi_part"]:
+                matches = [
+                    item for item in _list_children(store_or_storage, state["source_id"])
+                    if item.get("name") == table_name
+                ]
+                if len(matches) > 1 or any(
+                    item.get("mimeType") != FOLDER_MIME_TYPE for item in matches
+                ):
+                    raise NavigationError(f"Navigation name collision for folder {table_name!r}")
+                if matches:
+                    container = matches[0]
+                    if container["id"] not in owned and not state["recovering"]:
+                        raise NavigationError(f"Refusing to adopt unowned folder {table_name!r}")
+                    owned.add(container["id"])
+                else:
+                    container = {
+                        "id": _mkdir(store_or_storage, table_name, state["source_id"]),
+                        "name": table_name,
+                        "mimeType": FOLDER_MIME_TYPE,
+                    }
+                    owned.add(container["id"])
+                actual["container_id"] = container["id"]
+                expected_top_ids.add(container["id"])
+                expected_part_ids: set[str] = set()
+                for desired_shortcut in table["shortcuts"]:
+                    shortcut_id = _sync_owned_shortcut(
+                        store_or_storage, container["id"], desired_shortcut, owned,
+                        recovering_pending=state["recovering"],
+                    )
+                    expected_part_ids.add(shortcut_id)
+                    actual["shortcuts"].append({**desired_shortcut, "shortcut_id": shortcut_id})
+                for child in _list_children(store_or_storage, container["id"]):
+                    if child["id"] not in expected_part_ids:
+                        _remove_owned_tree(store_or_storage, child, owned)
+            else:
+                desired_shortcut = table["shortcuts"][0]
+                shortcut_id = _sync_owned_shortcut(
+                    store_or_storage, state["source_id"], desired_shortcut, owned,
+                    recovering_pending=state["recovering"],
+                )
+                expected_top_ids.add(shortcut_id)
+                actual["shortcuts"].append({**desired_shortcut, "shortcut_id": shortcut_id})
+            actual_tables[table_name] = actual
+        for child in _list_children(store_or_storage, state["source_id"]):
+            if child["id"] == state["index_id"] or child["id"] in expected_top_ids:
+                continue
+            _remove_owned_tree(store_or_storage, child, owned)
+        state["pending"]["tables"] = actual_tables
+        state["pending"]["previous_managed_ids"] = sorted(owned)
+        _create_or_replace_file(
+            store_or_storage, "navigation-index.json",
+            _json_bytes(state["pending"]), state["source_id"],
+        )
+    verify_medallion_navigation(
+        store_or_storage, root_id, source_id, manifest, _expected_status="pending"
+    )
+    receipts: dict[str, Any] = {
+        "source_id": source_id, "release_id": release_id, "layers": {}
+    }
+    for state in states:
+        final_index = dict(state["pending"])
+        final_index["status"] = "current_verified"
+        final_index["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+        _create_or_replace_file(
+            store_or_storage, "navigation-index.json",
+            _json_bytes(final_index), state["source_id"],
+        )
+        receipts["layers"][state["layer"]] = {
+            "source_nav_id": state["source_id"],
+            "index_file_id": state["index_id"],
+            "tables": final_index["tables"],
         }
-
+    verify_medallion_navigation(store_or_storage, root_id, source_id, manifest)
     return receipts
 
 
@@ -395,135 +649,113 @@ def verify_medallion_navigation(
     root_id: str,
     source_id: str,
     manifest: dict[str, Any],
+    *,
+    _expected_status: str = "current_verified",
 ) -> dict[str, Any]:
-    """Verify that medallion navigation links in 02_bronze, 03_silver, 04_gold match manifest.
-
-    Inspects actual Drive items: shortcutDetails.targetId, names, parents, exact counts.
-    Fails closed if shortcuts are missing, target IDs differ, index is stale, or surplus shortcuts exist.
-    """
-    expected_release_id = manifest["release_id"]
-    by_layer: dict[str, list[dict[str, Any]]] = {l: [] for l in ALL_MEDALLION_LAYERS}
-    for dataset in manifest.get("datasets", []):
-        layer = dataset.get("layer")
-        if layer in by_layer:
-            by_layer[layer].append(dataset)
-
-    verified_layers = {}
+    """Verify index identity and the complete physical navigation subtree."""
+    if _expected_status not in {"pending", "current_verified"}:
+        raise ValueError("unsupported navigation verification status")
+    by_layer = _manifest_layers(source_id, manifest)
+    release_id = manifest["release_id"]
+    verified_layers: dict[str, Any] = {}
     for layer in ALL_MEDALLION_LAYERS:
         datasets = by_layer[layer]
-        layer_folders = _find_item(store_or_storage, layer, root_id, mime_type=FOLDER_MIME_TYPE)
-        if len(layer_folders) != 1:
-            raise StaleNavigationError(f"Layer folder '{layer}' not found or ambiguous")
-        layer_id = layer_folders[0]
-
-        current_folders = _find_item(store_or_storage, CURRENT_NAV_DIR, layer_id, mime_type=FOLDER_MIME_TYPE)
-        if not datasets and not current_folders:
+        layer_item = _unique_child(
+            store_or_storage, root_id, layer, FOLDER_MIME_TYPE, required=True
+        )
+        current_item = _unique_child(
+            store_or_storage, layer_item["id"], CURRENT_NAV_DIR, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if current_item is None:
             continue
-        if len(current_folders) != 1:
-            raise StaleNavigationError(f"'{layer}/current' folder not found or ambiguous")
-        current_id = current_folders[0]
-
-        source_folders = _find_item(store_or_storage, source_id, current_id, mime_type=FOLDER_MIME_TYPE)
-        if not datasets and not source_folders:
+        source_item = _unique_child(
+            store_or_storage, current_item["id"], source_id, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if source_item is None:
             continue
-        if len(source_folders) != 1:
-            raise StaleNavigationError(f"'{layer}/current/{source_id}' folder not found or ambiguous")
-        source_nav_id = source_folders[0]
-
-        # Read navigation index
-        index_ids = _find_item(store_or_storage, "navigation-index.json", source_nav_id)
-        if len(index_ids) != 1:
-            raise StaleNavigationError(f"'{layer}/current/{source_id}/navigation-index.json' missing or ambiguous")
-        raw_index = _read_file_bytes(store_or_storage, index_ids[0])
-        try:
-            index_doc = json.loads(raw_index.decode("utf-8"))
-        except Exception as exc:
-            raise StaleNavigationError(f"Corrupt navigation index in '{layer}/current/{source_id}'") from exc
-
-        if index_doc.get("release_id") != expected_release_id:
+        index_item = _unique_child(
+            store_or_storage, source_item["id"], "navigation-index.json",
+            "application/json", required=True,
+        )
+        index_doc = _read_index(store_or_storage, index_item)
+        if (
+            index_doc.get("format_version") != 1
+            or index_doc.get("status") != _expected_status
+            or index_doc.get("source_id") != source_id
+            or index_doc.get("layer") != layer
+            or index_doc.get("release_id") != release_id
+            or not isinstance(index_doc.get("tables"), dict)
+        ):
             raise StaleNavigationError(
-                f"Navigation index in '{layer}/current/{source_id}' points to release "
-                f"'{index_doc.get('release_id')}', but current release is '{expected_release_id}'"
+                f"Navigation index identity/status mismatch in {layer}/current/{source_id}"
             )
-
-        # Verify actual Drive items and match against datasets
-        expected_top_shortcuts: set[str] = set()
-        expected_folders: dict[str, set[str]] = {}
-        indexed_tables = index_doc.get("tables", {})
-
-        for dataset in datasets:
-            table_name = dataset["table_name"]
-            if table_name not in indexed_tables:
-                raise StaleNavigationError(f"Table '{table_name}' missing from navigation index in {layer}")
-            expected_files = dataset.get("files", [])
-            table_meta = indexed_tables[table_name]
-            if len(expected_files) != table_meta.get("file_count"):
-                raise StaleNavigationError(
-                    f"Table '{table_name}' file count mismatch in navigation index for {layer}"
+        expected = _desired_tables(datasets)
+        if set(index_doc["tables"]) != set(expected):
+            raise StaleNavigationError(f"Navigation table keys mismatch in {layer}")
+        expected_top_ids = {index_item["id"]}
+        for table_name, desired_table in expected.items():
+            actual_table = index_doc["tables"].get(table_name)
+            if (
+                not isinstance(actual_table, dict)
+                or actual_table.get("is_multi_part") != desired_table["is_multi_part"]
+                or actual_table.get("file_count") != desired_table["file_count"]
+                or not isinstance(actual_table.get("shortcuts"), list)
+                or len(actual_table["shortcuts"]) != desired_table["file_count"]
+            ):
+                raise StaleNavigationError(f"Navigation table metadata mismatch for {layer}/{table_name}")
+            indexed_by_name = {
+                item.get("name"): item for item in actual_table["shortcuts"]
+                if isinstance(item, dict)
+            }
+            if set(indexed_by_name) != {item["name"] for item in desired_table["shortcuts"]}:
+                raise StaleNavigationError(f"Navigation shortcut keys mismatch for {layer}/{table_name}")
+            parent_id = source_item["id"]
+            if desired_table["is_multi_part"]:
+                container = _unique_child(
+                    store_or_storage, source_item["id"], table_name,
+                    FOLDER_MIME_TYPE, required=True,
                 )
-
-            if len(expected_files) == 1:
-                # Single-file dataset
-                sc_name = f"{table_name}.parquet"
-                expected_top_shortcuts.add(sc_name)
-                sc_items = _find_item(store_or_storage, sc_name, source_nav_id, mime_type=SHORTCUT_MIME_TYPE)
-                if len(sc_items) != 1:
-                    raise StaleNavigationError(
-                        f"Expected exactly 1 shortcut for '{sc_name}' in {layer}/current/{source_id}, found {len(sc_items)}"
-                    )
-                actual_target = _get_target_id(store_or_storage, sc_items[0])
-                if actual_target != expected_files[0]["id"]:
-                    raise StaleNavigationError(
-                        f"Drive shortcut target ID mismatch for '{sc_name}' in {layer}: "
-                        f"expected {expected_files[0]['id']}, got {actual_target}"
-                    )
+                if actual_table.get("container_id") != container["id"]:
+                    raise StaleNavigationError(f"Navigation container ID mismatch for {layer}/{table_name}")
+                expected_top_ids.add(container["id"])
+                parent_id = container["id"]
+            expected_child_ids: set[str] = set()
+            for wanted in desired_table["shortcuts"]:
+                indexed = indexed_by_name[wanted["name"]]
+                if indexed.get("target_id") != wanted["target_id"]:
+                    raise StaleNavigationError(f"Navigation target index mismatch for {layer}/{table_name}")
+                shortcut = _unique_child(
+                    store_or_storage, parent_id, wanted["name"],
+                    SHORTCUT_MIME_TYPE, required=True,
+                )
+                if (
+                    indexed.get("shortcut_id") != shortcut["id"]
+                    or _get_target_id(store_or_storage, shortcut["id"]) != wanted["target_id"]
+                ):
+                    raise StaleNavigationError(f"Navigation shortcut mismatch for {layer}/{table_name}")
+                expected_child_ids.add(shortcut["id"])
+            if desired_table["is_multi_part"]:
+                actual_ids = {item["id"] for item in _list_children(store_or_storage, parent_id)}
+                if actual_ids != expected_child_ids:
+                    raise StaleNavigationError(f"Navigation folder contents mismatch for {layer}/{table_name}")
             else:
-                # Multi-file dataset
-                ds_folders = _find_item(store_or_storage, table_name, source_nav_id, mime_type=FOLDER_MIME_TYPE)
-                if len(ds_folders) != 1:
-                    raise StaleNavigationError(
-                        f"Expected multi-file folder '{table_name}' in {layer}/current/{source_id}, found {len(ds_folders)}"
-                    )
-                ds_folder_id = ds_folders[0]
-                part_names: set[str] = set()
-                for part_idx, file_entry in enumerate(expected_files):
-                    part_name = file_entry.get("name", f"{table_name}--part-{part_idx}.parquet")
-                    part_names.add(part_name)
-                    part_items = _find_item(store_or_storage, part_name, ds_folder_id, mime_type=SHORTCUT_MIME_TYPE)
-                    if len(part_items) != 1:
-                        raise StaleNavigationError(
-                            f"Expected shortcut '{part_name}' in multi-file folder '{table_name}', found {len(part_items)}"
-                        )
-                    actual_target = _get_target_id(store_or_storage, part_items[0])
-                    if actual_target != file_entry["id"]:
-                        raise StaleNavigationError(
-                            f"Drive shortcut target ID mismatch for '{part_name}' in {layer}/{table_name}: "
-                            f"expected {file_entry['id']}, got {actual_target}"
-                        )
-                expected_folders[table_name] = part_names
-
-                # Check no surplus shortcuts in multi-file folder
-                folder_children = _list_children(store_or_storage, ds_folder_id)
-                actual_parts = {c["name"] for c in folder_children if c.get("mimeType") == SHORTCUT_MIME_TYPE}
-                if actual_parts != part_names:
-                    surplus = actual_parts - part_names
-                    raise StaleNavigationError(
-                        f"Surplus shortcuts found in multi-file folder '{table_name}' in {layer}: {surplus}"
-                    )
-
-        # Check no surplus top-level shortcuts in source_nav_id
-        top_children = _list_children(store_or_storage, source_nav_id)
-        actual_top_shortcuts = {c["name"] for c in top_children if c.get("mimeType") == SHORTCUT_MIME_TYPE}
-        if actual_top_shortcuts != expected_top_shortcuts:
-            surplus = actual_top_shortcuts - expected_top_shortcuts
+                expected_top_ids.update(expected_child_ids)
+        actual_top_ids = {
+            item["id"] for item in _list_children(store_or_storage, source_item["id"])
+        }
+        if actual_top_ids != expected_top_ids:
             raise StaleNavigationError(
-                f"Surplus shortcuts found in {layer}/current/{source_id}: {surplus}"
+                f"Navigation subtree contains obsolete or foreign items in {layer}/current/{source_id}"
             )
-
         verified_layers[layer] = {
             "status": "verified_current",
-            "release_id": expected_release_id,
+            "release_id": release_id,
             "table_count": len(datasets),
         }
-
-    return {"status": "medallion_navigation_verified", "source_id": source_id, "layers": verified_layers}
+    return {
+        "status": "medallion_navigation_verified",
+        "source_id": source_id,
+        "layers": verified_layers,
+    }

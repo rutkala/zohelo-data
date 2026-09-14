@@ -131,3 +131,9 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
   Batch/object limits protect execution; measured catalogue coverage establishes completion.
 - Report full raw archives separately from typed models and semantic definitions. Preserve
   the distinction between selected source products and every product of their providers.
+
+## Drive layout migration
+- Use the serialized main-branch migrate-drive-layout.yml workflow. A successful plan artifact
+  is the authorization source for apply, resume, and rollback; preserve its run ID and canonical
+  SHA-256. Never bypass plan provenance, cutover guards, durable journal recovery, or pending
+  navigation verification.

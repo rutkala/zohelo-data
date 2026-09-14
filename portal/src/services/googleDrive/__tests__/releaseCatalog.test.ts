@@ -995,3 +995,78 @@ describe("Canonical consolidated layout release resolution", () => {
     );
   });
 });
+
+describe("Release discovery mutation safety", () => {
+  it.each([
+    { canonical: true, label: "releases/nbp/current-release.json" },
+    { canonical: false, label: "current-release.json" },
+  ])("rejects a folder named current-release.json at $label", async ({ canonical }) => {
+    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+      if (canonical && name === "releases" && parentId === "root-id") {
+        return [{ id: "releases-root-id", name }];
+      }
+      if (canonical && name === "nbp" && parentId === "releases-root-id") {
+        return [{ id: "nbp-rel-id", name }];
+      }
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+      if (
+        name === "current-release.json" &&
+        parentId === (canonical ? "nbp-rel-id" : "root-id")
+      ) {
+        return [{
+          id: "pointer-folder",
+          name,
+          mimeType: "application/vnd.google-apps.folder",
+        }];
+      }
+      return [];
+    });
+    await expect(
+      resolveReleaseCatalog("token", createDriveDownloadBudget())
+    ).rejects.toThrow(/ambiguous or not a file/);
+  });
+
+  it("retries a source once when its pointer moves into the canonical folder", async () => {
+    const { pointerBytes } = await wdiPlatformFixture();
+    let canonicalReads = 0;
+    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+      if (name === "releases" && parentId === "root-id") {
+        return [{ id: "releases-root-id", name }];
+      }
+      if (name === "wdi" && parentId === "releases-root-id") {
+        return [{ id: "wdi-rel-id", name }];
+      }
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+      if (name === "current-release.json" && parentId === "wdi-rel-id") {
+        canonicalReads += 1;
+        return canonicalReads === 1
+          ? []
+          : [{ id: "wdi-pointer-id", name, size: pointerBytes.byteLength }];
+      }
+      return [];
+    });
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog.kind).toBe("release");
+    expect(canonicalReads).toBe(2);
+  });
+
+  it("fails clearly when an established legacy source remains pointerless", async () => {
+    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+      if (name === "wdi-platform" && parentId === "root-id") {
+        return [{ id: "legacy-wdi", name }];
+      }
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockResolvedValue([]);
+    await expect(
+      resolveReleaseCatalog("token", createDriveDownloadBudget())
+    ).rejects.toThrow(/Established source 'wdi'.*moving or incomplete/);
+  });
+});

@@ -56,6 +56,17 @@ def load_reviewed_plan(args: argparse.Namespace) -> dict:
     plan["plan_sha256"] = digest
     return plan
 
+def require_remote_journal_plan_hash(engine: DriveMigrationEngine, args: argparse.Namespace) -> None:
+    if not args.plan_sha256:
+        raise MigrationError(args.operation.capitalize() + " requires --plan-sha256 from the reviewed plan")
+    if len(args.plan_sha256) != 64 or any(c not in "0123456789abcdef" for c in args.plan_sha256):
+        raise MigrationError("Provided --plan-sha256 must be a lowercase SHA-256")
+    journal = engine._load_journal()
+    if journal is None:
+        raise MigrationError("No durable migration journal exists for " + args.operation)
+    if journal.get("plan_sha256") != args.plan_sha256:
+        raise MigrationError("Durable journal does not match the reviewed plan hash")
+
 def write_json(path: str | Path, value: dict) -> None:
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
@@ -94,7 +105,10 @@ def main() -> int:
     mutating = args.operation in {"apply", "resume", "rollback"}
     confirmed = args.confirm or (args.operation == "apply" and args.apply)
     if mutating and not confirmed:
-        print(json.dumps({"status": "operation_rejected", "error": "Explicit --confirm is required"}, indent=2), file=sys.stderr)
+        failure = write_failure_receipt(
+            args, MigrationError("Explicit --confirm is required"), "operation_rejected"
+        )
+        print(json.dumps(failure, indent=2, sort_keys=True), file=sys.stderr)
         return 1
     try:
         storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
@@ -106,9 +120,11 @@ def main() -> int:
             result = engine.apply(plan=load_reviewed_plan(args), confirmed=True)
             write_json("journal.json", result.get("journal", result))
         elif args.operation == "resume":
+            require_remote_journal_plan_hash(engine, args)
             result = engine.apply(resume=True, confirmed=True)
             write_json("journal.json", result.get("journal", result))
         elif args.operation == "rollback":
+            require_remote_journal_plan_hash(engine, args)
             result = engine.rollback(confirmed=True)
             write_json("journal.json", result.get("journal", result))
         else:

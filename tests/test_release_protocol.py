@@ -653,6 +653,46 @@ class ReleaseProtocolTests(unittest.TestCase):
         self.assertEqual(audit["event_type"], "retained_release_promotion_requested")
         self.assertEqual(audit["expected_current_release_id"], target["release_id"])
 
+    def test_publish_hook_runs_after_validation_and_pin_before_pointer_write(self):
+        store = MemoryStore()
+        seen = []
+        def hook(_store, pointer):
+            seen.append(pointer["release_id"])
+            self.assertEqual(store.find("current-release.json", "root"), [])
+            raise RuntimeError("navigation failed")
+        with self.assertRaisesRegex(ReleaseProtocolError, "pre-pointer publication hook"):
+            publish_release(
+                store, "root", **self._candidate(),
+                before_pointer_write=hook,
+            )
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(store.find("current-release.json", "root"), [])
+
+    def test_retained_hook_failure_preserves_exact_current_pointer(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        pointer_id = store.find("current-release.json", "root")[0]
+        pointer_bytes = store.read(pointer_id)
+        with self.assertRaisesRegex(ReleaseProtocolError, "pre-pointer retained-promotion hook"):
+            promote_retained_release(
+                store,
+                "root",
+                target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=lambda _store, _pointer: None,
+                before_pointer_write=lambda _store, _pointer: (_ for _ in ()).throw(
+                    RuntimeError("navigation failed")
+                ),
+            )
+        self.assertEqual(store.read(pointer_id), pointer_bytes)
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"],
+            current["release_id"],
+        )
+
     def test_retained_release_promotion_rejects_wrong_current_pin_without_writes(self):
         store = MemoryStore()
         first = publish_release(store, "root", **self._candidate())

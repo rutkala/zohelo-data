@@ -136,6 +136,7 @@ def publish_release(
     release_id: str | None = None,
     release_scope: str = "nbp_silver",
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
     direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
@@ -261,6 +262,13 @@ def publish_release(
     previous_raw = previous["raw"] if previous is not None else None
     if current_raw != previous_raw:
         raise ReleaseProtocolError("current-release pointer changed during candidate upload")
+    if before_pointer_write is not None:
+        try:
+            before_pointer_write(store, dict(staged_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "pre-pointer publication hook failed; current release retained"
+            ) from exc
 
     pointer = staged_pointer
     # Record the promotion instant after potentially long candidate validation.
@@ -285,6 +293,7 @@ def promote_retained_release(
     target_release_id: str,
     expected_current_release_id: str,
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
+    before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
     direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Promote one retained, fully verified release behind an exact current pin.
@@ -380,6 +389,13 @@ def promote_retained_release(
     observed = _read_pointer(store, root_id)
     if observed is None or observed["raw"] != current["raw"]:
         raise ReleaseProtocolError("current-release pointer changed during retained release validation")
+    if before_pointer_write is not None:
+        try:
+            before_pointer_write(store, dict(target_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "pre-pointer retained-promotion hook failed; current release retained"
+            ) from exc
     pointer_file_id = _write_pointer(store, root_id, current, _json_bytes(target_pointer))
     return {
         "status": "retained_release_promoted",

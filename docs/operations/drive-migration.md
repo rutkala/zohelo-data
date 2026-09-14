@@ -106,3 +106,28 @@ The engine:
 - **Personal Google AI Pro Account:** Verified, `useG1Credits: false`.
 - **GitHub Copilot:** Blocked by insufficient credits.
 - **Repository Permissions:** GHA workflow scoped to `contents: read`, `actions: read`.
+
+---
+
+## 5. Reviewed-plan provenance and recovery
+
+Run plan through the main-branch **Migrate Google Drive layout** workflow. Review both
+plan.json and plan-identity.json from its migration-plan artifact. Every apply,
+resume, or rollback dispatch must use the same decimal plan_run_id and the exact
+64-character plan_sha256 from that artifact.
+
+Before credentials are used, the workflow verifies that the referenced run belongs to this
+repository, used .github/workflows/migrate-drive-layout.yml, was a workflow_dispatch on
+main, completed successfully, and has the same commit as both the artifact and the executing
+workflow. The plan ID, root pins, and canonical plan digest must also match. A failed or stale
+run cannot authorize a mutation.
+
+The durable journal remains in 06_control and retains the original reviewed plan hash.
+Resume and rollback reject a different hash. Download migration-receipts after every run;
+it includes dispatch, plan-provenance, cutover-precondition, operation, error, verification,
+and local journal receipts that were produced.
+
+Navigation indexes use pending before any release pointer update. A successful reconciliation
+checks every expected shortcut target and the complete multipart subtree, then records
+current_verified. Retrying a publisher repairs pending navigation before changing the pointer.
+Foreign navigation children stop reconciliation and are preserved.

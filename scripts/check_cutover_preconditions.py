@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -113,46 +114,95 @@ def check_deployed_portal(portal_url: str, repo: str, required_commit: str,
     }
 
 
+def _header(headers: dict, name: str) -> str:
+    for key, value in headers.items():
+        if str(key).lower() == name.lower():
+            return str(value)
+    return ""
+
+
+def _next_link(link_header: str) -> str | None:
+    found: list[str] = []
+    for part in link_header.split(","):
+        sections = [section.strip() for section in part.split(";")]
+        if not sections or not sections[0].startswith("<") or not sections[0].endswith(">"):
+            continue
+        rels = {
+            token.strip().strip('"')
+            for section in sections[1:]
+            if "=" in section
+            for key, token in [section.split("=", 1)]
+            if key.strip().lower() == "rel"
+        }
+        if "next" in rels:
+            found.append(sections[0][1:-1])
+    if len(found) > 1:
+        raise ValueError("multiple rel=next links")
+    return found[0] if found else None
+
+
 def _list_all_runs(repo: str, token: str | None) -> tuple[list[dict], str | None]:
-    """Read every active-run status page; refuse partial, repeated, or malformed pages."""
+    """Read every active run; reject partial, repeated, or malformed pagination."""
     headers = _github_headers(token)
     runs: list[dict] = []
     seen_ids: set[int] = set()
     try:
         for status in sorted(ACTIVE_STATUSES):
             page = 1
-            seen_pages: set[int] = set()
-            while True:
-                if page in seen_pages or page > 100:
-                    return [], "pagination_loop_or_limit"
-                seen_pages.add(page)
+            expected_total: int | None = None
+            status_count = 0
+            while page <= 100:
                 url = (
                     f"https://api.github.com/repos/{repo}/actions/runs"
                     f"?status={urllib.parse.quote(status)}&per_page=100&page={page}"
                 )
-                data, headers_response = _json_request(url, headers)
-                batch = data.get("workflow_runs")
-                if not isinstance(batch, list):
+                data, response_headers = _json_request(url, headers)
+                if not isinstance(data, dict):
                     return [], "malformed_runs_response"
+                total_count = data.get("total_count")
+                batch = data.get("workflow_runs")
+                if (
+                    not isinstance(total_count, int)
+                    or isinstance(total_count, bool)
+                    or total_count < 0
+                    or not isinstance(batch, list)
+                    or len(batch) > 100
+                ):
+                    return [], "malformed_runs_response"
+                if expected_total is None:
+                    expected_total = total_count
+                elif total_count != expected_total:
+                    return [], "changing_total_count"
                 for run in batch:
                     if not isinstance(run, dict) or not isinstance(run.get("id"), int):
                         return [], "malformed_active_run"
-                    if run["id"] not in seen_ids:
-                        seen_ids.add(run["id"])
-                        runs.append(run)
-                if len(batch) < 100:
+                    if run["id"] in seen_ids:
+                        return [], "repeated_active_run"
+                    seen_ids.add(run["id"])
+                    runs.append(run)
+                    status_count += 1
+                next_url = _next_link(_header(response_headers, "link"))
+                if status_count == expected_total:
+                    if next_url is not None:
+                        return [], "unexpected_next_page"
                     break
-                # A full page must expose a distinct next page. The API's Link
-                # header is evidence that pagination was not silently truncated.
-                link = headers_response.get("Link", "")
-                if f"page={page + 1}" not in link:
+                if status_count > expected_total or not batch:
+                    return [], "partial_active_runs_response"
+                expected_url = (
+                    f"https://api.github.com/repos/{repo}/actions/runs"
+                    f"?status={urllib.parse.quote(status)}&per_page=100&page={page + 1}"
+                )
+                if next_url != expected_url:
                     return [], "partial_active_runs_response"
                 page += 1
+            else:
+                return [], "pagination_loop_or_limit"
         return runs, None
     except urllib.error.HTTPError as exc:
         return [], f"http_{exc.code}:{exc}"
     except Exception as exc:
         return [], f"request_failed:{exc}"
+
 
 def check_active_workflows(repo: str, token: str | None,
                            compatibility_commit: str) -> dict:
@@ -165,11 +215,25 @@ def check_active_workflows(repo: str, token: str | None,
 
     blockers: list[dict] = []
     for run in runs:
-        path = Path(str(run.get("path") or "")).name
-        status = str(run.get("status") or "")
-        if path not in PUBLISHER_WORKFLOWS or status not in ACTIVE_STATUSES:
+        raw_path = run.get("path")
+        status = run.get("status")
+        head_sha = run.get("head_sha")
+        if (
+            not isinstance(raw_path, str)
+            or not raw_path.startswith(".github/workflows/")
+            or Path(raw_path).name != raw_path.removeprefix(".github/workflows/")
+            or status not in ACTIVE_STATUSES
+            or not isinstance(head_sha, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40}", head_sha) is None
+        ):
+            return {
+                "status": "malformed_active_run",
+                "active_critical_runs_count": -1,
+                "clean": False,
+            }
+        path = Path(raw_path).name
+        if path not in PUBLISHER_WORKFLOWS:
             continue
-        head_sha = str(run.get("head_sha") or "")
         compatible, relation = commit_is_same_or_descendant(
             repo, compatibility_commit, head_sha, token
         )

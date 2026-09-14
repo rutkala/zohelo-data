@@ -710,93 +710,133 @@ export async function resolveReleaseCatalog(
   }
   const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
 
-  const findCanonicalPointer = async (sourceName: string) => {
+  const establishedSources = new Set<"nbp" | "bdl" | "wdi">();
+  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "wdi") => {
     if (!releasesFolderId) return undefined;
     const folders = (await findFoldersByName(sourceName, releasesFolderId, token)).filter(
       (folder) => folder.name === sourceName
     );
     if (folders.length > 1) {
-      throw new Error(`Folder 'releases/${sourceName}' is ambiguous; refusing to select a release.`);
+      throw new Error("Folder 'releases/" + sourceName + "' is ambiguous; refusing to select a release.");
     }
     if (folders.length === 0) return undefined;
-    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
-    if (pointerFiles.length > 1) {
-      throw new Error(`releases/${sourceName}/current-release.json is ambiguous; refusing to select a release.`);
-    }
-    return pointerFiles.length === 1 &&
-      pointerFiles[0].mimeType !== "application/vnd.google-apps.folder"
-      ? pointerFiles[0]
-      : undefined;
-  };
-
-  const canonicalNbpPointer = await findCanonicalPointer("nbp");
-  const canonicalBdlPointer = await findCanonicalPointer("bdl");
-  const canonicalWdiPointer = await findCanonicalPointer("wdi");
-
-  // 2. Legacy pointers
-  const rootPointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
-  if (
-    rootPointerFiles.length > 1 ||
-    (rootPointerFiles.length === 1 &&
-      rootPointerFiles[0].mimeType === "application/vnd.google-apps.folder")
-  ) {
-    throw new Error(
-      "current-release.json is ambiguous or not a file; refusing to select a release."
+    const pointerFiles = await findNamedFilesInFolder(
+      "current-release.json", folders[0].id, token
     );
-  }
-  const legacyNbpPointer = rootPointerFiles.length === 1 ? rootPointerFiles[0] : undefined;
-
-  const findPlatformPointer = async (folderName: "bdl-platform" | "wdi-platform") => {
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
+      throw new Error(
+        "releases/" + sourceName + "/current-release.json is ambiguous or not a file; refusing to select a release."
+      );
+    }
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
+  };
+  const findLegacyNbpPointer = async () => {
+    const pointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
+      throw new Error(
+        "current-release.json is ambiguous or not a file; refusing to select a release."
+      );
+    }
+    if (pointerFiles.length === 1) establishedSources.add("nbp");
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
+  };
+  const findPlatformPointer = async (
+    folderName: "bdl-platform" | "wdi-platform",
+    sourceName: "bdl" | "wdi"
+  ) => {
     const folders = (await findFoldersByName(folderName, rootId, token)).filter(
       (folder) => folder.name === folderName
     );
     if (folders.length > 1) {
-      throw new Error(`Folder '${folderName}' is ambiguous; refusing to select a release.`);
+      throw new Error("Folder '" + folderName + "' is ambiguous; refusing to select a release.");
     }
     if (folders.length === 0) return undefined;
-    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
-    if (pointerFiles.length > 1) {
+    establishedSources.add(sourceName);
+    const pointerFiles = await findNamedFilesInFolder(
+      "current-release.json", folders[0].id, token
+    );
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
       throw new Error(
-        `${folderName}/current-release.json is ambiguous; refusing to select a release.`
+        folderName + "/current-release.json is ambiguous or not a file; refusing to select a release."
       );
     }
-    return pointerFiles.length === 1 &&
-      pointerFiles[0].mimeType !== "application/vnd.google-apps.folder"
-      ? pointerFiles[0]
-      : undefined;
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
   };
-  const legacyBdlPointer = await findPlatformPointer("bdl-platform");
-  const legacyWdiPointer = await findPlatformPointer("wdi-platform");
-
-  // Fail closed on conflicting pointers
-  if (canonicalNbpPointer && legacyNbpPointer) {
-    throw new Error("Conflicting current-release pointers found for NBP in both releases/nbp and root.");
+  const selectSource = (
+    sourceName: "nbp" | "bdl" | "wdi",
+    canonical: Awaited<ReturnType<typeof findCanonicalPointer>>,
+    legacy: Awaited<ReturnType<typeof findLegacyNbpPointer>>
+  ) => {
+    if (canonical && legacy) {
+      const legacyLabel =
+        sourceName === "nbp" ? "root" : sourceName + "-platform";
+      throw new Error(
+        "Conflicting current-release pointers found for " + sourceName.toUpperCase() +
+          " in releases/" + sourceName + " and " + legacyLabel + "."
+      );
+    }
+    const pointer = canonical ?? legacy;
+    if (!pointer) return undefined;
+    return {
+      file: pointer,
+      label: canonical
+        ? "releases/" + sourceName + "/current-release.json"
+        : sourceName === "nbp"
+          ? "current-release.json"
+          : sourceName + "-platform/current-release.json",
+    };
+  };
+  // Preserve a stable first-pass observation order for all sources.
+  const canonicalNbpPointer = await findCanonicalPointer("nbp");
+  const canonicalBdlPointer = await findCanonicalPointer("bdl");
+  const canonicalWdiPointer = await findCanonicalPointer("wdi");
+  const legacyNbpPointer = await findLegacyNbpPointer();
+  const legacyBdlPointer = await findPlatformPointer("bdl-platform", "bdl");
+  const legacyWdiPointer = await findPlatformPointer("wdi-platform", "wdi");
+  let effectiveNbp = selectSource("nbp", canonicalNbpPointer, legacyNbpPointer);
+  let effectiveBdl = selectSource("bdl", canonicalBdlPointer, legacyBdlPointer);
+  let effectiveWdi = selectSource("wdi", canonicalWdiPointer, legacyWdiPointer);
+  const discoverSource = async (sourceName: "nbp" | "bdl" | "wdi") => {
+    const canonical = await findCanonicalPointer(sourceName);
+    const legacy =
+      sourceName === "nbp"
+        ? await findLegacyNbpPointer()
+        : await findPlatformPointer(
+            sourceName === "bdl" ? "bdl-platform" : "wdi-platform",
+            sourceName
+          );
+    return selectSource(sourceName, canonical, legacy);
+  };
+  // A source can move between canonical and legacy parents while the calls above
+  // are in flight. Retry every missing source once and then fail visibly if a
+  // source container was observed without its pointer.
+  for (const sourceName of ["nbp", "bdl", "wdi"] as const) {
+    const current =
+      sourceName === "nbp" ? effectiveNbp : sourceName === "bdl" ? effectiveBdl : effectiveWdi;
+    if (current) continue;
+    const retry = await discoverSource(sourceName);
+    if (sourceName === "nbp") effectiveNbp = retry;
+    else if (sourceName === "bdl") effectiveBdl = retry;
+    else effectiveWdi = retry;
+    if (!retry && establishedSources.has(sourceName)) {
+      throw new Error(
+        "Established source '" + sourceName + "' has no discoverable current-release.json; " +
+          "the Drive layout may be moving or incomplete."
+      );
+    }
   }
-  if (canonicalBdlPointer && legacyBdlPointer) {
-    throw new Error("Conflicting current-release pointers found for BDL in both releases/bdl and bdl-platform.");
-  }
-  if (canonicalWdiPointer && legacyWdiPointer) {
-    throw new Error("Conflicting current-release pointers found for WDI in both releases/wdi and wdi-platform.");
-  }
-
-  const effectiveNbp = canonicalNbpPointer
-    ? { file: canonicalNbpPointer, label: "releases/nbp/current-release.json" }
-    : legacyNbpPointer
-    ? { file: legacyNbpPointer, label: "current-release.json" }
-    : undefined;
-
-  const effectiveBdl = canonicalBdlPointer
-    ? { file: canonicalBdlPointer, label: "releases/bdl/current-release.json" }
-    : legacyBdlPointer
-    ? { file: legacyBdlPointer, label: "bdl-platform/current-release.json" }
-    : undefined;
-
-  const effectiveWdi = canonicalWdiPointer
-    ? { file: canonicalWdiPointer, label: "releases/wdi/current-release.json" }
-    : legacyWdiPointer
-    ? { file: legacyWdiPointer, label: "wdi-platform/current-release.json" }
-    : undefined;
-
   if (!effectiveNbp && !effectiveBdl && !effectiveWdi) {
     return { kind: "legacy" };
   }

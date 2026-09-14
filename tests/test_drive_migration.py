@@ -102,6 +102,8 @@ class MockDriveService:
                 return []
             if self.list_fault == "files_not_list":
                 return {"files": {}}
+            if self.list_fault == "missing_files":
+                return {"nextPageToken": None}
             matched = []
             for file_id, meta in self._files.items():
                 if meta.get("trashed", False):
@@ -938,6 +940,83 @@ class DriveMigrationTests(unittest.TestCase):
         self.assertFalse(svc._files["new-staged-release"].get("trashed", False))
         self.assertEqual(["f-bdl-releases"], svc._files["new-staged-release"]["parents"])
 
+    def test_resume_rejects_tampered_top_level_pins_before_mutation(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        interrupted = DriveMigrationEngine(
+            storage, expected_root_id="prod-root-123"
+        ).apply(
+            DriveMigrationEngine(storage, expected_root_id="prod-root-123").plan(),
+            confirmed=True,
+            stop_after_step=0,
+        )
+        journal_id = interrupted["journal_file_id"]
+        journal = json.loads(svc._files[journal_id]["content"])
+        journal["pins"]["nbp"]["pointer_file_id"] = "foreign-pointer"
+        svc._files[journal_id]["content"] = json.dumps(journal).encode()
+        before = copy.deepcopy(svc._files)
+        with self.assertRaises(MigrationError):
+            DriveMigrationEngine(storage, expected_root_id="prod-root-123").apply(
+                resume=True, confirmed=True
+            )
+        self.assertEqual(svc._files, before)
+
+    def test_plan_rejects_checksum_consistent_unverified_manifest_and_pointer_version(self):
+        for defect in ("manifest_status", "tests_failed", "pointer_version"):
+            with self.subTest(defect=defect):
+                files, _, _, _ = build_legacy_drive_state("prod-root-123")
+                if defect == "pointer_version":
+                    pointer = json.loads(files["f-root-pointer"]["content"])
+                    pointer["format_version"] = 2
+                    files["f-root-pointer"]["content"] = json.dumps(pointer).encode()
+                else:
+                    manifest = json.loads(files["f-nbp-manifest"]["content"])
+                    if defect == "manifest_status":
+                        manifest["status"] = "failed"
+                    else:
+                        manifest["tests"] = {"passed": False}
+                    manifest_bytes = json.dumps(manifest).encode()
+                    files["f-nbp-manifest"]["content"] = manifest_bytes
+                    pointer = json.loads(files["f-root-pointer"]["content"])
+                    pointer["manifest_sha256"] = sha256(manifest_bytes).hexdigest()
+                    files["f-root-pointer"]["content"] = json.dumps(pointer).encode()
+                storage, _ = make_storage_manager_mock(files, "prod-root-123")
+                with self.assertRaises(MigrationError):
+                    DriveMigrationEngine(
+                        storage, expected_root_id="prod-root-123"
+                    ).plan()
+
+    def test_apply_rejects_unplanned_release_root_child_before_mutation(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        plan = engine.plan()
+        svc._files["foreign-nbp-release"] = {
+            "id": "foreign-nbp-release",
+            "name": "99999999-9999-4999-8999-999999999999",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["f-releases"],
+            "trashed": False,
+        }
+        before = copy.deepcopy(svc._files)
+        with self.assertRaises(DriftError):
+            engine.apply(plan, confirmed=True)
+        self.assertEqual(svc._files, before)
+
+    def test_repeated_rollback_revalidates_exact_legacy_state(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        engine.apply(engine.plan(), confirmed=True)
+        engine.rollback(confirmed=True)
+        svc._files["f-root-pointer"]["parents"] = ["foreign-parent"]
+        before = copy.deepcopy(svc._files)
+        with self.assertRaises((DriftError, MigrationError)):
+            DriveMigrationEngine(storage, expected_root_id="prod-root-123").rollback(
+                confirmed=True
+            )
+        self.assertEqual(svc._files, before)
+
     def test_bounded_pagination_accepts_multiple_pages_and_rejects_bad_pages(self):
         files, *_ = build_legacy_drive_state("prod-root-123")
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
@@ -946,7 +1025,7 @@ class DriveMigrationTests(unittest.TestCase):
             "planned", DriveMigrationEngine(storage, "prod-root-123").plan()["status"]
         )
         self.assertEqual("legacy", detect_layout_mode(storage, "prod-root-123"))
-        for fault in ("repeated_token", "non_object", "files_not_list", "incomplete"):
+        for fault in ("repeated_token", "non_object", "files_not_list", "missing_files", "incomplete"):
             files, *_ = build_legacy_drive_state("prod-root-123")
             storage, svc = make_storage_manager_mock(files, "prod-root-123")
             svc.page_size_override = 1

@@ -29,6 +29,7 @@ from medallion_navigation import sync_source_medallion_navigation
 from release_protocol import (
     publish_release,
     read_current_release_manifest,
+    read_release_manifest,
     restore_current_release,
     ReleaseProtocolError,
 )
@@ -398,10 +399,13 @@ def run_platform(*, allow_production_write: bool = False, verify_current: bool =
             },
             release_scope=WDI_RELEASE_SCOPE,
             pre_promote_validator=validate_staged_wdi_release,
+            before_pointer_write=(
+                lambda store, pointer: sync_source_medallion_navigation(
+                    storage, root_id, "wdi", read_release_manifest(store, pointer)
+                )
+            ) if direct_releases else None,
             direct_releases=direct_releases,
         )
-        if direct_releases:
-            sync_source_medallion_navigation(storage, root_id, "wdi", result["manifest"])
         report = {
             "status": "wdi_platform_published", "release_id": result["release_id"],
             "source_id": WDI_SOURCE_ID, "coverage": modeled_coverage,

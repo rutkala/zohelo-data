@@ -124,9 +124,11 @@ class DriveMigrationEngine:
             ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
             if not isinstance(response, dict):
                 raise MigrationError("Drive list response is not an object")
-            items = response.get("files", [])
+            if response.get("incompleteSearch") not in (None, False):
+                raise MigrationError("Drive list reported an incomplete search")
+            items = response.get("files")
             if not isinstance(items, list):
-                raise MigrationError("Drive list response has a malformed files page")
+                raise MigrationError("Drive list response has a missing or malformed files page")
             for item in items:
                 if not isinstance(item, dict):
                     raise MigrationError("Drive list response contains a malformed item")
@@ -153,7 +155,7 @@ class DriveMigrationEngine:
             q += f" and mimeType='{mime_type}'"
         return self._paged_list(
             q=q,
-            fields="nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,shortcutDetails,trashed)",
+            fields="nextPageToken,incompleteSearch,files(id,name,mimeType,parents,size,md5Checksum,shortcutDetails,trashed)",
             page_size=100,
         )
 
@@ -166,7 +168,7 @@ class DriveMigrationEngine:
             q += f" and mimeType='{mime_type}'"
         return self._paged_list(
             q=q,
-            fields="nextPageToken,files(id,name,mimeType,parents,size,md5Checksum,shortcutDetails,trashed)",
+            fields="nextPageToken,incompleteSearch,files(id,name,mimeType,parents,size,md5Checksum,shortcutDetails,trashed)",
             page_size=50,
         )
 
@@ -369,7 +371,10 @@ class DriveMigrationEngine:
         steps = plan["steps"]
         if not isinstance(steps, list) or plan["step_count"] != len(steps) or not steps:
             raise MigrationError("Reviewed migration plan steps are malformed")
-        if set(("nbp", "bdl", "wdi", "control", "source_campaigns")).difference(plan["pins"]):
+        if set((
+            "nbp", "bdl", "wdi", "control", "source_campaigns",
+            "releases_root", "canonical_release_roots",
+        )).difference(plan["pins"]):
             raise MigrationError("Reviewed migration plan does not pin every established source")
         seen_steps: Set[str] = set()
         seen_objects: Set[str] = set()
@@ -445,8 +450,17 @@ class DriveMigrationEngine:
         plan = self._validate_plan(journal["plan"])
         if journal["plan_id"] != plan["plan_id"] or journal["plan_sha256"] != plan["plan_sha256"]:
             raise MigrationError("Migration journal immutable identity does not match its plan")
-        if journal["control_folder_id"] != plan["control_folder_id"]:
-            raise MigrationError("Migration journal control folder pin changed")
+        immutable_top_level = {
+            key: value for key, value in plan.items()
+            if key not in {"status", "steps", "read_only"}
+        }
+        for key, value in immutable_top_level.items():
+            if journal.get(key) != value:
+                raise MigrationError(
+                    f"Migration journal immutable field {key!r} differs from its plan"
+                )
+        if journal.get("read_only") is not False:
+            raise MigrationError("Mutable migration journal must declare read_only false")
         if journal["plan_sha256"] != self._journal_digest(journal):
             raise MigrationError("Migration journal plan digest does not match its immutable plan")
         if journal["status"] not in (
@@ -728,6 +742,8 @@ class DriveMigrationEngine:
                 raise MigrationError(f"{source} current pointer is invalid JSON") from exc
             if not isinstance(pointer_doc, dict):
                 raise MigrationError(f"{source} current pointer is not an object")
+            if pointer_doc.get("format_version") != 1:
+                raise MigrationError(f"{source} current pointer has an unsupported format")
             release_id = pointer_doc.get("release_id")
             manifest_id = pointer_doc.get("manifest_file_id")
             manifest_hash = pointer_doc.get("manifest_sha256")
@@ -769,6 +785,8 @@ class DriveMigrationEngine:
                 raise MigrationError(f"{source} manifest is invalid JSON") from exc
             if not isinstance(manifest, dict) or manifest.get("release_id") != release_id:
                 raise MigrationError(f"{source} manifest release identity is inconsistent")
+            if manifest.get("status") != "validated" or manifest.get("tests") != {"passed": True}:
+                raise MigrationError(f"{source} current manifest is not a validated passing release")
 
             target_pins = []
             seen_targets: Set[str] = set()
@@ -825,6 +843,18 @@ class DriveMigrationEngine:
             source_release_dirs[source] = release_dir["id"]
 
         pin_source("nbp", nbp_pointer, releases, wrapper_id=None)
+        releases_root_children = self._list_children(releases["id"])
+        pins["releases_root"] = {
+            "id": releases["id"],
+            "children": [
+                {
+                    "id": child["id"],
+                    "name": child["name"],
+                    "mime_type": child["mimeType"],
+                }
+                for child in sorted(releases_root_children, key=lambda child: child["id"])
+            ],
+        }
         wrappers: Dict[str, Dict[str, Any]] = {}
         wrapper_releases: Dict[str, Dict[str, Any]] = {}
         wrapper_pointers: Dict[str, Dict[str, Any]] = {}
@@ -941,6 +971,11 @@ class DriveMigrationEngine:
             "create_releases_nbp", releases_nbp_id, "nbp", FOLDER_MIME_TYPE,
             releases["id"], "folder",
         )
+        pins["canonical_release_roots"] = {
+            "nbp": releases_nbp_id,
+            "bdl": wrapper_releases["bdl"]["id"],
+            "wdi": wrapper_releases["wdi"]["id"],
+        }
         move_step("move_nbp_control", ingestion, control["id"], CANONICAL_NBP_CONTROL_FOLDER)
         for item in self._list_children(releases["id"]):
             if item.get("mimeType") == FOLDER_MIME_TYPE and UUID_REGEX.fullmatch(item.get("name", "")):
@@ -1120,6 +1155,7 @@ class DriveMigrationEngine:
             self._validate_plan(plan)
             immutable_plan = copy.deepcopy(plan)
             journal = copy.deepcopy(plan)
+            journal["read_only"] = False
             journal["schema_version"] = 1
             journal["plan"] = immutable_plan
             journal["plan_sha256"] = immutable_plan["plan_sha256"]
@@ -1310,10 +1346,16 @@ class DriveMigrationEngine:
                 raise MigrationError("Cannot rollback: no migration journal found")
         self._validate_journal(journal)
         if journal["status"] == "rolled_back":
+            self._assert_no_drift(journal["pins"], journal["steps"])
+            post_mode = detect_layout_mode(self.storage, self.root_id)
+            if post_mode != "legacy":
+                raise MigrationError(
+                    f"Rolled-back journal does not match the legacy layout; found {post_mode!r}"
+                )
             return {
                 "status": "migration_rolled_back",
                 "plan_id": journal["plan_id"],
-                "post_rollback_mode": detect_layout_mode(self.storage, self.root_id),
+                "post_rollback_mode": post_mode,
                 "journal": journal,
             }
         control_id = journal["control_folder_id"]
@@ -1369,10 +1411,11 @@ class DriveMigrationEngine:
                 step["rolled_back_at_utc"] = datetime.now(timezone.utc).isoformat()
                 self._save_journal(journal, control_id)
 
+            self._assert_no_drift(journal["pins"], journal["steps"])
             post_mode = detect_layout_mode(self.storage, self.root_id)
-            if post_mode not in ("legacy", "fresh"):
+            if post_mode != "legacy":
                 raise MigrationError(
-                    f"Rollback did not restore a legacy layout; found {post_mode!r}"
+                    f"Rollback did not restore the exact legacy layout; found {post_mode!r}"
                 )
             journal["status"] = "rolled_back"
             journal["rollback_completed_at_utc"] = datetime.now(timezone.utc).isoformat()
@@ -1432,6 +1475,50 @@ class DriveMigrationEngine:
                     f"Pinned item {item_id} is outside its exact recorded location"
                 )
             return meta
+
+        root_release_pin = pins.get("releases_root")
+        if not root_release_pin or root_release_pin.get("id") is None:
+            raise MigrationError("Migration recovery is missing releases root child pins")
+        action_by_item = {step["item_id"]: step for step in steps}
+        expected_root_children: Set[str] = set()
+        initial_ids: Set[str] = set()
+        for child in root_release_pin.get("children", []):
+            child_id = child["id"]
+            initial_ids.add(child_id)
+            meta = self._get_metadata(child_id)
+            action = action_by_item.get(child_id)
+            if (not meta or meta.get("trashed")
+                    or meta.get("mimeType") != child["mime_type"]
+                    or (action is None and meta.get("name") != child["name"])):
+                raise DriftError(f"Pinned releases child {child_id} changed")
+            parents = list(meta.get("parents") or [])
+            if action is None and parents != [root_release_pin["id"]]:
+                raise DriftError(f"Pinned releases child {child_id} changed parent")
+            if parents == [root_release_pin["id"]]:
+                expected_root_children.add(child_id)
+        for step in steps:
+            if step["item_id"] in initial_ids:
+                continue
+            if step["action"] == "move":
+                relevant = root_release_pin["id"] in (
+                    step["from_parent_id"], step["to_parent_id"]
+                )
+            else:
+                relevant = step["parent_id"] == root_release_pin["id"]
+            if not relevant:
+                continue
+            meta = self._get_metadata(step["item_id"])
+            if (meta and not meta.get("trashed")
+                    and list(meta.get("parents") or []) == [root_release_pin["id"]]):
+                expected_root_children.add(step["item_id"])
+        actual_root_children = {
+            item["id"] for item in self._list_children(root_release_pin["id"])
+        }
+        if actual_root_children != expected_root_children:
+            raise DriftError(
+                "Pinned releases root child set changed; "
+                f"expected {sorted(expected_root_children)}, found {sorted(actual_root_children)}"
+            )
 
         campaigns = pins.get("source_campaigns")
         if not campaigns:
@@ -1530,6 +1617,26 @@ class DriveMigrationEngine:
         mode = detect_layout_mode(self.storage, self.root_id)
         if mode != "canonical":
             raise MigrationError(f"Post-migration validation failed: layout mode is '{mode}', expected 'canonical'")
+
+        releases_pin = pins.get("releases_root", {})
+        canonical_roots = pins.get("canonical_release_roots", {})
+        if releases_pin and canonical_roots:
+            children = self._list_children(releases_pin["id"])
+            expected = {
+                source: canonical_roots[source] for source in CANONICAL_SOURCES
+            }
+            actual = {
+                item.get("name"): item["id"]
+                for item in children
+                if item.get("mimeType") == FOLDER_MIME_TYPE
+                and item.get("name") in CANONICAL_SOURCES
+            }
+            if (len(children) != 3 or actual != expected
+                    or any(list(item.get("parents") or []) != [releases_pin["id"]]
+                           for item in children)):
+                raise MigrationError(
+                    "Post-migration validation failed: releases must contain exactly nbp/bdl/wdi"
+                )
 
         # Verify NBP control root
         nbp_ctrl = resolve_nbp_control_root(self.storage, self.root_id, is_writer=False)
