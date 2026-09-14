@@ -56,8 +56,37 @@ def load_reviewed_plan(args: argparse.Namespace) -> dict:
     plan["plan_sha256"] = digest
     return plan
 
-def write_json(path: str, value: dict) -> None:
+def write_json(path: str | Path, value: dict) -> None:
     Path(path).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def write_failure_receipt(args: argparse.Namespace, exc: Exception, status: str) -> dict:
+    journal_path = args.journal_path or Path("journal.json")
+    journal = None
+    journal_read_error = None
+    if journal_path.is_file():
+        try:
+            candidate = json.loads(journal_path.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict):
+                journal = candidate
+            else:
+                journal_read_error = "local journal receipt is not a JSON object"
+        except Exception as read_exc:
+            journal_read_error = str(read_exc)
+    receipt = {
+        "status": status,
+        "operation": args.operation,
+        "error_type": type(exc).__name__,
+        "error_message": str(exc),
+        "journal_path": str(journal_path),
+        "journal": journal,
+    }
+    if journal_read_error:
+        receipt["journal_read_error"] = journal_read_error
+    write_json("migration-error.json", receipt)
+    write_json("operation-result.json", receipt)
+    return receipt
+
 
 def main() -> int:
     args = parse_args()
@@ -96,14 +125,12 @@ def main() -> int:
                 handle.write("status=" + result.get("status", "unknown") + "\n")
         return 0
     except (SafetyPinError, DriftError, MigrationError) as exc:
-        # The engine writes the full transition journal before each Drive mutation.
-        # Keep that receipt intact and publish a separate failure envelope.
-        write_json("migration-error.json", {"status": "migration_failed", "error_type": type(exc).__name__, "error_message": str(exc), "journal_path": str(args.journal_path or Path("journal.json"))})
-        print(Path("migration-error.json").read_text(), file=sys.stderr)
+        failure = write_failure_receipt(args, exc, "migration_failed")
+        print(json.dumps(failure, indent=2, sort_keys=True), file=sys.stderr)
         return 1
     except Exception as exc:
-        write_json("migration-error.json", {"status": "unexpected_failure", "error_type": type(exc).__name__, "error_message": str(exc), "journal_path": str(args.journal_path or Path("journal.json"))})
-        print(Path("migration-error.json").read_text(), file=sys.stderr)
+        failure = write_failure_receipt(args, exc, "unexpected_failure")
+        print(json.dumps(failure, indent=2, sort_keys=True), file=sys.stderr)
         return 1
 if __name__ == "__main__":
     raise SystemExit(main())

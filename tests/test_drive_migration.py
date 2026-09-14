@@ -5,6 +5,7 @@ import copy
 from hashlib import sha256
 import io
 import json
+import os
 from pathlib import Path
 import unittest
 from unittest import mock
@@ -55,20 +56,52 @@ from release_protocol import (
 from storage_manager import StorageManager
 
 
+class InjectedDriveFailure(RuntimeError):
+    pass
+
+
+class _Request:
+    def __init__(self, execute):
+        self.execute = execute
+
+
 class MockDriveService:
-    """In-memory mock Google Drive v3 files service faithful to real Drive behavior."""
+    """In-memory Drive v3 fake with durable effects and mutation fault injection."""
 
     def __init__(self, initial_files: dict[str, dict]):
         self._files = copy.deepcopy(initial_files)
         self._next_id = 1000
+        self.failure_at = None
+        self.failure_phase = None
+        self.mutation_count = 0
+        self.mutation_log = []
+        self.page_size_override = None
+        self.list_fault = None
 
     def files(self):
         return self
 
-    def list(self, q="", fields=None, pageSize=100, pageToken=None, supportsAllDrives=True, includeItemsFromAllDrives=True, **kwargs):
-        mock_req = MagicMock()
+    def _mutate(self, label, effect):
+        self.mutation_count += 1
+        index = self.mutation_count
+        self.mutation_log.append(label)
+        if self.failure_at == index and self.failure_phase == "before":
+            raise InjectedDriveFailure(f"before mutation {index}: {label}")
+        result = effect()
+        if self.failure_at == index and self.failure_phase == "after":
+            raise InjectedDriveFailure(f"after mutation {index}: {label}")
+        return result
 
+    def clear_failure(self):
+        self.failure_at = None
+        self.failure_phase = None
+
+    def list(self, q="", fields=None, pageSize=100, pageToken=None, supportsAllDrives=True, includeItemsFromAllDrives=True, **kwargs):
         def execute(num_retries=0):
+            if self.list_fault == "non_object":
+                return []
+            if self.list_fault == "files_not_list":
+                return {"files": {}}
             matched = []
             for file_id, meta in self._files.items():
                 if meta.get("trashed", False):
@@ -76,144 +109,150 @@ class MockDriveService:
                 match = True
                 if "in parents" in q:
                     import re
-                    m = re.search(r"'([^']+)' in parents", q)
-                    if m:
-                        parent_id = m.group(1)
-                        if parent_id not in meta.get("parents", []):
-                            match = False
+                    found = re.search(r"'([^']+)' in parents", q)
+                    if found and found.group(1) not in meta.get("parents", []):
+                        match = False
                 if match and "name=" in q:
                     import re
-                    m = re.search(r"name='([^']+)'", q)
-                    if m:
-                        name = m.group(1).replace("\\'", "'").replace("\\\\", "\\")
+                    found = re.search(r"name='([^']+)'", q)
+                    if found:
+                        name = found.group(1).replace("\\'", "'").replace("\\\\", "\\")
                         if meta.get("name") != name:
                             match = False
                 if match and "mimeType=" in q:
                     import re
-                    m = re.search(r"mimeType='([^']+)'", q)
-                    if m:
-                        mime = m.group(1)
-                        if meta.get("mimeType") != mime:
-                            match = False
+                    found = re.search(r"mimeType='([^']+)'", q)
+                    if found and meta.get("mimeType") != found.group(1):
+                        match = False
                 if match:
-                    item = {k: v for k, v in meta.items() if k != "content"}
-                    matched.append(item)
-            return {"files": matched, "nextPageToken": None}
+                    matched.append({k: copy.deepcopy(v) for k, v in meta.items() if k != "content"})
+            matched.sort(key=lambda item: item["id"])
+            if self.list_fault == "incomplete" and matched:
+                matched[0].pop("mimeType", None)
+            effective = self.page_size_override or pageSize
+            try:
+                offset = int(pageToken or "0")
+            except ValueError:
+                offset = 0
+            page = matched[offset:offset + effective]
+            next_offset = offset + effective
+            next_token = str(next_offset) if next_offset < len(matched) else None
+            if self.list_fault == "repeated_token" and matched:
+                next_token = "repeat"
+            response = {"files": page, "nextPageToken": next_token}
+            if self.list_fault == "incomplete":
+                response["incompleteSearch"] = True
+            return response
 
-        mock_req.execute = execute
-        return mock_req
+        return _Request(execute)
 
     def get(self, fileId, fields=None, supportsAllDrives=True):
-        mock_req = MagicMock()
-
         def execute(num_retries=0):
             if fileId not in self._files:
                 raise HttpError(httplib2.Response({"status": "404"}), b"not found")
-            # files.get returns metadata for trashed items when addressed by ID.
-            item = {k: v for k, v in self._files[fileId].items() if k != "content"}
+            item = {k: copy.deepcopy(v) for k, v in self._files[fileId].items() if k != "content"}
             item.setdefault("ownedByMe", True)
             item.setdefault("trashed", False)
             return item
 
-        mock_req.execute = execute
-        return mock_req
+        return _Request(execute)
 
     def get_media(self, fileId, supportsAllDrives=True):
-        mock_req = MagicMock()
-
-        def execute(num_retries=0):
-            if fileId not in self._files or self._files[fileId].get("trashed", False):
-                raise RuntimeError(f"File not found: {fileId}")
-            content = self._files[fileId].get("content")
-            if content is None:
-                content = b"{}"
-            return content
-
-        mock_req.execute = execute
-        return mock_req
-
-    def create(self, body=None, media_body=None, fields=None, supportsAllDrives=True):
-        mock_req = MagicMock()
-
-        def execute(num_retries=0):
-            nonlocal body
-            body = body or {}
-            self._next_id += 1
-            file_id = body.get("id") or f"file-{self._next_id}"
-            if file_id in self._files:
-                raise HttpError(httplib2.Response({"status": "409"}), b"already exists")
-            content = b""
-            if media_body and hasattr(media_body, "_fd"):
-                media_body._fd.seek(0)
-                content = media_body._fd.read()
-            self._files[file_id] = {
-                "id": file_id,
-                "name": body.get("name", "untitled"),
-                "mimeType": body.get("mimeType", "application/octet-stream"),
-                "parents": list(body.get("parents", [])),
-                "trashed": False,
-                "content": content,
-                "shortcutDetails": copy.deepcopy(body.get("shortcutDetails")),
-            }
-            return {"id": file_id, "name": body.get("name"), "parents": body.get("parents", [])}
-
-        mock_req.execute = execute
-        return mock_req
-
-    def update(self, fileId, body=None, media_body=None, addParents=None, removeParents=None, fields=None, supportsAllDrives=True):
-        mock_req = MagicMock()
-
         def execute(num_retries=0):
             if fileId not in self._files:
-                raise RuntimeError(f"File not found: {fileId}")
-            meta = self._files[fileId]
-            if body and "name" in body:
-                meta["name"] = body["name"]
-            if body and "trashed" in body:
-                meta["trashed"] = body["trashed"]
-            if body and "shortcutDetails" in body:
-                # Drive v3 rejects updating shortcutDetails on existing shortcuts
-                raise RuntimeError("Drive v3 does not allow updating shortcutDetails on existing shortcuts")
-            if media_body and hasattr(media_body, "_fd"):
-                media_body._fd.seek(0)
-                meta["content"] = media_body._fd.read()
-            parents = set(meta.get("parents", []))
-            if removeParents:
-                for p in removeParents.split(","):
-                    parents.discard(p.strip())
-            if addParents:
-                for p in addParents.split(","):
-                    parents.add(p.strip())
-            meta["parents"] = list(parents)
-            item = {k: v for k, v in meta.items() if k != "content"}
-            return item
+                raise HttpError(httplib2.Response({"status": "404"}), b"not found")
+            content = self._files[fileId].get("content")
+            return b"{}" if content is None else content
 
-        mock_req.execute = execute
-        return mock_req
+        return _Request(execute)
+
+    def create(self, body=None, media_body=None, fields=None, supportsAllDrives=True):
+        def execute(num_retries=0):
+            actual_body = body or {}
+            file_id = actual_body.get("id")
+            if not file_id:
+                self._next_id += 1
+                file_id = f"file-{self._next_id}"
+            label = f"create:{actual_body.get('mimeType')}:{actual_body.get('name')}:{file_id}"
+
+            def effect():
+                if file_id in self._files:
+                    raise HttpError(httplib2.Response({"status": "409"}), b"already exists")
+                content = b""
+                if media_body and hasattr(media_body, "_fd"):
+                    media_body._fd.seek(0)
+                    content = media_body._fd.read()
+                self._files[file_id] = {
+                    "id": file_id,
+                    "name": actual_body.get("name", "untitled"),
+                    "mimeType": actual_body.get("mimeType", "application/octet-stream"),
+                    "parents": list(actual_body.get("parents", [])),
+                    "trashed": False,
+                    "content": content,
+                    "shortcutDetails": copy.deepcopy(actual_body.get("shortcutDetails")),
+                }
+                return {k: copy.deepcopy(v) for k, v in self._files[file_id].items() if k != "content"}
+
+            return self._mutate(label, effect)
+
+        return _Request(execute)
+
+    def update(self, fileId, body=None, media_body=None, addParents=None, removeParents=None, fields=None, supportsAllDrives=True):
+        def execute(num_retries=0):
+            if fileId not in self._files:
+                raise HttpError(httplib2.Response({"status": "404"}), b"not found")
+            kind = "move" if addParents or removeParents or (body and "name" in body) else "content"
+            label = f"update:{kind}:{fileId}"
+
+            def effect():
+                meta = self._files[fileId]
+                if body and "shortcutDetails" in body:
+                    raise RuntimeError("Drive v3 does not allow shortcut target updates")
+                if body and "name" in body:
+                    meta["name"] = body["name"]
+                if body and "trashed" in body:
+                    meta["trashed"] = body["trashed"]
+                if media_body and hasattr(media_body, "_fd"):
+                    media_body._fd.seek(0)
+                    meta["content"] = media_body._fd.read()
+                parents = list(meta.get("parents", []))
+                if removeParents:
+                    remove = {value.strip() for value in removeParents.split(",")}
+                    parents = [value for value in parents if value not in remove]
+                if addParents:
+                    for value in (part.strip() for part in addParents.split(",")):
+                        if value and value not in parents:
+                            parents.append(value)
+                meta["parents"] = parents
+                return {k: copy.deepcopy(v) for k, v in meta.items() if k != "content"}
+
+            return self._mutate(label, effect)
+
+        return _Request(execute)
 
     def delete(self, fileId, supportsAllDrives=True):
-        mock_req = MagicMock()
-
         def execute(num_retries=0):
-            if fileId in self._files:
-                del self._files[fileId]
-            return {}
+            label = f"delete:{fileId}"
 
-        mock_req.execute = execute
-        return mock_req
+            def effect():
+                if fileId not in self._files:
+                    raise HttpError(httplib2.Response({"status": "404"}), b"not found")
+                self._files[fileId]["trashed"] = True
+                return {}
+
+            return self._mutate(label, effect)
+
+        return _Request(execute)
 
     def generateIds(self, count=1, space="drive", type="files"):
-        mock_req = MagicMock()
-
         def execute(num_retries=0):
             ids = []
             for _ in range(count):
                 self._next_id += 1
-                ids.append(f"gen-id-{self._next_id}")
+                ids.append(f"gen-{type}-{self._next_id}")
             return {"ids": ids}
 
-        mock_req.execute = execute
-        return mock_req
+        return _Request(execute)
 
 
 def build_legacy_drive_state(root_id: str = "prod-root-123"):
@@ -721,6 +760,343 @@ class DriveMigrationTests(unittest.TestCase):
                 len([f for f in svc._files.values() if f["name"] == "releases" and not f.get("trashed")]),
                 1,
             )
+
+    def test_cli_failure_receipt_embeds_latest_full_journal(self):
+        import migrate_drive_layout as migration_cli
+
+        journal = {
+            "schema_version": 2,
+            "status": "interrupted",
+            "plan_id": "plan-fixed",
+            "steps": [{"step_id": "move", "status": "started"}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            original_cwd = Path.cwd()
+            try:
+                tmp_path = Path(tmp)
+                journal_path = tmp_path / "durable-journal.json"
+                journal_path.write_text(json.dumps(journal), encoding="utf-8")
+                os.chdir(tmp_path)
+                args = mock.Mock(journal_path=journal_path, operation="resume")
+                receipt = migration_cli.write_failure_receipt(
+                    args, MigrationError("simulated failure"), "migration_failed"
+                )
+                self.assertEqual(journal, receipt["journal"])
+                self.assertEqual(
+                    receipt,
+                    json.loads((tmp_path / "migration-error.json").read_text()),
+                )
+                self.assertEqual(
+                    receipt,
+                    json.loads((tmp_path / "operation-result.json").read_text()),
+                )
+                self.assertEqual(journal, json.loads(journal_path.read_text()))
+            finally:
+                os.chdir(original_cwd)
+
+    def _assert_original_objects_unchanged(self, original, svc):
+        for file_id, expected in original.items():
+            self.assertIn(file_id, svc._files)
+            self.assertEqual(svc._files[file_id], expected, file_id)
+        active_extras = [
+            item["id"] for file_id, item in svc._files.items()
+            if file_id not in original
+            and not item.get("trashed")
+            and item.get("name") != "migration-journal.json"
+        ]
+        self.assertEqual([], active_extras)
+        journals = [
+            item for item in svc._files.values()
+            if item.get("name") == "migration-journal.json"
+            and not item.get("trashed")
+        ]
+        self.assertEqual(1, len(journals))
+        self.assertEqual(["f-06-control"], journals[0]["parents"])
+
+    def _all_fault_points(self, labels):
+        return range(1, len(labels) + 1)
+
+    def test_plan_contains_only_individually_pinned_navigation_actions(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, _ = make_storage_manager_mock(files, "prod-root-123")
+        plan = DriveMigrationEngine(storage, "prod-root-123").plan()
+        self.assertNotIn("sync_navigation", {step["action"] for step in plan["steps"]})
+        nav = [step for step in plan["steps"] if step["step_id"].startswith("nav_")]
+        self.assertEqual(26, len(nav))
+        self.assertEqual(9, sum(step.get("object_kind") == "json" for step in nav))
+        wdi_parts = [
+            step for step in nav
+            if step.get("object_kind") == "shortcut"
+            and step.get("target_id", "").startswith("wdi-obs-part-")
+        ]
+        self.assertEqual({"wdi-obs-part-0", "wdi-obs-part-1"}, {
+            step["target_id"] for step in wdi_parts
+        })
+        digest_input = copy.deepcopy(plan)
+        expected = digest_input.pop("plan_sha256")
+        self.assertEqual(
+            expected,
+            sha256(json.dumps(digest_input, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        )
+
+    def test_strict_preflight_rejects_location_hash_mime_and_navigation_collisions(self):
+        cases = []
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["f-source-campaigns"]["parents"] = ["f-ingestion-control"]
+        cases.append(files)
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["f-nbp-snapshot"]["content"] = b"changed"
+        cases.append(files)
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["f-06-control"]["mimeType"] = "application/json"
+        cases.append(files)
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["f-nbp-rel-uuid"]["parents"] = ["wrong-release-root"]
+        cases.append(files)
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["invalid-release-child"] = {
+            "id": "invalid-release-child", "name": "notes.txt",
+            "mimeType": "text/plain", "parents": ["f-bdl-releases"],
+            "content": b"unexpected",
+        }
+        cases.append(files)
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        files["foreign-current"] = {
+            "id": "foreign-current", "name": "current",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["f-04-gold"],
+        }
+        files["foreign-nbp"] = {
+            "id": "foreign-nbp", "name": "nbp",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["foreign-current"],
+        }
+        files["foreign-child"] = {
+            "id": "foreign-child", "name": "keep.txt",
+            "mimeType": "text/plain", "parents": ["foreign-nbp"],
+            "content": b"keep",
+        }
+        cases.append(files)
+        for index, state in enumerate(cases):
+            with self.subTest(case=index):
+                storage, _ = make_storage_manager_mock(state, "prod-root-123")
+                with self.assertRaises((MigrationError, LayoutResolutionError, AmbiguousLayoutError)):
+                    DriveMigrationEngine(storage, "prod-root-123").plan()
+
+    def test_all_retained_nbp_uuid_folders_move_and_restore_by_id(self):
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        retained_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        files[retained_id] = {
+            "id": retained_id,
+            "name": retained_id,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["f-releases"],
+            "trashed": False,
+        }
+        files["retained-payload"] = {
+            "id": "retained-payload",
+            "name": "retained.parquet",
+            "mimeType": "application/octet-stream",
+            "parents": [retained_id],
+            "content": b"RETAINED_BYTES",
+            "trashed": False,
+        }
+        original = copy.deepcopy(files)
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, "prod-root-123")
+        plan = engine.plan()
+        self.assertIn(
+            retained_id,
+            {step["item_id"] for step in plan["steps"] if step["action"] == "move"},
+        )
+        result = engine.apply(plan, confirmed=True)
+        nbp_folder = next(
+            step["item_id"] for step in result["journal"]["steps"]
+            if step["step_id"] == "create_releases_nbp"
+        )
+        self.assertEqual([nbp_folder], svc._files[retained_id]["parents"])
+        self.assertEqual(b"RETAINED_BYTES", svc._files["retained-payload"]["content"])
+        DriveMigrationEngine(storage, "prod-root-123").rollback(confirmed=True)
+        self._assert_original_objects_unchanged(original, svc)
+
+    def test_rollback_rejects_new_release_child_before_any_reverse_mutation(self):
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, "prod-root-123")
+        engine.apply(engine.plan(), confirmed=True)
+        svc._files["new-staged-release"] = {
+            "id": "new-staged-release",
+            "name": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["f-bdl-releases"],
+            "trashed": False,
+        }
+        before_count = svc.mutation_count
+        with self.assertRaises(DriftError):
+            DriveMigrationEngine(storage, "prod-root-123").rollback(confirmed=True)
+        self.assertEqual(before_count, svc.mutation_count)
+        self.assertFalse(svc._files["new-staged-release"].get("trashed", False))
+        self.assertEqual(["f-bdl-releases"], svc._files["new-staged-release"]["parents"])
+
+    def test_bounded_pagination_accepts_multiple_pages_and_rejects_bad_pages(self):
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        svc.page_size_override = 1
+        self.assertEqual(
+            "planned", DriveMigrationEngine(storage, "prod-root-123").plan()["status"]
+        )
+        self.assertEqual("legacy", detect_layout_mode(storage, "prod-root-123"))
+        for fault in ("repeated_token", "non_object", "files_not_list", "incomplete"):
+            files, *_ = build_legacy_drive_state("prod-root-123")
+            storage, svc = make_storage_manager_mock(files, "prod-root-123")
+            svc.page_size_override = 1
+            svc.list_fault = fault
+            with self.subTest(path="engine", fault=fault), self.assertRaises(MigrationError):
+                DriveMigrationEngine(storage, "prod-root-123").plan()
+            with self.subTest(path="layout_helper", fault=fault), self.assertRaises(
+                LayoutResolutionError
+            ):
+                detect_layout_mode(storage, "prod-root-123")
+
+    def test_missing_and_wrong_root_journals_fail_closed(self):
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        result = DriveMigrationEngine(storage, "prod-root-123").apply(
+            DriveMigrationEngine(storage, "prod-root-123").plan(),
+            confirmed=True, stop_after_step=0,
+        )
+        journal_id = result["journal_file_id"]
+        svc._files[journal_id]["trashed"] = True
+        with self.assertRaises(MigrationError):
+            DriveMigrationEngine(storage, "prod-root-123").apply(resume=True, confirmed=True)
+
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        result = DriveMigrationEngine(storage, "prod-root-123").apply(
+            DriveMigrationEngine(storage, "prod-root-123").plan(),
+            confirmed=True, stop_after_step=0,
+        )
+        journal_id = result["journal_file_id"]
+        document = json.loads(svc._files[journal_id]["content"])
+        document["expected_root_id"] = "foreign-root"
+        svc._files[journal_id]["content"] = json.dumps(document).encode()
+        with self.assertRaises(SafetyPinError):
+            DriveMigrationEngine(storage, "prod-root-123").apply(resume=True, confirmed=True)
+
+    def test_rollback_preflight_rejects_foreign_navigation_content_before_reverse(self):
+        files, *_ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        original = copy.deepcopy(files)
+        result = DriveMigrationEngine(storage, "prod-root-123").apply(
+            DriveMigrationEngine(storage, "prod-root-123").plan(), confirmed=True
+        )
+        owned_folder = next(
+            step for step in result["journal"]["steps"]
+            if step["action"] == "ensure_object"
+            and step["object_kind"] == "folder"
+            and not step["preexisting"]
+        )
+        svc._files["foreign-during-migration"] = {
+            "id": "foreign-during-migration", "name": "do-not-delete",
+            "mimeType": "text/plain", "parents": [owned_folder["item_id"]],
+            "content": b"foreign",
+        }
+        before = {
+            file_id: (item["name"], list(item["parents"]), item.get("trashed", False))
+            for file_id, item in svc._files.items()
+        }
+        with self.assertRaises(DriftError):
+            DriveMigrationEngine(storage, "prod-root-123").rollback(confirmed=True)
+        after = {
+            file_id: (item["name"], list(item["parents"]), item.get("trashed", False))
+            for file_id, item in svc._files.items()
+        }
+        self.assertEqual(before, after)
+        self.assertEqual(b"foreign", svc._files["foreign-during-migration"]["content"])
+
+    def test_apply_action_fault_matrix_recovers_fresh_and_rolls_back(self):
+        baseline_files, *_ = build_legacy_drive_state("prod-root-123")
+        baseline_storage, baseline_svc = make_storage_manager_mock(
+            baseline_files, "prod-root-123"
+        )
+        baseline_engine = DriveMigrationEngine(baseline_storage, "prod-root-123")
+        baseline_engine.apply(baseline_engine.plan(), confirmed=True)
+        labels = baseline_svc.mutation_log
+        self.assertEqual(110, len(labels))
+        self.assertEqual(73, sum(label.startswith("update:content:") for label in labels))
+        self.assertEqual(1, sum(
+            label.startswith("create:")
+            and ":migration-journal.json:" in label
+            for label in labels
+        ))
+        points = self._all_fault_points(labels)
+        for point in points:
+            for phase in ("before", "after"):
+                with self.subTest(point=point, phase=phase):
+                    files, *_ = build_legacy_drive_state("prod-root-123")
+                    original = copy.deepcopy(files)
+                    storage, svc = make_storage_manager_mock(files, "prod-root-123")
+                    engine = DriveMigrationEngine(storage, "prod-root-123")
+                    plan = engine.plan()
+                    reviewed = copy.deepcopy(plan)
+                    svc.failure_at = point
+                    svc.failure_phase = phase
+                    with self.assertRaises(InjectedDriveFailure):
+                        engine.apply(plan, confirmed=True)
+                    svc.clear_failure()
+                    fresh = DriveMigrationEngine(storage, "prod-root-123")
+                    journals = [
+                        item for item in svc._files.values()
+                        if item["name"] == "migration-journal.json"
+                        and not item.get("trashed")
+                    ]
+                    if journals:
+                        resumed = fresh.apply(resume=True, confirmed=True)
+                    else:
+                        resumed = fresh.apply(copy.deepcopy(reviewed), confirmed=True)
+                    self.assertEqual(reviewed, resumed["journal"]["plan"])
+                    self.assertEqual(reviewed["plan_sha256"], resumed["journal"]["plan_sha256"])
+                    DriveMigrationEngine(storage, "prod-root-123").rollback(confirmed=True)
+                    self._assert_original_objects_unchanged(original, svc)
+
+    def test_rollback_action_fault_matrix_recovers_fresh(self):
+        baseline_files, *_ = build_legacy_drive_state("prod-root-123")
+        baseline_storage, baseline_svc = make_storage_manager_mock(
+            baseline_files, "prod-root-123"
+        )
+        baseline_engine = DriveMigrationEngine(baseline_storage, "prod-root-123")
+        baseline_engine.apply(baseline_engine.plan(), confirmed=True)
+        start = len(baseline_svc.mutation_log)
+        baseline_engine.rollback(confirmed=True)
+        rollback_labels = baseline_svc.mutation_log[start:]
+        self.assertEqual(110, len(rollback_labels))
+        self.assertEqual(
+            74,
+            sum(label.startswith("update:content:") for label in rollback_labels),
+        )
+        points = self._all_fault_points(rollback_labels)
+        for point in points:
+            for phase in ("before", "after"):
+                with self.subTest(point=point, phase=phase):
+                    files, *_ = build_legacy_drive_state("prod-root-123")
+                    original = copy.deepcopy(files)
+                    storage, svc = make_storage_manager_mock(files, "prod-root-123")
+                    engine = DriveMigrationEngine(storage, "prod-root-123")
+                    applied = engine.apply(engine.plan(), confirmed=True)
+                    reviewed = copy.deepcopy(applied["journal"]["plan"])
+                    svc.mutation_count = 0
+                    svc.mutation_log = []
+                    svc.failure_at = point
+                    svc.failure_phase = phase
+                    with self.assertRaises(InjectedDriveFailure):
+                        engine.rollback(confirmed=True)
+                    svc.clear_failure()
+                    rolled_back = DriveMigrationEngine(
+                        storage, "prod-root-123"
+                    ).rollback(confirmed=True)
+                    self.assertEqual("migration_rolled_back", rolled_back["status"])
+                    self.assertEqual(reviewed, rolled_back["journal"]["plan"])
+                    self._assert_original_objects_unchanged(original, svc)
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,36 +36,53 @@ class LayoutResolutionError(RuntimeError):
 
 
 def _find_items(store_or_storage: Any, name: str, parent_id: str) -> list[str]:
-    """Find child item IDs by name under parent_id across ReleaseStore or StorageManager."""
+    """Find exact child IDs, failing closed on incomplete or malformed Drive pages."""
     drive_service = getattr(store_or_storage, "drive_service", None) or getattr(
         getattr(store_or_storage, "storage", None), "drive_service", None
     )
     if drive_service is not None:
         escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
         q = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
-        result = []
+        result: list[str] = []
         token = None
-        while True:
-            resp = drive_service.files().list(
+        seen_tokens: set[str] = set()
+        for _page_number in range(1000):
+            response = drive_service.files().list(
                 q=q,
-                fields="nextPageToken,files(id)",
+                fields="nextPageToken,incompleteSearch,files(id)",
                 pageSize=50,
                 supportsAllDrives=True,
                 includeItemsFromAllDrives=True,
                 pageToken=token,
             ).execute()
-            result.extend([f["id"] for f in resp.get("files", [])])
-            token = resp.get("nextPageToken")
-            if not token:
-                break
-        return result
+            if not isinstance(response, dict):
+                raise LayoutResolutionError("Drive list returned a malformed response")
+            incomplete = response.get("incompleteSearch")
+            if incomplete not in (None, False):
+                raise LayoutResolutionError("Drive list reported an incomplete search")
+            files = response.get("files")
+            if not isinstance(files, list):
+                raise LayoutResolutionError("Drive list response has no valid files list")
+            for item in files:
+                if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+                    raise LayoutResolutionError("Drive list response contains a malformed item")
+                result.append(item["id"])
+            next_token = response.get("nextPageToken")
+            if next_token in (None, ""):
+                return result
+            if not isinstance(next_token, str):
+                raise LayoutResolutionError("Drive list response has a malformed page token")
+            if next_token == token or next_token in seen_tokens:
+                raise LayoutResolutionError("Drive list repeated a page token")
+            seen_tokens.add(next_token)
+            token = next_token
+        raise LayoutResolutionError("Drive list exceeded the bounded page limit")
     if hasattr(store_or_storage, "find"):
         return list(store_or_storage.find(name, parent_id))
     if hasattr(store_or_storage, "_list_exact_folders"):
         folders = store_or_storage._list_exact_folders(name, parent_id=parent_id)
         return [f["id"] for f in folders]
     raise TypeError(f"Unsupported store or storage object: {type(store_or_storage)}")
-
 
 def _mkdir(store_or_storage: Any, name: str, parent_id: str) -> str:
     """Create a folder under parent_id across ReleaseStore or StorageManager."""
