@@ -244,10 +244,17 @@ class BdlResetEngine:
         roots: Dict[str, Dict[str, Any]] = {}
 
         def find_unique_folder(parent_id: str, name: str, context: str) -> Optional[Dict[str, Any]]:
-            matches = [f for f in self._find_exact_children(parent_id, name) if f.get("mimeType") == FOLDER_MIME_TYPE]
-            if len(matches) > 1:
-                raise AmbiguityError(f"Multiple folders named '{name}' found under {context}")
-            return matches[0] if matches else None
+            all_matches = self._find_exact_children(parent_id, name)
+            if not all_matches:
+                return None
+            if len(all_matches) > 1:
+                raise AmbiguityError(f"Multiple items named '{name}' found under {context}")
+            item = all_matches[0]
+            if item.get("mimeType") != FOLDER_MIME_TYPE:
+                raise AmbiguityError(
+                    f"Root item '{name}' under {context} has wrong MIME type '{item.get('mimeType')}'; expected folder"
+                )
+            return item
 
         # 1. 01_landing/gus_bdl
         landing = find_unique_folder(self.root_id, "01_landing", "root")
@@ -348,10 +355,23 @@ class BdlResetEngine:
 
                 # Validate shortcutDetails: NEVER traverse target, but verify target is not foreign
                 shortcut_details = child.get("shortcutDetails")
-                if mime_type == SHORTCUT_MIME_TYPE and shortcut_details:
+                if mime_type == SHORTCUT_MIME_TYPE:
+                    if not shortcut_details:
+                        raise AmbiguityError(f"Shortcut {child_id} has missing shortcutDetails")
                     target_id = shortcut_details.get("targetId")
                     if not target_id:
                         raise AmbiguityError(f"Shortcut {child_id} has malformed or missing targetId")
+                    target_meta = self._get_item_metadata(target_id)
+                    if target_meta:
+                        target_app_props = target_meta.get("appProperties") or {}
+                        if target_app_props.get("source_id") in KNOWN_NON_BDL_SOURCES:
+                            raise AmbiguityError(
+                                f"Shortcut {child_id} in {root_key} targets foreign source '{target_app_props.get('source_id')}'"
+                            )
+                        if target_meta.get("name") in KNOWN_NON_BDL_SOURCES:
+                            raise AmbiguityError(
+                                f"Shortcut {child_id} in {root_key} targets foreign source '{target_meta.get('name')}'"
+                            )
 
                 target_item = {
                     "id": child_id,
@@ -407,6 +427,8 @@ class BdlResetEngine:
                     if name == "releases" and sub_name == "bdl":
                         continue
                     if name == "05_archive" and sub_name == "bdl-platform":
+                        continue
+                    if name == "06_control" and sub_name == BDL_RESETS_DIR:
                         continue
                     if name in ALL_MEDALLION_LAYERS and sub_name == "current":
                         curr_children = self._list_children(sub["id"])
@@ -522,7 +544,12 @@ class BdlResetEngine:
         cutoff_ts = now_ts - MAX_QUOTA_HISTORY_SECONDS
         active_attempts = sorted([float(ts) for ts in raw_attempts if float(ts) > cutoff_ts])
 
-        clean_ledger = self._build_clean_fresh_ledger(active_attempts, provider_retry_at, last_attempt_utc)
+        clean_ledger = self._build_clean_fresh_ledger(
+            active_attempts,
+            provider_retry_at,
+            last_attempt_utc,
+            original_pointer_id=ptr_matches[0]["id"],
+        )
 
         return {
             "source_id": "gus_bdl",
@@ -541,11 +568,14 @@ class BdlResetEngine:
         quota_attempts: List[float],
         provider_retry_at: Optional[float],
         last_attempt_utc: Optional[str],
+        *,
+        original_pointer_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Construct a clean, valid v2 campaign state with preserved quota and NO prior work."""
+        """Construct a clean, valid campaign state with preserved quota and NO prior work."""
+        from ingestion.source_campaign import STATE_VERSION
         today = datetime.now(timezone.utc).date().isoformat()
-        return {
-            "schema_version": 2,
+        ledger = {
+            "schema_version": STATE_VERSION,
             "source_id": "gus_bdl",
             "onboarding_date": today,
             "pending": [],
@@ -566,6 +596,9 @@ class BdlResetEngine:
             "last_attempt_utc": last_attempt_utc,
             "quota_windows": [dict(w) for w in REGISTERED_BDL_QUOTA_WINDOWS],
         }
+        if original_pointer_id:
+            ledger["original_pointer_id"] = original_pointer_id
+        return ledger
 
     # -------------------------------------------------------------------------
     # Plan Generation (Strictly Read-Only)
@@ -1018,6 +1051,13 @@ class BdlResetEngine:
             if sha256(raw).hexdigest() != ptr_meta["sha256"]:
                 raise BdlResetError(f"Key non-BDL pointer {ptr_path} was corrupted during reset")
 
+        # Verify no active untrashed BDL roots remain
+        active_roots = self.discover_bdl_roots()
+        if active_roots:
+            raise BdlResetError(
+                f"Post-reset verification failed: found active untrashed BDL roots: {list(active_roots.keys())}"
+            )
+
         return {
             "status": "verified_clean",
             "roots_trashed": len(roots),
@@ -1026,25 +1066,118 @@ class BdlResetEngine:
             "key_pointers_verified": len(key_pointers),
         }
 
+    def consume_fresh_ledger(
+        self,
+        target_store: Any,
+        *,
+        plan_id: str,
+        expected_plan_sha256: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Validate and consume the clean fresh ledger from 06_control/bdl_resets/<plan_id>/ into target store.
+
+        Ensures that new BDL campaigns begin with preserved provider quota and cooldowns
+        outside the trashed data, but with strictly NO prior tasks, NO completed rows,
+        and gate='awaiting_web_bulk'.
+        """
+        from ingestion.source_campaign import STATE_VERSION, validate_state
+
+        # 1. Locate remote plan folder
+        ctrl_matches = [
+            f for f in self._find_exact_children(self.root_id, "06_control")
+            if f.get("mimeType") == FOLDER_MIME_TYPE
+        ]
+        if not ctrl_matches:
+            raise BdlResetError("06_control folder not found on Drive")
+        resets_folders = [
+            f for f in self._find_exact_children(ctrl_matches[0]["id"], BDL_RESETS_DIR)
+            if f.get("mimeType") == FOLDER_MIME_TYPE
+        ]
+        if not resets_folders:
+            raise BdlResetError(f"{BDL_RESETS_DIR} folder not found under 06_control")
+        plan_folders = [
+            f for f in self._find_exact_children(resets_folders[0]["id"], plan_id)
+            if f.get("mimeType") == FOLDER_MIME_TYPE
+        ]
+        if not plan_folders:
+            raise BdlResetError(f"Plan folder {plan_id} not found under 06_control/{BDL_RESETS_DIR}")
+
+        plan_folder_id = plan_folders[0]["id"]
+
+        # 2. Read plan.json and verify hash
+        plan_files = self._find_exact_children(plan_folder_id, "plan.json")
+        if not plan_files:
+            raise BdlResetError(f"plan.json not found in 06_control/{BDL_RESETS_DIR}/{plan_id}")
+        plan_bytes = self._read_file_bytes(plan_files[0]["id"])
+        plan_doc = json.loads(plan_bytes.decode("utf-8"))
+        actual_sha = _canonical_digest(plan_doc)
+        if expected_plan_sha256 and expected_plan_sha256 != actual_sha:
+            raise DriftError(f"Plan SHA-256 mismatch: expected '{expected_plan_sha256}', got '{actual_sha}'")
+
+        # 3. Read retained-quota-ledger.json
+        ledger_files = self._find_exact_children(plan_folder_id, "retained-quota-ledger.json")
+        if not ledger_files:
+            raise BdlResetError(f"retained-quota-ledger.json not found in 06_control/{BDL_RESETS_DIR}/{plan_id}")
+        ledger_bytes = self._read_file_bytes(ledger_files[0]["id"])
+        ledger = json.loads(ledger_bytes.decode("utf-8"))
+
+        # 4. Strictly validate fresh ledger invariants
+        if ledger.get("schema_version") != STATE_VERSION or ledger.get("source_id") != "gus_bdl":
+            raise BdlResetError("Retained quota ledger schema version or source ID is invalid")
+        if ledger.get("pending") != [] or ledger.get("completed") != {} or ledger.get("receipts") != []:
+            raise BdlResetError("Retained quota ledger contains old work or tasks; must be completely clean")
+        if ledger.get("coverage_status") != "awaiting_web_bulk" or ledger.get("gate") != "awaiting_web_bulk":
+            raise BdlResetError("Retained quota ledger must record coverage_status and gate as 'awaiting_web_bulk'")
+        validate_state(ledger, "gus_bdl")
+
+        # 5. Save to target campaign store
+        target_store.save(ledger)
+
+        # 6. Verify newly saved campaign state
+        loaded = target_store.load()
+        if not loaded:
+            raise BdlResetError("Target campaign store failed to load newly saved fresh ledger")
+        validate_state(loaded, "gus_bdl")
+        if loaded.get("pending") != [] or loaded.get("completed") != {} or loaded.get("receipts") != []:
+            raise BdlResetError("Consumed campaign state contains tasks or work after save")
+        if loaded.get("quota_attempts") != ledger.get("quota_attempts"):
+            raise BdlResetError("Consumed campaign state did not preserve quota attempts")
+        if loaded.get("provider_retry_at") != ledger.get("provider_retry_at"):
+            raise BdlResetError("Consumed campaign state did not preserve provider cooldown")
+
+        return {
+            "status": "fresh_ledger_consumed",
+            "source_id": "gus_bdl",
+            "plan_id": plan_id,
+            "quota_attempts_count": len(loaded.get("quota_attempts", [])),
+            "provider_retry_at": loaded.get("provider_retry_at"),
+            "coverage_status": loaded.get("coverage_status"),
+            "gate": loaded.get("gate"),
+        }
+
     # -------------------------------------------------------------------------
     # Journal Persistence Helpers
     # -------------------------------------------------------------------------
 
     def _load_or_init_journal(self, plan: Dict[str, Any], plan_folder_id: str, *, resume: bool) -> Dict[str, Any]:
+        def _validate_journal(j: dict[str, Any], label: str) -> dict[str, Any]:
+            if j.get("plan_sha256") != plan.get("plan_sha256"):
+                raise DriftError(f"{label} journal plan_sha256 does not match reviewed plan")
+            if j.get("plan_id") != plan.get("plan_id"):
+                raise DriftError(f"{label} journal plan_id does not match reviewed plan")
+            if j.get("root_id") != self.root_id:
+                raise SafetyPinError(f"{label} journal root_id does not match storage root")
+            return j
+
         if resume:
             # Try loading remote journal first
             existing = self._find_exact_children(plan_folder_id, "journal.json")
             if existing:
                 raw = self._read_file_bytes(existing[0]["id"])
                 journal = json.loads(raw.decode("utf-8"))
-                if journal.get("plan_sha256") != plan.get("plan_sha256"):
-                    raise DriftError("Remote journal plan_sha256 does not match reviewed plan")
-                return journal
+                return _validate_journal(journal, "Remote")
             elif self.journal_local_path.is_file():
                 journal = json.loads(self.journal_local_path.read_text(encoding="utf-8"))
-                if journal.get("plan_sha256") != plan.get("plan_sha256"):
-                    raise DriftError("Local journal plan_sha256 does not match reviewed plan")
-                return journal
+                return _validate_journal(journal, "Local")
             else:
                 raise BdlResetError("Resume failed: no remote or local journal exists for this plan")
 

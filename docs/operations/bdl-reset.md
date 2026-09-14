@@ -80,16 +80,22 @@ If apply fails or times out midway:
 
 ---
 
-## 3. Restoration from Google Drive Trash
+## 3. Restoration from Google Drive Trash & 30-Day Retention Policy
 
-If BDL data must be restored:
+> [!IMPORTANT]
+> **Google Drive 30-Day Trash Expiration Policy:**
+> Per official Google Drive v3 documentation, items in Google Drive trash (`trashed=true`) are permanently and automatically purged by Google after 30 days. Untrashing must occur within this 30-day window. Beyond 30 days, Drive permanently deletes trashed items; no retention or restore guarantee exists after expiration without an external backup.
 
-1. **Durable Journal Contains Exact Identities:**
-   Download the `bdl-reset-receipts` artifact or inspect `06_control/bdl-reset-recovery-journal.json`.
-   The journal's `trashed_items` array lists every item ID, name, parent ID, and timestamp.
+If BDL data must be restored within the 30-day window:
 
-2. **Restore via Drive API (Untrash):**
-   Run the following Python command in Codespaces or an authorized environment:
+1. **Durable Journal Contains Exact Root Identities:**
+   Download the `bdl-reset-receipts` artifact or inspect `06_control/bdl_resets/<plan_id>/journal.json`.
+   The journal's `root_checkpoints` array lists each of the 7 mutated BDL root folders, their IDs, and keys.
+
+2. **Restore via Drive API (Root-Level Untrash):**
+   Google Drive v3 inherits untrashed state (`trashed=false`) down the entire subtree. Setting `trashed: False` on the 7 BDL root folders automatically restores all 36,329 descendant files and subfolders without requiring tens of thousands of individual API calls.
+
+   Run the following Python script in Codespaces or an authorized reviewed environment:
    ```python
    import json
    from storage_manager import StorageManager
@@ -97,16 +103,18 @@ If BDL data must be restored:
    sm = StorageManager(backend="gdrive")
    journal = json.load(open("bdl-reset-journal.json"))
 
-   # Restore in reverse order (roots first, then children)
-   for item in reversed(journal["trashed_items"]):
-       print(f"Restoring {item['name']} ({item['id']})...")
+   # Untrash the 7 BDL root folders; descendants inherit trashed=False automatically
+   for checkpoint in journal.get("root_checkpoints", []):
+       root_id = checkpoint["root_id"]
+       root_key = checkpoint["root_key"]
+       print(f"Restoring root {root_key} ({root_id})...")
        sm.drive_service.files().update(
-           fileId=item["id"],
+           fileId=root_id,
            body={"trashed": False},
            supportsAllDrives=True,
        ).execute()
-   print("Restoration complete.")
+   print("Root restoration complete. All descendants have inherited untrashed status.")
    ```
 
 3. **Verify Restored Objects:**
-   Confirm that all restored folders and files are visible under their original parent IDs and accessible for ingestion or modeling.
+   Confirm that all 7 root folders and their descendant files and shortcuts are visible and accessible (`trashed=false`) under their original parents.

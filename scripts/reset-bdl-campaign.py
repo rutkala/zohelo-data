@@ -46,9 +46,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--operation",
-        choices=["plan", "apply", "resume", "verify"],
+        choices=["plan", "apply", "resume", "verify", "consume-fresh-ledger"],
         default="plan",
-        help="plan is read-only (default); apply and resume mutate Drive via recoverable trash",
+        help="plan is read-only (default); apply and resume mutate Drive via recoverable trash; consume-fresh-ledger initializes clean campaign state",
     )
     parser.add_argument(
         "--expected-root-id",
@@ -197,6 +197,17 @@ def main() -> int:
             plan = load_reviewed_plan(args)
             result = engine.verify_post_reset(plan)
             write_json("verification.json", result)
+            write_json("operation-result.json", result)
+        elif args.operation == "consume-fresh-ledger":
+            plan = load_reviewed_plan(args)
+            from ingestion.source_campaign_store import DriveCampaignStore
+            target_store = DriveCampaignStore(storage, "gus_bdl")
+            result = engine.consume_fresh_ledger(
+                target_store,
+                plan_id=plan["plan_id"],
+                expected_plan_sha256=args.plan_sha256,
+            )
+            write_json("consume-ledger-receipt.json", result)
             write_json("operation-result.json", result)
         else:
             raise BdlResetError(f"Unknown operation: {args.operation}")
