@@ -69,7 +69,7 @@ def main() -> int:
         return 1
     try:
         storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
-        engine = DriveMigrationEngine(storage=storage, expected_root_id=args.expected_root_id, journal_local_path=args.journal_path)
+        engine = DriveMigrationEngine(storage=storage, expected_root_id=args.expected_root_id, journal_local_path=args.journal_path or Path("journal.json"))
         if args.operation == "plan":
             result = engine.plan()
             write_json("plan.json", result)
@@ -96,11 +96,13 @@ def main() -> int:
                 handle.write("status=" + result.get("status", "unknown") + "\n")
         return 0
     except (SafetyPinError, DriftError, MigrationError) as exc:
-        write_json("migration-error.json", {"status": "migration_failed", "error_type": type(exc).__name__, "error_message": str(exc)})
+        # The engine writes the full transition journal before each Drive mutation.
+        # Keep that receipt intact and publish a separate failure envelope.
+        write_json("migration-error.json", {"status": "migration_failed", "error_type": type(exc).__name__, "error_message": str(exc), "journal_path": str(args.journal_path or Path("journal.json"))})
         print(Path("migration-error.json").read_text(), file=sys.stderr)
         return 1
     except Exception as exc:
-        write_json("migration-error.json", {"status": "unexpected_failure", "error_type": type(exc).__name__, "error_message": str(exc)})
+        write_json("migration-error.json", {"status": "unexpected_failure", "error_type": type(exc).__name__, "error_message": str(exc), "journal_path": str(args.journal_path or Path("journal.json"))})
         print(Path("migration-error.json").read_text(), file=sys.stderr)
         return 1
 if __name__ == "__main__":
