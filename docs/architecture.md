@@ -126,15 +126,16 @@ closed unless the archive has exactly the six accepted members and campaign cove
 annual cells in `WDICSV.csv` become Silver and Gold observations at geography (economy or
 source-published aggregate) × indicator × year grain. Geography, indicator and year dimensions,
 the observation fact and a release-coverage mart are published as an independent immutable
-`wdi-platform` release. Large observation relations are partitioned into bounded Parquet files;
-this changes transport size, not source scope. Staged validation restores every part, binds the
-release to the raw archive hash/size and dbt artifacts, and requires modeled observation coverage
-of every populated annual source cell. Nine native MetricFlow metrics expose archive/member and
-modeled-coverage counts at snapshot grain; WDI indicator values are not assumed additive.
+release under `releases/wdi/`. Large observation relations are partitioned into bounded Parquet
+files; this changes transport size, not source scope. Staged validation restores every part,
+binds the release to the raw archive hash/size and dbt artifacts, and requires modeled observation
+coverage of every populated annual source cell. Nine native MetricFlow metrics expose archive/member
+and modeled-coverage counts at snapshot grain; WDI indicator values are not assumed additive.
 `enable_wdi` is set only by the source-specific build so existing NBP and BDL release manifests
-remain isolated from WDI models and metrics.
-The portal resolves `wdi-platform/current-release.json` alongside NBP and BDL, validates all
-fourteen dataset contracts and their bounded file descriptors, and merges the WDI dbt catalogue
+remain isolated from WDI models and metrics. Readers continue to preserve legacy compatibility
+for historical paths where applicable.
+The portal resolves `releases/wdi/current-release.json` directly alongside NBP and BDL, validates
+all fourteen dataset contracts and their bounded file descriptors, and merges the WDI dbt catalogue
 and lineage into the existing Lakehouse experience. Browser queries retain the shared 512 MiB
 session budget; partitioning avoids a single oversized transfer but does not make the browser an
 unlimited archive reader.

@@ -3,7 +3,9 @@
 This guide explains the Google Drive storage layout for `zohelo-data` (`data.zohelo.com`), how current data is addressed, how sources publish packages, and how the canonical medallion layout operates.
 
 > [!NOTE]
-> **Owner Approval 14 September 2026:** Physical consolidation approved. Live cutover is awaiting verification. All retained release packages, manifests, data bytes, and folder identities are strictly preserved.
+> **Completed and verified 14 September 2026:** Physical consolidation is live. All 3,673 existing objects passed the preservation checks, and all 90 newly created navigation objects were verified. See the [delivery record](deliverables.md) and [verification receipt](releases/2026-09-14-drive-layout.json).
+
+`releases/` holds the actual versioned datasets for NBP, BDL and WDI. The Bronze, Silver and Gold `current/` folders provide shortcuts to those files, so browsing by data layer does not duplicate data. `06_control/` holds ingestion state and the migration journal. `05_archive/` retains historical material and the old platform wrappers.
 
 ---
 
@@ -45,7 +47,7 @@ zohelo-data/ (Drive root: 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf)
 ## 2. Source Release Architecture
 
 Each source (`nbp`, `bdl`, `wdi`) maintains an identical direct structure under `releases/<source>/`:
-- **Pointer:** `releases/<source>/current-release.json` contains `format_version: 2`, `release_id: "<uuid>"`, and `manifest_file_id: "<id>"`.
+- **Pointer:** `releases/<source>/current-release.json` identifies the current immutable release and its manifest. The migration preserves existing pointer bytes; readers support both legacy format 1 and current format 2. Current-format pointers declare `format_version: 2`, `release_id: "<uuid>"`, and `manifest_file_id: "<id>"`.
 - **Release Directory:** `releases/<source>/<uuid>/` contains:
   - `release.json`: Complete release manifest declaring datasets, schemas, logical medallion layer, row counts, and Parquet file checksums.
   - Parquet data files: Partitioned or table Parquet files.
@@ -70,7 +72,7 @@ To allow data consumers and exploratory tools to navigate by medallion tier with
 - Each medallion folder (`02_bronze/`, `03_silver/`, `04_gold/`) contains a `current/<source_id>/` directory.
 - Single-file tables: Direct Drive shortcut named `<table_name>.parquet` pointing to the Parquet file in the current release.
 - Multi-file datasets: Subdirectory `<table_name>/` containing shortcuts for each part file.
-- `navigation-index.json`: Drive-native index document updated atomically with release promotion, recording verified target IDs and checksums.
+- `navigation-index.json`: Drive-native index document updated during release promotion. Google Drive does not support atomic multi-resource transactions; navigation indexes are staged with pending status before the release pointer update, and verified only after exact pointer readback confirms the published state.
 - **Reconciliation and Pruning:** When a release advances, obsolete shortcuts from dropped tables or part changes are cleanly removed; user or non-shortcut files outside managed directories are never touched.
 
 ---
@@ -87,9 +89,7 @@ To allow data consumers and exploratory tools to navigate by medallion tier with
    ```
    This prevents concurrent write conflicts on Google Drive while queuing pending scheduled runs.
 
-2. **Migration Operations:**
-   - **Plan (Dry Run):** `python scripts/migrate_drive_layout.py --operation plan`
-   - **Apply:** `python scripts/migrate_drive_layout.py --operation apply --confirm --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
-   - **Resume:** `python scripts/migrate_drive_layout.py --operation resume --confirm --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
-   - **Rollback:** `python scripts/migrate_drive_layout.py --operation rollback --confirm --expected-root-id 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`
-   - **Verify:** `python scripts/migrate_drive_layout.py --operation verify`
+2. **Migration Operations and Operational Runbook:**
+   Drive migration mutations (`apply`, `resume`, `rollback`) are executed strictly via the main-branch **Migrate Google Drive layout** GitHub Actions workflow (`.github/workflows/migrate-drive-layout.yml`) using verified plan provenance artifacts (`migration-plan`). Direct local mutations are disabled for production safety.
+
+   For the complete operational procedures, dispatch input requirements, failure recovery, and diagnostic commands, refer to the [Google Drive Layout Migration Operational Runbook](operations/drive-migration.md).

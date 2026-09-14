@@ -1,0 +1,130 @@
+{
+  "apply": {
+    "conclusion": "success",
+    "head_sha": "f05e22da1c876d51ccce4380ac03efee6cbe2765",
+    "html_url": "https://github.com/rutkala/zohelo-data/actions/runs/34871823795",
+    "id": 34871823795,
+    "independent_verification_exit": 0,
+    "receipts_download_exit": 0,
+    "status": "completed"
+  },
+  "completed_at": "2026-09-14T17:21:23Z",
+  "cutover_preconditions": {
+    "preconditions_met": true,
+    "required_compatibility_commit": "f05e22da1c876d51ccce4380ac03efee6cbe2765",
+    "timestamp_utc": "2026-09-14T16:58:24.044641+00:00"
+  },
+  "independent_verification": {
+    "baseline_objects_checked": 3673,
+    "canonical_release_roots": {
+      "bdl": "1v9lrhg0GLg-LzUYhivPQRqYPtOujIrAa",
+      "nbp": "1a2NEXvsNWiRx3JVo75Ytt5dBJLELkOgc",
+      "wdi": "1GrL77irmNYOGfNReIV-wPVfFrDfxxHuH"
+    },
+    "completed_at": "2026-09-14T17:21:23Z",
+    "content_pins": [
+      {
+        "label": "nbp",
+        "unchanged": true
+      },
+      {
+        "label": "nbp_manifest",
+        "unchanged": true
+      },
+      {
+        "label": "bdl",
+        "unchanged": true
+      },
+      {
+        "label": "bdl_manifest",
+        "unchanged": true
+      },
+      {
+        "label": "wdi",
+        "unchanged": true
+      },
+      {
+        "label": "wdi_manifest",
+        "unchanged": true
+      },
+      {
+        "label": "nbp_state",
+        "unchanged": true
+      },
+      {
+        "label": "nbp_state_snapshot",
+        "unchanged": true
+      }
+    ],
+    "failures": [],
+    "new_objects_checked": 90,
+    "retained_release_folders_and_navigation_scanned": 157,
+    "samples": [
+      {
+        "hash_verified": true,
+        "row_count": 3,
+        "size": 478,
+        "source": "nbp",
+        "table": "dim_source_table"
+      },
+      {
+        "hash_verified": true,
+        "row_count": 31,
+        "size": 1318,
+        "source": "bdl",
+        "table": "dim_bdl_period"
+      },
+      {
+        "hash_verified": true,
+        "row_count": 66,
+        "size": 1027,
+        "source": "wdi",
+        "table": "dim_wdi_year"
+      }
+    ],
+    "status": "verified"
+  },
+  "limitations": [
+    "Retained datasets compared using Drive metadata and available checksums, not a full redownload of every file",
+    "SQL checks covered one hash-verified Gold table per source, not every table",
+    "No authenticated portal UI test was performed during this cutover"
+  ],
+  "operation": {
+    "journal_file_id": "1EYGfmyULqbLIJ5lS3Z7z41NqTsayhFlr",
+    "plan_id": "plan-migrate-c57d8f9c",
+    "status": "migration_completed"
+  },
+  "plan": {
+    "format_version": 1,
+    "plan_id": "plan-migrate-c57d8f9c",
+    "plan_sha256": "a16e68ae34a31e31d6f88adc9a8eeb0d49ad548cbce3c5128416633953e377ff",
+    "repository": "rutkala/zohelo-data",
+    "root_id": "1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf",
+    "workflow_commit": "f05e22da1c876d51ccce4380ac03efee6cbe2765",
+    "workflow_path": ".github/workflows/migrate-drive-layout.yml",
+    "workflow_run_id": "34870571745"
+  },
+  "plan_review": {
+    "all_part_shortcuts": 65,
+    "all_sharing_principals_unchanged": true,
+    "checks_passed": 368,
+    "existing_objects_to_move": 20,
+    "new_object_counts": {
+      "folder": 16,
+      "json": 9,
+      "shortcut": 65
+    },
+    "status": "approved_after_independent_plan_review",
+    "tables_indexed": 47
+  },
+  "preservation_checks": [
+    "Original IDs, MIME types, expected names and parents, and non-trash state",
+    "Original owners and exact sharing principal/type/role/address/domain/discovery fields",
+    "Available file size, MD5 and SHA-256 fields",
+    "Eight exact content byte pins",
+    "All new object identities, expected parents, shortcut target IDs and index bytes/status"
+  ],
+  "private_evidence_directory": "/workspaces/zohelo-drive-cutover-100/",
+  "schema_version": 1,
+  "status": "verified"
+}

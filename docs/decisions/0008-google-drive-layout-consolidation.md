@@ -1,6 +1,6 @@
 # Google Drive physical layout consolidation and canonical medallion hierarchy
 
-Status: Approved by owner on 14 September 2026. Live cutover awaiting verification. Delivery evidence belongs in [the canonical delivery record](../deliverables.md).
+Status: Approved, implemented and independently verified on 14 September 2026. Delivery evidence belongs in [the canonical delivery record](../deliverables.md) and [verification receipt](../releases/2026-09-14-drive-layout.json).
 
 ## Context
 
@@ -17,7 +17,7 @@ Consolidate Google Drive into a single, consistent, physical architecture:
 1. **Canonical Direct Releases Layout:**
    - `releases/nbp/`, `releases/bdl/`, `releases/wdi/`: each source contains its own `current-release.json` pointer and immutable UUID release directories directly.
    - Avoid an unnecessary nested `releases/releases/` level.
-   - Preserves all Parquet bytes, file IDs, checksums, and folder identities via atomic Drive API metadata moves (`addParents`/`removeParents`).
+   - Preserves Parquet bytes, file IDs, checksums, and folder identities via individual Drive API metadata moves (`addParents`/`removeParents`). The full migration is journaled and is not an atomic transaction across Drive objects.
 
 2. **Unified Control Root (`06_control/`):**
    - NBP ingestion control is moved and renamed from `ingestion-control` to `06_control/nbp/`.
@@ -33,11 +33,13 @@ Consolidate Google Drive into a single, consistent, physical architecture:
 
 5. **Migration Safety & Operational Invariants:**
    - Migration CLI defaults to bounded read-only plan (`--operation plan`).
-   - Mutating operations (`apply`, `resume`, `rollback`) require explicit `--confirm` and safety pin `--expected-root-id` matching `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`.
+   - Mutating operations (`apply`, `resume`, `rollback`) run through the reviewed main workflow with confirmation, the expected root `1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf`, compatibility commit, successful plan run ID, plan ID and plan SHA-256. The executing commit must match the plan commit; see the [operational runbook](../operations/drive-migration.md).
    - Pre-mutation drift checks pin pointer identities, file hashes, manifests, and NBP state before any changes.
    - All production data jobs (NBP, reconciliation, migration, and modeled BDL/WDI publishers) are bound to the shared concurrency group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`.
 
-## Tooling and Accounts Record
+## Implementation-stage Tooling and Accounts Record
+
+The following records the initial implementation stage. Subsequent CLI authentication, quota checks and AGY documentation delivery are recorded in [deliverables](../deliverables.md#delegation-policy-agreed--14-september-2026).
 
 - Personal Google AI Pro account verified (`useG1Credits: false`).
 - GitHub Copilot startup blocked by insufficient credits; AGY completed the initial Antigravity pass and implementation ownership then transferred to the internal fallback for review corrections and validation.
