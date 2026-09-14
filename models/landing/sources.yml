@@ -15,6 +15,16 @@ sources:
         meta:
           formatter: template
           external_location: "read_parquet('{{ env_var('ZOHELO_GUS_BDL_RESPONSES_PATH', '/tmp/zohelo_data/01_landing/gus_bdl/*.parquet') }}', union_by_name = true, filename = true)"
+      - name: eurostat_decoded_observations
+        description: "Structurally decoded cells from every accepted Eurostat JSON-stat Landing envelope; complete native dimensional keys, missing cells, status flags and response provenance are preserved."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_EUROSTAT_DECODED_PATH', '/tmp/zohelo_data/01_landing/eurostat/decoded-observations.parquet') }}', union_by_name = true)"
+      - name: eurostat_full_source_coverage
+        description: "Fresh durable full-distribution campaign coverage used only for accountability in the progressive modeled release."
+        meta:
+          formatter: template
+          external_location: "read_json_auto('{{ env_var('ZOHELO_EUROSTAT_FULL_COVERAGE_PATH', '/tmp/zohelo_data/01_landing/eurostat/full-source-coverage.json') }}')"
 
   - name: wdi_bulk
     schema: 01_landing

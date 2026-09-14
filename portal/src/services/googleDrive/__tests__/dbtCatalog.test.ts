@@ -318,6 +318,85 @@ describe("release dbt artifacts", () => {
     expect(overview?.block_contents).toContain("1 governed metric definition is published");
   });
 
+  it("annotates the Eurostat bronze model without claiming full-catalogue completion", () => {
+    const modelId = "model.zohelo_data.br_eurostat_observations";
+    const manifest: DbtManifest = {
+      metadata: {
+        dbt_schema_version: "https://schemas.getdbt.com/dbt/manifest/v12.json",
+        project_name: "zohelo_data",
+      },
+      nodes: {
+        [modelId]: {
+          unique_id: modelId,
+          package_name: "zohelo_data",
+          meta: { layer: "02_bronze" },
+          config: { meta: { layer: "02_bronze" } },
+        },
+      },
+      sources: {},
+      docs: {
+        "doc.zohelo_data.__overview__": {
+          name: "__overview__",
+          package_name: "zohelo_data",
+          block_contents: "Existing project overview.",
+        },
+      },
+    };
+    const selected: Extract<ReleaseCatalogResolution, { kind: "release" }> = {
+      kind: "release",
+      pointer: {
+        format_version: 1,
+        release_id: "423e4567-e89b-42d3-a456-426614174000",
+        manifest_file_id: "eurostat-manifest",
+        manifest_sha256: "b".repeat(64),
+        updated_at_utc: "2026-09-14T19:01:00Z",
+      },
+      manifestFileId: "eurostat-manifest",
+      fingerprint: "eurostat-release",
+      manifest: {
+        format_version: 2,
+        release_scope: "eurostat_progressive_api_platform",
+        release_id: "423e4567-e89b-42d3-a456-426614174000",
+        status: "validated",
+        code_sha: "e".repeat(40),
+        created_at_utc: "2026-09-14T19:00:00Z",
+        datasets: [],
+        artifacts: [],
+        inputs: [],
+        tests: { passed: true },
+      },
+      businessCatalogue: {
+        format_version: 1,
+        code_sha: "e".repeat(40),
+        lineage: { nodes: [], edges: [] },
+        metrics: [{ name: "eurostat_full_distribution_coverage_ratio" }],
+        sources: [
+          {
+            source_id: "eurostat",
+            name: "Eurostat",
+            description: "Progressive API model; full catalogue remains incomplete.",
+            status: "published_snapshot",
+            checked_through: "2026-09-14",
+            latest_observation_date: "2026-08-31",
+            last_successful_ingestion_at: "2026-09-14T18:51:00Z",
+            last_attempt_at: "2026-09-14T18:51:00Z",
+            raw_response_count: 1108,
+          },
+        ],
+      },
+    };
+
+    const prepared = prepareDbtManifest(manifest, selected);
+    expect(prepared.nodes[modelId].meta).toMatchObject({
+      zohelo_source_id: "eurostat",
+      zohelo_ingestion_status: "published_snapshot",
+      zohelo_latest_observation_date: "2026-08-31",
+    });
+    const overview = prepared.docs?.["doc.zohelo_data.__overview__"];
+    expect(overview?.block_contents).toContain("Eurostat");
+    expect(overview?.block_contents).toContain("1 governed metric definition is published");
+  });
+
   it("merges artifacts and manifests when multiple releases participate", async () => {
     const nbp = await resolution();
     const bdlResolution: Extract<ReleaseCatalogResolution, { kind: "release" }> = {
