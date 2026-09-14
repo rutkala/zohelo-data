@@ -1,0 +1,91 @@
+version: 2
+
+models:
+  - name: br_eurostat_observations
+    description: "Bronze cells decoded from accepted Eurostat JSON-stat envelopes, retaining complete native dimensional keys and response provenance."
+    columns:
+      - name: dataset_id
+        tests: [not_null]
+      - name: dimension_key_sha256
+        tests: [not_null]
+      - name: period_key
+        tests: [not_null]
+  - name: eurostat_observation_revisions
+    description: "Distinct typed Eurostat cell representations across exact replays and revisions."
+    columns:
+      - name: dataset_id
+        tests: [not_null]
+      - name: dimension_key_sha256
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [dataset_id, dimension_key_sha256, revision_number]
+  - name: stg_eurostat_observations
+    description: "Latest retained Eurostat representation at dataset and complete native dimensional-key grain."
+    columns:
+      - name: dataset_id
+        tests: [not_null]
+      - name: dimension_key_sha256
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [dataset_id, dimension_key_sha256]
+  - name: dim_eurostat_dataset
+    description: "Gold dimension for modeled Eurostat datasets in the admitted API contract."
+    columns:
+      - name: dataset_key
+        tests: [not_null, unique]
+  - name: dim_eurostat_geography
+    description: "Gold dimension for modeled Eurostat EU-country geographies."
+    columns:
+      - name: geography_key
+        tests: [not_null, unique]
+  - name: dim_eurostat_period
+    description: "Gold period dimension preserving Eurostat annual and monthly keys."
+    columns:
+      - name: period_key
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [period_key, freq_code]
+  - name: fact_eurostat_observations
+    description: "Gold Eurostat cells at dataset and complete native dimensional-key grain, including explicit missing cells and status flags."
+    columns:
+      - name: dataset_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_eurostat_dataset')
+                field: dataset_key
+      - name: geography_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_eurostat_geography')
+                field: geography_key
+      - name: dimension_key_sha256
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [dataset_key, dimension_key_sha256]
+  - name: mart_eurostat_coverage
+    description: "One-row accountability snapshot for the explicitly partial Eurostat API model; complete_official_catalogue is always false until full-distribution acceptance."
+    columns:
+      - name: snapshot_date
+        tests: [not_null, unique]
+      - name: admitted_dataset_total
+        tests: [not_null]
+      - name: admitted_series_total
+        tests: [not_null]
+      - name: complete_official_catalogue
+        tests: [not_null]
+      - name: catalogue_distributions
+        tests: [not_null]
+      - name: validated_current_distributions
+        tests: [not_null]

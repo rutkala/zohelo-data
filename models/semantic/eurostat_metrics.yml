@@ -1,0 +1,106 @@
+version: 2
+
+semantic_models:
+  - name: eurostat_coverage
+    description: "Coverage/accountability for the admitted Eurostat API model. This does not represent complete official catalogue coverage."
+    model: ref('mart_eurostat_coverage')
+    config:
+      enabled: "{{ var('enable_eurostat', false) }}"
+    defaults:
+      agg_time_dimension: snapshot_date
+    entities:
+      - name: eurostat_coverage_snapshot
+        type: primary
+        expr: cast(snapshot_date as varchar)
+    dimensions:
+      - name: snapshot_date
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - {name: eurostat_admitted_dataset_total_measure, agg: max, expr: admitted_dataset_total}
+      - {name: eurostat_admitted_series_total_measure, agg: max, expr: admitted_series_total}
+      - {name: eurostat_modeled_dataset_total_measure, agg: max, expr: modeled_dataset_total}
+      - {name: eurostat_modeled_series_total_measure, agg: max, expr: modeled_series_total}
+      - {name: eurostat_modeled_response_total_measure, agg: max, expr: modeled_response_total}
+      - {name: eurostat_modeled_cell_total_measure, agg: max, expr: modeled_cell_total}
+      - {name: eurostat_modeled_value_total_measure, agg: max, expr: modeled_value_total}
+      - {name: eurostat_admitted_dataset_coverage_ratio_measure, agg: max, expr: admitted_dataset_coverage_ratio}
+      - {name: eurostat_admitted_series_coverage_ratio_measure, agg: max, expr: admitted_series_coverage_ratio}
+      - {name: eurostat_catalogue_distribution_total_measure, agg: max, expr: catalogue_distributions}
+      - {name: eurostat_validated_distribution_total_measure, agg: max, expr: validated_current_distributions}
+      - {name: eurostat_full_distribution_coverage_ratio_measure, agg: max, expr: full_distribution_coverage_ratio}
+
+metrics:
+  - name: eurostat_admitted_dataset_total
+    label: Eurostat admitted dataset total
+    description: "Three datasets in the reviewed API slice contract; not the full Eurostat catalogue."
+    type: simple
+    type_params: {measure: eurostat_admitted_dataset_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: datasets, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_admitted_series_total
+    label: Eurostat admitted series total
+    description: "The 81 dataset-country roots in the reviewed API slice contract."
+    type: simple
+    type_params: {measure: eurostat_admitted_series_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: dataset-country roots, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_modeled_dataset_total
+    label: Eurostat modeled dataset total
+    description: "Distinct admitted datasets represented in the current Gold fact."
+    type: simple
+    type_params: {measure: eurostat_modeled_dataset_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: datasets, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_modeled_series_total
+    label: Eurostat modeled series total
+    description: "Distinct admitted dataset-country roots represented in the current Gold fact."
+    type: simple
+    type_params: {measure: eurostat_modeled_series_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: dataset-country roots, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_modeled_response_total
+    label: Eurostat modeled response total
+    description: "Distinct retained response hashes contributing to the current model."
+    type: simple
+    type_params: {measure: eurostat_modeled_response_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: responses, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_modeled_cell_total
+    label: Eurostat modeled cell total
+    description: "Current Gold cells including explicit missing positions."
+    type: simple
+    type_params: {measure: eurostat_modeled_cell_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: cells, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_modeled_value_total
+    label: Eurostat modeled value total
+    description: "Current Gold cells containing source values."
+    type: simple
+    type_params: {measure: eurostat_modeled_value_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: values, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_admitted_dataset_coverage_ratio
+    label: Eurostat admitted dataset coverage ratio
+    description: "Modeled datasets divided by the three-dataset reviewed API contract; not source-catalogue coverage."
+    type: simple
+    type_params: {measure: eurostat_admitted_dataset_coverage_ratio_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: ratio, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_admitted_series_coverage_ratio
+    label: Eurostat admitted series coverage ratio
+    description: "Modeled dataset-country roots divided by 81 admitted roots; not source-catalogue coverage."
+    type: simple
+    type_params: {measure: eurostat_admitted_series_coverage_ratio_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: ratio, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_catalogue_distribution_total
+    label: Eurostat catalogue distribution total
+    description: "Current official full-distribution catalogue units admitted by the fresh inventory."
+    type: simple
+    type_params: {measure: eurostat_catalogue_distribution_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: distributions, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_validated_distribution_total
+    label: Eurostat validated distribution total
+    description: "Current official full-distribution catalogue units retained and validated."
+    type: simple
+    type_params: {measure: eurostat_validated_distribution_total_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: distributions, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}
+  - name: eurostat_full_distribution_coverage_ratio
+    label: Eurostat full distribution coverage ratio
+    description: "Validated current full distributions divided by the current official catalogue total."
+    type: simple
+    type_params: {measure: eurostat_full_distribution_coverage_ratio_measure}
+    config: {enabled: "{{ var('enable_eurostat', false) }}", meta: {definition_status: source_defined, unit: ratio, required_grain: [snapshot_date], aggregation_policy: identity_at_daily_snapshot_grain, version: '1'}}

@@ -23,6 +23,11 @@ from wdi_platform_contract import (
     WDI_PLATFORM_DATASETS,
     WDI_PLATFORM_DATE_COLUMNS,
 )
+from eurostat_platform_contract import (
+    EUROSTAT_PLATFORM_DATASETS,
+    EUROSTAT_PLATFORM_DATE_COLUMNS,
+    EUROSTAT_RELEASE_SCOPE,
+)
 
 
 REQUIRED_DATASETS = frozenset(
@@ -96,6 +101,13 @@ PLATFORM_RELEASES = {
         "date_columns": WDI_PLATFORM_DATE_COLUMNS,
         "required_artifacts": PLATFORM_REQUIRED_ARTIFACTS,
         "allow_zero_rows": WDI_ALLOW_ZERO_ROWS,
+    },
+    EUROSTAT_RELEASE_SCOPE: {
+        "label": "progressive Eurostat API platform",
+        "datasets": EUROSTAT_PLATFORM_DATASETS,
+        "date_columns": EUROSTAT_PLATFORM_DATE_COLUMNS,
+        "required_artifacts": PLATFORM_REQUIRED_ARTIFACTS,
+        "allow_zero_rows": frozenset(),
     },
 }
 _ALLOWED_RESULT_STATUSES = frozenset({"success", "pass"})
@@ -507,7 +519,7 @@ def _validate_candidate(**kwargs: Any) -> dict[str, Any]:
     if scope in PLATFORM_RELEASES:
         return _validate_platform_candidate(**kwargs)
     raise ReleaseProtocolError(
-        "release_scope must be 'nbp_silver', 'nbp_platform', 'bdl_platform', or 'wdi_platform'"
+        "release_scope must be 'nbp_silver' or a registered platform scope"
     )
 
 
