@@ -1,0 +1,98 @@
+name: BDL Web UI probe
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bdl-web-probe.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-pipeline-gus_bdl
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    if: contains(github.event.head_commit.message, '[probe-bdl-web]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Confirm Web credentials
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+        run: |
+          test -n "$GUS_BDL_WEB_EMAIL"
+          test -n "$GUS_BDL_WEB_PASSWORD"
+      - name: Install browser dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+      - name: Probe normal Web export controls
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          const email = process.env.GUS_BDL_WEB_EMAIL;
+          const password = process.env.GUS_BDL_WEB_PASSWORD;
+          const safe = (v) => String(v ?? '').replaceAll(email, '[REDACTED_EMAIL]').replaceAll(password, '[REDACTED_PASSWORD]');
+          const browser = await chromium.launch({headless: true});
+          const context = await browser.newContext({acceptDownloads: true, locale: 'pl-PL'});
+          const page = await context.newPage();
+          const controls = async (label) => {
+            const rows = await page.locator('input,button,a,select').evaluateAll((els) => els.filter(e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)).map(e => ({tag:e.tagName,id:e.id||null,type:e.getAttribute('type'),name:e.getAttribute('name'),value:e.getAttribute('value'),text:(e.textContent||'').trim().replace(/\s+/g,' ').slice(0,160),href:e.getAttribute('href'),disabled:'disabled' in e?!!e.disabled:false})).filter(x => x.id || x.value || x.text));
+            console.log(`PROBE_${label}=` + safe(JSON.stringify(rows)));
+          };
+          try {
+            await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', {waitUntil:'domcontentloaded',timeout:45000});
+            await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
+            await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
+            await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
+            await page.waitForTimeout(1500);
+            const login = await page.locator('body').innerText();
+            if (/Użytkownik:\s*Gość/i.test(login) || !/Użytkownik:/i.test(login)) throw new Error('BDL web login failed');
+            await page.goto('https://bdl.stat.gov.pl/bdl/dane/podgrup/wymiary/2/3/1319', {waitUntil:'domcontentloaded',timeout:60000});
+            await page.waitForTimeout(1200);
+            const clicked = new Set();
+            for (let round=0; round<20; round++) {
+              const candidates = await page.locator('[id$="_SelectAll"]').evaluateAll(els => els.map(e => ({id:e.id,visible:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length),disabled:'disabled' in e?!!e.disabled:false})));
+              const next = candidates.filter(x => x.visible && !x.disabled && !clicked.has(x.id)).sort((a,b)=>a.id.localeCompare(b.id))[0];
+              if (!next) break;
+              await page.locator(`#${next.id}`).click();
+              clicked.add(next.id);
+              await page.waitForTimeout(800);
+            }
+            const body = await page.locator('body').innerText();
+            const count = body.match(/Wybrano\s+([0-9\s]+)\s+informacji/i)?.[1]?.replace(/\s/g,'') || null;
+            console.log('PROBE_SELECTED_INFORMATION=' + count);
+            await controls('DIMENSIONS');
+            const next = page.locator('input,button').filter({has: page.locator('text=/Dalej/i')});
+            let nextControl = null;
+            const candidates = await page.locator('input,button').evaluateAll(els => els.filter(e => !!(e.offsetWidth||e.offsetHeight||e.getClientRects().length) && !e.disabled).map(e => ({id:e.id,tag:e.tagName,value:e.getAttribute('value'),text:(e.textContent||'').trim()})).filter(x => /Dalej/i.test(x.value||'') || /Dalej/i.test(x.text||'')));
+            console.log('PROBE_NEXT_CANDIDATES=' + JSON.stringify(candidates));
+            if (!candidates.length) throw new Error('No enabled Dalej control after dimension selection');
+            nextControl = candidates[0];
+            await page.locator(`#${nextControl.id}`).click();
+            await page.waitForTimeout(1800);
+            console.log('PROBE_AFTER_NEXT_URL=' + page.url());
+            await controls('AFTER_NEXT');
+            console.log('PROBE_AFTER_NEXT_BODY=' + safe((await page.locator('body').innerText()).replace(/\s+/g,' ').slice(0,5000)));
+          } finally {
+            await browser.close();
+          }
+          NODE
