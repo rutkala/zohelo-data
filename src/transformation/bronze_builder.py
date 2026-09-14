@@ -86,8 +86,8 @@ def process_bronze():
     print("🥉 Starting Bronze Layer transformation...")
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     from drive_release_store import DriveReleaseStore
-    root_id = storage.resolve_root(create=False)
-    if DriveReleaseStore(storage, root_id).find("ingestion-control", root_id):
+    release_finder = DriveReleaseStore(storage, root_id)
+    if release_finder.find("ingestion-control", root_id) or release_finder.find("06_control", root_id):
         raise RuntimeError("Verified ingestion is active. Use src/nbp_platform.py; legacy archival is disabled.")
     storage.authorize_writes()
     drive = storage.drive_service

@@ -4,12 +4,20 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 13 September 2026. **The complete current WDI archive is now modeled and published; the
-active priority returns to full Eurostat and BDL coverage.** The
-Drive layout audit was integrated in PR #95 with a recommendation to retain the separate modeled
-release namespaces. NBP product acceptance remains complete; full coverage of all four selected
-sources remains open. Existing serialized ingestion schedules continue the incomplete Eurostat and
-BDL backfills and the separate WDI API reconciliation queue.
+Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. The implementation passed the full data and portal gates and final review is underway; live cutover remains awaiting merge, deployment and verification.**
+The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
+
+### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026
+
+The owner approved physical consolidation into one consistent architecture:
+- Canonical layout: `releases/nbp/`, `releases/bdl/`, `releases/wdi/`, each containing its `current-release.json` pointer and UUID release packages directly.
+- Ingestion state consolidated under `06_control/nbp` and `06_control/source_campaigns` with exact identities preserved.
+- Medallion layer navigation shortcuts and indexes under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`), supporting single-file and multi-file datasets (such as WDI multi-part tables).
+- Reversible archival of legacy wrappers `bdl-platform` and `wdi-platform` into `05_archive/`.
+- Concurrency protection under shared group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`.
+- Live cutover status: **Awaiting verification.** All production Drive writes remain strictly gated behind reviewed main workflow dispatch after lead review.
+- Tooling and account verification: Personal Google AI Pro account verified (`useG1Credits: false`); GitHub Copilot blocked by insufficient credits.
+
 
 ### Delegation policy agreed — 14 September 2026
 
@@ -19,10 +27,10 @@ review, integration and communication. Work proceeds one engineering task at a t
 AGY uses only the personal Gemini subscription and one reusable Codespace with a separate
 feature branch/worktree per task. See the [working agreement](collaboration.md#delegation-and-cost-policy).
 
-This records the agreed policy, not completed end-to-end automation. The earlier AGY
-pilot demonstrated execution with a cached account session; a subsequent read-only CLI
-check verified version 1.2.2. Before another model task, verify the account owning that
-session and disable credit overages. Direct CLI/SSH dispatch from the Work runtime
+This records the agreed policy, not completed end-to-end automation. Copilot could not
+start because its account had no credits. The personal Google AI Pro account and the
+disabled overage setting were verified before AGY used the cached Codespace session;
+after AGY stopped, implementation ownership transferred to the internal fallback. Direct CLI/SSH dispatch from the Work runtime
 remains unconfigured; do not claim a worker has started without its actual dispatch
 receipt. No Cloud model access was enabled, and recording this decision launches no
 engineering worker or duplicate ingestion run.

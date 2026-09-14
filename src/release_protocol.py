@@ -136,6 +136,9 @@ def publish_release(
     release_id: str | None = None,
     release_scope: str = "nbp_silver",
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    after_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
 
@@ -168,18 +171,21 @@ def publish_release(
         if previous_manifest["format_version"] == 2 and candidate["release_scope"] == "nbp_silver":
             raise ReleaseProtocolError("A legacy silver candidate cannot replace a platform release")
 
-    releases_ids = store.find("releases", root_id)
-    if len(releases_ids) > 1:
-        raise ReleaseProtocolError("ambiguous releases folders under publication root")
-    if releases_ids:
-        releases_id = _require_id(releases_ids[0], "releases folder id")
+    if direct_releases:
+        release_container_id = root_id
     else:
-        releases_id = _require_id(store.mkdir("releases", root_id), "releases folder id")
+        releases_ids = store.find("releases", root_id)
+        if len(releases_ids) > 1:
+            raise ReleaseProtocolError("ambiguous releases folders under publication root")
+        if releases_ids:
+            release_container_id = _require_id(releases_ids[0], "releases folder id")
+        else:
+            release_container_id = _require_id(store.mkdir("releases", root_id), "releases folder id")
 
-    if store.find(candidate["release_id"], releases_id):
+    if store.find(candidate["release_id"], release_container_id):
         raise ReleaseProtocolError(f"release folder already exists: {candidate['release_id']}")
     release_folder_id = _require_id(
-        store.mkdir(candidate["release_id"], releases_id), "release folder id"
+        store.mkdir(candidate["release_id"], release_container_id), "release folder id"
     )
 
     published_datasets: list[dict[str, Any]] = []
@@ -257,12 +263,26 @@ def publish_release(
     previous_raw = previous["raw"] if previous is not None else None
     if current_raw != previous_raw:
         raise ReleaseProtocolError("current-release pointer changed during candidate upload")
+    if before_pointer_write is not None:
+        try:
+            before_pointer_write(store, dict(staged_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "pre-pointer publication hook failed; current release retained"
+            ) from exc
 
     pointer = staged_pointer
     # Record the promotion instant after potentially long candidate validation.
     pointer["updated_at_utc"] = _utc_now()
     pointer_bytes = _json_bytes(pointer)
     pointer_file_id = _write_pointer(store, root_id, previous, pointer_bytes)
+    if after_pointer_write is not None:
+        try:
+            after_pointer_write(store, dict(pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "current-release pointer was promoted and read back, but post-pointer publication hook failed"
+            ) from exc
 
     return {
         "release_id": candidate["release_id"],
@@ -281,6 +301,9 @@ def promote_retained_release(
     target_release_id: str,
     expected_current_release_id: str,
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
+    before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    after_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Promote one retained, fully verified release behind an exact current pin.
 
@@ -305,14 +328,20 @@ def promote_retained_release(
     # Pin and verify the current manifest itself, then fully validate the target.
     current_manifest = _read_release_manifest(store, current["value"])
 
-    releases_ids = store.find("releases", root_id)
-    if len(releases_ids) != 1:
-        raise ReleaseProtocolError("releases folder is missing or ambiguous")
-    releases_id = _require_id(releases_ids[0], "releases folder id")
-    target_folders = store.find(target_release_id, releases_id)
-    if len(target_folders) != 1:
-        raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
-    target_folder_id = _require_id(target_folders[0], "target release folder id")
+    if direct_releases:
+        target_folders = store.find(target_release_id, root_id)
+        if len(target_folders) != 1:
+            raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
+        target_folder_id = _require_id(target_folders[0], "target release folder id")
+    else:
+        releases_ids = store.find("releases", root_id)
+        if len(releases_ids) != 1:
+            raise ReleaseProtocolError("releases folder is missing or ambiguous")
+        releases_id = _require_id(releases_ids[0], "releases folder id")
+        target_folders = store.find(target_release_id, releases_id)
+        if len(target_folders) != 1:
+            raise ReleaseProtocolError("target retained release folder is missing or ambiguous")
+        target_folder_id = _require_id(target_folders[0], "target release folder id")
     manifest_ids = store.find("release.json", target_folder_id)
     if len(manifest_ids) != 1:
         raise ReleaseProtocolError("target retained release manifest is missing or ambiguous")
@@ -369,7 +398,21 @@ def promote_retained_release(
     observed = _read_pointer(store, root_id)
     if observed is None or observed["raw"] != current["raw"]:
         raise ReleaseProtocolError("current-release pointer changed during retained release validation")
+    if before_pointer_write is not None:
+        try:
+            before_pointer_write(store, dict(target_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "pre-pointer retained-promotion hook failed; current release retained"
+            ) from exc
     pointer_file_id = _write_pointer(store, root_id, current, _json_bytes(target_pointer))
+    if after_pointer_write is not None:
+        try:
+            after_pointer_write(store, dict(target_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "retained current-release pointer was promoted and read back, but post-pointer hook failed"
+            ) from exc
     return {
         "status": "retained_release_promoted",
         "target_release_id": target_release_id,
@@ -451,6 +494,7 @@ def read_current_release_manifest(store: ReleaseStore, root_id: str) -> dict[str
 
 # Useful, short name for adapters/consumers.
 read_current_release = restore_current_release
+read_release_manifest = _read_release_manifest
 
 
 def _validate_candidate(**kwargs: Any) -> dict[str, Any]:

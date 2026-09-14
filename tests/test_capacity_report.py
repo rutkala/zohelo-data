@@ -132,8 +132,17 @@ class CapacityReportTests(unittest.TestCase):
         from ingestion.nbp_state import new_state
         manager = MagicMock()
         manager.resolve_root.return_value = "selected-root"
-        manager._list_exact_folders.return_value = [{"id": "control"}]
-        manager.drive_service.files().list().execute.return_value = {"files": []}
+        def listed(**kwargs):
+            query = kwargs["q"]
+            response = {"files": []}
+            if "name='06_control'" in query:
+                response = {"files": [{"id": "control"}]}
+            elif "name='nbp'" in query and "'control' in parents" in query:
+                response = {"files": [{"id": "nbp-control"}]}
+            request = MagicMock()
+            request.execute.return_value = response
+            return request
+        manager.drive_service.files().list.side_effect = listed
         manager.drive_service.about().get().execute.return_value = {
             "storageQuota": {"limit": "1000", "usage": "20"}}
         factory = MagicMock(return_value=manager)
@@ -141,7 +150,7 @@ class CapacityReportTests(unittest.TestCase):
         def loaded(_store, control, specs):
             # Read and validate the actual production config, not a replacement
             # test mapping. A metadata-only sources.yaml cannot satisfy this.
-            self.assertEqual(control, "control")
+            self.assertEqual(control, "nbp-control")
             self.assertEqual(len(specs), 4)
             self.assertTrue(all("{start_date}" in spec.endpoint_template for spec in specs.values()))
             state = new_state(specs, datetime(2026, 9, 7, tzinfo=timezone.utc))

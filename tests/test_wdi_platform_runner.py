@@ -130,7 +130,7 @@ class WdiPlatformRunnerTests(unittest.TestCase):
 
             archive = root / "archive.zip"
             archive.write_bytes(b"archive")
-            with patch.object(wdi_platform, "_stores", return_value=(object(), object(), _ReleaseStore())), \
+            with patch.object(wdi_platform, "_stores", return_value=(object(), object(), _ReleaseStore(), False, "wdi-root", None)), \
                  patch.object(wdi_platform, "_current_archive", return_value=({}, full_coverage, receipt, archive, receipt["inspection"], index)), \
                  patch.object(wdi_platform, "_extract_archive", side_effect=fake_extract), \
                  patch.object(wdi_platform, "build_platform", side_effect=fake_build), \

@@ -701,57 +701,161 @@ export async function resolveReleaseCatalog(
     throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in Google Drive root.`);
   }
   const rootId = roots[0].id;
-  const rootPointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
-  if (
-    rootPointerFiles.length > 1 ||
-    (rootPointerFiles.length === 1 &&
-      rootPointerFiles[0].mimeType === "application/vnd.google-apps.folder")
-  ) {
-    throw new Error(
-      "current-release.json is ambiguous or not a file; refusing to select a release."
-    );
+  // 1. Canonical layout under releases/
+  const releasesFolders = (await findFoldersByName("releases", rootId, token)).filter(
+    (folder) => folder.name === "releases"
+  );
+  if (releasesFolders.length > 1) {
+    throw new Error("Folder 'releases' is ambiguous in Google Drive root.");
   }
+  const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
 
-  const findPlatformPointer = async (folderName: "bdl-platform" | "wdi-platform") => {
+  const establishedSources = new Set<"nbp" | "bdl" | "wdi">();
+  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "wdi") => {
+    if (!releasesFolderId) return undefined;
+    const folders = (await findFoldersByName(sourceName, releasesFolderId, token)).filter(
+      (folder) => folder.name === sourceName
+    );
+    if (folders.length > 1) {
+      throw new Error("Folder 'releases/" + sourceName + "' is ambiguous; refusing to select a release.");
+    }
+    if (folders.length === 0) return undefined;
+    establishedSources.add(sourceName);
+    const pointerFiles = await findNamedFilesInFolder(
+      "current-release.json", folders[0].id, token
+    );
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
+      throw new Error(
+        "releases/" + sourceName + "/current-release.json is ambiguous or not a file; refusing to select a release."
+      );
+    }
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
+  };
+  const findLegacyNbpPointer = async () => {
+    const pointerFiles = await findNamedFilesInFolder("current-release.json", rootId, token);
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
+      throw new Error(
+        "current-release.json is ambiguous or not a file; refusing to select a release."
+      );
+    }
+    if (pointerFiles.length === 1) establishedSources.add("nbp");
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
+  };
+  const findPlatformPointer = async (
+    folderName: "bdl-platform" | "wdi-platform",
+    sourceName: "bdl" | "wdi"
+  ) => {
     const folders = (await findFoldersByName(folderName, rootId, token)).filter(
       (folder) => folder.name === folderName
     );
     if (folders.length > 1) {
-      throw new Error(`Folder '${folderName}' is ambiguous; refusing to select a release.`);
+      throw new Error("Folder '" + folderName + "' is ambiguous; refusing to select a release.");
     }
     if (folders.length === 0) return undefined;
-    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
-    if (pointerFiles.length > 1) {
+    establishedSources.add(sourceName);
+    const pointerFiles = await findNamedFilesInFolder(
+      "current-release.json", folders[0].id, token
+    );
+    if (
+      pointerFiles.length > 1 ||
+      (pointerFiles.length === 1 &&
+        pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
+    ) {
       throw new Error(
-        `${folderName}/current-release.json is ambiguous; refusing to select a release.`
+        folderName + "/current-release.json is ambiguous or not a file; refusing to select a release."
       );
     }
-    return pointerFiles.length === 1 &&
-      pointerFiles[0].mimeType !== "application/vnd.google-apps.folder"
-      ? pointerFiles[0]
-      : undefined;
+    return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
   };
-  const bdlPointerFile = await findPlatformPointer("bdl-platform");
-  const wdiPointerFile = await findPlatformPointer("wdi-platform");
-
-  if (rootPointerFiles.length === 0 && !bdlPointerFile && !wdiPointerFile) {
+  const selectSource = (
+    sourceName: "nbp" | "bdl" | "wdi",
+    canonical: Awaited<ReturnType<typeof findCanonicalPointer>>,
+    legacy: Awaited<ReturnType<typeof findLegacyNbpPointer>>
+  ) => {
+    if (canonical && legacy) {
+      const legacyLabel =
+        sourceName === "nbp" ? "root" : sourceName + "-platform";
+      throw new Error(
+        "Conflicting current-release pointers found for " + sourceName.toUpperCase() +
+          " in releases/" + sourceName + " and " + legacyLabel + "."
+      );
+    }
+    const pointer = canonical ?? legacy;
+    if (!pointer) return undefined;
+    return {
+      file: pointer,
+      label: canonical
+        ? "releases/" + sourceName + "/current-release.json"
+        : sourceName === "nbp"
+          ? "current-release.json"
+          : sourceName + "-platform/current-release.json",
+    };
+  };
+  // Preserve a stable first-pass observation order for all sources.
+  const canonicalNbpPointer = await findCanonicalPointer("nbp");
+  const canonicalBdlPointer = await findCanonicalPointer("bdl");
+  const canonicalWdiPointer = await findCanonicalPointer("wdi");
+  const legacyNbpPointer = await findLegacyNbpPointer();
+  const legacyBdlPointer = await findPlatformPointer("bdl-platform", "bdl");
+  const legacyWdiPointer = await findPlatformPointer("wdi-platform", "wdi");
+  let effectiveNbp = selectSource("nbp", canonicalNbpPointer, legacyNbpPointer);
+  let effectiveBdl = selectSource("bdl", canonicalBdlPointer, legacyBdlPointer);
+  let effectiveWdi = selectSource("wdi", canonicalWdiPointer, legacyWdiPointer);
+  const discoverSource = async (sourceName: "nbp" | "bdl" | "wdi") => {
+    const canonical = await findCanonicalPointer(sourceName);
+    const legacy =
+      sourceName === "nbp"
+        ? await findLegacyNbpPointer()
+        : await findPlatformPointer(
+            sourceName === "bdl" ? "bdl-platform" : "wdi-platform",
+            sourceName
+          );
+    return selectSource(sourceName, canonical, legacy);
+  };
+  // A source can move between canonical and legacy parents while the calls above
+  // are in flight. Retry every missing source once and then fail visibly if a
+  // source container was observed without its pointer.
+  for (const sourceName of ["nbp", "bdl", "wdi"] as const) {
+    const current =
+      sourceName === "nbp" ? effectiveNbp : sourceName === "bdl" ? effectiveBdl : effectiveWdi;
+    if (current) continue;
+    const retry = await discoverSource(sourceName);
+    if (sourceName === "nbp") effectiveNbp = retry;
+    else if (sourceName === "bdl") effectiveBdl = retry;
+    else effectiveWdi = retry;
+    if (!retry && establishedSources.has(sourceName)) {
+      throw new Error(
+        "Established source '" + sourceName + "' has no discoverable current-release.json; " +
+          "the Drive layout may be moving or incomplete."
+      );
+    }
+  }
+  if (!effectiveNbp && !effectiveBdl && !effectiveWdi) {
     return { kind: "legacy" };
   }
 
   const releases: SingleReleaseResolution[] = [];
-  if (rootPointerFiles.length === 1) {
+  if (effectiveNbp) {
     releases.push(
-      await resolveSingleRelease(rootPointerFiles[0], "current-release.json", token, budget)
+      await resolveSingleRelease(effectiveNbp.file, effectiveNbp.label, token, budget)
     );
   }
-  if (bdlPointerFile) {
+  if (effectiveBdl) {
     releases.push(
-      await resolveSingleRelease(bdlPointerFile, "bdl-platform/current-release.json", token, budget)
+      await resolveSingleRelease(effectiveBdl.file, effectiveBdl.label, token, budget)
     );
   }
-  if (wdiPointerFile) {
+  if (effectiveWdi) {
     releases.push(
-      await resolveSingleRelease(wdiPointerFile, "wdi-platform/current-release.json", token, budget)
+      await resolveSingleRelease(effectiveWdi.file, effectiveWdi.label, token, budget)
     );
   }
 

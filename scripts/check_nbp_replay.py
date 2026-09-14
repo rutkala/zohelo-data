@@ -20,6 +20,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from drive_release_store import DriveReleaseStore  # noqa: E402
 from ingestion.nbp_state import list_successful_response_descriptors  # noqa: E402
+from layout_resolution import resolve_source_release_root  # noqa: E402
 from nbp_platform import DATASET_MODELS, MAX_RAW_BYTES, build_platform, download_envelopes  # noqa: E402
 from release_protocol import restore_current_release  # noqa: E402
 from storage_manager import StorageManager  # noqa: E402
@@ -131,8 +132,9 @@ def check_replay() -> dict[str, Any]:
     head = _git_head()
     storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
     root = storage.resolve_root(create=False)
-    store = DriveReleaseStore(storage, root)
-    manifest = restore_current_release(store, root)
+    release_root, _ = resolve_source_release_root(storage, root, "nbp", is_writer=False)
+    store = DriveReleaseStore(storage, release_root)
+    manifest = restore_current_release(store, release_root)
     if manifest.get("format_version") != 2 or manifest.get("release_scope") != "nbp_platform":
         raise ValueError("Selected current release is not an NBP platform format-version-2 release")
     if manifest.get("code_sha") != head:

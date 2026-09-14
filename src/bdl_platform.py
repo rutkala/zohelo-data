@@ -27,7 +27,9 @@ from bdl_semantic import METRICS, validate_release_metrics
 from drive_release_store import DriveReleaseStore
 from ingestion.landing_publication import verify_landing
 from ingestion.source_campaign_store import DriveCampaignStore
-from release_protocol import publish_release, restore_current_release
+from layout_resolution import resolve_source_release_root
+from medallion_navigation import (finalize_source_medallion_navigation, sync_source_medallion_navigation)
+from release_protocol import publish_release, read_release_manifest, restore_current_release
 from runtime_metadata import _code_sha
 from storage_manager import StorageManager
 
@@ -42,8 +44,9 @@ ARTIFACT_NAMES = (
 )
 
 
-def _release_root(storage: StorageManager, root_id: str) -> str:
-    return storage.get_or_create_nested_folder(["bdl-platform"], root_id=root_id)
+def _release_root(storage: StorageManager, root_id: str, is_writer: bool = False) -> str:
+    root, _ = resolve_source_release_root(storage, root_id, "bdl", is_writer=is_writer)
+    return root
 
 
 def _campaign_store(backend: str, local_root: Path | None, allow_production_write: bool):
@@ -56,7 +59,8 @@ def _campaign_store(backend: str, local_root: Path | None, allow_production_writ
         storage.resolve_root(create=False)
         storage.authorize_writes()
         root_id = storage.resolve_root(create=False)
-        return storage, root_id, DriveCampaignStore(storage, BDL_SOURCE_ID), DriveReleaseStore(storage, _release_root(storage, root_id))
+        release_root, _ = resolve_source_release_root(storage, root_id, "bdl", is_writer=True)
+        return storage, root_id, DriveCampaignStore(storage, BDL_SOURCE_ID), DriveReleaseStore(storage, release_root)
     raise ValueError("BDL modeled publication currently supports only the drive backend")
 
 
@@ -225,7 +229,26 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
         }
         if release_store is None:
             raise ValueError("BDL release publication currently requires drive backend")
-        result = publish_release(release_store, release_store.root_id, datasets=datasets, artifacts=artifacts, inputs=[{"source_id": BDL_SOURCE_ID, "id": descriptor["id"], "size": descriptor["size"], "sha256": descriptor["sha256"], "ingestion_sequence": index + 1} for index, descriptor in enumerate(landing_manifest["files"])], code_sha=code_sha, measurements=measurements, release_scope="bdl_platform", pre_promote_validator=validate_staged_bdl_release)
+        _, direct_releases = resolve_source_release_root(storage, root_id, "bdl", is_writer=True)
+        result = publish_release(
+            release_store, release_store.root_id, datasets=datasets, artifacts=artifacts,
+            inputs=[{"source_id": BDL_SOURCE_ID, "id": descriptor["id"], "size": descriptor["size"], "sha256": descriptor["sha256"], "ingestion_sequence": index + 1} for index, descriptor in enumerate(landing_manifest["files"])],
+            code_sha=code_sha, measurements=measurements, release_scope="bdl_platform",
+            pre_promote_validator=validate_staged_bdl_release,
+            before_pointer_write=(
+                lambda release_store, pointer: sync_source_medallion_navigation(
+                    storage, root_id, "bdl",
+                    read_release_manifest(release_store, pointer), finalize=False,
+                )
+            ) if direct_releases else None,
+            after_pointer_write=(
+                lambda release_store, pointer: finalize_source_medallion_navigation(
+                    storage, root_id, "bdl",
+                    read_release_manifest(release_store, pointer),
+                )
+            ) if direct_releases else None,
+            direct_releases=direct_releases,
+        )
         report = {
             "status": "bdl_platform_published",
             "release_id": result["release_id"],

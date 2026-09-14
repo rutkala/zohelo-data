@@ -186,6 +186,10 @@ def inventory_project(files, root_id, *, max_files=10_000, max_list_requests=250
                 incomplete_reasons.add("drive_metadata_request_failed")
                 stop = True
                 break
+            if not isinstance(response, dict):
+                incomplete_reasons.add("malformed_drive_metadata_response")
+                stop = True
+                break
             if response.get("incompleteSearch"):
                 incomplete_reasons.add("drive_incomplete_search")
             for item in response.get("files", []):
@@ -221,7 +225,7 @@ def inventory_project(files, root_id, *, max_files=10_000, max_list_requests=250
             token = response.get("nextPageToken")
             if not token or stop:
                 break
-            if token in seen_tokens:
+            if not isinstance(token, str) or token in seen_tokens:
                 incomplete_reasons.add("repeated_page_token")
                 stop = True
                 break

@@ -101,6 +101,7 @@ class BdlPlatformRunnerTests(unittest.TestCase):
                  patch.object(bdl_platform, "verify_landing", return_value=manifest), \
                  patch.object(bdl_platform, "build_platform", side_effect=fake_build_platform), \
                  patch.object(bdl_platform, "_code_sha", return_value="a" * 40), \
+                 patch.object(bdl_platform, "resolve_source_release_root", return_value=("releases", False)), \
                  patch.object(bdl_platform, "publish_release", side_effect=fake_publish_release):
                 report = bdl_platform.run_platform(
                     backend="drive",

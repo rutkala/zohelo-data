@@ -66,6 +66,14 @@ BDL_REQUIRED_DATASETS = frozenset({
     "fact_bdl_observations", "mart_bdl_coverage",
 })
 
+WDI_REQUIRED_DATASETS = frozenset({
+    "bronze_wdi_country", "bronze_wdi_country_series", "bronze_wdi_data",
+    "bronze_wdi_footnote", "bronze_wdi_series", "bronze_wdi_series_time",
+    "wdi_countries", "wdi_indicators", "wdi_observations",
+    "dim_wdi_geography", "dim_wdi_indicator", "dim_wdi_year",
+    "fact_wdi_observations", "mart_wdi_coverage",
+})
+
 REQUIRED_ARTIFACT_NAMES = frozenset({
     "manifest.json", "catalog.json", "run_results.json",
     "business-catalog.json", "ingestion-state.json",
@@ -535,15 +543,15 @@ def audit_publication_pointer(
             "scope_label": scope_label,
             "error": "Multiple releases folders found under publication root",
         }
-    if releases_dirs:
-        rel_folder_matches = find_child_by_name(drive_files, releases_dirs[0]["id"], release_id, budget, mime_type=FOLDER_MIME_TYPE)
-        if len(rel_folder_matches) == 1:
-            expected_release_folder_id = rel_folder_matches[0]["id"]
-        elif len(rel_folder_matches) > 1:
-            return {
-                "status": "ambiguous_release_folder",
-                "error": f"Multiple folders named '{release_id}' under releases directory",
-            }
+    search_dir = releases_dirs[0]["id"] if releases_dirs else publication_root_id
+    rel_folder_matches = find_child_by_name(drive_files, search_dir, release_id, budget, mime_type=FOLDER_MIME_TYPE)
+    if len(rel_folder_matches) == 1:
+        expected_release_folder_id = rel_folder_matches[0]["id"]
+    elif len(rel_folder_matches) > 1:
+        return {
+            "status": "ambiguous_release_folder",
+            "error": f"Multiple folders named '{release_id}' under releases directory",
+        }
 
     if not expected_release_folder_id:
         return {
@@ -969,8 +977,8 @@ def classify_top_level_folder(name: str) -> Dict[str, str]:
             "classification": "active_nbp_convention",
         },
         "releases": {
-            "purpose": "NBP publication root: immutable release directories and current pointer",
-            "producer": "src/nbp_platform.py via src/release_protocol.py",
+            "purpose": "Publication root: immutable release directories and current pointer",
+            "producer": "src/nbp_platform.py, bdl_platform.py, wdi_platform.py via src/release_protocol.py",
             "consumers": "Portal release catalog, restore_release.py, SQL consumers",
             "classification": "active",
         },
@@ -978,7 +986,13 @@ def classify_top_level_folder(name: str) -> Dict[str, str]:
             "purpose": "BDL publication namespace: immutable release directories and current pointer",
             "producer": "src/bdl_platform.py via _release_root and src/release_protocol.py",
             "consumers": "Portal release catalog (explicitly checks bdl-platform/)",
-            "classification": "active_asymmetric_root",
+            "classification": "active_or_legacy",
+        },
+        "wdi-platform": {
+            "purpose": "WDI publication namespace: immutable release directories and current pointer",
+            "producer": "src/wdi_platform.py via _release_root and src/release_protocol.py",
+            "consumers": "Portal release catalog (checks wdi-platform/)",
+            "classification": "active_or_legacy",
         },
         "promotion-audits": {
             "purpose": "Optional audit trail receipts for release promotions (code-supported path)",
@@ -1139,68 +1153,155 @@ def run_full_drive_audit(
             }
         resolved_root_id = roots[0]["id"]
 
-    # 2. Physical storage map
+    # 2. Produce physical storage map of top-level folders
     physical_map = audit_physical_storage_map(drive_files, resolved_root_id, budget)
+    if budget.incomplete_reasons:
+        return {"status": "audit_incomplete", "incomplete_reasons": sorted(budget.incomplete_reasons)}
 
-    # 3. NBP publication pointer (root current-release.json)
-    nbp_pointer = audit_publication_pointer(
-        drive_files, resolved_root_id, budget, "current-release.json",
-        expected_scope="nbp_platform", scope_label="nbp_root",
-    )
+    # 3. Check for canonical releases folder and subfolders
+    releases_folders = find_child_by_name(drive_files, resolved_root_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
+    releases_root_id = releases_folders[0]["id"] if len(releases_folders) == 1 else None
 
-    # 4. BDL publication pointer (bdl-platform/current-release.json)
-    bdl_folders = find_child_by_name(drive_files, resolved_root_id, "bdl-platform", budget, mime_type=FOLDER_MIME_TYPE)
-    bdl_pointer = None
-    bdl_releases_audit = None
-    if len(bdl_folders) == 1:
-        bdl_folder_id = bdl_folders[0]["id"]
-        bdl_pointer = audit_publication_pointer(
-            drive_files, bdl_folder_id, budget, "current-release.json",
-            expected_scope="bdl_platform", scope_label="bdl_platform",
-        )
-        bdl_rel_dirs = find_child_by_name(drive_files, bdl_folder_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
-        if len(bdl_rel_dirs) == 1:
-            current_bdl_rel_id = bdl_pointer.get("release_id") if bdl_pointer else None
-            bdl_is_verified = (bdl_pointer.get("status") == "current_manifest_and_metadata_verified")
-            bdl_releases_audit = audit_release_directories(
-                drive_files, bdl_rel_dirs[0]["id"], budget,
-                current_release_id=current_bdl_rel_id,
-                current_pointer_verified=bdl_is_verified,
-                current_manifest_file_id=bdl_pointer.get("manifest_file_id") if bdl_pointer else None,
-            )
-        elif len(bdl_rel_dirs) > 1:
-            bdl_releases_audit = {"status": "ambiguous_releases_folder", "count": len(bdl_rel_dirs)}
-    elif len(bdl_folders) > 1:
-        bdl_pointer = {"status": "ambiguous_bdl_platform_folder", "count": len(bdl_folders)}
-    else:
-        bdl_pointer = {"status": "bdl_platform_folder_not_found"}
-
-    # 5. NBP releases directory audit
-    nbp_rel_dirs = find_child_by_name(drive_files, resolved_root_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
+    # NBP publication pointer & releases
+    nbp_canonical = find_child_by_name(drive_files, releases_root_id, "nbp", budget, mime_type=FOLDER_MIME_TYPE) if releases_root_id else []
+    nbp_pointer = None
     nbp_releases_audit = None
-    if len(nbp_rel_dirs) == 1:
-        current_nbp_rel_id = nbp_pointer.get("release_id") if nbp_pointer else None
+    if len(nbp_canonical) == 1:
+        nbp_dir_id = nbp_canonical[0]["id"]
+        nbp_pointer = audit_publication_pointer(
+            drive_files, nbp_dir_id, budget, "current-release.json",
+            expected_scope="nbp_platform", scope_label="nbp_canonical",
+        )
+        current_nbp_id = nbp_pointer.get("release_id") if nbp_pointer else None
         nbp_is_verified = (nbp_pointer.get("status") == "current_manifest_and_metadata_verified")
         nbp_releases_audit = audit_release_directories(
-            drive_files, nbp_rel_dirs[0]["id"], budget,
-            current_release_id=current_nbp_rel_id,
+            drive_files, nbp_dir_id, budget,
+            current_release_id=current_nbp_id,
             current_pointer_verified=nbp_is_verified,
             current_manifest_file_id=nbp_pointer.get("manifest_file_id") if nbp_pointer else None,
         )
-    elif len(nbp_rel_dirs) > 1:
-        nbp_releases_audit = {"status": "ambiguous_releases_folder", "count": len(nbp_rel_dirs)}
+    else:
+        # Legacy NBP: root current-release.json and releases/
+        nbp_pointer = audit_publication_pointer(
+            drive_files, resolved_root_id, budget, "current-release.json",
+            expected_scope="nbp_platform", scope_label="nbp_root",
+        )
+        if releases_root_id:
+            current_nbp_id = nbp_pointer.get("release_id") if nbp_pointer else None
+            nbp_is_verified = (nbp_pointer.get("status") == "current_manifest_and_metadata_verified")
+            nbp_releases_audit = audit_release_directories(
+                drive_files, releases_root_id, budget,
+                current_release_id=current_nbp_id,
+                current_pointer_verified=nbp_is_verified,
+                current_manifest_file_id=nbp_pointer.get("manifest_file_id") if nbp_pointer else None,
+            )
+
+    # 4. BDL publication pointer & releases
+    bdl_canonical = find_child_by_name(drive_files, releases_root_id, "bdl", budget, mime_type=FOLDER_MIME_TYPE) if releases_root_id else []
+    bdl_pointer = None
+    bdl_releases_audit = None
+    if len(bdl_canonical) == 1:
+        bdl_dir_id = bdl_canonical[0]["id"]
+        bdl_pointer = audit_publication_pointer(
+            drive_files, bdl_dir_id, budget, "current-release.json",
+            expected_scope="bdl_platform", scope_label="bdl_canonical",
+        )
+        current_bdl_id = bdl_pointer.get("release_id") if bdl_pointer else None
+        bdl_is_verified = (bdl_pointer.get("status") == "current_manifest_and_metadata_verified")
+        bdl_releases_audit = audit_release_directories(
+            drive_files, bdl_dir_id, budget,
+            current_release_id=current_bdl_id,
+            current_pointer_verified=bdl_is_verified,
+            current_manifest_file_id=bdl_pointer.get("manifest_file_id") if bdl_pointer else None,
+        )
+    else:
+        # Legacy BDL: bdl-platform/current-release.json and bdl-platform/releases
+        bdl_folders = find_child_by_name(drive_files, resolved_root_id, "bdl-platform", budget, mime_type=FOLDER_MIME_TYPE)
+        if len(bdl_folders) == 1:
+            bdl_folder_id = bdl_folders[0]["id"]
+            bdl_pointer = audit_publication_pointer(
+                drive_files, bdl_folder_id, budget, "current-release.json",
+                expected_scope="bdl_platform", scope_label="bdl_platform",
+            )
+            bdl_rel_dirs = find_child_by_name(drive_files, bdl_folder_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
+            if len(bdl_rel_dirs) == 1:
+                current_bdl_id = bdl_pointer.get("release_id") if bdl_pointer else None
+                bdl_is_verified = (bdl_pointer.get("status") == "current_manifest_and_metadata_verified")
+                bdl_releases_audit = audit_release_directories(
+                    drive_files, bdl_rel_dirs[0]["id"], budget,
+                    current_release_id=current_bdl_id,
+                    current_pointer_verified=bdl_is_verified,
+                    current_manifest_file_id=bdl_pointer.get("manifest_file_id") if bdl_pointer else None,
+                )
+            elif len(bdl_rel_dirs) > 1:
+                bdl_releases_audit = {"status": "ambiguous_releases_folder", "count": len(bdl_rel_dirs)}
+        elif len(bdl_folders) > 1:
+            bdl_pointer = {"status": "ambiguous_bdl_platform_folder", "count": len(bdl_folders)}
+        else:
+            bdl_pointer = {"status": "bdl_platform_folder_not_found"}
+
+    # 5. WDI publication pointer & releases
+    wdi_canonical = find_child_by_name(drive_files, releases_root_id, "wdi", budget, mime_type=FOLDER_MIME_TYPE) if releases_root_id else []
+    wdi_pointer = None
+    wdi_releases_audit = None
+    if len(wdi_canonical) == 1:
+        wdi_dir_id = wdi_canonical[0]["id"]
+        wdi_pointer = audit_publication_pointer(
+            drive_files, wdi_dir_id, budget, "current-release.json",
+            expected_scope="wdi_platform", scope_label="wdi_canonical",
+        )
+        current_wdi_id = wdi_pointer.get("release_id") if wdi_pointer else None
+        wdi_is_verified = (wdi_pointer.get("status") == "current_manifest_and_metadata_verified")
+        wdi_releases_audit = audit_release_directories(
+            drive_files, wdi_dir_id, budget,
+            current_release_id=current_wdi_id,
+            current_pointer_verified=wdi_is_verified,
+            current_manifest_file_id=wdi_pointer.get("manifest_file_id") if wdi_pointer else None,
+        )
+    else:
+        # Legacy WDI: wdi-platform/current-release.json and wdi-platform/releases
+        wdi_folders = find_child_by_name(drive_files, resolved_root_id, "wdi-platform", budget, mime_type=FOLDER_MIME_TYPE)
+        if len(wdi_folders) == 1:
+            wdi_folder_id = wdi_folders[0]["id"]
+            wdi_pointer = audit_publication_pointer(
+                drive_files, wdi_folder_id, budget, "current-release.json",
+                expected_scope="wdi_platform", scope_label="wdi_platform",
+            )
+            wdi_rel_dirs = find_child_by_name(drive_files, wdi_folder_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
+            if len(wdi_rel_dirs) == 1:
+                current_wdi_id = wdi_pointer.get("release_id") if wdi_pointer else None
+                wdi_is_verified = (wdi_pointer.get("status") == "current_manifest_and_metadata_verified")
+                wdi_releases_audit = audit_release_directories(
+                    drive_files, wdi_rel_dirs[0]["id"], budget,
+                    current_release_id=current_wdi_id,
+                    current_pointer_verified=wdi_is_verified,
+                    current_manifest_file_id=wdi_pointer.get("manifest_file_id") if wdi_pointer else None,
+                )
+            elif len(wdi_rel_dirs) > 1:
+                wdi_releases_audit = {"status": "ambiguous_releases_folder", "count": len(wdi_rel_dirs)}
+        elif len(wdi_folders) > 1:
+            wdi_pointer = {"status": "ambiguous_wdi_platform_folder", "count": len(wdi_folders)}
+        else:
+            wdi_pointer = {"status": "wdi_platform_folder_not_found"}
 
     # Determine overall audit status
     has_ambiguity = bool(
         physical_map.get("duplicate_folders")
         or (nbp_pointer and "ambiguous" in nbp_pointer.get("status", ""))
         or (bdl_pointer and "ambiguous" in bdl_pointer.get("status", ""))
+        or (wdi_pointer and "ambiguous" in wdi_pointer.get("status", ""))
         or (nbp_releases_audit and "ambiguous" in nbp_releases_audit.get("status", ""))
         or (bdl_releases_audit and "ambiguous" in bdl_releases_audit.get("status", ""))
+        or (wdi_releases_audit and "ambiguous" in wdi_releases_audit.get("status", ""))
     )
 
     nbp_verified = (nbp_pointer and nbp_pointer.get("status") == "current_manifest_and_metadata_verified")
     bdl_verified = (bdl_pointer and bdl_pointer.get("status") == "current_manifest_and_metadata_verified")
+    wdi_verified = (
+        wdi_pointer is None
+        or wdi_pointer.get("status") == "wdi_platform_folder_not_found"
+        or wdi_pointer.get("status") == "current_manifest_and_metadata_verified"
+    )
     releases_complete = (
         nbp_releases_audit and nbp_releases_audit.get("current_folder_found")
         and bdl_releases_audit and bdl_releases_audit.get("current_folder_found")
@@ -1210,7 +1311,7 @@ def run_full_drive_audit(
         overall_status = "ambiguous_structure"
     elif budget.incomplete_reasons:
         overall_status = "audit_incomplete"
-    elif nbp_verified and bdl_verified and releases_complete:
+    elif nbp_verified and bdl_verified and wdi_verified and releases_complete:
         overall_status = "audit_manifest_and_metadata_verified"
     else:
         overall_status = "audit_verification_failed"
@@ -1239,6 +1340,8 @@ def run_full_drive_audit(
         "physical_storage_map": physical_map,
         "nbp_current_pointer": nbp_pointer,
         "bdl_current_pointer": bdl_pointer,
+        "wdi_current_pointer": wdi_pointer,
         "nbp_releases": nbp_releases_audit,
         "bdl_releases": bdl_releases_audit,
+        "wdi_releases": wdi_releases_audit,
     }
