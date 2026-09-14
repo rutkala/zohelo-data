@@ -45,7 +45,10 @@ sources:
     permitted_operation: Public BDL API collection under CC BY 4.0; retain source metadata and attribution.
     min_request_interval_seconds: 1
     max_requests: 12
-    registered_max_requests: 60
+    # The registered transport profile independently enforces 80% of the current
+    # official 500/15m, 5,000/12h and 50,000/7d ceilings. A 100-request cycle
+    # lets metadata bootstrap use that existing safety envelope efficiently.
+    registered_max_requests: 100
     discovery_pause_threshold: 40
     quota_windows:
       - {seconds: 900, requests: 80}
