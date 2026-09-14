@@ -33,8 +33,10 @@ backlog and no remaining API tasks. The full catalogue therefore remains incompl
 distribution payloads remain raw-only.
 
 WDI [run 34881599243](https://github.com/rutkala/zohelo-data/actions/runs/34881599243) completed its
-Landing continuation and was freshly verifying the already accepted complete-archive modeled
-release under the shared production lock. BDL
+Landing continuation and freshly published and restored complete-archive release
+`e12f475f-9146-4fc0-9fef-bbf1b6e1b24e`: 9,015,914 of 9,015,914 populated values, 264 of 264
+geographies and 1,498 of 1,498 indicators are modeled through Gold, for a ratio of exactly 1.0.
+BDL
 [run 34879372531](https://github.com/rutkala/zohelo-data/actions/runs/34879372531) advanced Landing to
 3,996 accepted/published responses with zero publication backlog and 2,409 API tasks pending; its
 modeled job was cancelled when a later scheduled BDL run replaced the queued workflow. This is not
