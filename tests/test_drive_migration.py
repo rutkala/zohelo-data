@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import unittest
+from unittest import mock
 import tempfile
 import httplib2
 from googleapiclient.errors import HttpError
@@ -328,7 +329,7 @@ def build_legacy_drive_state(root_id: str = "prod-root-123"):
         "f-wdi-pointer": {"id": "f-wdi-pointer", "name": "current-release.json", "mimeType": "application/json", "parents": ["f-wdi-wrapper"], "content": json.dumps({"format_version": 1, "release_id": wdi_release_id, "manifest_file_id": "f-wdi-manifest", "manifest_sha256": sha256(json.dumps(wdi_manifest).encode()).hexdigest(), "updated_at_utc": wdi_manifest["created_at_utc"]}).encode()},
         # Ingestion control & states
         "f-ingestion-control": {"id": "f-ingestion-control", "name": "ingestion-control", "mimeType": "application/vnd.google-apps.folder", "parents": [root_id]},
-        "f-source-campaigns": {"id": "f-source-campaigns", "name": "source_campaigns", "mimeType": "application/vnd.google-apps.folder", "parents": ["f-ingestion-control"]},
+        "f-source-campaigns": {"id": "f-source-campaigns", "name": "source_campaigns", "mimeType": "application/vnd.google-apps.folder", "parents": ["f-06-control"]},
         "f-states": {"id": "f-states", "name": "states", "mimeType": "application/vnd.google-apps.folder", "parents": ["f-ingestion-control"]},
         "f-nbp-snapshot": {"id": "f-nbp-snapshot", "name": "snapshot-1.json", "mimeType": "application/json", "parents": ["f-states"], "content": state_snapshot_bytes},
         "f-state-pointer": {"id": "f-state-pointer", "name": "current-ingestion-state.json", "mimeType": "application/json", "parents": ["f-ingestion-control"], "content": state_ptr_bytes},
@@ -459,7 +460,7 @@ class DriveMigrationTests(unittest.TestCase):
         # Verify source campaigns kept exact state identity under 06_control
         self.assertEqual(svc._files["f-source-campaigns"]["name"], "source_campaigns")
         ctrl_folder = [f for f in svc._files.values() if f["name"] == "06_control" and "prod-root-123" in f.get("parents", [])][0]
-        self.assertEqual(["f-ingestion-control"], svc._files["f-source-campaigns"]["parents"])
+        self.assertEqual(["f-06-control"], svc._files["f-source-campaigns"]["parents"])
 
         # Verify wrappers moved to 05_archive
         archive_id = "f-05-archive"
@@ -686,6 +687,40 @@ class DriveMigrationTests(unittest.TestCase):
                 storage, expected_root_id="prod-root-123", journal_local_path=receipt
             )._load_journal()
             self.assertEqual(recovered["steps"][0]["status"], "started")
+
+
+    def test_folder_create_then_journal_save_failure_recovers_fresh_engine(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt = Path(tmp) / "journal.json"
+            engine = DriveMigrationEngine(
+                storage, expected_root_id="prod-root-123", journal_local_path=receipt
+            )
+            real_save = engine._save_journal
+            failed = {"value": False}
+
+            def fail_completion_receipt(journal, control_id):
+                if (not failed["value"]
+                        and any(step.get("status") == "completed" for step in journal["steps"])):
+                    failed["value"] = True
+                    raise RuntimeError("simulated journal upload failure")
+                return real_save(journal, control_id)
+
+            with mock.patch.object(engine, "_save_journal", side_effect=fail_completion_receipt):
+                with self.assertRaisesRegex(RuntimeError, "journal upload failure"):
+                    engine.apply(engine.plan(), confirmed=True)
+            self.assertTrue(failed["value"])
+            # Simulate a fresh worker that has only the durable Drive journal.
+            receipt.unlink()
+            resumed = DriveMigrationEngine(
+                storage, expected_root_id="prod-root-123"
+            ).apply(resume=True, confirmed=True)
+            self.assertEqual(resumed["status"], "migration_completed")
+            self.assertEqual(
+                len([f for f in svc._files.values() if f["name"] == "releases" and not f.get("trashed")]),
+                1,
+            )
 
 if __name__ == "__main__":
     unittest.main()

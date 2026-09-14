@@ -570,6 +570,28 @@ class DriveMigrationEngine:
         archive_folder = by_name.get(ARCHIVE_FOLDER, [None])[0]
 
         # ---------------------------------------------------------------------
+        # A live cutover has no partial legacy layout. Validate all pins before
+        # creating a journal or performing any mutation.
+        missing_sources = [source for source in ("nbp", "bdl", "wdi") if source not in pins]
+        if missing_sources:
+            raise MigrationError("Migration preflight requires all current sources: " + ", ".join(missing_sources))
+        if not ingestion_control or ingestion_control.get("mimeType") != FOLDER_MIME_TYPE:
+            raise MigrationError("Migration preflight requires one NBP ingestion-control folder")
+        if not control_folder or control_folder.get("mimeType") != FOLDER_MIME_TYPE:
+            raise MigrationError("Migration preflight requires one top-level 06_control folder")
+        if not state_pointer_file or state_pointer_file.get("name") != "current-ingestion-state.json":
+            raise MigrationError("Migration preflight requires current-ingestion-state.json")
+        if not state_snapshot_id or not state_snapshot_sha:
+            raise MigrationError("Migration preflight requires a pinned NBP state snapshot")
+        if (not source_campaigns_folder
+                or source_campaigns_folder.get("mimeType") != FOLDER_MIME_TYPE
+                or list(source_campaigns_folder.get("parents") or []) != [control_folder["id"]]):
+            raise MigrationError("source_campaigns must remain directly and uniquely under 06_control")
+        if "control" not in pins:
+            raise MigrationError("Migration preflight did not pin NBP control state")
+        pins["control"]["source_campaigns_id"] = source_campaigns_folder["id"]
+        pins["control"]["state_pointer_name"] = "current-ingestion-state.json"
+
         # Construct migration steps
         # ---------------------------------------------------------------------
         steps: List[Dict[str, Any]] = []
