@@ -188,6 +188,7 @@ jobs:
     concurrency:
       group: zohelo-production-data
       cancel-in-progress: false
+      queue: max
     needs: collect_and_publish
     if: >-
       always() && github.ref == 'refs/heads/main' &&

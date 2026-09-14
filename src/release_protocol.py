@@ -462,6 +462,7 @@ def read_current_release_manifest(store: ReleaseStore, root_id: str) -> dict[str
 
 # Useful, short name for adapters/consumers.
 read_current_release = restore_current_release
+read_release_manifest = _read_release_manifest
 
 
 def _validate_candidate(**kwargs: Any) -> dict[str, Any]:

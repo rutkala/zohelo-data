@@ -97,6 +97,13 @@ def validate_workflow(path: Path, document: Any) -> list[str]:
     if _has_write_permission(workflow_permissions):
         errors.append(f"{path}: write permissions must be scoped to the job that needs them")
 
+    top_concurrency = _mapping(workflow.get("concurrency"))
+    if top_concurrency and top_concurrency.get("group") == "zohelo-production-data":
+        if top_concurrency.get("cancel-in-progress") not in (False, "false"):
+            errors.append(f"{path}: concurrency group 'zohelo-production-data' must set cancel-in-progress: false")
+        if top_concurrency.get("queue") != "max":
+            errors.append(f"{path}: concurrency group 'zohelo-production-data' must set queue: max")
+
     has_manual_dispatch = "workflow_dispatch" in triggers
     is_pull_request = "pull_request" in triggers
 
@@ -113,6 +120,13 @@ def validate_workflow(path: Path, document: Any) -> list[str]:
             errors.append(f"{path}: job {job_name!r} has no explicit effective permissions")
         elif is_pull_request and _has_write_permission(permissions):
             errors.append(f"{path}: pull-request job {job_name!r} must not have write permissions")
+
+        job_concurrency = _mapping(job.get("concurrency"))
+        if job_concurrency and job_concurrency.get("group") == "zohelo-production-data":
+            if job_concurrency.get("cancel-in-progress") not in (False, "false"):
+                errors.append(f"{path}: job {job_name!r} concurrency group 'zohelo-production-data' must set cancel-in-progress: false")
+            if job_concurrency.get("queue") != "max":
+                errors.append(f"{path}: job {job_name!r} concurrency group 'zohelo-production-data' must set queue: max")
 
         if "uses" not in job:
             timeout = job.get("timeout-minutes")

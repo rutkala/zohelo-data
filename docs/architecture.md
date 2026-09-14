@@ -45,13 +45,13 @@ flowchart TD
 
 Medallion describes progressively refined data quality; it does not require Spark or a particular storage product. Landing and Archive are additional lifecycle boundaries. [Medallion reference](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion).
 
-Published physical files belong to an immutable release folder. Its manifest assigns logical layers, SQL names, file IDs and checksums. Consumers never infer current data from the most recently modified layer folder. See [the Google Drive structure guide](drive-structure.md) for the physical layout, release pointers, and structural harmonization.
+Published physical files belong to immutable release folders under `releases/<source>/<uuid>/`, where `<source>` is one of `nbp`, `bdl`, or `wdi`. Each source contains its own `current-release.json` pointer directly in its source release folder. Ingestion state is unified under `06_control/` (`06_control/nbp` and `06_control/source_campaigns`). Medallion navigation is maintained via Drive shortcuts and `navigation-index.json` under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`). See [the Google Drive structure guide](drive-structure.md) for the complete physical layout, release pointers, and operational runbook.
 
 ## Publication and recovery
 
-The publisher saves validated ingestion progress after each request. It builds all 15 tables from pinned inputs, runs dbt tests and native MetricFlow acceptance queries, uploads a candidate, then verifies the uploaded Parquet and its provenance before changing `current-release.json`. Consumers pin the release once. Post-publication fresh reads and cold replay are additional evidence; their failure is not an automatic rollback.
+The publisher saves validated ingestion progress after each request. It builds all tables from pinned inputs, runs dbt tests and native MetricFlow acceptance queries, uploads a candidate, then verifies the uploaded Parquet and its provenance before changing `current-release.json`. Consumers pin the release once. Post-publication fresh reads and cold replay are additional evidence; their failure is not an automatic rollback.
 
-Drive provides no database transaction or compare-and-swap for this protocol. Production operations use one Actions concurrency group and pointer-drift detection. Do not run another production writer outside that route. An ambiguous update response stops rather than claiming success. Retained-release promotion checks the expected current release and validates the target before switching.
+Drive provides no database transaction or compare-and-swap for this protocol. Production operations use the unified Actions concurrency group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`, along with rigorous pointer and state drift detection. Do not run another production writer outside that route. An ambiguous update response stops rather than claiming success. Retained-release promotion checks the expected current release and validates the target before switching.
 
 `checked_through`, `latest_observation_date` and release identity describe different facts. Rebuild means recovery from retained input, not historical time travel; a regressive cutoff is rejected. `full` is a compatibility name for resumable catch-up, not a forced redownload of every historical interval.
 

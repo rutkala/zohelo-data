@@ -50,7 +50,7 @@ def promote(*, target_release_id: str, expected_current_release_id: str, source:
         direct_releases=direct_releases,
     )
     if direct_releases:
-        manifest = read_release_manifest(release_store, target_release_id)
+        manifest = result.get("manifest") or read_release_manifest(release_store, target_release_id)
         sync_source_medallion_navigation(storage, root_id, source, manifest)
 
     report = {

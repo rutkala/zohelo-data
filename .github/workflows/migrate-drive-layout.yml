@@ -12,13 +12,20 @@ on:
         type: string
         default: '1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf'
         required: true
+      confirm:
+        description: 'Confirm execution for mutating operations (apply, resume, rollback)'
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: zohelo-production-data
   cancel-in-progress: false
+  queue: max
 
 jobs:
   migrate_drive:
@@ -36,15 +43,34 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install pinned dependencies
         run: python -m pip install -r requirements.txt
+      - name: Verify cutover preconditions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_cutover_preconditions.py
       - name: Execute Drive layout migration operation
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           ZOHELO_ALLOW_PRODUCTION_WRITES: 'true'
+          OPERATION: ${{ inputs.operation }}
+          EXPECTED_ROOT_ID: ${{ inputs.expected_root_id }}
+          CONFIRMED: ${{ inputs.confirm }}
         run: |
-          args=(--operation "${{ inputs.operation }}" --expected-root-id "${{ inputs.expected_root_id }}")
-          if [[ "${{ inputs.operation }}" == "apply" ]]; then
-            args+=(--apply)
+          args=(--operation "$OPERATION" --expected-root-id "$EXPECTED_ROOT_ID")
+          if [[ "$CONFIRMED" == "true" ]]; then
+            args+=(--confirm)
           fi
           python scripts/migrate_drive_layout.py "${args[@]}"
+      - name: Upload migration receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: migration-receipts
+          path: |
+            plan.json
+            journal.json
+            verification.json
+            cutover-preconditions.json
+          if-no-files-found: ignore

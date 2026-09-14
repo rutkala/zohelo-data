@@ -37,8 +37,30 @@ class LayoutResolutionError(RuntimeError):
 
 def _find_items(store_or_storage: Any, name: str, parent_id: str) -> list[str]:
     """Find child item IDs by name under parent_id across ReleaseStore or StorageManager."""
+    drive_service = getattr(store_or_storage, "drive_service", None) or getattr(
+        getattr(store_or_storage, "storage", None), "drive_service", None
+    )
+    if drive_service is not None:
+        escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
+        q = f"name='{escaped_name}' and '{parent_id}' in parents and trashed=false"
+        result = []
+        token = None
+        while True:
+            resp = drive_service.files().list(
+                q=q,
+                fields="nextPageToken,files(id)",
+                pageSize=50,
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageToken=token,
+            ).execute()
+            result.extend([f["id"] for f in resp.get("files", [])])
+            token = resp.get("nextPageToken")
+            if not token:
+                break
+        return result
     if hasattr(store_or_storage, "find"):
-        return store_or_storage.find(name, parent_id)
+        return list(store_or_storage.find(name, parent_id))
     if hasattr(store_or_storage, "_list_exact_folders"):
         folders = store_or_storage._list_exact_folders(name, parent_id=parent_id)
         return [f["id"] for f in folders]
@@ -47,10 +69,10 @@ def _find_items(store_or_storage: Any, name: str, parent_id: str) -> list[str]:
 
 def _mkdir(store_or_storage: Any, name: str, parent_id: str) -> str:
     """Create a folder under parent_id across ReleaseStore or StorageManager."""
-    if hasattr(store_or_storage, "mkdir"):
-        return store_or_storage.mkdir(name, parent_id)
     if hasattr(store_or_storage, "get_or_create_nested_folder"):
         return store_or_storage.get_or_create_nested_folder([name], root_id=parent_id)
+    if hasattr(store_or_storage, "mkdir"):
+        return store_or_storage.mkdir(name, parent_id)
     raise TypeError(f"Unsupported store or storage object: {type(store_or_storage)}")
 
 
@@ -61,46 +83,58 @@ def detect_layout_mode(store_or_storage: Any, root_id: str) -> str:
         "canonical": Canonical layout established (e.g. releases/nbp exists or 06_control/nbp exists).
         "legacy": Legacy layout established (e.g. root current-release.json, bdl-platform, wdi-platform, or ingestion-control exists).
         "fresh": Neither layout exists (uninitialized isolated root).
-        "ambiguous": Both layouts have active pointers or wrappers.
+        "ambiguous": Both layouts have active pointers or wrappers, or duplicate containers exist.
     """
     has_legacy = False
     has_canonical = False
 
     # Check legacy indicators
     root_pointers = _find_items(store_or_storage, "current-release.json", root_id)
+    if len(root_pointers) > 1:
+        return "ambiguous"
     if root_pointers:
         has_legacy = True
 
     bdl_legacy = _find_items(store_or_storage, LEGACY_BDL_WRAPPER, root_id)
+    if len(bdl_legacy) > 1:
+        return "ambiguous"
     if bdl_legacy:
         has_legacy = True
 
     wdi_legacy = _find_items(store_or_storage, LEGACY_WDI_WRAPPER, root_id)
+    if len(wdi_legacy) > 1:
+        return "ambiguous"
     if wdi_legacy:
         has_legacy = True
 
     ingestion_control = _find_items(store_or_storage, LEGACY_NBP_CONTROL_FOLDER, root_id)
+    if len(ingestion_control) > 1:
+        return "ambiguous"
     if ingestion_control:
         has_legacy = True
 
     # Check canonical indicators
     releases_folders = _find_items(store_or_storage, CANONICAL_RELEASES_FOLDER, root_id)
+    if len(releases_folders) > 1:
+        return "ambiguous"
     if releases_folders:
-        if len(releases_folders) > 1:
-            return "ambiguous"
         rel_id = releases_folders[0]
         for src in CANONICAL_SOURCES:
             src_folders = _find_items(store_or_storage, src, rel_id)
+            if len(src_folders) > 1:
+                return "ambiguous"
             if src_folders:
                 has_canonical = True
                 break
 
     control_folders = _find_items(store_or_storage, CANONICAL_CONTROL_FOLDER, root_id)
+    if len(control_folders) > 1:
+        return "ambiguous"
     if control_folders:
-        if len(control_folders) > 1:
-            return "ambiguous"
         ctrl_id = control_folders[0]
         nbp_ctrl = _find_items(store_or_storage, CANONICAL_NBP_CONTROL_FOLDER, ctrl_id)
+        if len(nbp_ctrl) > 1:
+            return "ambiguous"
         if nbp_ctrl:
             has_canonical = True
 
@@ -127,7 +161,7 @@ def resolve_source_release_root(
         where direct_releases=True indicates releases/<source>/ contains UUID release dirs directly.
 
     Raises:
-        AmbiguousLayoutError: if both canonical and legacy pointers or folders exist and conflict.
+        AmbiguousLayoutError: if duplicate containers or both canonical and legacy pointers exist.
         LayoutResolutionError: if resolution fails.
     """
     source = source.lower().strip()
@@ -143,9 +177,14 @@ def resolve_source_release_root(
         if mode == "legacy":
             # Write to established legacy layout
             if source == "nbp":
+                root_ptrs = _find_items(store_or_storage, "current-release.json", root_id)
+                if len(root_ptrs) > 1:
+                    raise AmbiguousLayoutError("Multiple root 'current-release.json' pointers found")
                 return root_id, False
             elif source == "bdl":
                 bdl_folders = _find_items(store_or_storage, LEGACY_BDL_WRAPPER, root_id)
+                if len(bdl_folders) > 1:
+                    raise AmbiguousLayoutError(f"Multiple '{LEGACY_BDL_WRAPPER}' folders found under root")
                 if len(bdl_folders) != 1:
                     raise LayoutResolutionError(
                         f"Legacy BDL folder '{LEGACY_BDL_WRAPPER}' is missing or ambiguous"
@@ -153,6 +192,8 @@ def resolve_source_release_root(
                 return bdl_folders[0], False
             elif source == "wdi":
                 wdi_folders = _find_items(store_or_storage, LEGACY_WDI_WRAPPER, root_id)
+                if len(wdi_folders) > 1:
+                    raise AmbiguousLayoutError(f"Multiple '{LEGACY_WDI_WRAPPER}' folders found under root")
                 if len(wdi_folders) != 1:
                     raise LayoutResolutionError(
                         f"Legacy WDI folder '{LEGACY_WDI_WRAPPER}' is missing or ambiguous"
@@ -178,7 +219,7 @@ def resolve_source_release_root(
 
         return source_id, True
 
-    # Reader path: check both canonical and legacy; fail closed if both exist
+    # Reader path: check both canonical and legacy; fail closed if ambiguous or both exist
     canonical_ptr_found = False
     canonical_folder_id = None
     legacy_ptr_found = False
@@ -186,42 +227,50 @@ def resolve_source_release_root(
 
     # Check canonical
     releases_ids = _find_items(store_or_storage, CANONICAL_RELEASES_FOLDER, root_id)
-    if len(releases_ids) == 1:
+    if len(releases_ids) > 1:
+        raise AmbiguousLayoutError("Multiple 'releases' folders found under root")
+    elif len(releases_ids) == 1:
         source_ids = _find_items(store_or_storage, source, releases_ids[0])
-        if len(source_ids) == 1:
+        if len(source_ids) > 1:
+            raise AmbiguousLayoutError(f"Multiple '{source}' folders found under releases")
+        elif len(source_ids) == 1:
             canonical_folder_id = source_ids[0]
             ptrs = _find_items(store_or_storage, "current-release.json", canonical_folder_id)
-            if len(ptrs) == 1:
-                canonical_ptr_found = True
-            elif len(ptrs) > 1:
+            if len(ptrs) > 1:
                 raise AmbiguousLayoutError(f"Ambiguous current-release.json in releases/{source}")
+            elif len(ptrs) == 1:
+                canonical_ptr_found = True
 
     # Check legacy
     if source == "nbp":
         root_ptrs = _find_items(store_or_storage, "current-release.json", root_id)
-        if len(root_ptrs) == 1:
+        if len(root_ptrs) > 1:
+            raise AmbiguousLayoutError("Multiple root 'current-release.json' pointers found")
+        elif len(root_ptrs) == 1:
             legacy_ptr_found = True
             legacy_folder_id = root_id
-        elif len(root_ptrs) > 1:
-            raise AmbiguousLayoutError("Ambiguous root current-release.json")
     elif source == "bdl":
         bdl_folders = _find_items(store_or_storage, LEGACY_BDL_WRAPPER, root_id)
-        if len(bdl_folders) == 1:
+        if len(bdl_folders) > 1:
+            raise AmbiguousLayoutError(f"Multiple '{LEGACY_BDL_WRAPPER}' folders found under root")
+        elif len(bdl_folders) == 1:
             legacy_folder_id = bdl_folders[0]
             ptrs = _find_items(store_or_storage, "current-release.json", legacy_folder_id)
-            if len(ptrs) == 1:
-                legacy_ptr_found = True
-            elif len(ptrs) > 1:
+            if len(ptrs) > 1:
                 raise AmbiguousLayoutError(f"Ambiguous current-release.json in {LEGACY_BDL_WRAPPER}")
+            elif len(ptrs) == 1:
+                legacy_ptr_found = True
     elif source == "wdi":
         wdi_folders = _find_items(store_or_storage, LEGACY_WDI_WRAPPER, root_id)
-        if len(wdi_folders) == 1:
+        if len(wdi_folders) > 1:
+            raise AmbiguousLayoutError(f"Multiple '{LEGACY_WDI_WRAPPER}' folders found under root")
+        elif len(wdi_folders) == 1:
             legacy_folder_id = wdi_folders[0]
             ptrs = _find_items(store_or_storage, "current-release.json", legacy_folder_id)
-            if len(ptrs) == 1:
-                legacy_ptr_found = True
-            elif len(ptrs) > 1:
+            if len(ptrs) > 1:
                 raise AmbiguousLayoutError(f"Ambiguous current-release.json in {LEGACY_WDI_WRAPPER}")
+            elif len(ptrs) == 1:
+                legacy_ptr_found = True
 
     if canonical_ptr_found and legacy_ptr_found:
         raise AmbiguousLayoutError(
@@ -264,6 +313,8 @@ def resolve_nbp_control_root(
             )
         if mode == "legacy":
             folders = _find_items(store_or_storage, LEGACY_NBP_CONTROL_FOLDER, root_id)
+            if len(folders) > 1:
+                raise AmbiguousLayoutError("Multiple legacy 'ingestion-control' folders found under root")
             if len(folders) != 1:
                 raise LayoutResolutionError("Legacy 'ingestion-control' folder missing or ambiguous")
             return folders[0]
@@ -284,15 +335,22 @@ def resolve_nbp_control_root(
             return _mkdir(store_or_storage, CANONICAL_NBP_CONTROL_FOLDER, control_id)
         return nbp_ids[0]
 
-    # Reader path:
-    canonical_folder_id = None
+    # Reader path: check both canonical and legacy; fail closed if ambiguous or both exist
     control_ids = _find_items(store_or_storage, CANONICAL_CONTROL_FOLDER, root_id)
+    if len(control_ids) > 1:
+        raise AmbiguousLayoutError(f"Multiple '{CANONICAL_CONTROL_FOLDER}' folders found under root")
+
+    canonical_folder_id = None
     if len(control_ids) == 1:
         nbp_ids = _find_items(store_or_storage, CANONICAL_NBP_CONTROL_FOLDER, control_ids[0])
-        if len(nbp_ids) == 1:
+        if len(nbp_ids) > 1:
+            raise AmbiguousLayoutError(f"Multiple '{CANONICAL_NBP_CONTROL_FOLDER}' folders found under {CANONICAL_CONTROL_FOLDER}")
+        elif len(nbp_ids) == 1:
             canonical_folder_id = nbp_ids[0]
 
     legacy_folders = _find_items(store_or_storage, LEGACY_NBP_CONTROL_FOLDER, root_id)
+    if len(legacy_folders) > 1:
+        raise AmbiguousLayoutError(f"Multiple legacy '{LEGACY_NBP_CONTROL_FOLDER}' folders found under root")
     legacy_folder_id = legacy_folders[0] if len(legacy_folders) == 1 else None
 
     if canonical_folder_id and legacy_folder_id:

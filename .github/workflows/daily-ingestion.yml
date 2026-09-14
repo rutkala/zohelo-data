@@ -50,6 +50,7 @@ permissions:
 concurrency:
   group: zohelo-production-data
   cancel-in-progress: false
+  queue: max
 
 jobs:
   publish:

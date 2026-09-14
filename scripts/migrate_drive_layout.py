@@ -2,7 +2,8 @@
 """CLI tool for planning, applying, resuming, rolling back, and verifying Google Drive consolidation.
 
 Default execution is strictly bounded read-only plan (--dry-run).
-Explicit --apply requires opt-in confirmation and safety pin --expected-root-id.
+Mutating operations (apply, resume, rollback) require explicit --confirm flag and
+safety pin --expected-root-id.
 """
 from __future__ import annotations
 
@@ -42,9 +43,20 @@ def parse_args() -> argparse.Namespace:
         help=f"Expected Drive root ID safety pin (default: {PRODUCTION_ROOT_ID}).",
     )
     parser.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Explicit confirmation required to perform mutating operations (apply, resume, rollback).",
+    )
+    parser.add_argument(
         "--apply",
         action="store_true",
-        help="Explicit confirmation required to perform mutating operations under --operation apply.",
+        help="Alias for --confirm when running --operation apply.",
+    )
+    parser.add_argument(
+        "--plan-file",
+        type=Path,
+        default=None,
+        help="Optional path to reviewed plan JSON file to apply.",
     )
     parser.add_argument(
         "--journal-path",
@@ -59,11 +71,16 @@ def main() -> int:
     args = parse_args()
     logging.disable(logging.CRITICAL)
 
-    if args.operation == "apply" and not args.apply:
+    is_mutating = args.operation in ("apply", "resume", "rollback")
+    confirmed = args.confirm or (args.operation == "apply" and args.apply)
+
+    if is_mutating and not confirmed:
+        err_msg = f"Mutating operation '{args.operation}' requires explicit --confirm flag."
         print(
             json.dumps({
-                "status": "apply_rejected",
-                "error": "Mutating operation 'apply' requires explicit --apply confirmation flag.",
+                "status": "operation_rejected",
+                "operation": args.operation,
+                "error": err_msg,
             }, indent=2),
             file=sys.stderr,
         )
@@ -77,16 +94,28 @@ def main() -> int:
             journal_local_path=args.journal_path,
         )
 
+        plan = None
+        if args.plan_file and args.plan_file.is_file():
+            try:
+                plan = json.loads(args.plan_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                raise MigrationError(f"Could not read plan file {args.plan_file}: {exc}")
+
         if args.operation == "plan":
             result = engine.plan()
+            Path("plan.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
         elif args.operation == "apply":
-            result = engine.apply()
+            result = engine.apply(plan=plan, confirmed=confirmed)
+            Path("journal.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
         elif args.operation == "resume":
-            result = engine.apply(resume=True)
+            result = engine.apply(resume=True, confirmed=confirmed)
+            Path("journal.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
         elif args.operation == "rollback":
-            result = engine.rollback()
+            result = engine.rollback(confirmed=confirmed)
+            Path("journal.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
         elif args.operation == "verify":
             result = engine.verify()
+            Path("verification.json").write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
         else:
             raise ValueError(f"Unknown operation: {args.operation}")
 

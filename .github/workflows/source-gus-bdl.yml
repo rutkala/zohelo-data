@@ -115,6 +115,7 @@ jobs:
     concurrency:
       group: zohelo-production-data
       cancel-in-progress: false
+      queue: max
     needs: [ingest_landing]
     if: >-
       always() && !cancelled() &&
