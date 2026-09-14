@@ -277,6 +277,7 @@ class StorageManager:
             query += f" and '{self._escape_drive_query_literal(parent_id)}' in parents"
         folders = []
         page_token = None
+        seen_page_tokens: set[str] = set()
         while True:
             list_args = {
                 "q": query,
@@ -292,6 +293,9 @@ class StorageManager:
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
+            if not isinstance(page_token, str) or page_token in seen_page_tokens:
+                raise RuntimeError("Drive folder listing returned an invalid or repeated page token")
+            seen_page_tokens.add(page_token)
         return [item for item in folders
             if item.get("mimeType") == self.FOLDER_MIME_TYPE and item.get("name") == folder_name
             and item.get("trashed") is not True]

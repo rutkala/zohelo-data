@@ -35,7 +35,10 @@ class PlatformRunnerTests(unittest.TestCase):
         specs = {key: SourceSpec(key, date(2020, 1, 1), value.endpoint_template, value.params)
                  for key, value in specs.items()}
         store = MemoryStore()
-        storage = MagicMock()
+        storage = MagicMock(spec=[
+            "resolve_root", "resolve_zone", "get_or_create_nested_folder", "find"
+        ])
+        storage.find.return_value = []
         storage.resolve_root.return_value = "root"
         storage.resolve_zone.return_value = "landing"
         storage.get_or_create_nested_folder.side_effect = lambda parts, root_id: "-".join([root_id, *parts])

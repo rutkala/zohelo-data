@@ -25,8 +25,7 @@ PUBLISHER_WORKFLOWS = {
     "source-gus-bdl.yml",
     "source-world-bank.yml",
     "daily-ingestion.yml",
-    "daily-reconciliation.yml",
-    "platform_transform_and_release.yml",
+    "deploy.yml",
 }
 
 
@@ -41,8 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--receipt-path", type=Path, default=Path("cutover-preconditions.json")
     )
-    parser.add_argument("--skip-portal-check", action="store_true")
-    parser.add_argument("--skip-actions-check", action="store_true")
     return parser.parse_args()
 
 
@@ -117,33 +114,45 @@ def check_deployed_portal(portal_url: str, repo: str, required_commit: str,
 
 
 def _list_all_runs(repo: str, token: str | None) -> tuple[list[dict], str | None]:
-    """Read all run pages, refusing repeated page tokens or malformed responses."""
+    """Read every active-run status page; refuse partial, repeated, or malformed pages."""
     headers = _github_headers(token)
     runs: list[dict] = []
-    page = 1
-    seen_pages: set[int] = set()
+    seen_ids: set[int] = set()
     try:
-        while True:
-            if page in seen_pages or page > 100:
-                return [], "pagination_loop_or_limit"
-            seen_pages.add(page)
-            url = (
-                f"https://api.github.com/repos/{repo}/actions/runs"
-                f"?per_page=100&page={page}"
-            )
-            data, _ = _json_request(url, headers)
-            batch = data.get("workflow_runs")
-            if not isinstance(batch, list):
-                return [], "malformed_runs_response"
-            runs.extend(batch)
-            if len(batch) < 100:
-                return runs, None
-            page += 1
+        for status in sorted(ACTIVE_STATUSES):
+            page = 1
+            seen_pages: set[int] = set()
+            while True:
+                if page in seen_pages or page > 100:
+                    return [], "pagination_loop_or_limit"
+                seen_pages.add(page)
+                url = (
+                    f"https://api.github.com/repos/{repo}/actions/runs"
+                    f"?status={urllib.parse.quote(status)}&per_page=100&page={page}"
+                )
+                data, headers_response = _json_request(url, headers)
+                batch = data.get("workflow_runs")
+                if not isinstance(batch, list):
+                    return [], "malformed_runs_response"
+                for run in batch:
+                    if not isinstance(run, dict) or not isinstance(run.get("id"), int):
+                        return [], "malformed_active_run"
+                    if run["id"] not in seen_ids:
+                        seen_ids.add(run["id"])
+                        runs.append(run)
+                if len(batch) < 100:
+                    break
+                # A full page must expose a distinct next page. The API's Link
+                # header is evidence that pagination was not silently truncated.
+                link = headers_response.get("Link", "")
+                if f"page={page + 1}" not in link:
+                    return [], "partial_active_runs_response"
+                page += 1
+        return runs, None
     except urllib.error.HTTPError as exc:
         return [], f"http_{exc.code}:{exc}"
     except Exception as exc:
         return [], f"request_failed:{exc}"
-
 
 def check_active_workflows(repo: str, token: str | None,
                            compatibility_commit: str) -> dict:
@@ -193,27 +202,21 @@ def main() -> int:
         "checks": {},
     }
 
-    if args.skip_portal_check:
-        report["checks"]["deployed_portal"] = {"status": "skipped", "compatible": True}
-    else:
-        portal = check_deployed_portal(
-            args.portal_url, args.repo, args.compatibility_commit, token
-        )
-        report["checks"]["deployed_portal"] = portal
-        if not portal["compatible"]:
-            report["preconditions_met"] = False
-            report["blocking_reason"] = "portal deployment lacks reviewed canonical-layout support"
+    portal = check_deployed_portal(
+        args.portal_url, args.repo, args.compatibility_commit, token
+    )
+    report["checks"]["deployed_portal"] = portal
+    if not portal["compatible"]:
+        report["preconditions_met"] = False
+        report["blocking_reason"] = "portal deployment lacks reviewed canonical-layout support"
 
-    if args.skip_actions_check:
-        report["checks"]["active_workflows"] = {"status": "skipped", "clean": True}
-    else:
-        actions = check_active_workflows(args.repo, token, args.compatibility_commit)
-        report["checks"]["active_workflows"] = actions
-        if not actions["clean"]:
-            report["preconditions_met"] = False
-            report["blocking_reason"] = (
-                f"found {actions['active_critical_runs_count']} old or unverified publisher runs"
-            )
+    actions = check_active_workflows(args.repo, token, args.compatibility_commit)
+    report["checks"]["active_workflows"] = actions
+    if not actions["clean"]:
+        report["preconditions_met"] = False
+        report["blocking_reason"] = (
+            f"found {actions['active_critical_runs_count']} old or unverified publisher runs"
+        )
 
     rendered = json.dumps(report, indent=2, sort_keys=True)
     args.receipt_path.parent.mkdir(parents=True, exist_ok=True)
