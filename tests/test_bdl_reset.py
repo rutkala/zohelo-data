@@ -589,5 +589,86 @@ class BdlResetTests(unittest.TestCase):
                 )
 
 
+class BdlResetDispatchAndProvenanceTests(unittest.TestCase):
+    def test_dispatch_validation_strict_rules(self):
+        import validate_bdl_reset_dispatch as dispatch
+
+        # Plan requires no special mutating fields
+        self.assertEqual([], dispatch.validate("plan", False, "", "", ""))
+
+        # Mutating operations require confirmation and valid pins
+        valid_pins = ("12345", "plan-bdl-reset-1234abcd", "a" * 64)
+        for op in ("apply", "resume"):
+            self.assertEqual([], dispatch.validate(op, True, *valid_pins))
+            # Unconfirmed
+            errors = dispatch.validate(op, False, *valid_pins)
+            self.assertTrue(any("confirmation" in e for e in errors))
+            # Malformed run ID
+            errors = dispatch.validate(op, True, "abc", "plan-bdl-reset-1234abcd", "a" * 64)
+            self.assertTrue(any("run ID" in e for e in errors))
+            # Malformed plan ID
+            errors = dispatch.validate(op, True, "12345", "bad_id", "a" * 64)
+            self.assertTrue(any("plan ID" in e for e in errors))
+            # Malformed sha256
+            errors = dispatch.validate(op, True, "12345", "plan-bdl-reset-1234abcd", "not-a-sha")
+            self.assertTrue(any("SHA-256" in e for e in errors))
+
+    def test_plan_provenance_verification(self):
+        import verify_bdl_reset_plan as verifier
+
+        root = "root-123"
+        commit = "c" * 40
+        plan = {
+            "status": "planned",
+            "plan_id": "plan-bdl-reset-test1234",
+            "root_id": root,
+            "expected_root_id": root,
+            "targets": [],
+            "non_bdl_baseline": [],
+        }
+        digest = verifier.canonical_plan_hash(plan)
+        plan["plan_sha256"] = digest
+
+        identity = {
+            "format_version": 1,
+            "repository": "rutkala/zohelo-data",
+            "workflow_path": verifier.WORKFLOW_PATH,
+            "workflow_run_id": "9999",
+            "workflow_commit": commit,
+            "plan_id": "plan-bdl-reset-test1234",
+            "plan_sha256": digest,
+            "root_id": root,
+        }
+
+        # Successful verification without token (static pins check)
+        result = verifier.verify_provenance(
+            plan=plan,
+            identity=identity,
+            run_id="9999",
+            expected_root_id=root,
+            expected_plan_id="plan-bdl-reset-test1234",
+            expected_plan_sha256=digest,
+            repository="rutkala/zohelo-data",
+            executing_commit=commit,
+            token="",
+        )
+        self.assertEqual("reviewed_plan_verified", result["status"])
+
+        # Tampered digest raises ProvenanceError
+        with self.assertRaises(verifier.ProvenanceError):
+            verifier.verify_provenance(
+                plan=plan,
+                identity=identity,
+                run_id="9999",
+                expected_root_id=root,
+                expected_plan_id="plan-bdl-reset-test1234",
+                expected_plan_sha256="b" * 64,
+                repository="rutkala/zohelo-data",
+                executing_commit=commit,
+                token="",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -9,7 +9,8 @@ Default operation is read-only plan. Mutating operations (apply, resume) require
 - Verification that BDL writer workflow is disabled and has no active/queued runs
 - Execution in main Actions runtime with zohelo-production-data concurrency
 
-All deletions use recoverable Google Drive trash only (NEVER permanent delete).
+All deletions mutate exact BDL root folders only via recoverable Google Drive trash.
+Descendants inherit trashed status automatically.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ from bdl_reset import (
     BdlResetEngine,
     BdlResetError,
     DriftError,
+    RuntimeGuardError,
     SafetyPinError,
     _canonical_digest,
 )
@@ -72,11 +74,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("bdl-reset-journal.json"),
         help="Path to local journal receipt JSON",
-    )
-    parser.add_argument(
-        "--skip-producer-check",
-        action="store_true",
-        help="Skip active producer check (permitted ONLY in local test environments)",
     )
     return parser.parse_args()
 
@@ -122,6 +119,40 @@ def load_reviewed_plan(args: argparse.Namespace) -> dict:
     return plan
 
 
+def format_concise_summary(operation: str, result: dict) -> str:
+    """Format concise Markdown summary avoiding 36k-line payload in CI output."""
+    plan_id = result.get("plan_id", "N/A")
+    plan_sha = result.get("plan_sha256", "N/A")
+    status = result.get("status", "N/A")
+
+    lines = [
+        f"## GUS BDL Reset ({operation})",
+        "",
+        f"- **Status:** `{status}`",
+        f"- **Plan ID:** `{plan_id}`",
+        f"- **Plan SHA-256:** `{plan_sha}`",
+    ]
+
+    if "counts_by_root" in result:
+        lines.append("")
+        lines.append("| Root Path | Object Count | Total Bytes |")
+        lines.append("|---|---|---|")
+        for root_key, count in sorted(result["counts_by_root"].items()):
+            b = result.get("bytes_by_root", {}).get(root_key, 0)
+            lines.append(f"| `{root_key}` | {count:,} | {b:,} |")
+        lines.append("")
+        lines.append(f"**Total Objects:** {result.get('total_object_count', 0):,} | **Total Bytes:** {result.get('total_bytes', 0):,}")
+        lines.append(f"**Non-BDL Baseline Preserved:** {result.get('non_bdl_baseline_count', 0)} structures")
+    elif "roots_trashed" in result:
+        lines.append(f"- **Roots Trashed:** {result.get('roots_trashed')}")
+        lines.append(f"- **Descendants Inherited Trash:** {result.get('total_descendants_inherited_trash', 0):,}")
+        lines.append(f"- **Remote Plan Folder:** `{result.get('remote_plan_folder')}`")
+
+    lines.append("")
+    lines.append("Full artifact details written to `plan.json` / `recovery-receipt.json`.")
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     args = parse_args()
     logging.disable(logging.CRITICAL)
@@ -158,7 +189,6 @@ def main() -> int:
                 confirmed=True,
                 resume=args.operation == "resume",
                 expected_sha256=args.plan_sha256,
-                skip_producer_check=args.skip_producer_check,
                 github_token=github_token,
             )
             write_json("recovery-receipt.json", result)
@@ -171,20 +201,23 @@ def main() -> int:
         else:
             raise BdlResetError(f"Unknown operation: {args.operation}")
 
-        rendered = json.dumps(result, indent=2, sort_keys=True)
-        print(rendered)
+        # Render concise output to stdout and step summary
+        summary_md = format_concise_summary(args.operation, result)
+        print(summary_md)
 
         if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
             with Path(summary).open("a", encoding="utf-8") as handle:
-                handle.write(f"\n## GUS BDL Reset ({args.operation})\n\n```json\n{rendered}\n```\n")
+                handle.write(summary_md)
 
         if output := os.environ.get("GITHUB_OUTPUT"):
             with Path(output).open("a", encoding="utf-8") as handle:
                 handle.write(f"status={result.get('status', 'unknown')}\n")
+                handle.write(f"plan_id={result.get('plan_id', '')}\n")
+                handle.write(f"plan_sha256={result.get('plan_sha256', '')}\n")
 
         return 0
 
-    except (SafetyPinError, DriftError, AmbiguityError, ActiveProducerError, BdlResetError) as exc:
+    except (SafetyPinError, DriftError, AmbiguityError, ActiveProducerError, RuntimeGuardError, BdlResetError) as exc:
         failure = write_failure_receipt(args, exc, "bdl_reset_failed")
         print(json.dumps(failure, indent=2, sort_keys=True), file=sys.stderr)
         return 1

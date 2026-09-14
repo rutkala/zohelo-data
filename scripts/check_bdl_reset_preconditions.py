@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify pre-reset preconditions: BDL producer workflow is disabled and has no active runs."""
+"""Strict fail-closed guard verifying that BDL producer workflow is disabled with zero active runs."""
 from __future__ import annotations
 
 import argparse
@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 DEFAULT_REPO = "rutkala/zohelo-data"
@@ -27,76 +29,120 @@ def _github_headers(token: str | None) -> dict[str, str]:
     return headers
 
 
+def _json_request(url: str, headers: dict[str, str], timeout: int = 15) -> tuple[dict, dict]:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8")), dict(response.headers.items())
+
+
+def _header(headers: dict, name: str) -> str:
+    for key, value in headers.items():
+        if str(key).lower() == name.lower():
+            return str(value)
+    return ""
+
+
+def _next_link(link_header: str) -> str | None:
+    found: list[str] = []
+    for part in link_header.split(","):
+        sections = [section.strip() for section in part.split(";")]
+        if not sections or not sections[0].startswith("<") or not sections[0].endswith(">"):
+            continue
+        rels = {
+            token.strip().strip('"')
+            for section in sections[1:]
+            if "=" in section
+            for key, token in [section.split("=", 1)]
+            if key.strip().lower() == "rel"
+        }
+        if "next" in rels:
+            found.append(sections[0][1:-1])
+    if len(found) > 1:
+        raise ValueError("multiple rel=next links")
+    return found[0] if found else None
+
+
 def check_bdl_producer(repo: str, token: str | None) -> dict:
     headers = _github_headers(token)
 
-    # 1. Check workflow state
+    # 1. Check workflow state (must exist and be disabled)
     wf_url = f"https://api.github.com/repos/{repo}/actions/workflows/{BDL_WORKFLOW}"
-    req = urllib.request.Request(wf_url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            wf_data = json.loads(response.read().decode("utf-8"))
-            state = wf_data.get("state")
-            is_disabled = state in ("disabled_manually", "disabled_inactivity")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            state = "not_found"
-            is_disabled = True
-        else:
+        wf_data, _ = _json_request(wf_url, headers)
+        if not isinstance(wf_data, dict):
+            return {"status": "malformed_response", "workflow": BDL_WORKFLOW, "clean": False, "error": "malformed workflow json"}
+        state = wf_data.get("state")
+        if state not in ("disabled_manually", "disabled_inactivity"):
             return {
-                "status": f"http_{exc.code}",
+                "status": "workflow_not_disabled",
                 "workflow": BDL_WORKFLOW,
+                "workflow_state": state,
                 "disabled": False,
-                "error": str(exc),
+                "clean": False,
+                "error": f"Workflow is not disabled (state: '{state}')",
             }
     except Exception as exc:
+        # Fails closed on 404, network error, timeout, permission error
         return {
-            "status": "request_failed",
+            "status": "workflow_check_failed",
             "workflow": BDL_WORKFLOW,
-            "disabled": False,
-            "error": str(exc),
+            "clean": False,
+            "error": f"Failed to check workflow {BDL_WORKFLOW}: {exc}",
         }
 
-    # 2. Check for active or pending runs of this workflow
+    # 2. Check for active or pending runs using strict pagination
     active_runs = []
-    for status in sorted(ACTIVE_STATUSES):
-        runs_url = f"https://api.github.com/repos/{repo}/actions/workflows/{BDL_WORKFLOW}/runs?status={status}"
-        runs_req = urllib.request.Request(runs_url, headers=headers)
-        try:
-            with urllib.request.urlopen(runs_req, timeout=15) as response:
-                runs_data = json.loads(response.read().decode("utf-8"))
-                for run in runs_data.get("workflow_runs", []):
+    try:
+        for status in sorted(ACTIVE_STATUSES):
+            page = 1
+            expected_total = None
+            status_count = 0
+            while page <= 50:
+                url = (
+                    f"https://api.github.com/repos/{repo}/actions/workflows/{BDL_WORKFLOW}/runs"
+                    f"?status={urllib.parse.quote(status)}&per_page=100&page={page}"
+                )
+                data, response_headers = _json_request(url, headers)
+                if not isinstance(data, dict):
+                    return {"status": "malformed_runs_response", "clean": False, "error": "runs response is not an object"}
+                total_count = data.get("total_count")
+                batch = data.get("workflow_runs")
+                if not isinstance(total_count, int) or not isinstance(batch, list):
+                    return {"status": "malformed_runs_response", "clean": False, "error": "runs payload missing total_count or workflow_runs"}
+                if expected_total is None:
+                    expected_total = total_count
+                elif total_count != expected_total:
+                    return {"status": "changing_total_count", "clean": False, "error": "total_count shifted during pagination"}
+
+                for run in batch:
+                    if not isinstance(run, dict) or not isinstance(run.get("id"), int):
+                        return {"status": "malformed_run", "clean": False, "error": "run item malformed"}
                     active_runs.append({
-                        "id": run.get("id"),
+                        "id": run["id"],
                         "status": run.get("status"),
                         "head_sha": run.get("head_sha"),
                         "created_at": run.get("created_at"),
                     })
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                break
-            return {
-                "status": f"http_{exc.code}",
-                "workflow": BDL_WORKFLOW,
-                "disabled": is_disabled,
-                "active_runs_count": -1,
-                "error": str(exc),
-            }
-        except Exception as exc:
-            return {
-                "status": "request_failed",
-                "workflow": BDL_WORKFLOW,
-                "disabled": is_disabled,
-                "active_runs_count": -1,
-                "error": str(exc),
-            }
+                    status_count += 1
 
-    clean = is_disabled and len(active_runs) == 0
+                next_url = _next_link(_header(response_headers, "link"))
+                if status_count == expected_total or not batch:
+                    break
+                page += 1
+    except Exception as exc:
+        return {
+            "status": "active_runs_check_failed",
+            "workflow": BDL_WORKFLOW,
+            "clean": False,
+            "error": f"Failed checking active runs for {BDL_WORKFLOW}: {exc}",
+        }
+
+    clean = (len(active_runs) == 0)
     return {
-        "status": "verified" if clean else "producer_active_or_enabled",
+        "status": "verified" if clean else "active_runs_detected",
         "workflow": BDL_WORKFLOW,
         "workflow_state": state,
-        "disabled": is_disabled,
+        "disabled": True,
         "active_runs_count": len(active_runs),
         "active_runs": active_runs,
         "clean": clean,
@@ -122,12 +168,7 @@ def main() -> int:
 
     if not producer_check.get("clean"):
         report["preconditions_met"] = False
-        reasons = []
-        if not producer_check.get("disabled"):
-            reasons.append(f"workflow {BDL_WORKFLOW} is not disabled (state: {producer_check.get('workflow_state')})")
-        if producer_check.get("active_runs_count", 0) > 0:
-            reasons.append(f"found {producer_check['active_runs_count']} active/queued runs of {BDL_WORKFLOW}")
-        report["blocking_reason"] = "; ".join(reasons)
+        report["blocking_reason"] = producer_check.get("error") or f"Found {producer_check.get('active_runs_count')} active/queued runs"
 
     rendered = json.dumps(report, indent=2, sort_keys=True)
     args.receipt_path.parent.mkdir(parents=True, exist_ok=True)
