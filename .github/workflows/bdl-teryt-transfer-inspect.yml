@@ -1,0 +1,77 @@
+name: Inspect BDL territory transfer controls
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/bdl-teryt-transfer-inspect.yml']
+permissions:
+  contents: read
+concurrency:
+  group: zohelo-pipeline-gus_bdl
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: contains(github.event.head_commit.message, '[inspect-bdl-transfer]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {persist-credentials: false}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx --no-install playwright install --with-deps chromium
+      - name: Inspect transfer controls after territorial select-all
+        env:
+          GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
+          GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          const browser=await chromium.launch({headless:true});
+          const context=await browser.newContext({locale:'pl-PL'});
+          const page=await context.newPage();
+          const enabledNext=async()=>{
+            for(let n=0;n<40;n++){
+              for(const id of ['ctl00_ContentPlaceHolder_dalej1','ctl00_ContentPlaceHolder_dalej2']){
+                const c=page.locator(`#${id}`);
+                if(await c.count() && await c.isVisible().catch(()=>false) && await c.isEnabled().catch(()=>false)) return c;
+              }
+              await page.waitForTimeout(500);
+            }
+            throw new Error('No enabled Dalej');
+          };
+          try{
+            await page.goto('https://bdl.stat.gov.pl/bdl/logowanie',{waitUntil:'domcontentloaded',timeout:45000});
+            await page.locator('#ctl00_ContentPlaceHolder_Email').fill(process.env.GUS_BDL_WEB_EMAIL);
+            await page.locator('#ctl00_ContentPlaceHolder_Password').fill(process.env.GUS_BDL_WEB_PASSWORD);
+            await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
+            await page.waitForTimeout(1200);
+            await page.goto('https://bdl.stat.gov.pl/bdl/dane/podgrup/wymiary/2/3/1319',{waitUntil:'domcontentloaded',timeout:60000});
+            await page.waitForTimeout(1200);
+            const seen=new Set();
+            for(let round=0;round<20;round++){
+              const all=await page.locator('[id$="_SelectAll"]').evaluateAll(els=>els.map(e=>({id:e.id,v:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length),d:!!e.disabled})));
+              const x=all.filter(x=>x.v&&!x.d&&!seen.has(x.id)).sort((a,b)=>a.id.localeCompare(b.id))[0];
+              if(!x) break;
+              await page.locator(`#${x.id}`).click(); seen.add(x.id); await page.waitForTimeout(1200);
+            }
+            const next=await enabledNext();
+            await next.click();
+            await page.waitForURL(/\/bdl\/dane\/podgrup\/teryt/,{timeout:30000});
+            await page.waitForTimeout(800);
+            await page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton').click();
+            await page.locator('li.rmItem').filter({hasText:'Zaznacz wszystkie'}).first().locator('.rmLink').click();
+            await page.waitForTimeout(500);
+            const nodes=await page.locator('[id*="terytList"], [class*="rlb"], button, a, input').evaluateAll(els=>els.filter(e=>!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)).map(e=>({tag:e.tagName,id:e.id||null,cls:typeof e.className==='string'?e.className:'',type:e.getAttribute('type'),title:e.getAttribute('title'),value:e.getAttribute('value'),text:(e.textContent||'').trim().replace(/\s+/g,' ').slice(0,160),href:e.getAttribute('href'),aria:e.getAttribute('aria-label')})).filter(x=>/terytlist|rlb|transfer|przenie|wybran|dodaj|right|left|move|arrow/i.test(JSON.stringify(x))));
+            console.log('TRANSFER_NODES='+JSON.stringify(nodes));
+            const selected=await page.locator('.rlbSelected').count();
+            console.log('HIGHLIGHTED_COUNT='+selected);
+          }finally{await browser.close();}
+          NODE
