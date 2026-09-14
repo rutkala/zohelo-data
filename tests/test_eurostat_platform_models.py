@@ -37,10 +37,12 @@ class EurostatPlatformModelTests(unittest.TestCase):
                 self._row("history-1", "history", "2026-09-10T00:00:00Z", "demo_pjan_pl_2023_2025.json"),
                 self._row("recent-1", "recent", "2026-09-11T00:00:00Z", "prc_hicp_minr_pl_2025_2026.json"),
                 self._row("recent-2", "recent", "2026-09-12T00:00:00Z", "nama_10_gdp_pl_2023_2025.json"),
+                self._row("history-2", "history", "2026-09-13T00:00:00Z", "demo_pjan_pl_2023_2025.json", changed_first_value=True),
+                self._row("history-3", "history", "2026-09-14T00:00:00Z", "demo_pjan_pl_2023_2025.json"),
             ]
             self._write_landing(landing, rows)
             report = decode_landing_files([landing], decoded)
-            self.assertEqual(report["decoded_response_count"], 3)
+            self.assertEqual(report["decoded_response_count"], 5)
             self.assertGreater(report["decoded_cell_count"], 20)
             coverage_path.write_text(json.dumps({
                 "catalogue_distributions": 21247,
@@ -98,12 +100,33 @@ class EurostatPlatformModelTests(unittest.TestCase):
                     "where json_extract_string(dimension_key_json, '$.geo') = 'PL' "
                     "and json_extract_string(dimension_key_json, '$.time') is not null"
                 ).fetchone()[0]
-                self.assertEqual(complete_keys, report["decoded_cell_count"])
+                decoded_keys = connection.execute(
+                    "select count(*) from (select distinct dataset_id, dimension_key_sha256 "
+                    "from read_parquet(?))",
+                    [str(decoded)],
+                ).fetchone()[0]
+                self.assertEqual(complete_keys, decoded_keys)
+                reverted = connection.execute(
+                    'select revision_count, current_revision_event_type '
+                    'from "04_gold"."fact_eurostat_observations" '
+                    "where dataset_key = 'demo_pjan' and period_key = '2023'"
+                ).fetchone()
+                self.assertEqual(reverted, (3, "observed_value_changed"))
+                reverted_history = connection.execute(
+                    'select value_json, revision_event_type from "03_silver"."eurostat_observation_revisions" '
+                    "where dataset_id = 'demo_pjan' and period_key = '2023' order by revision_number"
+                ).fetchall()
+                self.assertEqual(len(reverted_history), 3)
+                self.assertEqual(reverted_history[0][0], reverted_history[2][0])
 
     @staticmethod
-    def _row(task_id, lane, retrieved_at, fixture_name):
+    def _row(task_id, lane, retrieved_at, fixture_name, changed_first_value=False):
         payload = (REPO_ROOT / "tests/fixtures/sources/eurostat" / fixture_name).read_text(encoding="utf-8")
         document = json.loads(payload)
+        if changed_first_value:
+            first_key = sorted(document["value"], key=int)[0]
+            document["value"][first_key] += 1
+            payload = json.dumps(document, ensure_ascii=False, separators=(",", ":"))
         dataset = document["extension"]["id"].lower()
         raw = payload.encode("utf-8")
         return (

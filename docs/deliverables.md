@@ -13,14 +13,18 @@ This change adds the first production-gated Eurostat modeled release without nar
 the full-source commitment. It consumes every accepted response in the complete reviewed API
 contract (three datasets × 27 current EU countries), decodes every JSON-stat cube cell including
 explicit missing positions, preserves the full native dimension key and status, reconciles
-revisions, and publishes eight source-shaped Bronze, Silver and Gold datasets. Twelve native
-MetricFlow coverage/accountability metrics are checked against Gold before promotion. Generic
-Eurostat values are deliberately not exposed as an additive business metric.
+revisions (including value reversions), and publishes eight source-shaped Bronze, Silver and Gold
+datasets. Twelve native MetricFlow coverage/accountability metrics are checked against Gold before
+promotion. Generic Eurostat values are deliberately not exposed as an additive business metric.
+The existing portal discovers the canonical Eurostat pointer, validates the exact release contract,
+and exposes its tables, catalogue, lineage and source status alongside the other releases.
 
 The release is independently restorable, hash-bound to all Landing fragments, and staged before
-its immutable `releases/eurostat` pointer is promoted. Its coverage mart also binds the current
+its immutable `releases/eurostat` pointer is promoted. Every Landing fragment is re-read and hashed
+during staged validation. Its coverage mart also binds the current
 full-distribution campaign evidence, so the smaller modeled API contract cannot be mistaken for
-complete Eurostat. All 473 repository data-platform tests pass, including exact sparse-cell,
+complete Eurostat: raw catalogue completion and modeled completion remain separate. All 474
+repository data-platform tests pass, including exact sparse-cell,
 revision, release-contract and native MetricFlow regressions. Production promotion and fresh
 restore remain the acceptance gate for this change; no production release is claimed in advance.
 
@@ -39,9 +43,9 @@ geographies and 1,498 of 1,498 indicators are modeled through Gold, for a ratio 
 BDL
 [run 34879372531](https://github.com/rutkala/zohelo-data/actions/runs/34879372531) advanced Landing to
 3,996 accepted/published responses with zero publication backlog and 2,409 API tasks pending; its
-modeled job was cancelled when a later scheduled BDL run replaced the queued workflow. This is not
-data loss, but the 15-minute workflow cadence can starve the downstream transform while another
-source holds the shared production lock. Current BDL continuation
+modeled job hit its configured 25-minute timeout during the build. This is not data loss, but the
+current transform timeout is shorter than the observed end-to-end build and fresh-restore path.
+Current BDL continuation
 [run 34885171452](https://github.com/rutkala/zohelo-data/actions/runs/34885171452) was active and was
 not duplicated. The separate authenticated Web-bulk route still has no accepted bulk archive and
 BDL remains far from the 172,576-variable full scope.

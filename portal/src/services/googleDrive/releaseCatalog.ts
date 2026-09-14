@@ -11,6 +11,7 @@ import type {
   BusinessCatalogue,
   BusinessCatalogueLineageNode,
   BusinessCatalogueSource,
+  EurostatPlatformReleaseManifest,
   LakehouseFile,
   PlatformReleaseManifest,
   ReleaseArtifact,
@@ -100,6 +101,21 @@ export const WDI_DATED_DATASETS = new Set([
   "dim_wdi_year",
   "fact_wdi_observations",
   "mart_wdi_coverage",
+]);
+export const EUROSTAT_DATASETS: Record<string, ReleaseLayer> = {
+  bronze_eurostat_observations: "02_bronze",
+  eurostat_observation_revisions: "03_silver",
+  eurostat_observations: "03_silver",
+  dim_eurostat_dataset: "04_gold",
+  dim_eurostat_geography: "04_gold",
+  dim_eurostat_period: "04_gold",
+  fact_eurostat_observations: "04_gold",
+  mart_eurostat_coverage: "04_gold",
+};
+export const EUROSTAT_DATED_DATASETS = new Set([
+  "dim_eurostat_period",
+  "fact_eurostat_observations",
+  "mart_eurostat_coverage",
 ]);
 const WDI_ZERO_ROW_DATASETS = new Set([
   "bronze_wdi_country_series",
@@ -262,7 +278,12 @@ function parseFile(raw: unknown, datasetId: string, layer: ReleaseLayer): Lakeho
 
 function parseDataset(
   raw: unknown,
-  scope: "nbp_silver" | "nbp_platform" | "bdl_platform" | "wdi_platform"
+  scope:
+    | "nbp_silver"
+    | "nbp_platform"
+    | "bdl_platform"
+    | "wdi_platform"
+    | "eurostat_progressive_api_platform"
 ): ReleaseDataset {
   if (!isRecord(raw)) throw new Error("Release manifest has an invalid dataset.");
   const dataset_id = asNonEmptyString(raw.dataset_id, "dataset_id");
@@ -273,7 +294,9 @@ function parseDataset(
         ? V2_DATASETS[dataset_id]
         : scope === "bdl_platform"
           ? BDL_DATASETS[dataset_id]
-          : WDI_DATASETS[dataset_id];
+          : scope === "wdi_platform"
+            ? WDI_DATASETS[dataset_id]
+            : EUROSTAT_DATASETS[dataset_id];
   if (!expectedLayer || raw.layer !== expectedLayer) {
     throw new Error(`Release dataset '${dataset_id}' has an invalid layer.`);
   }
@@ -336,6 +359,20 @@ function parseDataset(
     throw new Error(`Release dataset '${dataset_id}' may not omit date bounds.`);
   }
   if (scope === "wdi_platform" && !WDI_DATED_DATASETS.has(dataset_id) && min_date !== null) {
+    throw new Error(`Release dataset '${dataset_id}' must not declare date bounds.`);
+  }
+  if (
+    scope === "eurostat_progressive_api_platform" &&
+    EUROSTAT_DATED_DATASETS.has(dataset_id) &&
+    min_date === null
+  ) {
+    throw new Error(`Release dataset '${dataset_id}' may not omit date bounds.`);
+  }
+  if (
+    scope === "eurostat_progressive_api_platform" &&
+    !EUROSTAT_DATED_DATASETS.has(dataset_id) &&
+    min_date !== null
+  ) {
     throw new Error(`Release dataset '${dataset_id}' must not declare date bounds.`);
   }
   if (min_date !== null && max_date !== null && min_date > max_date) {
@@ -408,7 +445,8 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
     (format_version === 2 &&
       rawScope !== "nbp_platform" &&
       rawScope !== "bdl_platform" &&
-      rawScope !== "wdi_platform") ||
+      rawScope !== "wdi_platform" &&
+      rawScope !== "eurostat_progressive_api_platform") ||
     raw.status !== "validated"
   ) {
     throw new Error(
@@ -417,8 +455,17 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
         : "The selected release is not a validated platform release."
     );
   }
-  const scope: "nbp_silver" | "nbp_platform" | "bdl_platform" | "wdi_platform" = rawScope as
-    "nbp_silver" | "nbp_platform" | "bdl_platform" | "wdi_platform";
+  const scope:
+    | "nbp_silver"
+    | "nbp_platform"
+    | "bdl_platform"
+    | "wdi_platform"
+    | "eurostat_progressive_api_platform" = rawScope as
+    | "nbp_silver"
+    | "nbp_platform"
+    | "bdl_platform"
+    | "wdi_platform"
+    | "eurostat_progressive_api_platform";
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
     throw new Error("The selected release does not have passing tests.");
   }
@@ -433,7 +480,9 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
         ? Object.keys(V2_DATASETS)
         : scope === "bdl_platform"
           ? Object.keys(BDL_DATASETS)
-          : Object.keys(WDI_DATASETS);
+          : scope === "wdi_platform"
+            ? Object.keys(WDI_DATASETS)
+            : Object.keys(EUROSTAT_DATASETS);
   if (
     ids.size !== datasets.length ||
     ids.size !== requiredIds.length ||
@@ -446,7 +495,9 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
           ? "The selected platform release must contain exactly the 15 required NBP datasets."
           : scope === "bdl_platform"
             ? "The selected platform release must contain exactly the 18 required BDL datasets."
-            : "The selected platform release must contain exactly the 14 required WDI datasets."
+            : scope === "wdi_platform"
+              ? "The selected platform release must contain exactly the 14 required WDI datasets."
+              : "The selected platform release must contain exactly the 8 required Eurostat datasets."
     );
   }
   const fileIds = new Set<string>();
@@ -501,11 +552,18 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
       release_scope: "bdl_platform",
     } satisfies BdlPlatformReleaseManifest;
   }
+  if (scope === "wdi_platform") {
+    return {
+      ...base,
+      format_version: 2,
+      release_scope: "wdi_platform",
+    } satisfies WdiPlatformReleaseManifest;
+  }
   return {
     ...base,
     format_version: 2,
-    release_scope: "wdi_platform",
-  } satisfies WdiPlatformReleaseManifest;
+    release_scope: "eurostat_progressive_api_platform",
+  } satisfies EurostatPlatformReleaseManifest;
 }
 
 function parseBusinessSource(raw: unknown): BusinessCatalogueSource {
@@ -558,7 +616,11 @@ function parseLineageNode(raw: unknown): BusinessCatalogueLineageNode {
 
 function parseBusinessCatalogue(
   bytes: Uint8Array,
-  manifest: PlatformReleaseManifest | BdlPlatformReleaseManifest | WdiPlatformReleaseManifest
+  manifest:
+    | PlatformReleaseManifest
+    | BdlPlatformReleaseManifest
+    | WdiPlatformReleaseManifest
+    | EurostatPlatformReleaseManifest
 ): BusinessCatalogue {
   let raw: unknown;
   try {
@@ -710,27 +772,29 @@ export async function resolveReleaseCatalog(
   }
   const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
 
-  const establishedSources = new Set<"nbp" | "bdl" | "wdi">();
-  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "wdi") => {
+  const establishedSources = new Set<"nbp" | "bdl" | "wdi" | "eurostat">();
+  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "wdi" | "eurostat") => {
     if (!releasesFolderId) return undefined;
     const folders = (await findFoldersByName(sourceName, releasesFolderId, token)).filter(
       (folder) => folder.name === sourceName
     );
     if (folders.length > 1) {
-      throw new Error("Folder 'releases/" + sourceName + "' is ambiguous; refusing to select a release.");
+      throw new Error(
+        "Folder 'releases/" + sourceName + "' is ambiguous; refusing to select a release."
+      );
     }
     if (folders.length === 0) return undefined;
     establishedSources.add(sourceName);
-    const pointerFiles = await findNamedFilesInFolder(
-      "current-release.json", folders[0].id, token
-    );
+    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
     if (
       pointerFiles.length > 1 ||
       (pointerFiles.length === 1 &&
         pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
     ) {
       throw new Error(
-        "releases/" + sourceName + "/current-release.json is ambiguous or not a file; refusing to select a release."
+        "releases/" +
+          sourceName +
+          "/current-release.json is ambiguous or not a file; refusing to select a release."
       );
     }
     return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
@@ -761,31 +825,34 @@ export async function resolveReleaseCatalog(
     }
     if (folders.length === 0) return undefined;
     establishedSources.add(sourceName);
-    const pointerFiles = await findNamedFilesInFolder(
-      "current-release.json", folders[0].id, token
-    );
+    const pointerFiles = await findNamedFilesInFolder("current-release.json", folders[0].id, token);
     if (
       pointerFiles.length > 1 ||
       (pointerFiles.length === 1 &&
         pointerFiles[0].mimeType === "application/vnd.google-apps.folder")
     ) {
       throw new Error(
-        folderName + "/current-release.json is ambiguous or not a file; refusing to select a release."
+        folderName +
+          "/current-release.json is ambiguous or not a file; refusing to select a release."
       );
     }
     return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
   };
   const selectSource = (
-    sourceName: "nbp" | "bdl" | "wdi",
+    sourceName: "nbp" | "bdl" | "wdi" | "eurostat",
     canonical: Awaited<ReturnType<typeof findCanonicalPointer>>,
     legacy: Awaited<ReturnType<typeof findLegacyNbpPointer>>
   ) => {
     if (canonical && legacy) {
-      const legacyLabel =
-        sourceName === "nbp" ? "root" : sourceName + "-platform";
+      const legacyLabel = sourceName === "nbp" ? "root" : sourceName + "-platform";
       throw new Error(
-        "Conflicting current-release pointers found for " + sourceName.toUpperCase() +
-          " in releases/" + sourceName + " and " + legacyLabel + "."
+        "Conflicting current-release pointers found for " +
+          sourceName.toUpperCase() +
+          " in releases/" +
+          sourceName +
+          " and " +
+          legacyLabel +
+          "."
       );
     }
     const pointer = canonical ?? legacy;
@@ -803,59 +870,71 @@ export async function resolveReleaseCatalog(
   const canonicalNbpPointer = await findCanonicalPointer("nbp");
   const canonicalBdlPointer = await findCanonicalPointer("bdl");
   const canonicalWdiPointer = await findCanonicalPointer("wdi");
+  const canonicalEurostatPointer = await findCanonicalPointer("eurostat");
   const legacyNbpPointer = await findLegacyNbpPointer();
   const legacyBdlPointer = await findPlatformPointer("bdl-platform", "bdl");
   const legacyWdiPointer = await findPlatformPointer("wdi-platform", "wdi");
   let effectiveNbp = selectSource("nbp", canonicalNbpPointer, legacyNbpPointer);
   let effectiveBdl = selectSource("bdl", canonicalBdlPointer, legacyBdlPointer);
   let effectiveWdi = selectSource("wdi", canonicalWdiPointer, legacyWdiPointer);
-  const discoverSource = async (sourceName: "nbp" | "bdl" | "wdi") => {
+  let effectiveEurostat = selectSource("eurostat", canonicalEurostatPointer, undefined);
+  const discoverSource = async (sourceName: "nbp" | "bdl" | "wdi" | "eurostat") => {
     const canonical = await findCanonicalPointer(sourceName);
     const legacy =
-      sourceName === "nbp"
-        ? await findLegacyNbpPointer()
-        : await findPlatformPointer(
-            sourceName === "bdl" ? "bdl-platform" : "wdi-platform",
-            sourceName
-          );
+      sourceName === "eurostat"
+        ? undefined
+        : sourceName === "nbp"
+          ? await findLegacyNbpPointer()
+          : await findPlatformPointer(
+              sourceName === "bdl" ? "bdl-platform" : "wdi-platform",
+              sourceName
+            );
     return selectSource(sourceName, canonical, legacy);
   };
   // A source can move between canonical and legacy parents while the calls above
   // are in flight. Retry every missing source once and then fail visibly if a
   // source container was observed without its pointer.
-  for (const sourceName of ["nbp", "bdl", "wdi"] as const) {
+  for (const sourceName of ["nbp", "bdl", "wdi", "eurostat"] as const) {
     const current =
-      sourceName === "nbp" ? effectiveNbp : sourceName === "bdl" ? effectiveBdl : effectiveWdi;
+      sourceName === "nbp"
+        ? effectiveNbp
+        : sourceName === "bdl"
+          ? effectiveBdl
+          : sourceName === "wdi"
+            ? effectiveWdi
+            : effectiveEurostat;
     if (current) continue;
     const retry = await discoverSource(sourceName);
     if (sourceName === "nbp") effectiveNbp = retry;
     else if (sourceName === "bdl") effectiveBdl = retry;
-    else effectiveWdi = retry;
+    else if (sourceName === "wdi") effectiveWdi = retry;
+    else effectiveEurostat = retry;
     if (!retry && establishedSources.has(sourceName)) {
       throw new Error(
-        "Established source '" + sourceName + "' has no discoverable current-release.json; " +
+        "Established source '" +
+          sourceName +
+          "' has no discoverable current-release.json; " +
           "the Drive layout may be moving or incomplete."
       );
     }
   }
-  if (!effectiveNbp && !effectiveBdl && !effectiveWdi) {
+  if (!effectiveNbp && !effectiveBdl && !effectiveWdi && !effectiveEurostat) {
     return { kind: "legacy" };
   }
 
   const releases: SingleReleaseResolution[] = [];
   if (effectiveNbp) {
-    releases.push(
-      await resolveSingleRelease(effectiveNbp.file, effectiveNbp.label, token, budget)
-    );
+    releases.push(await resolveSingleRelease(effectiveNbp.file, effectiveNbp.label, token, budget));
   }
   if (effectiveBdl) {
-    releases.push(
-      await resolveSingleRelease(effectiveBdl.file, effectiveBdl.label, token, budget)
-    );
+    releases.push(await resolveSingleRelease(effectiveBdl.file, effectiveBdl.label, token, budget));
   }
   if (effectiveWdi) {
+    releases.push(await resolveSingleRelease(effectiveWdi.file, effectiveWdi.label, token, budget));
+  }
+  if (effectiveEurostat) {
     releases.push(
-      await resolveSingleRelease(effectiveWdi.file, effectiveWdi.label, token, budget)
+      await resolveSingleRelease(effectiveEurostat.file, effectiveEurostat.label, token, budget)
     );
   }
 
