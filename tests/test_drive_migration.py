@@ -652,5 +652,20 @@ class DriveMigrationTests(unittest.TestCase):
         with self.assertRaises(DriftError):
             engine.apply(plan, confirmed=True)
 
+
+    def test_resume_preserves_reviewed_plan_identity_without_nesting(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, _ = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        interrupted = engine.apply(engine.plan(), confirmed=True, stop_after_step=0)
+        immutable_plan = copy.deepcopy(interrupted["journal"]["plan"])
+        immutable_digest = interrupted["journal"]["plan_sha256"]
+        resumed = DriveMigrationEngine(storage, expected_root_id="prod-root-123").apply(
+            resume=True, confirmed=True
+        )
+        self.assertEqual(resumed["journal"]["plan"], immutable_plan)
+        self.assertEqual(resumed["journal"]["plan_sha256"], immutable_digest)
+        self.assertNotIn("plan", resumed["journal"]["plan"])
+
 if __name__ == "__main__":
     unittest.main()

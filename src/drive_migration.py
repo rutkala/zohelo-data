@@ -216,11 +216,15 @@ class DriveMigrationEngine:
         return verified
 
     def _journal_digest(self, journal: Dict[str, Any]) -> str:
-        """Digest the immutable plan snapshot carried by a journal."""
+        """Return the canonical digest used by the reviewed-plan CLI contract."""
         plan = journal.get("plan")
         if not isinstance(plan, dict):
             raise MigrationError("Journal has no immutable plan snapshot")
-        return hashlib.sha256(_json_bytes(plan)).hexdigest()
+        immutable = copy.deepcopy(plan)
+        immutable.pop("plan_sha256", None)
+        return hashlib.sha256(json.dumps(
+            immutable, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")).hexdigest()
 
     def _validate_journal(self, journal: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(journal, dict):
@@ -239,6 +243,26 @@ class DriveMigrationEngine:
             raise MigrationError("Migration journal plan digest does not match its immutable plan")
         if journal["plan"].get("plan_id") != journal["plan_id"]:
             raise MigrationError("Migration journal plan_id does not match its immutable plan")
+        immutable_steps = journal["plan"]["steps"]
+        if len(immutable_steps) != len(journal["steps"]):
+            raise MigrationError("Migration journal progress does not match reviewed plan steps")
+        progress_fields = {
+            "status", "started_at_utc", "completed_at_utc", "resolved_id",
+            "was_created", "planned_id", "was_absent_before_create", "rolled_back_at_utc",
+        }
+        for index, (original, progress) in enumerate(zip(immutable_steps, journal["steps"])):
+            if not isinstance(original, dict) or not isinstance(progress, dict):
+                raise MigrationError("Migration journal step is malformed")
+            for key, value in original.items():
+                if key not in progress_fields and progress.get(key) != value:
+                    raise MigrationError(
+                        f"Migration journal step {index} changed reviewed field {key!r}"
+                    )
+            unexpected = set(progress).difference(original).difference(progress_fields)
+            if unexpected:
+                raise MigrationError(
+                    f"Migration journal step {index} contains unsupported progress fields: {sorted(unexpected)}"
+                )
         return journal
 
     def _load_journal(self, control_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
@@ -275,12 +299,16 @@ class DriveMigrationEngine:
         if remote is not None:
             self._validate_journal(remote)
         if local is not None and remote is not None:
-            strip = lambda v: {k: x for k, x in v.items() if k != "journal_file_id"}
-            if _json_bytes(strip(local)) != _json_bytes(strip(remote)):
-                raise MigrationError("Local and Drive migration journals disagree; refuse recovery")
             if local.get("journal_file_id") and local["journal_file_id"] != remote["journal_file_id"]:
                 raise MigrationError("Local journal points at a different Drive journal")
-        journal = remote or local
+            immutable_keys = ("plan_id", "expected_root_id", "plan_sha256")
+            if any(local.get(key) != remote.get(key) for key in immutable_keys):
+                raise MigrationError("Local and Drive journals have different immutable identities")
+            # Local-first persistence intentionally allows a local receipt to be ahead
+            # when a remote update fails.  It is safe to resume from that receipt:
+            # every started action has a durable intent and is reconciled against Drive.
+            # A foreign plan/root mismatch above still stops recovery.
+        journal = local or remote
         if journal.get("journal_file_id") and remote is None:
             raise MigrationError("Pinned Drive migration journal is missing")
         return journal
@@ -804,13 +832,19 @@ class DriveMigrationEngine:
         # Pre-apply drift check: verify current release pointers, manifests, and NBP state
         self._assert_no_drift(pins, steps, context)
 
-        journal = dict(plan)
-        # Keep a byte-stable, immutable reviewed plan separate from mutable step
-        # progress.  Resume/rollback validates this before inspecting Drive state.
-        journal["schema_version"] = 1
-        journal["plan"] = copy.deepcopy(plan)
-        journal["plan_sha256"] = hashlib.sha256(_json_bytes(journal["plan"])).hexdigest()
-        journal["status"] = "in_progress"
+        if resume:
+            # The loaded journal already carries the original reviewed plan and its
+            # immutable canonical digest.  Never nest or recompute it on recovery.
+            journal = plan
+            self._validate_journal(journal)
+        else:
+            journal = dict(plan)
+            # Keep a byte-stable reviewed plan separate from mutable progress.  The
+            # digest is exactly the CLI canonical digest (excluding its own field).
+            journal["schema_version"] = 1
+            journal["plan"] = copy.deepcopy(plan)
+            journal["plan_sha256"] = plan.get("plan_sha256") or self._journal_digest(journal)
+            journal["status"] = "in_progress"
         journal["control_folder_id"] = control_id
         if "started_at_utc" not in journal:
             journal["started_at_utc"] = datetime.now(timezone.utc).isoformat()
@@ -853,7 +887,10 @@ class DriveMigrationEngine:
                         raise DriftError(
                             f"Folder {step['name']!r} exists with foreign ID {folder_id!r}"
                         )
-                    was_created = bool(step.get("was_created", False))
+                    was_created = bool(
+                        step.get("was_created", False)
+                        or (planned_id and step.get("was_absent_before_create"))
+                    )
                 else:
                     if not planned_id:
                         ids = self.drive_service.files().generateIds(
@@ -862,6 +899,7 @@ class DriveMigrationEngine:
                         if len(ids) != 1 or not ids[0]:
                             raise MigrationError("Drive did not allocate a folder ID")
                         planned_id = step["planned_id"] = ids[0]
+                        step["was_absent_before_create"] = True
                         # Ownership is durable before the create request.
                         self._save_journal(journal, control_id)
                     created = self.drive_service.files().create(
