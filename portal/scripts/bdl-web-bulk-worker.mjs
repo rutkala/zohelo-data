@@ -24,6 +24,16 @@ async function infoCount(page) {
   const match = body.match(/Wybrano\s+([0-9\s]+)\s+informacji/i);
   return match ? Number(match[1].replace(/\s/g, '')) : null;
 }
+async function enabledNext(page) {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    for (const id of ['ctl00_ContentPlaceHolder_dalej1', 'ctl00_ContentPlaceHolder_dalej2']) {
+      const control = page.locator(`#${id}`);
+      if (await control.count() && await control.isVisible().catch(() => false) && await control.isEnabled().catch(() => false)) return control;
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error('No enabled Dalej control after BDL postback');
+}
 async function listExports(page) {
   await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(900);
@@ -85,24 +95,17 @@ function validateProviderFilename(suggested, generationStartedAt) {
   );
   const providerStartedAt = providerClockValue(generationStartedAt, 'Europe/Warsaw');
   const providerFinishedAt = providerClockValue(new Date(), 'Europe/Warsaw');
-  // Provider filenames have whole-second precision.  The start second is
-  // ambiguous with an older pending export, so fail closed until the next one.
   const fresh = emitted > providerStartedAt && emitted <= providerFinishedAt;
   if (!fresh) throw new Error('BDL export filename predates the current generation request');
   return timestamp;
 }
-async function captureExport(page, entry, generationStartedAt) {
-  const control = page.locator(`#${entry.id}`);
-  if (!await control.count()) throw new Error(`Export control disappeared: ${entry.id}`);
-  const downloadPromise = page.waitForEvent('download', { timeout: 180000 }).catch(() => null);
-  await control.evaluate((el) => el.click());
-  const download = await downloadPromise;
-  if (!download) throw new Error('BDL Export action did not produce a browser download');
+async function persistZipDownload(download, generationStartedAt = null) {
   const suggested = download.suggestedFilename();
   if (!suggested) throw new Error('BDL export did not provide a source filename');
-  const providerGenerationTimestamp = validateProviderFilename(suggested, generationStartedAt);
+  if (!/\.zip$/i.test(suggested)) throw new Error(`BDL relational export was not a ZIP archive: ${suggested}`);
+  const providerGenerationTimestamp = generationStartedAt ? validateProviderFilename(suggested, generationStartedAt) : null;
   const filename = suggested.replace(/[^A-Za-z0-9._-]/g, '_');
-  const target = path.join(outDir, `download-${filename}`);
+  const target = path.join(outDir, `download-${subgroupId}-${filename}`);
   await download.saveAs(target);
   const metadata = await fs.stat(target);
   const prefix = Buffer.alloc(Math.min(16, metadata.size));
@@ -112,7 +115,7 @@ async function captureExport(page, entry, generationStartedAt) {
   } finally {
     await handle.close();
   }
-  if (metadata.size < 4 || prefix[0] !== 0x50 || prefix[1] !== 0x4b) throw new Error('BDL bulk download is not a ZIP archive');
+  if (metadata.size < 4 || prefix[0] !== 0x50 || prefix[1] !== 0x4b) throw new Error('BDL Web download is not a ZIP archive');
   const digest = crypto.createHash('sha256');
   await new Promise((resolve, reject) => {
     const stream = createReadStream(target);
@@ -121,6 +124,36 @@ async function captureExport(page, entry, generationStartedAt) {
     stream.on('error', reject);
   });
   return { filename, suggestedFilename: suggested, providerGenerationTimestamp, bytes: metadata.size, sha256: digest.digest('hex'), firstBytesHex: prefix.toString('hex') };
+}
+async function captureGeneratedExport(page, entry, generationStartedAt) {
+  const control = page.locator(`#${entry.id}`);
+  if (!await control.count()) throw new Error(`Export control disappeared: ${entry.id}`);
+  const downloadPromise = page.waitForEvent('download', { timeout: 180000 }).catch(() => null);
+  await control.evaluate((el) => el.click());
+  const download = await downloadPromise;
+  if (!download) throw new Error('BDL Export action did not produce a browser download');
+  return persistZipDownload(download, generationStartedAt);
+}
+async function captureRelationalExport(page) {
+  let csvOption = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
+  if (!(await csvOption.count()) || !(await csvOption.isVisible().catch(() => false))) {
+    const exportButton = page.getByText(/^(?:Eksport|Export)$/i).first();
+    if (!(await exportButton.count()) || !(await exportButton.isVisible().catch(() => false))) {
+      throw new Error('BDL result table has no visible Export control');
+    }
+    await exportButton.click();
+    await page.waitForTimeout(500);
+    csvOption = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
+  }
+  if (!(await csvOption.count()) || !(await csvOption.isVisible().catch(() => false))) {
+    const choices = await page.locator('a,button,li,span').evaluateAll((els) => els.filter((e) => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length)).map((e) => (e.textContent || '').trim().replace(/\s+/g, ' ')).filter((text) => /CSV|XLS/i.test(text)));
+    throw new Error(`BDL result table has no relational CSV option; visible export choices: ${JSON.stringify([...new Set(choices)])}`);
+  }
+  const downloadPromise = page.waitForEvent('download', { timeout: 180000 }).catch(() => null);
+  await csvOption.click();
+  const download = await downloadPromise;
+  if (!download) throw new Error('BDL relational CSV action did not produce a browser download');
+  return persistZipDownload(download);
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -136,9 +169,6 @@ try {
   result.login = !/Użytkownik:\s*Gość/i.test(loginText) && /Użytkownik:/i.test(loginText);
   if (!result.login) throw new Error('BDL web login failed');
 
-  // Do not let an older pending export transition after this run's POST and
-  // masquerade as its result.  Wait for every matching pre-existing control to
-  // settle, then pin the final row content before requesting a new package.
   const baselineExports = await settlePreexistingExports(page);
   const baselineFingerprints = new Set(baselineExports.map(exportFingerprint));
   result.preexistingExportsSettled = true;
@@ -160,7 +190,29 @@ try {
     result.status = 'web_bulk_unsupported';
     result.detail = 'No positive information selection was produced';
   } else if (result.selectedInformation <= 3500) {
-    result.status = 'below_bulk_threshold';
+    let next = await enabledNext(page);
+    await next.click();
+    await page.waitForURL(/\/bdl\/dane\/podgrup\/teryt/, { timeout: 30000 });
+    await page.waitForTimeout(800);
+    const menu = page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton');
+    if (!(await menu.isVisible().catch(() => false)) || !(await menu.isEnabled().catch(() => false))) throw new Error('BDL territorial selection menu is unavailable');
+    await menu.click();
+    const selectAll = page.locator('li.rmItem').filter({ hasText: 'Zaznacz wszystkie' }).first().locator('.rmLink');
+    if (!(await selectAll.isVisible().catch(() => false))) throw new Error('BDL territorial select-all action is unavailable');
+    await selectAll.click();
+    await page.waitForTimeout(700);
+    const transferAll = page.locator('button.rlbTransferAllFrom').first();
+    if (!(await transferAll.isVisible().catch(() => false)) || !(await transferAll.isEnabled().catch(() => false))) throw new Error('BDL territorial transfer-all action is unavailable');
+    await transferAll.click();
+    next = await enabledNext(page);
+    const body = await page.locator('body').innerText().catch(() => '');
+    const selectedMatch = body.match(/Wybranych elementów:\s*([0-9\s]+)/i);
+    result.selectedTerritorialUnits = selectedMatch ? Number(selectedMatch[1].replace(/\s/g, '')) : null;
+    await next.click();
+    await page.waitForTimeout(1800);
+    result.tableUrl = page.url();
+    result.archive = await captureRelationalExport(page);
+    result.status = 'downloaded_relational_export';
   } else {
     let downloadButton = null;
     for (const id of ['ctl00_ContentPlaceHolder_download1', 'ctl00_ContentPlaceHolder_download2']) {
@@ -197,7 +249,7 @@ try {
         if (attempt < 36) await page.waitForTimeout(5000);
       }
       if (!ready) throw new Error('BDL package generated but no new bound Export control appeared');
-      result.archive = await captureExport(page, ready, generationRequestObservedAt);
+      result.archive = await captureGeneratedExport(page, ready, generationRequestObservedAt);
       result.status = 'downloaded_generated_export';
     }
   }
