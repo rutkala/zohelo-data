@@ -75,13 +75,17 @@ models:
           arguments:
             combination_of_columns: [dataset_key, dimension_key_sha256]
   - name: mart_eurostat_coverage
-    description: "One-row accountability snapshot for the explicitly partial Eurostat API model; complete_official_catalogue is always false until full-distribution acceptance."
+    description: "One-row accountability snapshot for the explicitly partial Eurostat API model; raw_catalogue_complete tracks raw retention while complete_official_catalogue stays false until full-distribution modeling is accepted."
     columns:
       - name: snapshot_date
         tests: [not_null, unique]
       - name: admitted_dataset_total
         tests: [not_null]
       - name: admitted_series_total
+        tests: [not_null]
+      - name: latest_observation_date
+        tests: [not_null]
+      - name: raw_catalogue_complete
         tests: [not_null]
       - name: complete_official_catalogue
         tests: [not_null]

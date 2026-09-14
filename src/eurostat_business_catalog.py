@@ -65,7 +65,7 @@ def build_eurostat_business_catalog(
         "metrics": metrics,
         "metrics_status": "source_defined" if metrics else "awaiting_business_approval",
         "metrics_explanation": (
-            "Release-bound Eurostat metrics report only the reviewed three-dataset, 81-country-series API contract. The Gold fact remains source-shaped and complete_official_catalogue stays false while the full distribution campaign continues."
+            "Release-bound Eurostat metrics report only the reviewed three-dataset, 81-country-series API contract. Raw catalogue completion is reported separately; complete_official_catalogue stays false until full-distribution modeling is accepted."
             if metrics else "No governed EUROSTAT semantic metrics are present in this release's dbt manifest."
         ),
     }

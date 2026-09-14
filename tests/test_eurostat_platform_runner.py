@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 import tempfile
@@ -8,12 +9,14 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import eurostat_platform  # noqa: E402
+from eurostat_release_validation import _validate_landing_inputs  # noqa: E402
 from eurostat_platform_contract import (  # noqa: E402
     EUROSTAT_PLATFORM_DATASETS,
     EUROSTAT_PLATFORM_DATE_COLUMNS,
     EUROSTAT_RELEASE_SCOPE,
 )
 from release_protocol import PLATFORM_RELEASES  # noqa: E402
+from release_validation import ReleaseValidationError  # noqa: E402
 
 
 class _CampaignStore:
@@ -32,7 +35,44 @@ class _ReleaseStore:
     root_id = "root"
 
 
+class _InputStore:
+    def __init__(self, values):
+        self.values = values
+
+    def read(self, file_id):
+        return self.values[file_id]
+
+
 class EurostatPlatformRunnerTests(unittest.TestCase):
+    def test_staged_input_validation_hashes_every_recorded_landing_fragment(self):
+        payloads = {"landing-1": b"first", "landing-2": b"second"}
+        inputs = [
+            {
+                "source_id": "eurostat",
+                "id": file_id,
+                "size": len(raw),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "ingestion_sequence": index,
+            }
+            for index, (file_id, raw) in enumerate(payloads.items(), start=1)
+        ]
+        state = {
+            "landing_snapshot_id": "snapshot-1",
+            "landing_inputs": inputs,
+            "accepted_response_count": 2,
+            "published_response_count": 2,
+            "pending_publication_count": 0,
+        }
+        report = _validate_landing_inputs(_InputStore(payloads), {"inputs": inputs}, state)
+        self.assertEqual(report["fragment_count"], 2)
+        self.assertEqual(report["input_bytes"], 11)
+        with self.assertRaisesRegex(ReleaseValidationError, "fingerprint changed"):
+            _validate_landing_inputs(
+                _InputStore({**payloads, "landing-2": b"tampered"}),
+                {"inputs": inputs},
+                state,
+            )
+
     def test_release_scope_is_registered_with_the_exact_contract(self):
         contract = PLATFORM_RELEASES[EUROSTAT_RELEASE_SCOPE]
         self.assertEqual(contract["datasets"], EUROSTAT_PLATFORM_DATASETS)
@@ -116,6 +156,8 @@ class EurostatPlatformRunnerTests(unittest.TestCase):
                         "full_distribution_coverage_ratio": 3517 / 21247,
                         "inventories_current": True,
                         "catalogue_checked_on": "2026-09-10",
+                        "latest_observation_date": "2026-01-31",
+                        "raw_catalogue_complete": False,
                         "complete_official_catalogue": False,
                     },
                 )
@@ -148,6 +190,8 @@ class EurostatPlatformRunnerTests(unittest.TestCase):
         self.assertEqual(state_document["source_id"], "eurostat")
         self.assertEqual(state_document["sources"]["eurostat"]["coverage"]["modeled_dataset_total"], 1)
         self.assertFalse(state_document["sources"]["eurostat"]["coverage_complete"])
+        self.assertEqual(state_document["sources"]["eurostat"]["latest_observation_date"], "2026-01-31")
+        self.assertEqual(state_document["landing_inputs"], release_calls["kwargs"]["inputs"])
         business_catalog = next(item for item in release_calls["kwargs"]["artifacts"] if item["name"] == "business-catalog.json")
         self.assertEqual(json.loads(release_calls["artifact_payloads"]["business-catalog.json"])["sources"][0]["source_id"], "eurostat")
         self.assertEqual(release_calls["kwargs"]["measurements"]["landing_fragments"], 2)

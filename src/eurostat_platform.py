@@ -194,7 +194,9 @@ def build_platform(workspace: Path):
         "full_distribution_coverage_ratio": coverage[17],
         "inventories_current": coverage[18],
         "catalogue_checked_on": coverage[19].isoformat() if coverage[19] is not None else None,
-        "complete_official_catalogue": coverage[20],
+        "latest_observation_date": coverage[20].isoformat() if coverage[20] is not None else None,
+        "raw_catalogue_complete": coverage[21],
+        "complete_official_catalogue": coverage[22],
     }
 
 
@@ -217,6 +219,16 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
         if campaign_state is None:
             raise RuntimeError("No EUROSTAT campaign state is available")
         landing_paths = _download_landing_snapshot(campaign_store, workspace)
+        landing_inputs = [
+            {
+                "source_id": EUROSTAT_SOURCE_ID,
+                "id": descriptor["id"],
+                "size": descriptor["size"],
+                "sha256": descriptor["sha256"],
+                "ingestion_sequence": index + 1,
+            }
+            for index, descriptor in enumerate(landing_manifest["files"])
+        ]
         decode_measurements = decode_landing_files(
             landing_paths, workspace / "decoded-observations.parquet"
         )
@@ -230,7 +242,7 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
             "sources": {
                 EUROSTAT_SOURCE_ID: {
                     "checked_through": coverage["snapshot_date"],
-                    "latest_observation_date": coverage["snapshot_date"],
+                    "latest_observation_date": coverage["latest_observation_date"],
                     "last_successful_ingestion_at": campaign_state.get("last_success_utc"),
                     "last_attempt_at": campaign_state.get("last_attempt_utc"),
                     "raw_response_count": campaign_state.get("accepted_responses", 0),
@@ -250,6 +262,7 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
             "pending_publication_count": landing_manifest["pending_publication_count"],
             "coverage_status": landing_manifest["coverage_status"],
             "modeling_scope": EUROSTAT_RELEASE_SCOPE,
+            "landing_inputs": landing_inputs,
             "raw_response_count": campaign_state.get("accepted_responses", 0),
             "pending_tasks": len(campaign_state.get("pending", [])),
             "catalogue_totals": campaign_state.get("catalogue_totals", {}),
@@ -275,7 +288,7 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
         _, direct_releases = resolve_source_release_root(storage, root_id, "eurostat", is_writer=True)
         result = publish_release(
             release_store, release_store.root_id, datasets=datasets, artifacts=artifacts,
-            inputs=[{"source_id": EUROSTAT_SOURCE_ID, "id": descriptor["id"], "size": descriptor["size"], "sha256": descriptor["sha256"], "ingestion_sequence": index + 1} for index, descriptor in enumerate(landing_manifest["files"])],
+            inputs=landing_inputs,
             code_sha=code_sha, measurements=measurements, release_scope=EUROSTAT_RELEASE_SCOPE,
             pre_promote_validator=validate_staged_eurostat_release,
             before_pointer_write=(

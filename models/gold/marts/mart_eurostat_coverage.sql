@@ -5,7 +5,8 @@ with observations as (
 ),
 responses as (
     select count(distinct response_sha256) as modeled_response_total,
-           max(last_seen_at_utc) as latest_retrieved_at_utc
+           max(last_seen_at_utc) as latest_retrieved_at_utc,
+           max(period_end_date) as latest_observation_date
     from observations
 ),
 counts as (
@@ -40,5 +41,7 @@ select
     cast(full_source.validated_current_distributions as double) / nullif(full_source.catalogue_distributions, 0) as full_distribution_coverage_ratio,
     full_source.inventories_current,
     cast(full_source.catalogue_checked_on as date) as catalogue_checked_on,
-    full_source.coverage_status = 'complete_current_catalogue' as complete_official_catalogue
+    responses.latest_observation_date,
+    full_source.coverage_status = 'complete_current_catalogue' as raw_catalogue_complete,
+    false as complete_official_catalogue
 from responses cross join counts cross join full_source

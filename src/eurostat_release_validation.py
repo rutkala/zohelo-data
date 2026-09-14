@@ -99,6 +99,7 @@ def validate_staged_eurostat_release(store: Any, pointer: dict[str, Any]) -> dic
     coverage = state.get("coverage")
     if not isinstance(coverage, dict):
         raise ReleaseValidationError("EUROSTAT ingestion evidence omits coverage summary")
+    input_report = _validate_landing_inputs(store, manifest, state)
     source_entry = catalogue_sources[0]
     if source_entry.get("raw_response_count") != state.get("raw_response_count"):
         raise ReleaseValidationError("business catalogue raw response count differs from ingestion evidence")
@@ -127,11 +128,60 @@ def validate_staged_eurostat_release(store: Any, pointer: dict[str, Any]) -> dic
             "full_distribution_coverage_ratio": row[17],
             "inventories_current": row[18],
             "catalogue_checked_on": row[19].isoformat() if row[19] is not None else None,
-            "complete_official_catalogue": row[20],
+            "latest_observation_date": row[20].isoformat() if row[20] is not None else None,
+            "raw_catalogue_complete": row[21],
+            "complete_official_catalogue": row[22],
         }
         if any(coverage.get(key) != value for key, value in expected.items()):
             raise ReleaseValidationError("EUROSTAT modeled coverage summary differs from gold mart")
-    return {"release_id": manifest["release_id"], "format_version": manifest["format_version"], "datasets": reports}
+    return {
+        "release_id": manifest["release_id"],
+        "format_version": manifest["format_version"],
+        "datasets": reports,
+        "landing_inputs": input_report,
+    }
+
+
+def _validate_landing_inputs(store: Any, manifest: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    inputs = manifest.get("inputs")
+    recorded = state.get("landing_inputs")
+    snapshot_id = state.get("landing_snapshot_id")
+    if not isinstance(snapshot_id, str) or not snapshot_id:
+        raise ReleaseValidationError("EUROSTAT ingestion evidence omits Landing snapshot identity")
+    if not isinstance(inputs, list) or not inputs or inputs != recorded:
+        raise ReleaseValidationError("release inputs differ from the recorded Landing snapshot descriptors")
+    if state.get("pending_publication_count") != 0 or state.get("accepted_response_count") != state.get("published_response_count"):
+        raise ReleaseValidationError("recorded EUROSTAT Landing snapshot has a publication backlog")
+    seen_ids: set[str] = set()
+    total_bytes = 0
+    for index, descriptor in enumerate(inputs, start=1):
+        if (
+            not isinstance(descriptor, dict)
+            or descriptor.get("source_id") != EUROSTAT_SOURCE_ID
+            or descriptor.get("ingestion_sequence") != index
+            or not isinstance(descriptor.get("id"), str)
+            or not descriptor["id"]
+            or descriptor["id"] in seen_ids
+            or type(descriptor.get("size")) is not int
+            or descriptor["size"] <= 0
+            or not isinstance(descriptor.get("sha256"), str)
+            or len(descriptor["sha256"]) != 64
+        ):
+            raise ReleaseValidationError("release has an invalid EUROSTAT Landing input descriptor")
+        seen_ids.add(descriptor["id"])
+        raw = store.read(descriptor["id"])
+        if (
+            not isinstance(raw, bytes)
+            or len(raw) != descriptor["size"]
+            or sha256(raw).hexdigest() != descriptor["sha256"]
+        ):
+            raise ReleaseValidationError("EUROSTAT Landing input fingerprint changed before promotion")
+        total_bytes += len(raw)
+    return {
+        "snapshot_id": snapshot_id,
+        "fragment_count": len(inputs),
+        "input_bytes": total_bytes,
+    }
 
 
 def _artifact_bytes(store: Any, manifest: dict[str, Any]) -> dict[str, bytes]:

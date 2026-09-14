@@ -83,9 +83,12 @@ class EurostatPlatformModelTests(unittest.TestCase):
                 coverage = connection.execute(
                     'select admitted_dataset_total, admitted_series_total, modeled_dataset_total, '
                     'modeled_series_total, catalogue_distributions, validated_current_distributions, '
-                    'complete_official_catalogue from "04_gold"."mart_eurostat_coverage"'
+                    'latest_observation_date, raw_catalogue_complete, complete_official_catalogue '
+                    'from "04_gold"."mart_eurostat_coverage"'
                 ).fetchone()
-                self.assertEqual(coverage, (3, 81, 3, 3, 21247, 3517, False))
+                self.assertEqual(coverage[:6], (3, 81, 3, 3, 21247, 3517))
+                self.assertEqual(coverage[6].isoformat(), "2026-08-31")
+                self.assertEqual(coverage[7:], (False, False))
                 missing = connection.execute(
                     'select count(*) from "04_gold"."fact_eurostat_observations" where is_missing'
                 ).fetchone()[0]

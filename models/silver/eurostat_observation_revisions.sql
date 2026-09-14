@@ -18,10 +18,22 @@ with distinct_versions as (
         min(retrieved_at_utc) as first_seen_at_utc,
         max(retrieved_at_utc) as last_seen_at_utc,
         count(*) as replayed_response_count,
-        min(response_sha256) as first_response_sha256,
-        max(response_sha256) as last_response_sha256,
-        min(task_id) as first_task_id,
-        max(task_id) as last_task_id
+        arg_min(
+            response_sha256,
+            (retrieved_at_utc, response_sha256, task_id)
+        ) as first_response_sha256,
+        arg_max(
+            response_sha256,
+            (retrieved_at_utc, response_sha256, task_id)
+        ) as last_response_sha256,
+        arg_min(
+            task_id,
+            (retrieved_at_utc, response_sha256, task_id)
+        ) as first_task_id,
+        arg_max(
+            task_id,
+            (retrieved_at_utc, response_sha256, task_id)
+        ) as last_task_id
     from {{ ref('br_eurostat_observations') }}
     group by dataset_id, dimension_key_sha256, value_json, status_code, is_missing
 ),
