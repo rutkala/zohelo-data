@@ -28,7 +28,7 @@ from drive_release_store import DriveReleaseStore
 from ingestion.landing_publication import verify_landing
 from ingestion.source_campaign_store import DriveCampaignStore
 from layout_resolution import resolve_source_release_root
-from medallion_navigation import sync_source_medallion_navigation
+from medallion_navigation import (finalize_source_medallion_navigation, sync_source_medallion_navigation)
 from release_protocol import publish_release, read_release_manifest, restore_current_release
 from runtime_metadata import _code_sha
 from storage_manager import StorageManager
@@ -236,8 +236,15 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
             code_sha=code_sha, measurements=measurements, release_scope="bdl_platform",
             pre_promote_validator=validate_staged_bdl_release,
             before_pointer_write=(
-                lambda store, pointer: sync_source_medallion_navigation(
-                    storage, root_id, "bdl", read_release_manifest(store, pointer)
+                lambda release_store, pointer: sync_source_medallion_navigation(
+                    storage, root_id, "bdl",
+                    read_release_manifest(release_store, pointer), finalize=False,
+                )
+            ) if direct_releases else None,
+            after_pointer_write=(
+                lambda release_store, pointer: finalize_source_medallion_navigation(
+                    storage, root_id, "bdl",
+                    read_release_manifest(release_store, pointer),
                 )
             ) if direct_releases else None,
             direct_releases=direct_releases,

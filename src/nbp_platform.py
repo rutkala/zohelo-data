@@ -25,7 +25,7 @@ from ingestion.nbp_state import (LoadedState, commit_response, list_successful_r
                                  load_state, plan_requests, response_envelope,
                                  ingestion_config_from_config, validate_non_regressive_cutoff)
 from layout_resolution import resolve_nbp_control_root, resolve_source_release_root
-from medallion_navigation import sync_source_medallion_navigation
+from medallion_navigation import (finalize_source_medallion_navigation, sync_source_medallion_navigation)
 from release_protocol import publish_release, read_release_manifest
 from release_validation import validate_staged_release
 from semantic_query import validate_release_metrics
@@ -298,6 +298,12 @@ def run_platform(mode="incremental", cutoff=None, max_requests=512):
                                  release_scope="nbp_platform", pre_promote_validator=validate_staged_release,
                                  before_pointer_write=(
                                      lambda release_store, pointer: sync_source_medallion_navigation(
+                                         storage, store.root_id, "nbp",
+                                         read_release_manifest(release_store, pointer), finalize=False,
+                                     )
+                                 ) if direct_releases else None,
+                                 after_pointer_write=(
+                                     lambda release_store, pointer: finalize_source_medallion_navigation(
                                          storage, store.root_id, "nbp",
                                          read_release_manifest(release_store, pointer),
                                      )

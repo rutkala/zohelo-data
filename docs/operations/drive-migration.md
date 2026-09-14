@@ -113,8 +113,8 @@ The engine:
 
 Run plan through the main-branch **Migrate Google Drive layout** workflow. Review both
 plan.json and plan-identity.json from its migration-plan artifact. Every apply,
-resume, or rollback dispatch must use the same decimal plan_run_id and the exact
-64-character plan_sha256 from that artifact.
+resume, or rollback dispatch must use the same plan_id, decimal plan_run_id, and
+exact 64-character plan_sha256 from that artifact.
 
 Before credentials are used, the workflow verifies that the referenced run belongs to this
 repository, used .github/workflows/migrate-drive-layout.yml, was a workflow_dispatch on
@@ -127,7 +127,9 @@ Resume and rollback reject a different hash. Download migration-receipts after e
 it includes dispatch, plan-provenance, cutover-precondition, operation, error, verification,
 and local journal receipts that were produced.
 
-Navigation indexes use pending before any release pointer update. A successful reconciliation
-checks every expected shortcut target and the complete multipart subtree, then records
-current_verified. Retrying a publisher repairs pending navigation before changing the pointer.
-Foreign navigation children stop reconciliation and are preserved.
+Navigation indexes use pending before any release pointer update. Preparation checks every
+expected shortcut target and the complete multipart subtree while keeping the indexes pending.
+Only after the current pointer is written and its exact bytes are read back does publication
+record current_verified. A pointer-write or finalization failure leaves pending navigation for
+the next publisher retry to reconcile. Foreign navigation children stop reconciliation and are
+preserved.

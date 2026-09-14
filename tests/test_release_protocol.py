@@ -693,6 +693,82 @@ class ReleaseProtocolTests(unittest.TestCase):
             current["release_id"],
         )
 
+    def test_pointer_write_failure_leaves_prepared_state_pending(self):
+        store = MemoryStore()
+        events = []
+
+        def prepare(_store, _pointer):
+            events.append("pending")
+            store.fail_create_name = "current-release.json"
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "uncertain outcome"):
+            publish_release(
+                store, "root", **self._candidate(),
+                before_pointer_write=prepare,
+                after_pointer_write=lambda _store, _pointer: events.append("verified"),
+            )
+
+        self.assertEqual(events, ["pending"])
+        self.assertEqual(store.find("current-release.json", "root"), [])
+
+    def test_publish_finalizes_only_after_exact_pointer_readback(self):
+        store = MemoryStore()
+        events = []
+
+        def finalize(_store, pointer):
+            events.append("finalize")
+            self.assertEqual(
+                restore_current_release(store, "root")["release_id"],
+                pointer["release_id"],
+            )
+            raise RuntimeError("navigation finalization failed")
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "post-pointer .*hook failed"):
+            publish_release(
+                store, "root", **self._candidate(),
+                before_pointer_write=lambda _store, _pointer: events.append("pending"),
+                after_pointer_write=finalize,
+            )
+
+        self.assertEqual(events, ["pending", "finalize"])
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"],
+            self.release_id,
+        )
+
+    def test_retained_finalizes_only_after_exact_pointer_readback(self):
+        store = MemoryStore()
+        target = publish_release(store, "root", **self._candidate())
+        current_candidate = self._candidate()
+        current_candidate["release_id"] = "9cfa4638-2df2-4c31-936e-8fcaa787289d"
+        current = publish_release(store, "root", **current_candidate)
+        events = []
+
+        def finalize(_store, pointer):
+            events.append("finalize")
+            self.assertEqual(
+                restore_current_release(store, "root")["release_id"],
+                pointer["release_id"],
+            )
+            raise RuntimeError("navigation finalization failed")
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "post-pointer .*hook failed"):
+            promote_retained_release(
+                store,
+                "root",
+                target_release_id=target["release_id"],
+                expected_current_release_id=current["release_id"],
+                pre_promote_validator=lambda _store, _pointer: None,
+                before_pointer_write=lambda _store, _pointer: events.append("pending"),
+                after_pointer_write=finalize,
+            )
+
+        self.assertEqual(events, ["pending", "finalize"])
+        self.assertEqual(
+            restore_current_release(store, "root")["release_id"],
+            target["release_id"],
+        )
+
     def test_retained_release_promotion_rejects_wrong_current_pin_without_writes(self):
         store = MemoryStore()
         first = publish_release(store, "root", **self._candidate())

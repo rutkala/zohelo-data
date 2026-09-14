@@ -15,7 +15,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 from bdl_release_validation import validate_staged_bdl_release  # noqa: E402
 from drive_release_store import DriveReleaseStore  # noqa: E402
 from layout_resolution import resolve_source_release_root  # noqa: E402
-from medallion_navigation import sync_source_medallion_navigation  # noqa: E402
+from medallion_navigation import (finalize_source_medallion_navigation, sync_source_medallion_navigation)  # noqa: E402
 from release_protocol import promote_retained_release, read_release_manifest  # noqa: E402
 from release_validation import validate_staged_release  # noqa: E402
 from storage_manager import StorageManager  # noqa: E402
@@ -48,8 +48,15 @@ def promote(*, target_release_id: str, expected_current_release_id: str, source:
         expected_current_release_id=expected_current_release_id,
         pre_promote_validator=validator,
         before_pointer_write=(
-            lambda store, pointer: sync_source_medallion_navigation(
-                storage, root_id, source, read_release_manifest(store, pointer)
+            lambda release_store, pointer: sync_source_medallion_navigation(
+                storage, root_id, source,
+                read_release_manifest(release_store, pointer), finalize=False,
+            )
+        ) if direct_releases else None,
+        after_pointer_write=(
+            lambda release_store, pointer: finalize_source_medallion_navigation(
+                storage, root_id, source,
+                read_release_manifest(release_store, pointer),
             )
         ) if direct_releases else None,
         direct_releases=direct_releases,

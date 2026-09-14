@@ -950,13 +950,11 @@ describe("WDI platform release resolution", () => {
 });
 
 describe("Canonical consolidated layout release resolution", () => {
-  it("resolves canonical releases/nbp, releases/bdl, and releases/wdi", async () => {
+  it("resolves canonical releases/wdi while genuinely absent source folders stay optional", async () => {
     const { pointerBytes } = await wdiPlatformFixture();
     vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
       if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name: "zohelo-data" }];
       if (name === "releases" && parentId === "root-id") return [{ id: "releases-root-id", name: "releases" }];
-      if (name === "nbp" && parentId === "releases-root-id") return [{ id: "nbp-rel-id", name: "nbp" }];
-      if (name === "bdl" && parentId === "releases-root-id") return [{ id: "bdl-rel-id", name: "bdl" }];
       if (name === "wdi" && parentId === "releases-root-id") return [{ id: "wdi-rel-id", name: "wdi" }];
       return [];
     });
@@ -1056,17 +1054,28 @@ describe("Release discovery mutation safety", () => {
     expect(canonicalReads).toBe(2);
   });
 
-  it("fails clearly when an established legacy source remains pointerless", async () => {
-    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
-      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
-      if (name === "wdi-platform" && parentId === "root-id") {
-        return [{ id: "legacy-wdi", name }];
-      }
-      return [];
-    });
-    vi.mocked(findNamedFilesInFolder).mockResolvedValue([]);
-    await expect(
-      resolveReleaseCatalog("token", createDriveDownloadBudget())
-    ).rejects.toThrow(/Established source 'wdi'.*moving or incomplete/);
-  });
+  it.each(["legacy", "canonical"] as const)(
+    "fails clearly when an established %s source remains pointerless",
+    async (layout) => {
+      vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+        if (name === "zohelo-data" && parentId === "root") {
+          return [{ id: "root-id", name }];
+        }
+        if (layout === "canonical" && name === "releases" && parentId === "root-id") {
+          return [{ id: "releases-root-id", name }];
+        }
+        if (layout === "canonical" && name === "wdi" && parentId === "releases-root-id") {
+          return [{ id: "canonical-wdi", name }];
+        }
+        if (layout === "legacy" && name === "wdi-platform" && parentId === "root-id") {
+          return [{ id: "legacy-wdi", name }];
+        }
+        return [];
+      });
+      vi.mocked(findNamedFilesInFolder).mockResolvedValue([]);
+      await expect(
+        resolveReleaseCatalog("token", createDriveDownloadBudget())
+      ).rejects.toThrow(/Established source 'wdi'.*moving or incomplete/);
+    }
+  );
 });

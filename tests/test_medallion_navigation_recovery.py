@@ -10,7 +10,8 @@ from layout_resolution import resolve_source_release_root
 import medallion_navigation as navigation
 from medallion_navigation import (
     NavigationError, SHORTCUT_MIME_TYPE, StaleNavigationError,
-    sync_source_medallion_navigation, verify_medallion_navigation,
+    finalize_source_medallion_navigation, sync_source_medallion_navigation,
+    verify_medallion_navigation,
 )
 from release_protocol import read_current_release_manifest
 
@@ -90,6 +91,36 @@ class NavigationRecoveryTests(unittest.TestCase):
             "parents": [], "content": b"cleanup", "trashed": False}
         sync_source_medallion_navigation(storage, "prod-root-123", "wdi", single)
         self.assertTrue(all(svc._files[x]["trashed"] for x in stale))
+
+    def test_deferred_finalize_keeps_indexes_pending_until_pointer_confirmation(self):
+        storage, svc, manifest = self.canonical("nbp")
+
+        receipt = sync_source_medallion_navigation(
+            storage, "prod-root-123", "nbp", manifest, finalize=False,
+        )
+        self.assertEqual(receipt["status"], "navigation_pending")
+        indexes = [
+            json.loads(item["content"])
+            for item in svc._files.values()
+            if item.get("name") == "navigation-index.json"
+            and not item.get("trashed")
+            and json.loads(item["content"]).get("source_id") == "nbp"
+        ]
+        self.assertEqual({item["status"] for item in indexes}, {"pending"})
+
+        result = finalize_source_medallion_navigation(
+            storage, "prod-root-123", "nbp", manifest,
+        )
+        self.assertEqual(result["status"], "medallion_navigation_verified")
+        indexes = [
+            json.loads(item["content"])
+            for item in svc._files.values()
+            if item.get("name") == "navigation-index.json"
+            and not item.get("trashed")
+            and json.loads(item["content"]).get("source_id") == "nbp"
+        ]
+        self.assertEqual({item["status"] for item in indexes}, {"current_verified"})
+        verify_medallion_navigation(storage, "prod-root-123", "nbp", manifest)
 
     def test_verification_rejects_index_and_physical_drift(self):
         storage, svc, manifest = self.canonical("nbp")

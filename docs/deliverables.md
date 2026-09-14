@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. Implementation is under review and has not passed the full data gate; live cutover remains awaiting deployment, verification and lead review.**
+Updated 14 September 2026. **The owner approved the physical Google Drive consolidation on 14 September 2026. The implementation passed the full data and portal gates and final review is underway; live cutover remains awaiting merge, deployment and verification.**
 The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
 
 ### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026

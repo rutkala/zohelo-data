@@ -137,6 +137,7 @@ def publish_release(
     release_scope: str = "nbp_silver",
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
     before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    after_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
     direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Publish a validated, immutable NBP silver release.
@@ -275,6 +276,13 @@ def publish_release(
     pointer["updated_at_utc"] = _utc_now()
     pointer_bytes = _json_bytes(pointer)
     pointer_file_id = _write_pointer(store, root_id, previous, pointer_bytes)
+    if after_pointer_write is not None:
+        try:
+            after_pointer_write(store, dict(pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "current-release pointer was promoted and read back, but post-pointer publication hook failed"
+            ) from exc
 
     return {
         "release_id": candidate["release_id"],
@@ -294,6 +302,7 @@ def promote_retained_release(
     expected_current_release_id: str,
     pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
     before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+    after_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
     direct_releases: bool = False,
 ) -> dict[str, Any]:
     """Promote one retained, fully verified release behind an exact current pin.
@@ -397,6 +406,13 @@ def promote_retained_release(
                 "pre-pointer retained-promotion hook failed; current release retained"
             ) from exc
     pointer_file_id = _write_pointer(store, root_id, current, _json_bytes(target_pointer))
+    if after_pointer_write is not None:
+        try:
+            after_pointer_write(store, dict(target_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "retained current-release pointer was promoted and read back, but post-pointer hook failed"
+            ) from exc
     return {
         "status": "retained_release_promoted",
         "target_release_id": target_release_id,

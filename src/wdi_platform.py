@@ -25,7 +25,7 @@ from ingestion.full_source_adapters import inspect_distribution
 from ingestion.full_source_campaign import coverage as bulk_coverage
 from ingestion.source_campaign_store import _CampaignStore
 from layout_resolution import resolve_source_release_root
-from medallion_navigation import sync_source_medallion_navigation
+from medallion_navigation import (finalize_source_medallion_navigation, sync_source_medallion_navigation)
 from release_protocol import (
     publish_release,
     read_current_release_manifest,
@@ -400,8 +400,15 @@ def run_platform(*, allow_production_write: bool = False, verify_current: bool =
             release_scope=WDI_RELEASE_SCOPE,
             pre_promote_validator=validate_staged_wdi_release,
             before_pointer_write=(
-                lambda store, pointer: sync_source_medallion_navigation(
-                    storage, root_id, "wdi", read_release_manifest(store, pointer)
+                lambda release_store, pointer: sync_source_medallion_navigation(
+                    storage, root_id, "wdi",
+                    read_release_manifest(release_store, pointer), finalize=False,
+                )
+            ) if direct_releases else None,
+            after_pointer_write=(
+                lambda release_store, pointer: finalize_source_medallion_navigation(
+                    storage, root_id, "wdi",
+                    read_release_manifest(release_store, pointer),
                 )
             ) if direct_releases else None,
             direct_releases=direct_releases,

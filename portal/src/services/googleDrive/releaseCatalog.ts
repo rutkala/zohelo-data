@@ -720,6 +720,7 @@ export async function resolveReleaseCatalog(
       throw new Error("Folder 'releases/" + sourceName + "' is ambiguous; refusing to select a release.");
     }
     if (folders.length === 0) return undefined;
+    establishedSources.add(sourceName);
     const pointerFiles = await findNamedFilesInFolder(
       "current-release.json", folders[0].id, token
     );

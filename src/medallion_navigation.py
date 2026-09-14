@@ -411,6 +411,8 @@ def sync_source_medallion_navigation(
     root_id: str,
     source_id: str,
     manifest: dict[str, Any],
+    *,
+    finalize: bool = True,
 ) -> dict[str, Any]:
     """Durably reconcile canonical shortcuts before a release pointer changes."""
     by_layer = _manifest_layers(source_id, manifest)
@@ -625,20 +627,79 @@ def sync_source_medallion_navigation(
         store_or_storage, root_id, source_id, manifest, _expected_status="pending"
     )
     receipts: dict[str, Any] = {
-        "source_id": source_id, "release_id": release_id, "layers": {}
+        "status": "navigation_pending",
+        "source_id": source_id, "release_id": release_id, "layers": {
+            state["layer"]: {
+                "source_nav_id": state["source_id"],
+                "index_file_id": state["index_id"],
+                "tables": state["pending"]["tables"],
+            }
+            for state in states
+        }
     }
-    for state in states:
-        final_index = dict(state["pending"])
-        final_index["status"] = "current_verified"
-        final_index["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
-        _create_or_replace_file(
-            store_or_storage, "navigation-index.json",
-            _json_bytes(final_index), state["source_id"],
+    if not finalize:
+        return receipts
+    return finalize_source_medallion_navigation(
+        store_or_storage, root_id, source_id, manifest
+    )
+
+
+def finalize_source_medallion_navigation(
+    store_or_storage: Any,
+    root_id: str,
+    source_id: str,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Mark fully reconciled navigation current after exact pointer readback."""
+    by_layer = _manifest_layers(source_id, manifest)
+    release_id = manifest["release_id"]
+    verify_medallion_navigation(
+        store_or_storage, root_id, source_id, manifest,
+        _expected_status={"pending", "current_verified"},
+    )
+    receipts: dict[str, Any] = {
+        "status": "medallion_navigation_verified",
+        "source_id": source_id, "release_id": release_id, "layers": {},
+    }
+    for layer in ALL_MEDALLION_LAYERS:
+        datasets = by_layer[layer]
+        layer_item = _unique_child(
+            store_or_storage, root_id, layer, FOLDER_MIME_TYPE, required=True
         )
-        receipts["layers"][state["layer"]] = {
-            "source_nav_id": state["source_id"],
-            "index_file_id": state["index_id"],
-            "tables": final_index["tables"],
+        current_item = _unique_child(
+            store_or_storage, layer_item["id"], CURRENT_NAV_DIR, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if current_item is None:
+            continue
+        source_item = _unique_child(
+            store_or_storage, current_item["id"], source_id, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if source_item is None:
+            continue
+        index_item = _unique_child(
+            store_or_storage, source_item["id"], "navigation-index.json",
+            "application/json", required=True,
+        )
+        index = _read_index(store_or_storage, index_item)
+        if index is None:
+            raise StaleNavigationError("Navigation index disappeared before finalization")
+        if index.get("status") == "pending":
+            final_index = dict(index)
+            final_index["status"] = "current_verified"
+            final_index["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+            index_id = _create_or_replace_file(
+                store_or_storage, "navigation-index.json",
+                _json_bytes(final_index), source_item["id"],
+            )
+            if index_id != index_item["id"]:
+                raise StaleNavigationError("Navigation index identity changed during finalization")
+            index = final_index
+        receipts["layers"][layer] = {
+            "source_nav_id": source_item["id"],
+            "index_file_id": index_item["id"],
+            "tables": index["tables"],
         }
     verify_medallion_navigation(store_or_storage, root_id, source_id, manifest)
     return receipts
@@ -650,10 +711,13 @@ def verify_medallion_navigation(
     source_id: str,
     manifest: dict[str, Any],
     *,
-    _expected_status: str = "current_verified",
+    _expected_status: str | set[str] = "current_verified",
 ) -> dict[str, Any]:
     """Verify index identity and the complete physical navigation subtree."""
-    if _expected_status not in {"pending", "current_verified"}:
+    allowed_statuses = (
+        {_expected_status} if isinstance(_expected_status, str) else set(_expected_status)
+    )
+    if not allowed_statuses or not allowed_statuses <= {"pending", "current_verified"}:
         raise ValueError("unsupported navigation verification status")
     by_layer = _manifest_layers(source_id, manifest)
     release_id = manifest["release_id"]
@@ -682,7 +746,7 @@ def verify_medallion_navigation(
         index_doc = _read_index(store_or_storage, index_item)
         if (
             index_doc.get("format_version") != 1
-            or index_doc.get("status") != _expected_status
+            or index_doc.get("status") not in allowed_statuses
             or index_doc.get("source_id") != source_id
             or index_doc.get("layer") != layer
             or index_doc.get("release_id") != release_id
