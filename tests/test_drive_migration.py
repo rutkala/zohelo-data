@@ -7,6 +7,8 @@ import io
 import json
 from pathlib import Path
 import unittest
+import httplib2
+from googleapiclient.errors import HttpError
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -103,8 +105,9 @@ class MockDriveService:
         mock_req = MagicMock()
 
         def execute(num_retries=0):
-            if fileId not in self._files or self._files[fileId].get("trashed", False):
-                raise RuntimeError(f"File not found: {fileId}")
+            if fileId not in self._files:
+                raise HttpError(httplib2.Response({"status": "404"}), b"not found")
+            # files.get returns metadata for trashed items when addressed by ID.
             item = {k: v for k, v in self._files[fileId].items() if k != "content"}
             item.setdefault("ownedByMe", True)
             item.setdefault("trashed", False)
@@ -135,6 +138,8 @@ class MockDriveService:
             body = body or {}
             self._next_id += 1
             file_id = body.get("id") or f"file-{self._next_id}"
+            if file_id in self._files:
+                raise HttpError(httplib2.Response({"status": "409"}), b"already exists")
             content = b""
             if media_body and hasattr(media_body, "_fd"):
                 media_body._fd.seek(0)
@@ -285,7 +290,13 @@ def build_legacy_drive_state(root_id: str = "prod-root-123"):
         "state_sha256": sha256(state_snapshot_bytes).hexdigest(),
     }).encode()
 
+    # Production already has the shared control root.  NBP's legacy control
+    # remains separate until the migration moves it under this root.
     files = {
+        "f-06-control": {"id": "f-06-control", "name": "06_control",
+                         "mimeType": "application/vnd.google-apps.folder", "parents": [root_id]},
+        "f-source-campaigns": {"id": "f-source-campaigns", "name": "source_campaigns",
+                               "mimeType": "application/vnd.google-apps.folder", "parents": ["f-06-control"]},
         root_id: {"id": root_id, "name": "zohelo-data", "mimeType": "application/vnd.google-apps.folder", "parents": []},
         # Medallion folders
         "f-01-landing": {"id": "f-01-landing", "name": "01_landing", "mimeType": "application/vnd.google-apps.folder", "parents": [root_id]},
@@ -602,6 +613,44 @@ class DriveMigrationTests(unittest.TestCase):
         verify_res = verify_medallion_navigation(storage, "prod-root-123", "wdi", single_file_wdi_manifest)
         self.assertEqual(verify_res["status"], "medallion_navigation_verified")
 
+
+
+    def test_corrupt_or_duplicate_journal_fails_closed(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        interrupted = engine.apply(engine.plan(), confirmed=True, stop_after_step=0)
+        journal_id = interrupted["journal_file_id"]
+        # A malformed durable receipt is a recovery stop condition, never a cue to replan.
+        svc._files[journal_id]["content"] = b"{not-json"
+        with self.assertRaises(MigrationError):
+            DriveMigrationEngine(storage, expected_root_id="prod-root-123").apply(
+                resume=True, confirmed=True
+            )
+
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        interrupted = engine.apply(engine.plan(), confirmed=True, stop_after_step=0)
+        journal_id = interrupted["journal_file_id"]
+        original = svc._files[journal_id]
+        svc._files["duplicate-journal"] = {
+            **original, "id": "duplicate-journal", "parents": list(original["parents"]),
+        }
+        with self.assertRaises(AmbiguousLayoutError):
+            DriveMigrationEngine(storage, expected_root_id="prod-root-123").apply(
+                resume=True, confirmed=True
+            )
+
+    def test_apply_refuses_foreign_parent_on_pinned_move(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        plan = engine.plan()
+        move = next(step for step in plan["steps"] if step["action"] in ("move", "move_and_rename"))
+        svc._files[move["item_id"]]["parents"].append("foreign-parent")
+        with self.assertRaises(DriftError):
+            engine.apply(plan, confirmed=True)
 
 if __name__ == "__main__":
     unittest.main()

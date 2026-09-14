@@ -21,6 +21,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
+import hashlib
+import copy
 import logging
 import os
 from pathlib import Path
@@ -182,163 +184,150 @@ class DriveMigrationEngine:
         to_parent_id: str,
         to_name: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Atomically move item from from_parent_id to to_parent_id and optionally rename.
-
-        Guarantees:
-        - Fails closed if expected name or from_parent_id does not match current state.
-        - Idempotently recognizes already-completed state.
-        - Removes ONLY from_parent_id (never touches other parents).
-        - Reads back and verifies immediately after mutation.
-        """
+        """Move one pinned item only when its complete current state is known."""
         meta = self.drive_service.files().get(
-            fileId=item_id,
-            fields="id,name,parents,trashed",
+            fileId=item_id, fields="id,name,parents,trashed,mimeType",
             supportsAllDrives=True,
         ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
-
-        if meta.get("trashed") is True:
-            raise MigrationError(f"Item {item_id} ('{meta.get('name')}') is trashed in Drive")
-
-        current_parents = meta.get("parents") or []
-        current_name = meta.get("name")
+        if meta.get("trashed"):
+            raise DriftError(f"Item {item_id} is trashed")
+        parents = list(meta.get("parents") or [])
         target_name = to_name or expected_name
-
-        # Check already-completed state
-        already_in_dest = (to_parent_id in current_parents and from_parent_id not in current_parents)
-        already_has_name = (current_name == target_name)
-        if already_in_dest and already_has_name:
+        if parents == [to_parent_id] and meta.get("name") == target_name:
             return meta
-
-        # Fail closed on foreign parent or name drift
-        if from_parent_id not in current_parents:
-            raise MigrationError(
-                f"Cannot move item {item_id} ('{current_name}'): expected source parent '{from_parent_id}' "
-                f"not in actual parents {current_parents}"
+        if parents != [from_parent_id] or meta.get("name") != expected_name:
+            raise DriftError(
+                f"Item {item_id} drifted: expected name={expected_name!r}, "
+                f"parents={[from_parent_id]!r}; found name={meta.get('name')!r}, parents={parents!r}"
             )
-        if current_name != expected_name:
-            raise MigrationError(
-                f"Cannot move item {item_id}: expected name '{expected_name}', but found '{current_name}' (external rename)"
-            )
-
-        body = {}
-        if to_name and to_name != current_name:
-            body["name"] = to_name
-
-        # Remove ONLY the recorded source parent
-        updated = self.drive_service.files().update(
-            fileId=item_id,
-            body=body if body else None,
-            addParents=to_parent_id,
-            removeParents=from_parent_id,
-            fields="id,name,parents,trashed",
+        body = {"name": target_name} if target_name != expected_name else None
+        self.drive_service.files().update(
+            fileId=item_id, body=body, addParents=to_parent_id,
+            removeParents=from_parent_id, fields="id,name,parents,trashed,mimeType",
             supportsAllDrives=True,
         ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
-
-        # Read back and verify
-        verify_meta = self.drive_service.files().get(
-            fileId=item_id,
-            fields="id,name,parents,trashed",
+        verified = self.drive_service.files().get(
+            fileId=item_id, fields="id,name,parents,trashed,mimeType",
             supportsAllDrives=True,
         ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+        if (verified.get("trashed") or verified.get("name") != target_name
+                or list(verified.get("parents") or []) != [to_parent_id]):
+            raise DriftError(f"Move of {item_id} did not reach its exact pinned target")
+        return verified
 
-        ver_parents = verify_meta.get("parents") or []
-        ver_name = verify_meta.get("name")
+    def _journal_digest(self, journal: Dict[str, Any]) -> str:
+        """Digest the immutable plan snapshot carried by a journal."""
+        plan = journal.get("plan")
+        if not isinstance(plan, dict):
+            raise MigrationError("Journal has no immutable plan snapshot")
+        return hashlib.sha256(_json_bytes(plan)).hexdigest()
 
-        if to_parent_id not in ver_parents or from_parent_id in ver_parents or ver_name != target_name:
-            raise MigrationError(
-                f"Readback verification failed after moving item {item_id}: expected parent '{to_parent_id}', "
-                f"name '{target_name}'; got parents {ver_parents}, name '{ver_name}'"
-            )
-
-        return verify_meta
-
-    # -------------------------------------------------------------------------
-    # Journal management
-    # -------------------------------------------------------------------------
+    def _validate_journal(self, journal: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(journal, dict):
+            raise MigrationError("Migration journal must be a JSON object")
+        required = ("schema_version", "plan_id", "expected_root_id", "plan", "plan_sha256", "steps", "status")
+        missing = [key for key in required if not journal.get(key)]
+        if missing:
+            raise MigrationError(f"Migration journal is missing required fields: {', '.join(missing)}")
+        if journal["schema_version"] != 1:
+            raise MigrationError(f"Unsupported migration journal schema {journal['schema_version']!r}")
+        if journal["expected_root_id"] != self.root_id:
+            raise SafetyPinError("Migration journal root pin does not match this Drive root")
+        if not isinstance(journal["steps"], list) or not isinstance(journal["plan"].get("steps"), list):
+            raise MigrationError("Migration journal steps are malformed")
+        if journal["plan_sha256"] != self._journal_digest(journal):
+            raise MigrationError("Migration journal plan digest does not match its immutable plan")
+        if journal["plan"].get("plan_id") != journal["plan_id"]:
+            raise MigrationError("Migration journal plan_id does not match its immutable plan")
+        return journal
 
     def _load_journal(self, control_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        journal = None
-        if self.journal_local_path and self.journal_local_path.is_file():
+        """Load one validated journal. Corruption and duplicates are stop conditions."""
+        local = None
+        if self.journal_local_path and self.journal_local_path.exists():
             try:
-                journal = json.loads(self.journal_local_path.read_text(encoding="utf-8"))
-            except Exception as exc:
-                logger.warning(f"Could not read local journal {self.journal_local_path}: {exc}")
-
-        if not control_id:
-            ctrl_folders = self._find_child_by_name(self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE)
-            if len(ctrl_folders) == 1:
-                control_id = ctrl_folders[0]["id"]
-
+                local = json.loads(self.journal_local_path.read_text("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise MigrationError(f"Local migration journal is unreadable: {exc}") from exc
+        if control_id is None:
+            controls = self._find_child_by_name(self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE)
+            if len(controls) > 1:
+                raise AmbiguousLayoutError("Duplicate top-level 06_control folders")
+            control_id = controls[0]["id"] if controls else None
+        remote = None
         if control_id:
-            journal_files = self._find_child_by_name(control_id, JOURNAL_FILE_NAME)
-            if len(journal_files) == 1:
+            same_name = self._find_child_by_name(control_id, JOURNAL_FILE_NAME)
+            if len(same_name) > 1:
+                raise AmbiguousLayoutError("Duplicate migration journal files under 06_control")
+            if same_name:
+                item = same_name[0]
+                if item.get("mimeType") != "application/json":
+                    raise MigrationError("Migration journal name is occupied by a non-JSON item")
                 try:
-                    data = self._read_file_bytes(journal_files[0]["id"])
-                    drive_journal = json.loads(data.decode("utf-8"))
-                    # Drive journal takes precedence if both exist
-                    journal = drive_journal
-                except Exception as exc:
-                    logger.warning(f"Could not read Drive journal: {exc}")
-
-        if journal:
-            # Validate root ID pin in journal
-            j_root = journal.get("root_id") or journal.get("expected_root_id")
-            if j_root and j_root != self.root_id:
-                raise SafetyPinError(
-                    f"Journal root ID '{j_root}' does not match active engine root ID '{self.root_id}'"
-                )
-
+                    remote = json.loads(self._read_file_bytes(item["id"]).decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError, OSError) as exc:
+                    raise MigrationError(f"Drive migration journal is unreadable: {exc}") from exc
+                remote["journal_file_id"] = item["id"]
+        if local is None and remote is None:
+            return None
+        if local is not None:
+            self._validate_journal(local)
+        if remote is not None:
+            self._validate_journal(remote)
+        if local is not None and remote is not None:
+            strip = lambda v: {k: x for k, x in v.items() if k != "journal_file_id"}
+            if _json_bytes(strip(local)) != _json_bytes(strip(remote)):
+                raise MigrationError("Local and Drive migration journals disagree; refuse recovery")
+            if local.get("journal_file_id") and local["journal_file_id"] != remote["journal_file_id"]:
+                raise MigrationError("Local journal points at a different Drive journal")
+        journal = remote or local
+        if journal.get("journal_file_id") and remote is None:
+            raise MigrationError("Pinned Drive migration journal is missing")
         return journal
 
     def _save_journal(self, journal: Dict[str, Any], control_id: str) -> str:
-        """Persist journal to local path and Drive top-level 06_control/ folder."""
-        data = _json_bytes(journal)
-        if self.journal_local_path:
-            self.journal_local_path.parent.mkdir(parents=True, exist_ok=True)
-            self.journal_local_path.write_bytes(data)
-
+        """Write a local receipt first and update only the pinned Drive journal."""
+        self._validate_journal(journal)
+        def save_local():
+            if self.journal_local_path:
+                self.journal_local_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self.journal_local_path.with_name(self.journal_local_path.name + ".tmp")
+                tmp.write_bytes(_json_bytes(journal))
+                tmp.replace(self.journal_local_path)
+        save_local()
         import io
         from googleapiclient.http import MediaIoBaseUpload
-
         journal_file_id = journal.get("journal_file_id")
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/json", resumable=False)
-
         if journal_file_id:
-            try:
-                self.drive_service.files().update(
-                    fileId=journal_file_id,
-                    media_body=media,
-                    fields="id",
-                    supportsAllDrives=True,
-                ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
-                return journal_file_id
-            except Exception:
-                pass
-
-        existing = self._find_child_by_name(control_id, JOURNAL_FILE_NAME)
-        if existing:
-            file_id = existing[0]["id"]
-            self.drive_service.files().update(
-                fileId=file_id,
-                media_body=media,
-                fields="id",
+            meta = self.drive_service.files().get(
+                fileId=journal_file_id, fields="id,name,mimeType,parents,trashed",
                 supportsAllDrives=True,
             ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
-            journal["journal_file_id"] = file_id
-            return file_id
-        else:
-            created = self.drive_service.files().create(
-                body={"name": JOURNAL_FILE_NAME, "parents": [control_id], "mimeType": "application/json"},
-                media_body=media,
-                fields="id",
-                supportsAllDrives=True,
-            ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
-            journal["journal_file_id"] = created["id"]
-            return created["id"]
-
-    # -------------------------------------------------------------------------
-    # Planning
-    # -------------------------------------------------------------------------
+            if (meta.get("trashed") or meta.get("name") != JOURNAL_FILE_NAME
+                    or meta.get("mimeType") != "application/json"
+                    or list(meta.get("parents") or []) != [control_id]):
+                raise DriftError("Pinned migration journal identity has drifted")
+            media = MediaIoBaseUpload(io.BytesIO(_json_bytes(journal)), mimetype="application/json", resumable=False)
+            self.drive_service.files().update(fileId=journal_file_id, media_body=media, fields="id",
+                supportsAllDrives=True).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+            return journal_file_id
+        if self._find_child_by_name(control_id, JOURNAL_FILE_NAME):
+            raise MigrationError("A migration journal exists without a pinned journal ID")
+        ids = self.drive_service.files().generateIds(count=1, space="drive", type="files").execute(
+            num_retries=DRIVE_REPEATABLE_RETRIES).get("ids", [])
+        if len(ids) != 1 or not ids[0]:
+            raise MigrationError("Drive did not allocate a durable migration journal ID")
+        journal["journal_file_id"] = ids[0]
+        save_local()
+        media = MediaIoBaseUpload(io.BytesIO(_json_bytes(journal)), mimetype="application/json", resumable=False)
+        created = self.drive_service.files().create(
+            body={"id": ids[0], "name": JOURNAL_FILE_NAME, "parents": [control_id],
+                  "mimeType": "application/json"},
+            media_body=media, fields="id", supportsAllDrives=True,
+        ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+        if created.get("id") != ids[0]:
+            raise MigrationError("Drive created migration journal with an unexpected ID")
+        return ids[0]
 
     def plan(self) -> Dict[str, Any]:
         def required_child(children: List[Dict[str, Any]], name: str,
@@ -776,14 +765,21 @@ class DriveMigrationEngine:
         pins = plan.get("pins", {})
         steps = plan.get("steps", [])
 
-        # Ensure top-level 06_control folder exists for journal storage
+        # A journal must exist before the first Drive mutation.  06_control is an
+        # established production root and therefore must already be uniquely present.
         ctrl_step = next((s for s in steps if s["step_id"] == "ensure_06_control"), None)
-        control_id = ctrl_step.get("resolved_id") or ctrl_step.get("existing_id") if ctrl_step else None
+        control_id = (ctrl_step.get("resolved_id") or ctrl_step.get("existing_id")) if ctrl_step else None
         if not control_id:
-            control_id, _ = self._get_or_create_folder(self.root_id, CANONICAL_CONTROL_FOLDER)
+            controls = self._find_child_by_name(
+                self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE
+            )
+            if len(controls) != 1:
+                raise MigrationError(
+                    "Cannot start migration without exactly one established top-level 06_control"
+                )
+            control_id = controls[0]["id"]
             if ctrl_step:
-                ctrl_step["resolved_id"] = control_id
-                ctrl_step["status"] = "completed"
+                ctrl_step["existing_id"] = control_id
 
         # Rehydrate all context mapping from journal and completed steps
         context: Dict[str, str] = {
@@ -809,6 +805,11 @@ class DriveMigrationEngine:
         self._assert_no_drift(pins, steps, context)
 
         journal = dict(plan)
+        # Keep a byte-stable, immutable reviewed plan separate from mutable step
+        # progress.  Resume/rollback validates this before inspecting Drive state.
+        journal["schema_version"] = 1
+        journal["plan"] = copy.deepcopy(plan)
+        journal["plan_sha256"] = hashlib.sha256(_json_bytes(journal["plan"])).hexdigest()
         journal["status"] = "in_progress"
         journal["control_folder_id"] = control_id
         if "started_at_utc" not in journal:
@@ -832,9 +833,45 @@ class DriveMigrationEngine:
                 }
 
             action = step["action"]
+            # Persist the intended action before touching Drive.  If the process dies
+            # after an API success but before the completed receipt, a fresh engine
+            # reconciles this started step against its preallocated ID.
+            step["status"] = "started"
+            step["started_at_utc"] = datetime.now(timezone.utc).isoformat()
+            self._save_journal(journal, control_id)
             if action == "ensure_folder":
                 parent_id = context.get(step.get("parent_name"), step.get("parent_id"))
-                folder_id, was_created = self._get_or_create_folder(parent_id, step["name"])
+                matches = self._find_child_by_name(parent_id, step["name"], mime_type=FOLDER_MIME_TYPE)
+                if len(matches) > 1:
+                    raise AmbiguousLayoutError(
+                        f"Duplicate folder {step['name']!r} under {parent_id!r}"
+                    )
+                planned_id = step.get("planned_id")
+                if matches:
+                    folder_id = matches[0]["id"]
+                    if planned_id and folder_id != planned_id:
+                        raise DriftError(
+                            f"Folder {step['name']!r} exists with foreign ID {folder_id!r}"
+                        )
+                    was_created = bool(step.get("was_created", False))
+                else:
+                    if not planned_id:
+                        ids = self.drive_service.files().generateIds(
+                            count=1, space="drive", type="files"
+                        ).execute(num_retries=DRIVE_REPEATABLE_RETRIES).get("ids", [])
+                        if len(ids) != 1 or not ids[0]:
+                            raise MigrationError("Drive did not allocate a folder ID")
+                        planned_id = step["planned_id"] = ids[0]
+                        # Ownership is durable before the create request.
+                        self._save_journal(journal, control_id)
+                    created = self.drive_service.files().create(
+                        body={"id": planned_id, "name": step["name"],
+                              "mimeType": FOLDER_MIME_TYPE, "parents": [parent_id]},
+                        fields="id,name,parents,mimeType", supportsAllDrives=True,
+                    ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                    if created.get("id") != planned_id:
+                        raise MigrationError("Drive created a folder with an unexpected ID")
+                    folder_id, was_created = planned_id, True
                 step["resolved_id"] = folder_id
                 step["was_created"] = was_created
                 context[step["name"]] = folder_id
@@ -953,9 +990,13 @@ class DriveMigrationEngine:
                 elif step["step_id"] == "ensure_05_archive":
                     context[ARCHIVE_FOLDER] = resolved
 
-        # Reverse in reverse order
+        # Refuse rollback after any pointer/state/root drift.  A rollback is allowed
+        # to reverse only the transition represented by this exact journal.
+        self._assert_no_drift(journal.get("pins", {}), steps, context)
+        # Reverse in reverse order.  A started receipt may represent an API success
+        # whose completed receipt was lost, so it is reconciled as well.
         for step in reversed(steps):
-            if step.get("status") != "completed":
+            if step.get("status") not in ("completed", "started"):
                 continue
 
             action = step["action"]
@@ -981,13 +1022,20 @@ class DriveMigrationEngine:
                 ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
 
                 current_parents = item_meta.get("parents") or []
-                if original_parent_id not in current_parents and applied_parent_id in current_parents:
+                if current_parents == [original_parent_id] and item_meta.get("name") == original_name:
+                    pass
+                elif current_parents == [applied_parent_id] and item_meta.get("name") == applied_name:
                     self._move_and_rename_item(
                         item_id,
                         expected_name=applied_name,
                         from_parent_id=applied_parent_id,
                         to_parent_id=original_parent_id,
                         to_name=original_name,
+                    )
+                else:
+                    raise DriftError(
+                        f"Rollback refuses drifted item {item_id}: "
+                        f"name={item_meta.get('name')!r}, parents={current_parents!r}"
                     )
                 step["status"] = "rolled_back"
                 step["rolled_back_at_utc"] = datetime.now(timezone.utc).isoformat()
@@ -1040,7 +1088,9 @@ class DriveMigrationEngine:
         # Verify legacy mode is restored
         post_rollback_mode = detect_layout_mode(self.storage, self.root_id)
         if post_rollback_mode not in ("legacy", "fresh"):
-            logger.warning(f"Post-rollback layout mode is '{post_rollback_mode}', expected 'legacy'")
+            raise MigrationError(
+                f"Rollback did not restore a legacy layout; found {post_rollback_mode!r}"
+            )
 
         journal["status"] = "rolled_back"
         journal["rollback_completed_at_utc"] = datetime.now(timezone.utc).isoformat()
