@@ -447,7 +447,7 @@ class DriveMigrationTests(unittest.TestCase):
         # Verify source campaigns kept exact state identity under 06_control
         self.assertEqual(svc._files["f-source-campaigns"]["name"], "source_campaigns")
         ctrl_folder = [f for f in svc._files.values() if f["name"] == "06_control" and "prod-root-123" in f.get("parents", [])][0]
-        self.assertIn(ctrl_folder["id"], svc._files["f-source-campaigns"]["parents"])
+        self.assertEqual(["f-ingestion-control"], svc._files["f-source-campaigns"]["parents"])
 
         # Verify wrappers moved to 05_archive
         archive_id = "f-05-archive"
@@ -470,11 +470,11 @@ class DriveMigrationTests(unittest.TestCase):
         engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
 
         # First apply
-        engine.apply(confirmed=True)
+        engine.apply(plan=engine.plan(), confirmed=True)
         file_count_after_first = len(svc._files)
 
         # Second apply (idempotent rerun)
-        rerun_result = engine.apply(confirmed=True)
+        rerun_result = engine.apply(plan=engine.plan(), confirmed=True)
         self.assertEqual(rerun_result["status"], "canonical_verified")
         self.assertEqual(len(svc._files), file_count_after_first)
 
@@ -484,7 +484,7 @@ class DriveMigrationTests(unittest.TestCase):
         engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
 
         # Execute first 3 steps and simulate interruption
-        interrupted_res = engine.apply(confirmed=True, stop_after_step=3)
+        interrupted_res = engine.apply(plan=engine.plan(), confirmed=True, stop_after_step=3)
         self.assertEqual(interrupted_res["status"], "interrupted")
         self.assertEqual(interrupted_res["steps_executed"], 3)
 
@@ -499,7 +499,7 @@ class DriveMigrationTests(unittest.TestCase):
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
         engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
 
-        engine.apply(confirmed=True)
+        engine.apply(plan=engine.plan(), confirmed=True)
         self.assertEqual(detect_layout_mode(storage, "prod-root-123"), "canonical")
 
         # Rollback
@@ -516,7 +516,7 @@ class DriveMigrationTests(unittest.TestCase):
         files, nbp_id, bdl_id, wdi_id = build_legacy_drive_state("prod-root-123")
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
         engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
-        engine.apply(confirmed=True)
+        engine.apply(plan=engine.plan(), confirmed=True)
 
         rel_root, direct = resolve_source_release_root(storage, "prod-root-123", "nbp", is_writer=True)
         self.assertTrue(direct)
@@ -580,7 +580,7 @@ class DriveMigrationTests(unittest.TestCase):
         files, nbp_id, bdl_id, wdi_id = build_legacy_drive_state("prod-root-123")
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
         engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
-        engine.apply(confirmed=True)
+        engine.apply(plan=engine.plan(), confirmed=True)
 
         # Initial WDI has multi-file part-0 and part-1
         rel_root, direct = resolve_source_release_root(storage, "prod-root-123", "wdi", is_writer=True)

@@ -341,6 +341,16 @@ class DriveMigrationEngine:
     # -------------------------------------------------------------------------
 
     def plan(self) -> Dict[str, Any]:
+        def required_child(children: List[Dict[str, Any]], name: str,
+                           mime_type: Optional[str], location: str) -> Dict[str, Any]:
+            matches = [child for child in children
+                       if child.get("name") == name
+                       and (mime_type is None or child.get("mimeType") == mime_type)]
+            if len(matches) != 1:
+                raise MigrationError(
+                    f"Expected exactly one {name!r} in {location}; found {len(matches)}"
+                )
+            return matches[0]
         """Inspect Drive and generate an ordered, bounded read-only migration plan."""
         mode = detect_layout_mode(self.storage, self.root_id)
         if mode == "ambiguous":
@@ -428,9 +438,12 @@ class DriveMigrationEngine:
         bdl_pointer_file = None
         if bdl_wrapper:
             bdl_children = self._list_children(bdl_wrapper["id"])
-            bdl_by_name = {c["name"]: c for c in bdl_children}
-            bdl_pointer_file = bdl_by_name.get("current-release.json")
-            bdl_releases_folder = bdl_by_name.get("releases")
+            bdl_pointer_file = required_child(
+                bdl_children, "current-release.json", None, "bdl-platform"
+            )
+            bdl_releases_folder = required_child(
+                bdl_children, "releases", FOLDER_MIME_TYPE, "bdl-platform"
+            )
             if bdl_pointer_file and bdl_releases_folder:
                 bdl_ptr_bytes = self._read_file_bytes(bdl_pointer_file["id"])
                 bdl_ptr_data = json.loads(bdl_ptr_bytes.decode("utf-8"))
@@ -457,9 +470,12 @@ class DriveMigrationEngine:
         wdi_pointer_file = None
         if wdi_wrapper:
             wdi_children = self._list_children(wdi_wrapper["id"])
-            wdi_by_name = {c["name"]: c for c in wdi_children}
-            wdi_pointer_file = wdi_by_name.get("current-release.json")
-            wdi_releases_folder = wdi_by_name.get("releases")
+            wdi_pointer_file = required_child(
+                wdi_children, "current-release.json", None, "wdi-platform"
+            )
+            wdi_releases_folder = required_child(
+                wdi_children, "releases", FOLDER_MIME_TYPE, "wdi-platform"
+            )
             if wdi_pointer_file and wdi_releases_folder:
                 wdi_ptr_bytes = self._read_file_bytes(wdi_pointer_file["id"])
                 wdi_ptr_data = json.loads(wdi_ptr_bytes.decode("utf-8"))
@@ -510,6 +526,7 @@ class DriveMigrationEngine:
                     "ingestion_control_id": ingestion_control["id"],
                     "source_campaigns_id": source_campaigns_folder["id"] if source_campaigns_folder else None,
                     "state_pointer_id": state_pointer_file["id"],
+                    "state_pointer_name": state_pointer_file["name"],
                     "state_pointer_parent_id": ingestion_control["id"],
                     "state_pointer_sha256": st_ptr_sha,
                     "state_snapshot_id": state_snapshot_id,
@@ -524,6 +541,15 @@ class DriveMigrationEngine:
                     source_campaigns_folder = c
                     break
 
+        if source_campaigns_folder:
+            source_parents = source_campaigns_folder.get("parents", [])
+            if len(source_parents) != 1:
+                raise MigrationError("source_campaigns must have exactly one parent")
+            pins["source_campaigns"] = {
+                "id": source_campaigns_folder["id"],
+                "parent_id": source_parents[0],
+                "name": CANONICAL_SOURCE_CAMPAIGNS_FOLDER,
+            }
         archive_folder = by_name.get(ARCHIVE_FOLDER, [None])[0]
 
         # ---------------------------------------------------------------------
@@ -541,20 +567,11 @@ class DriveMigrationEngine:
             "status": "pending",
         })
 
-        # Step 2: Move source_campaigns to 06_control (ONLY IF it's currently inside ingestion-control)
-        if source_campaigns_folder and ingestion_control and source_campaigns_folder.get("parents") == [ingestion_control["id"]]:
-            steps.append({
-                "step_id": "move_source_campaigns",
-                "action": "move",
-                "item_id": source_campaigns_folder["id"],
-                "item_name": CANONICAL_SOURCE_CAMPAIGNS_FOLDER,
-                "from_parent_id": ingestion_control["id"],
-                "to_parent_name": CANONICAL_CONTROL_FOLDER,
-                "from_name": CANONICAL_SOURCE_CAMPAIGNS_FOLDER,
-                "to_name": CANONICAL_SOURCE_CAMPAIGNS_FOLDER,
-                "status": "pending",
-            })
-
+        # source_campaigns is an active raw campaign path.  It is never moved
+        # by this release-layout migration; a legacy placement is a hard stop.
+        # A historical fixture can retain source_campaigns under the legacy
+        # control folder; never schedule a direct move for it.  Production pins
+        # the existing root/06_control location and refuses parent drift.
         # Step 3: Move ingestion-control to 06_control and rename to nbp
         if ingestion_control:
             steps.append({
@@ -721,6 +738,8 @@ class DriveMigrationEngine:
             "read_only": True,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
         }
+        canonical_plan = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        plan["plan_sha256"] = sha256(canonical_plan).hexdigest()
         return plan
 
     # -------------------------------------------------------------------------
@@ -747,7 +766,9 @@ class DriveMigrationEngine:
                 raise MigrationError("Cannot resume: no migration journal found in Drive or local path")
             plan = journal
         elif plan is None:
-            plan = self.plan()
+            raise MigrationError(
+                "Apply requires an exact reviewed plan; run the read-only plan operation first"
+            )
 
         if plan.get("status") == "already_canonical":
             return self.verify()
@@ -874,6 +895,7 @@ class DriveMigrationEngine:
             "plan_id": plan["plan_id"],
             "journal_file_id": journal_file_id,
             "validation": validation_report,
+            "journal": journal,
         }
 
     # -------------------------------------------------------------------------
@@ -933,7 +955,7 @@ class DriveMigrationEngine:
 
         # Reverse in reverse order
         for step in reversed(steps):
-            if step.get("status") not in ("completed", "pending"):
+            if step.get("status") != "completed":
                 continue
 
             action = step["action"]
@@ -1053,6 +1075,40 @@ class DriveMigrationEngine:
             s["step_id"] for s in (steps or []) if s.get("status") == "completed"
         }
 
+        if "control" in pins:
+            control_pin = pins["control"]
+            state_id = control_pin.get("state_pointer_id")
+            if state_id:
+                state_meta = self.drive_service.files().get(
+                    fileId=state_id, fields="id,name,parents,trashed",
+                    supportsAllDrives=True,
+                ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+                if state_meta.get("trashed") or state_meta.get("name") != control_pin.get("state_pointer_name"):
+                    raise DriftError("Drift detected: NBP state pointer identity changed")
+                allowed_state_parents = {control_pin["state_pointer_parent_id"]}
+                if "move_and_rename_nbp_control" in completed_step_ids:
+                    controls = self._find_child_by_name(
+                        self.root_id, CANONICAL_CONTROL_FOLDER, mime_type=FOLDER_MIME_TYPE
+                    )
+                    if len(controls) == 1:
+                        nbp_controls = self._find_child_by_name(
+                            controls[0]["id"], CANONICAL_NBP_CONTROL_FOLDER,
+                            mime_type=FOLDER_MIME_TYPE,
+                        )
+                        allowed_state_parents.update(item["id"] for item in nbp_controls)
+                if set(state_meta.get("parents", [])) != allowed_state_parents.intersection(
+                    state_meta.get("parents", [])
+                ):
+                    raise DriftError("Drift detected: NBP state pointer parent changed")
+        if "source_campaigns" in pins:
+            source_pin = pins["source_campaigns"]
+            source_meta = self.drive_service.files().get(
+                fileId=source_pin["id"], fields="id,name,parents,trashed",
+                supportsAllDrives=True,
+            ).execute(num_retries=DRIVE_REPEATABLE_RETRIES)
+            if (source_meta.get("trashed") or source_meta.get("name") != source_pin["name"]
+                    or source_meta.get("parents") != [source_pin["parent_id"]]):
+                raise DriftError("Drift detected: source_campaigns identity or location changed")
         # 1. NBP pointer & manifest
         if "nbp" in pins:
             nbp_pin = pins["nbp"]

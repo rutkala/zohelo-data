@@ -1,182 +1,228 @@
 #!/usr/bin/env python3
-"""Cutover guard verifying preconditions before live Google Drive migration.
+"""Fail-closed cutover guard for the reviewed Drive layout migration.
 
-Checks:
-1. Deployed portal compatibility: verifies that the deployed portal site
-   (via portal-build.json) is running a commit that supports canonical release format 2
-   and direct_releases layout.
-2. Active workflow drain/fence: queries the GitHub Actions runs API (using read-only
-   metadata permissions) to confirm that no legacy or uncoordinated publisher workflows
-   (source-gus-bdl, source-world-bank, daily-ingestion) are currently running or queued.
-
-Outputs a durable receipt: cutover-preconditions.json
+The guard performs read-only portal and Actions API checks.  It is intentionally
+strict: an unavailable API, missing compatibility evidence, or an unknown active
+publisher blocks a live migration.
 """
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
 import json
-import logging
 import os
 from pathlib import Path
 import sys
-import urllib.request
 import urllib.error
-
-logger = logging.getLogger(__name__)
+import urllib.parse
+import urllib.request
 
 DEFAULT_REPO = "rutkala/zohelo-data"
-DEFAULT_PORTAL_URL = "https://rutkala.github.io/zohelo-data/portal-build.json"
-CRITICAL_WORKFLOWS = {
+DEFAULT_PORTAL_URL = "https://data.zohelo.com/portal-build.json"
+CANONICAL_LAYOUT_MARKER = "canonical-release-roots-v1"
+ACTIVE_STATUSES = {"queued", "in_progress", "pending", "waiting", "requested"}
+PUBLISHER_WORKFLOWS = {
     "source-gus-bdl.yml",
     "source-world-bank.yml",
     "daily-ingestion.yml",
     "daily-reconciliation.yml",
+    "platform_transform_and_release.yml",
 }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=DEFAULT_REPO, help="GitHub repository (owner/repo).")
-    parser.add_argument("--compatibility-commit", default=None, help="Required minimum/compatibility commit SHA.")
-    parser.add_argument("--portal-url", default=DEFAULT_PORTAL_URL, help="URL to deployed portal-build.json.")
-    parser.add_argument("--receipt-path", type=Path, default=Path("cutover-preconditions.json"), help="Receipt output path.")
-    parser.add_argument("--skip-portal-check", action="store_true", help="Skip remote portal-build.json check (for offline/unit test).")
-    parser.add_argument("--skip-actions-check", action="store_true", help="Skip GitHub Actions API check (for offline/unit test).")
+    parser.add_argument("--repo", default=DEFAULT_REPO)
+    parser.add_argument(
+        "--compatibility-commit", required=True,
+        help="Reviewed portal compatibility commit; deployed code must equal or descend from it.",
+    )
+    parser.add_argument("--portal-url", default=DEFAULT_PORTAL_URL)
+    parser.add_argument(
+        "--receipt-path", type=Path, default=Path("cutover-preconditions.json")
+    )
+    parser.add_argument("--skip-portal-check", action="store_true")
+    parser.add_argument("--skip-actions-check", action="store_true")
     return parser.parse_args()
 
 
-def check_deployed_portal(portal_url: str, required_commit: str | None = None) -> dict:
-    """Verify deployed portal-build.json metadata."""
-    req = urllib.request.Request(portal_url, headers={"User-Agent": "zohelo-cutover-guard"})
+def _json_request(url: str, headers: dict[str, str], timeout: int = 15) -> tuple[dict, dict]:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8")), dict(response.headers.items())
+
+
+def _github_headers(token: str | None) -> dict[str, str]:
+    headers = {
+        "User-Agent": "zohelo-cutover-guard",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def commit_is_same_or_descendant(repo: str, required: str, candidate: str,
+                                 token: str | None) -> tuple[bool, str]:
+    """Return whether candidate is the reviewed commit or a verified descendant."""
+    if not required or not candidate:
+        return False, "missing_commit"
+    if candidate == required:
+        return True, "exact"
+    url = (
+        f"https://api.github.com/repos/{repo}/compare/"
+        f"{urllib.parse.quote(required, safe='')}...{urllib.parse.quote(candidate, safe='')}"
+    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        data, _ = _json_request(url, _github_headers(token))
+    except Exception as exc:
+        return False, f"compare_failed:{exc}"
+    status = data.get("status")
+    if status in {"identical", "ahead"}:
+        return True, status
+    return False, f"not_descendant:{status}"
+
+
+def check_deployed_portal(portal_url: str, repo: str, required_commit: str,
+                          token: str | None) -> dict:
+    try:
+        data, _ = _json_request(
+            portal_url, {"User-Agent": "zohelo-cutover-guard"}, timeout=10
+        )
     except Exception as exc:
         return {
-            "status": "portal_check_failed",
-            "url": portal_url,
-            "error": str(exc),
+            "status": "portal_check_failed", "url": portal_url, "error": str(exc),
             "compatible": False,
         }
 
-    supported_formats = data.get("supported_release_formats", [])
-    deployed_commit = data.get("git_commit", "")
-
-    is_compatible = 2 in supported_formats
-    if required_commit and deployed_commit != required_commit:
-        # Note: If deployed commit doesn't match required commit, check if it still supports format 2
-        logger.info(f"Deployed commit {deployed_commit} differs from required {required_commit}")
-
+    deployed = str(data.get("git_commit") or "")
+    layouts = data.get("supported_drive_layouts")
+    if not isinstance(layouts, list):
+        layouts = []
+    descendant, relation = commit_is_same_or_descendant(
+        repo, required_commit, deployed, token
+    )
+    compatible = CANONICAL_LAYOUT_MARKER in layouts and descendant
     return {
-        "status": "verified" if is_compatible else "incompatible_format",
+        "status": "verified" if compatible else "incompatible",
         "url": portal_url,
-        "deployed_commit": deployed_commit,
-        "supported_release_formats": supported_formats,
-        "compatible": is_compatible,
+        "deployed_commit": deployed,
+        "required_commit": required_commit,
+        "commit_relation": relation,
+        "supported_release_formats": data.get("supported_release_formats", []),
+        "supported_drive_layouts": layouts,
+        "compatible": compatible,
     }
 
 
-def check_active_workflows(repo: str, token: str | None = None) -> dict:
-    """Query GitHub Actions runs API to check for running or queued publisher workflows."""
-    url = f"https://api.github.com/repos/{repo}/actions/runs?status=in_progress"
-    headers = {"User-Agent": "zohelo-cutover-guard", "Accept": "application/vnd.github.v3+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+def _list_all_runs(repo: str, token: str | None) -> tuple[list[dict], str | None]:
+    """Read all run pages, refusing repeated page tokens or malformed responses."""
+    headers = _github_headers(token)
+    runs: list[dict] = []
+    page = 1
+    seen_pages: set[int] = set()
+    try:
+        while True:
+            if page in seen_pages or page > 100:
+                return [], "pagination_loop_or_limit"
+            seen_pages.add(page)
+            url = (
+                f"https://api.github.com/repos/{repo}/actions/runs"
+                f"?per_page=100&page={page}"
+            )
+            data, _ = _json_request(url, headers)
+            batch = data.get("workflow_runs")
+            if not isinstance(batch, list):
+                return [], "malformed_runs_response"
+            runs.extend(batch)
+            if len(batch) < 100:
+                return runs, None
+            page += 1
+    except urllib.error.HTTPError as exc:
+        return [], f"http_{exc.code}:{exc}"
+    except Exception as exc:
+        return [], f"request_failed:{exc}"
 
-    active_runs = []
-    for status_filter in ("in_progress", "queued"):
-        run_url = f"https://api.github.com/repos/{repo}/actions/runs?status={status_filter}"
-        req = urllib.request.Request(run_url, headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                for run in data.get("workflow_runs", []):
-                    wf_path = Path(run.get("path", "")).name
-                    if wf_path in CRITICAL_WORKFLOWS:
-                        active_runs.append({
-                            "id": run.get("id"),
-                            "name": run.get("name"),
-                            "workflow": wf_path,
-                            "status": run.get("status"),
-                            "head_sha": run.get("head_sha"),
-                            "html_url": run.get("html_url"),
-                        })
-        except urllib.error.HTTPError as exc:
-            if exc.code == 403:
-                logger.warning(f"Rate limited or forbidden querying GitHub Actions API: {exc}")
-                return {
-                    "status": "rate_limited_or_forbidden",
-                    "error": str(exc),
-                    "active_critical_runs_count": 0,
-                    "clean": True,  # Cannot block if API is rate-limited outside GHA
-                }
-            return {
-                "status": "api_error",
-                "error": str(exc),
-                "active_critical_runs_count": -1,
-                "clean": False,
-            }
-        except Exception as exc:
-            return {
-                "status": "network_error",
-                "error": str(exc),
-                "active_critical_runs_count": -1,
-                "clean": False,
-            }
+
+def check_active_workflows(repo: str, token: str | None,
+                           compatibility_commit: str) -> dict:
+    runs, error = _list_all_runs(repo, token)
+    if error:
+        return {
+            "status": "api_unavailable", "error": error,
+            "active_critical_runs_count": -1, "clean": False,
+        }
+
+    blockers: list[dict] = []
+    for run in runs:
+        path = Path(str(run.get("path") or "")).name
+        status = str(run.get("status") or "")
+        if path not in PUBLISHER_WORKFLOWS or status not in ACTIVE_STATUSES:
+            continue
+        head_sha = str(run.get("head_sha") or "")
+        compatible, relation = commit_is_same_or_descendant(
+            repo, compatibility_commit, head_sha, token
+        )
+        # Compatible jobs use the shared migration/publication lock and are
+        # serialized behind this job; only old/unknown publishers must drain.
+        if compatible:
+            continue
+        blockers.append({
+            "id": run.get("id"), "workflow": path, "status": status,
+            "head_sha": head_sha, "compatibility_relation": relation,
+            "html_url": run.get("html_url"),
+        })
 
     return {
         "status": "verified",
-        "active_critical_runs_count": len(active_runs),
-        "active_runs": active_runs,
-        "clean": len(active_runs) == 0,
+        "active_critical_runs_count": len(blockers),
+        "active_runs": blockers,
+        "clean": not blockers,
     }
 
 
 def main() -> int:
     args = parse_args()
     token = os.environ.get("GITHUB_TOKEN")
-
     report: dict = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "repo": args.repo,
+        "required_compatibility_commit": args.compatibility_commit,
         "preconditions_met": True,
         "checks": {},
     }
 
-    # 1. Portal check
-    if not args.skip_portal_check:
-        portal_res = check_deployed_portal(args.portal_url, args.compatibility_commit)
-        report["checks"]["deployed_portal"] = portal_res
-        if not portal_res.get("compatible"):
-            report["preconditions_met"] = False
-            report["blocking_reason"] = "Deployed portal is not compatible with release format 2"
-    else:
+    if args.skip_portal_check:
         report["checks"]["deployed_portal"] = {"status": "skipped", "compatible": True}
-
-    # 2. Workflow drain check
-    if not args.skip_actions_check:
-        actions_res = check_active_workflows(args.repo, token)
-        report["checks"]["active_workflows"] = actions_res
-        if not actions_res.get("clean"):
-            report["preconditions_met"] = False
-            report["blocking_reason"] = f"Found {actions_res.get('active_critical_runs_count')} active or queued critical publisher workflow runs"
     else:
+        portal = check_deployed_portal(
+            args.portal_url, args.repo, args.compatibility_commit, token
+        )
+        report["checks"]["deployed_portal"] = portal
+        if not portal["compatible"]:
+            report["preconditions_met"] = False
+            report["blocking_reason"] = "portal deployment lacks reviewed canonical-layout support"
+
+    if args.skip_actions_check:
         report["checks"]["active_workflows"] = {"status": "skipped", "clean": True}
+    else:
+        actions = check_active_workflows(args.repo, token, args.compatibility_commit)
+        report["checks"]["active_workflows"] = actions
+        if not actions["clean"]:
+            report["preconditions_met"] = False
+            report["blocking_reason"] = (
+                f"found {actions['active_critical_runs_count']} old or unverified publisher runs"
+            )
 
-    # Write receipt
     rendered = json.dumps(report, indent=2, sort_keys=True)
-    if args.receipt_path:
-        args.receipt_path.parent.mkdir(parents=True, exist_ok=True)
-        args.receipt_path.write_text(rendered + "\n", encoding="utf-8")
-
+    args.receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    args.receipt_path.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
-
     if not report["preconditions_met"]:
-        print(f"\n❌ Cutover preconditions NOT met: {report.get('blocking_reason')}", file=sys.stderr)
+        print("Cutover preconditions NOT met", file=sys.stderr)
         return 1
-
-    print("\n✅ All cutover preconditions verified successfully.", file=sys.stderr)
+    print("Cutover preconditions verified", file=sys.stderr)
     return 0
 
 

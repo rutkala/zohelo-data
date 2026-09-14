@@ -1153,6 +1153,11 @@ def run_full_drive_audit(
             }
         resolved_root_id = roots[0]["id"]
 
+    # 2. Produce physical storage map of top-level folders
+    physical_map = audit_physical_storage_map(drive_files, resolved_root_id, budget)
+    if budget.incomplete_reasons:
+        return {"status": "audit_incomplete", "incomplete_reasons": sorted(budget.incomplete_reasons)}
+
     # 3. Check for canonical releases folder and subfolders
     releases_folders = find_child_by_name(drive_files, resolved_root_id, "releases", budget, mime_type=FOLDER_MIME_TYPE)
     releases_root_id = releases_folders[0]["id"] if len(releases_folders) == 1 else None
