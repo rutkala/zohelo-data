@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PORTAL_ROOT = REPO_ROOT / "portal"
 WORKER = PORTAL_ROOT / "scripts" / "bdl-web-bulk-worker.mjs"
 ACCEPTED_WORKER_STATUSES = {"downloaded_relational_export", "downloaded_generated_export"}
+MAX_WORKER_ATTEMPTS = 3
 
 
 def _require_production_context() -> None:
@@ -150,10 +151,44 @@ def plan() -> dict[str, Any]:
         "landed_subgroups": len(landed),
         "processed_subgroups": len(processed),
         "remaining_subgroups": len(remaining),
+        "remaining_candidates": remaining,
         "candidate": candidate,
         "bulk_root_id": bulk_id,
         "control_root_id": control_id,
     }
+
+
+def _run_worker(*, workspace: Path, env: dict[str, str], subgroup_id: str, started: float, max_seconds: int) -> dict[str, Any]:
+    last_error: Exception | None = None
+    for attempt in range(1, MAX_WORKER_ATTEMPTS + 1):
+        _clean_ephemeral(workspace)
+        remaining = max_seconds - (time.monotonic() - started)
+        if remaining < 300:
+            raise RuntimeError(f"Not enough run time remains to safely start {subgroup_id}")
+        print(json.dumps({"status": "bdl_web_worker_attempt", "subgroup_id": subgroup_id, "attempt": attempt}), flush=True)
+        try:
+            subprocess.run(
+                ["node", str(WORKER)],
+                cwd=PORTAL_ROOT,
+                env=env,
+                check=True,
+                timeout=min(1800, max(300, int(remaining))),
+            )
+            worker_result_path = workspace / "worker-result.json"
+            if not worker_result_path.is_file():
+                raise RuntimeError("BDL Web worker did not produce worker-result.json")
+            worker_result = json.loads(worker_result_path.read_text(encoding="utf-8"))
+            if worker_result.get("status") not in ACCEPTED_WORKER_STATUSES:
+                raise RuntimeError(f"BDL Web worker did not complete subgroup {subgroup_id}: {worker_result.get('status')}")
+            return worker_result
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, RuntimeError, json.JSONDecodeError) as exc:
+            last_error = exc
+            print(json.dumps({"status": "bdl_web_worker_retry", "subgroup_id": subgroup_id, "attempt": attempt, "error": str(exc)}), flush=True)
+            if attempt < MAX_WORKER_ATTEMPTS and max_seconds - (time.monotonic() - started) >= 330:
+                time.sleep(10 * attempt)
+                continue
+            break
+    raise RuntimeError(f"BDL Web worker failed after {MAX_WORKER_ATTEMPTS} attempts for {subgroup_id}: {last_error}")
 
 
 def run(*, workspace: Path, max_seconds: int) -> dict:
@@ -164,27 +199,29 @@ def run(*, workspace: Path, max_seconds: int) -> dict:
     workspace.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     completed_this_run = 0
-    last_plan: dict | None = None
 
-    while time.monotonic() - started < max_seconds:
-        last_plan = plan()
-        _write_json(workspace / "plan.json", last_plan)
-        status = last_plan.get("status")
-        if status == "complete":
+    initial_plan = plan()
+    _write_json(workspace / "plan.json", initial_plan)
+    status = initial_plan.get("status")
+    if status == "complete":
+        candidates: list[dict[str, Any]] = []
+    elif status == "candidate":
+        raw_candidates = initial_plan.get("remaining_candidates")
+        if not isinstance(raw_candidates, list) or not all(isinstance(item, dict) for item in raw_candidates):
+            raise RuntimeError("BDL Web bootstrap planner did not provide a valid remaining candidate queue")
+        candidates = raw_candidates
+    else:
+        raise RuntimeError(f"BDL Web bootstrap planner blocked with status {status!r}: {json.dumps(initial_plan, ensure_ascii=False, sort_keys=True)}")
+
+    for candidate in candidates:
+        if max_seconds - (time.monotonic() - started) < 300:
             break
-        if status != "candidate":
-            raise RuntimeError(f"BDL Web bootstrap planner blocked with status {status!r}: {json.dumps(last_plan, ensure_ascii=False, sort_keys=True)}")
-
-        candidate = last_plan.get("candidate")
-        if not isinstance(candidate, dict):
-            raise RuntimeError("BDL Web bootstrap candidate is malformed")
         subgroup_id = candidate.get("subgroup_id")
         subgroup_url = candidate.get("url")
         subgroup_name = candidate.get("subgroup_name") or subgroup_id
         if not isinstance(subgroup_id, str) or not isinstance(subgroup_url, str):
             raise RuntimeError("BDL Web bootstrap candidate identity is malformed")
 
-        _clean_ephemeral(workspace)
         env = dict(os.environ)
         env.update(
             BDL_BULK_SUBGROUP_ID=subgroup_id,
@@ -193,19 +230,7 @@ def run(*, workspace: Path, max_seconds: int) -> dict:
             BDL_BULK_OUT_DIR=str(workspace),
         )
         print(json.dumps({"status": "bdl_web_subgroup_started", "subgroup_id": subgroup_id, "completed_this_run": completed_this_run}), flush=True)
-        subprocess.run(
-            ["node", str(WORKER)],
-            cwd=PORTAL_ROOT,
-            env=env,
-            check=True,
-            timeout=min(1800, max(300, int(max_seconds - (time.monotonic() - started)))),
-        )
-        worker_result_path = workspace / "worker-result.json"
-        if not worker_result_path.is_file():
-            raise RuntimeError("BDL Web worker did not produce worker-result.json")
-        worker_result = json.loads(worker_result_path.read_text(encoding="utf-8"))
-        if worker_result.get("status") not in ACCEPTED_WORKER_STATUSES:
-            raise RuntimeError(f"BDL Web worker did not complete subgroup {subgroup_id}: {worker_result.get('status')}")
+        _run_worker(workspace=workspace, env=env, subgroup_id=subgroup_id, started=started, max_seconds=max_seconds)
 
         archives = sorted(workspace.glob("download-*.zip"))
         if len(archives) != 1:
@@ -216,9 +241,6 @@ def run(*, workspace: Path, max_seconds: int) -> dict:
             raise RuntimeError(f"BDL Web landing did not verify for {subgroup_id}")
         completed_this_run += 1
         print(json.dumps({"status": "bdl_web_subgroup_landed", "subgroup_id": subgroup_id, "completed_this_run": completed_this_run, "row_count": landed_summary.get("row_count")}), flush=True)
-
-        if max_seconds - (time.monotonic() - started) < 180:
-            break
 
     final_plan = plan()
     _write_json(workspace / "final-plan.json", final_plan)
