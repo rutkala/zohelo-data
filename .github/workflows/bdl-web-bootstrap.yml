@@ -9,9 +9,17 @@ on:
         default: false
   schedule:
     - cron: '17 */6 * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bdl-web-bootstrap.yml'
+      - 'src/bdl_web_queue.py'
+      - 'portal/scripts/bdl-web-catalogue.mjs'
+      - 'portal/scripts/bdl-web-bulk-worker.mjs'
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: zohelo-pipeline-gus_bdl
@@ -19,7 +27,9 @@ concurrency:
 
 jobs:
   ingest_web_history:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[resume-bdl-web]'))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
@@ -62,6 +72,17 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: python src/bdl_web_bulk_reset.py
+      - name: Recover inspected URL index when still available
+        # Optional recovery metadata only. The Python loader checks the exact SHA-256.
+        # After the artifact expires, the durable Web queue or fresh UI discovery is used.
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: bdl-web-historical-bootstrap-evidence
+          path: bdl-recovery-seed
+          run-id: 34938114306
+          repository: ${{ github.repository }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Ingest BDL historical data through authenticated Web UI
         env:
           GUS_BDL_WEB_EMAIL: ${{ secrets.GUS_BDL_WEB_EMAIL }}
@@ -70,17 +91,18 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           PYTHONPATH: src
-        run: python src/bdl_web_bootstrap.py --workspace portal/test-results/bdl-web-bulk --max-seconds 18600
+          PYTHONUNBUFFERED: '1'
+        run: python src/bdl_web_queue.py --workspace portal/test-results/bdl-web-bulk --max-seconds 18600 --seed bdl-recovery-seed/plan.json
       - name: Upload sanitized ingestion evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bdl-web-historical-bootstrap-evidence
           path: |
-            portal/test-results/bdl-web-bulk/plan.json
-            portal/test-results/bdl-web-bulk/final-plan.json
+            portal/test-results/bdl-web-bulk/catalogue-task.json
             portal/test-results/bdl-web-bulk/worker-result.json
-            portal/test-results/bdl-web-bulk/landing-summary.json
             portal/test-results/bdl-web-bulk/bootstrap-summary.json
+            portal/test-results/bdl-web-bulk/landed-*.json
+            portal/test-results/bdl-web-bulk/failure-*.json
           if-no-files-found: warn
           retention-days: 3

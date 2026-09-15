@@ -212,8 +212,6 @@ class BdlBulkIngestTests(unittest.TestCase):
             "MediaInMemoryUpload",
             side_effect=lambda raw, **_: SimpleNamespace(raw=raw),
         ):
-            # Size is generated dynamically; mirror it from the media payload by
-            # allowing the verifier to read the response size through a tiny shim.
             request.execute.side_effect = lambda **_: {
                 **created,
                 "size": len(
@@ -239,22 +237,33 @@ class BdlBulkIngestTests(unittest.TestCase):
 
 class BdlBulkWorkflowTests(unittest.TestCase):
     def test_workflow_shares_provider_lock_and_excludes_archives_from_evidence(self):
-        path = ROOT / ".github" / "workflows" / "source-gus-bdl.yml"
+        path = ROOT / ".github" / "workflows" / "bdl-web-bootstrap.yml"
         workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         self.assertEqual("zohelo-pipeline-gus_bdl", workflow["concurrency"]["group"])
-        job = workflow["jobs"]["web_bulk_backfill"]
+        self.assertEqual("false", workflow["concurrency"]["cancel-in-progress"])
+        self.assertEqual({"ingest_web_history"}, set(workflow["jobs"]))
+        job = workflow["jobs"]["ingest_web_history"]
         self.assertIn("refs/heads/main", job["if"])
-        self.assertEqual(["platform_transform_and_release"], job["needs"])
+        self.assertNotIn("needs", job)
+        self.assertEqual("330", job["timeout-minutes"])
         upload = next(
-            step for step in job["steps"] if step.get("name") == "Upload sanitized backfill evidence"
+            step for step in job["steps"] if step.get("name") == "Upload sanitized ingestion evidence"
         )
         evidence_paths = upload["with"]["path"]
         self.assertNotIn("download-", evidence_paths)
         self.assertNotIn("bdl-web-bulk/\n", evidence_paths)
-        plan_step = next(
-            step for step in job["steps"] if step.get("name") == "Plan next unprocessed BDL subgroup"
+        for step in job["steps"]:
+            self.assertNotIn("GUS_BDL_API_KEY", step.get("env", {}))
+            command = step.get("run", "")
+            self.assertNotIn("bdl_platform.py", command)
+            self.assertNotIn("dbt build", command)
+        ingestion = next(
+            step for step in job["steps"]
+            if step.get("name") == "Ingest BDL historical data through authenticated Web UI"
         )
-        self.assertNotIn("GUS_BDL_API_KEY", plan_step.get("env", {}))
+        self.assertIn("src/bdl_web_queue.py", ingestion["run"])
+        self.assertNotIn("src/bdl_web_bootstrap.py", ingestion["run"])
+        self.assertFalse((ROOT / ".github/workflows/source-gus-bdl.yml").exists())
 
     def test_worker_hashes_download_as_stream(self):
         worker = (ROOT / "portal" / "scripts" / "bdl-web-bulk-worker.mjs").read_text(
@@ -277,7 +286,7 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         self.assertIn("generationRequestObservedAt", worker)
         self.assertIn("if (matches && generationRequestObservedAt === null)", worker)
         self.assertNotIn("const generationStartedAt = new Date()", worker)
-        workflow = (ROOT / ".github" / "workflows" / "source-gus-bdl.yml").read_text(
+        workflow = (ROOT / ".github" / "workflows" / "bdl-web-bootstrap.yml").read_text(
             encoding="utf-8"
         )
         self.assertNotIn("downloaded_existing_export", workflow)
