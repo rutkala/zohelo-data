@@ -34,6 +34,19 @@ async function enabledNext(page) {
   }
   throw new Error('No enabled Dalej control after BDL postback');
 }
+async function waitForResultTable(page) {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    let pathname = '';
+    try { pathname = new URL(page.url()).pathname; } catch {}
+    if (/\/bdl\/dane\/podgrup\/tablica/i.test(pathname)) return;
+    const exportVisible = await page.getByText(/^(?:Eksport|Export)$/i, { exact: true }).first().isVisible().catch(() => false);
+    const csvVisible = await page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first().isVisible().catch(() => false);
+    if (exportVisible || csvVisible) return;
+    await page.waitForTimeout(1000);
+  }
+  throw new Error(`BDL result table did not become ready after territorial selection; current URL: ${page.url()}`);
+}
 async function listExports(page) {
   await page.goto('https://bdl.stat.gov.pl/bdl/start', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
   await page.waitForTimeout(900);
@@ -191,11 +204,8 @@ try {
     const body = await page.locator('body').innerText().catch(() => '');
     const selectedMatch = body.match(/Wybranych elementów:\s*([0-9\s]+)/i);
     result.selectedTerritorialUnits = selectedMatch ? Number(selectedMatch[1].replace(/\s/g, '')) : null;
-    const territoryPath = new URL(page.url()).pathname;
-    const navigation = page.waitForURL((url) => url.pathname !== territoryPath, { timeout: 60000 });
     await next.click();
-    await navigation;
-    await page.waitForTimeout(800);
+    await waitForResultTable(page);
     result.tableUrl = page.url();
     result.archive = await captureRelationalExport(page);
     result.status = 'downloaded_relational_export';
