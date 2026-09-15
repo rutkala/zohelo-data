@@ -9,10 +9,6 @@ on:
         default: false
   schedule:
     - cron: '17 */6 * * *'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bdl-web-bootstrap.yml'
 
 permissions:
   contents: read
@@ -22,90 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cleanup_obsolete_history:
-    name: Remove obsolete Actions history
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      github.event_name == 'push' &&
-      contains(github.event.head_commit.message, '[cleanup-actions-history]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Delete runs belonging to removed workflow files
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          import urllib.error
-          import urllib.request
-
-          repo = os.environ['REPOSITORY']
-          token = os.environ['GH_TOKEN']
-          active = {
-              str(path).replace('\\', '/')
-              for pattern in ('.github/workflows/*.yml', '.github/workflows/*.yaml')
-              for path in pathlib.Path('.').glob(pattern)
-          }
-          headers = {
-              'Accept': 'application/vnd.github+json',
-              'Authorization': f'Bearer {token}',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'User-Agent': 'zohelo-actions-cleanup',
-          }
-
-          def request(method, url):
-              req = urllib.request.Request(url, method=method, headers=headers)
-              with urllib.request.urlopen(req, timeout=60) as response:
-                  raw = response.read()
-                  return json.loads(raw) if raw else None
-
-          obsolete = []
-          page = 1
-          while True:
-              payload = request('GET', f'https://api.github.com/repos/{repo}/actions/runs?per_page=100&page={page}')
-              runs = payload.get('workflow_runs', [])
-              if not runs:
-                  break
-              for run in runs:
-                  path = run.get('path')
-                  if path and path not in active and run.get('status') == 'completed':
-                      obsolete.append((run['id'], run.get('name'), path))
-              if len(runs) < 100:
-                  break
-              page += 1
-
-          print(f'Active workflow files: {sorted(active)}')
-          print(f'Obsolete completed runs found: {len(obsolete)}')
-          deleted = 0
-          failures = []
-          for run_id, name, path in obsolete:
-              try:
-                  request('DELETE', f'https://api.github.com/repos/{repo}/actions/runs/{run_id}')
-                  deleted += 1
-                  print(f'Deleted {run_id}: {name} ({path})')
-              except urllib.error.HTTPError as exc:
-                  failures.append((run_id, exc.code, name, path))
-                  print(f'FAILED {run_id}: HTTP {exc.code} {name} ({path})')
-
-          print(f'Deleted obsolete runs: {deleted}')
-          if failures:
-              raise SystemExit(f'Failed to delete {len(failures)} obsolete runs: {failures[:10]}')
-          PY
-
   ingest_web_history:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
