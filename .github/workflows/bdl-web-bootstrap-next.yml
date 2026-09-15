@@ -1,0 +1,13 @@
+name: BDL Web historical bootstrap next
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo placeholder
