@@ -4,6 +4,73 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL Web-only historical ingestion resumed — 15 September 2026
+
+**Full BDL history remains incomplete, but new Web-export data is now landing.** The owner
+reaffirmed that the immediate task is ingestion only: historical numerical data through the
+BDL website first, with API incremental ingestion later. Bronze/Silver/Gold processing is
+not a prerequisite for this collection. Earlier dated descriptions of the mixed BDL
+API/medallion workflow below are historical, not the current execution path.
+
+[PR #122](https://github.com/rutkala/zohelo-data/pull/122) merged as
+`d2b00671a54a7c7f4e98ed15d8909c2aa158ccd1` after the complete
+[data validation](https://github.com/rutkala/zohelo-data/actions/runs/34964952709) and
+[portal validation](https://github.com/rutkala/zohelo-data/actions/runs/34964952700) passed.
+It replaces the approximately 51-minute receipt replay with a small durable Web queue,
+adds paged Web metadata discovery, retains failed subgroups without stopping other exports,
+and keeps conversion/Drive publication failures fail-closed. Fifteen queue regressions include
+actual loop tests for provider failure continuation, restart, hash mismatch and ambiguous writes.
+The stale tests referring to the deleted BDL workflow now assert the retained single-job,
+Web-only workflow instead; the obsolete workflow was not restored.
+
+The marked merge immediately started [BDL Web historical bootstrap run #9,
+34966018325](https://github.com/rutkala/zohelo-data/actions/runs/34966018325) at 11:56 UTC.
+The checkpoint at 12:05 UTC confirms these **three new** landed subgroups:
+
+| Web subgroup | Rows recorded in its verified Landing completion receipt | Completed UTC |
+| --- | ---: | --- |
+| P1315 | 101,640 | 12:01:13 |
+| P1316 | 776,412 | 12:03:28 |
+| P1318 | 215,136 | 12:05:23 |
+
+That is 1,093,188 newly landed source rows, separate from the previously landed P1312
+(287,835 rows). These are source-export row counts, not proof of full BDL coverage or
+published analytical facts. The run continued after P1314 returned BDL's server-error page.
+Fresh Web discovery independently exhausted the root metadata table: 33 categories across
+seven pages. Child group/subgroup discovery and complete historical export coverage remain open;
+the old hash-pinned URL seed is explicitly incomplete and cannot satisfy completion.
+
+**Independent data check:** P1315's completion marker, manifest, original ZIP and Parquet were
+freshly downloaded from Drive. Manifest SHA-256/size, object SHA-256/MD5/size and ZIP CRC passed.
+The freshly read source CSV contains exactly 101,640 rows, years 1995–2001 and 2,904 distinct
+territorial codes. Its manifest and completion marker agree with that row count. No independent
+Parquet row-by-row/SQL comparison was performed in this check: this session lacked a local
+Parquet query engine. The producer performed its normal conversion and upload verification.
+The verified P1315 package is in [its immutable Drive snapshot](https://drive.google.com/drive/folders/1iXp2XDu7o9aIBvIjz9TNBHfy3qWBzqLf).
+
+**Continuation and human operation:** keep the single `ingest_web_history` job in
+`.github/workflows/bdl-web-bootstrap.yml`. Its manual dispatch and six-hour schedule resume the
+same source-owned queue; the runtime allowance is 330 minutes, with a 310-minute extraction
+budget. Do not set `reset_web_bulk` during ordinary continuation. Exact exports, Parquet and
+manifests land under `01_landing/gus_bdl/web_bulk/<subgroup>/<archive-sha256>/`; final completion
+markers and `web-queue-v1.json` are under that Web-bulk area's `_control/`. Run summaries report
+new landed rows/subgroups separately from catalogue exhaustion and outstanding failures. An
+incomplete run that lands nothing exits nonzero. No BDL API observation key is supplied to this
+workflow, and it does not run BDL medallion publication.
+
+**Remaining work, not Done:** complete Web catalogue discovery and all exports; resolve failing
+subgroups including P1313 and P1314 instead of treating failure or absence as completion; verify
+full-history/dimension/territory coverage and continued restart behavior. The next failure repair
+must investigate bounded Web selections for result-table errors rather than only retrying the
+same all-territory request. The original full older-BDL purge/portal replacement and later API
+incremental acceptance are not established by this ingestion restart. No additional owner
+approval is pending for routine repair and verification within the existing boundaries.
+
+**Execution route:** the prior canonical record reports Copilot's monthly quota exhausted.
+This session had no connected Codespace terminal; local Git transport also failed DNS. The lead
+completed this existing bounded repair using the connected GitHub tools and existing CI rather
+than claiming an external-agent dispatch or enabling another paid model/account route.
+
 Updated 14 September 2026. **The owner-approved Google Drive consolidation is live and independently verified.** Implementation [PR #101](https://github.com/rutkala/zohelo-data/pull/101) merged, the compatible portal was deployed, and [apply run 34871823795](https://github.com/rutkala/zohelo-data/actions/runs/34871823795) completed successfully. Independent verification passed at 17:21 UTC.
 The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
 
@@ -184,7 +251,7 @@ starter batches. The current acceptance position is:
 
 | Selected product | Fresh verified evidence | Remaining work |
 | --- | --- | --- |
-| NBP REST A/B/C and gold | [Run 34666809424](https://github.com/rutkala/zohelo-data/actions/runs/34666809424) published release `c4cfcadb-0cd0-4c93-b2b9-f408d082737e`: all four feeds are complete through 11 September, with 426,687 FX fact rows and 3,454 gold fact rows. Capacity remained within its configured bounds. | Continue daily freshness and retained-release checks; no coverage repair is currently indicated. |
+| NBP REST A/B/C and gold | [Run 34666809424](https://github.com/rutkala/zohelo-data/actions/runs/34666809424) published release `c4cfcadb-0cd0-4c93-b2b9a9fb26dd6f536903ae20`: all four feeds are complete through 11 September, with 426,687 FX fact rows and 3,454 gold fact rows. Capacity remained within its configured bounds. | Continue daily freshness and retained-release checks; no coverage repair is currently indicated. |
 | World Bank WDI | [Run 34711375091](https://github.com/rutkala/zohelo-data/actions/runs/34711375091) freshly verified the one current official bulk archive (`complete_current_catalogue`), 3,117 accepted/published API responses and zero publication backlog. | The bulk data remains `raw_distributions_only`; 1,203 API tasks remain, and the archive still needs source-specific Bronze/Silver/Gold/release/catalogue delivery. |
 | Eurostat | [Run 34716919745](https://github.com/rutkala/zohelo-data/actions/runs/34716919745) verified 2,694 of 21,247 current catalogue distributions (12.68%), 3,063 retained accepted versions, 10,310,601,785 raw bytes, 20,138 pending tasks and zero failed pending tasks. | The resumable catalogue backfill is healthy but incomplete and still `raw_distributions_only`; progressive source-shaped modeling must not imply complete catalogue coverage. |
 | GUS BDL | [Run 34715218197](https://github.com/rutkala/zohelo-data/actions/runs/34715218197) published and freshly verified modeled release `dbf19d62-837b-43fd-be0b-9973bbc54dbc`, with 2,416,897 current fact rows. It models 41 of 172,576 source variables (0.0238%), from 2,012 accepted/published Landing responses and zero publication backlog, with 920 campaign tasks pending. | Bronze/Silver/Gold and coverage semantics are live, but variable/history coverage is far from complete. Continue API batches and the reviewed authenticated Web bulk path until catalogue reconciliation proves completion. |
