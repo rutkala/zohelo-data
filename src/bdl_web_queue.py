@@ -3,6 +3,7 @@
 A provider failure remains outstanding; it never becomes a completion marker and
 never prevents other subgroups from being collected. Drive/upload errors stop the
 writer, because an ambiguous write must not be retried as a provider failure.
+Landing stores native bytes only; discovery reads routing metadata, not observations.
 """
 from __future__ import annotations
 
@@ -66,7 +67,7 @@ def new_state(seed_path: Path | None = None) -> dict:
 
 
 def apply_discovery(state: dict, task: dict, result: dict) -> dict:
-    """Accept a fully paged Web table, then queue its children depth-first."""
+    """Accept a fully paged Web routing table, then queue its children depth-first."""
     if result.get("url") != task["url"] or result.get("complete") is not True:
         raise ValueError("Web catalogue task did not prove table exhaustion")
     records = result.get("records")
@@ -117,20 +118,21 @@ def next_candidate(state: dict, landed: set[str], attempted: set[str]) -> dict |
     ), default=None)
 
 
-def progress(state: dict, landed: set[str], completed: int, rows: int) -> dict:
+def progress(state: dict, landed: set[str], completed: int, transferred_bytes: int) -> dict:
     known = set(state["candidates"])
     missing = known - landed
     unverified = [key for key, item in state["candidates"].items() if not item.get("web_catalogue_verified")]
     exhausted = not state["discovery_pending"] and bool(state["discovery_completed"]) and not unverified
     complete = exhausted and bool(known) and not missing and not state["catalogue_errors"]
     return {"status": "complete" if complete else "incomplete", "updated_at_utc": now(),
+            "completion_scope": "native_downloads_only", "content_validation": "not_performed",
             "catalogue_exhausted": exhausted, "known_subgroups": len(known),
             "landed_known_subgroups": len(known & landed), "landed_total_subgroups": len(landed),
             "remaining_known_subgroups": len(missing), "unverified_index_subgroups": len(unverified),
             "pending_catalogue_tables": len(state["discovery_pending"]),
             "failed_subgroups": sorted(key for key in state["failures"] if key not in landed),
             "catalogue_errors": state["catalogue_errors"],
-            "completed_this_run": completed, "rows_landed_this_run": rows}
+            "completed_this_run": completed, "bytes_landed_this_run": transferred_bytes}
 
 
 class DriveControl:
@@ -212,23 +214,25 @@ def run(workspace: Path, max_seconds: int, seed: Path | None = None) -> dict:
     landed, _ = _durable_status(storage, bulk, control)  # Non-landed legacy markers are NOT completion.
     attempted: set[str] = set()
     discovery_attempted: set[str] = set()
-    completed = rows = 0
+    completed = transferred_bytes = 0
     start = time.monotonic()
 
     def report() -> dict:
-        value = progress(state, landed, completed, rows)
+        value = progress(state, landed, completed, transferred_bytes)
         (workspace / "bootstrap-summary.json").write_bytes(rendered(value))
         print(json.dumps(value, ensure_ascii=False), flush=True)
         summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
         if summary_path:
             Path(summary_path).write_text(
                 "# BDL Web historical ingestion\n\n"
-                f"Campaign: **{value['status']}**. New verified subgroups this run: **{completed}**; rows: **{rows:,}**.\n\n"
+                f"Native-download campaign: **{value['status']}**. New files this run: **{completed}**; bytes: **{transferred_bytes:,}**.\n\n"
                 f"Known subgroups: {value['known_subgroups']}; landed: {value['landed_known_subgroups']}; "
                 f"outstanding: {value['remaining_known_subgroups']}. Web catalogue tables still pending: "
                 f"{value['pending_catalogue_tables']}. Catalogue exhausted: {value['catalogue_exhausted']}.\n\n"
                 f"Failed and still pending: {', '.join(value['failed_subgroups']) or 'none'}.\n\n"
-                "No API observations or medallion transformations are run. A checkpoint is not full-source acceptance.\n"
+                "Landing contains unchanged native downloads. No decompression, data parsing, row counts, "
+                "Parquet conversion, API observations or medallion transformations are run. "
+                "Native transfer completion is not validated data coverage or full-source acceptance.\n"
             )
         return value
 
@@ -277,18 +281,19 @@ def run(workspace: Path, max_seconds: int, seed: Path | None = None) -> dict:
                                   "error": str(exc)[:1600]}), flush=True)
                 report()
                 continue
-            # Do not swallow Drive, conversion or ambiguous checkpoint errors.
-            receipt = ingest_archive(archives[0], subgroup, True)
+            # Native transfer only. Uncertain Drive writes must still stop safely.
+            receipt = ingest_archive(archives[0], subgroup, True,
+                                     source_filename=(result.get("archive") or {}).get("suggestedFilename"))
             if receipt.get("status") != "bdl_web_bulk_landed":
                 raise RuntimeError("BDL Landing upload did not verify")
             (workspace / f"landed-{subgroup}.json").write_bytes(rendered(receipt))
             landed.add(subgroup)
             completed += 1
-            rows += int(receipt["row_count"])
+            transferred_bytes += int(receipt["archive_bytes"])
             state["failures"].pop(subgroup, None)
             store.save(state)
             print(json.dumps({"status": "bdl_web_subgroup_landed", "subgroup_id": subgroup,
-                              "row_count": receipt["row_count"], "completed_this_run": completed}), flush=True)
+                              "archive_bytes": receipt["archive_bytes"], "completed_this_run": completed}), flush=True)
             report()
         return report()
     finally:
