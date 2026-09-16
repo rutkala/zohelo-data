@@ -4,6 +4,53 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Native-only Landing for all sources — 16 September 2026
+
+**Q-LANDING-001 is resolved:** the owner requires ingestion to download and store native
+files/responses unchanged, with no data processing in the Landing step. This applies to
+all existing and future sources, both full loads and increments. [ADR 0009](decisions/0009-native-only-landing.md)
+and the first section of [AGENTS.md](../AGENTS.md) make the rule mandatory. Older descriptions
+below of generated Landing Parquet, parsing and validation during ingestion are historical;
+they are not exceptions to this decision. Only necessary transport/navigation, byte integrity
+and lightweight resume metadata remain in ingestion. Content processing starts downstream.
+
+**BDL implementation:** [PR #124](https://github.com/rutkala/zohelo-data/pull/124) removes archive
+extraction, CSV parsing, schema inspection, row counting and Parquet conversion from
+`bdl_bulk_ingest.py`. It uploads the native object under its original provider filename when
+available, with small manifests/checkpoints in the existing `_control` area. New v2 receipts
+say `landing_scope: native_bytes_only` and `content_validation: not_performed`; the queue reports
+files and bytes. Existing completed raw downloads remain resumable; this change does not purge
+old files, repeat successful downloads or mutate published analytical releases. Seven new
+native-transfer regressions and the existing queue execution tests cover opaque/malformed
+content, preserved bytes, filename forwarding, retry metadata and fail-closed storage errors.
+CI/merge and subsequent production evidence are attached to PR #124; code completion does
+not by itself establish new live downloads or full historical coverage.
+
+**Known pre-change blocker:** run [35007743970](https://github.com/rutkala/zohelo-data/actions/runs/35007743970)
+downloaded P1463 through the Web UI but stopped in DuckDB CSV conversion before persisting the
+native ZIP. The raw-only path removes that dependency rather than ignoring malformed rows.
+The previous diagnostic recorded 33 landed exports and incomplete catalogue discovery. That is
+a dated checkpoint, not a refreshed total. Browser export failures and catalogue gaps remain
+separate outstanding work; the native-only change does not claim they have been resolved.
+
+**Cross-source rollout remains open, not Done:** apply the same boundary to WDI and Eurostat
+API/bulk paths and their generated response-envelope publication, then NBP acquisition versus
+validation/build orchestration, and OpenData acquisition versus its separate Bronze loader.
+Inspect each real execution path; retain already-native files and current consumer pointers;
+move remaining unpack/parse/convert/validate work into independently executable downstream
+processing with its own checkpoint and failure state. No other source adapter is claimed to
+have been refactored by PR #124. Verify byte-preserving transfer and that a downstream parsing
+failure cannot block the next download for each source before accepting that rollout.
+
+**Immediate continuation:** review/pass the existing data gate, merge the BDL correction,
+start the existing single Web workflow using its explicit resume trigger, and verify native
+objects/checkpoints, especially P1463. Do not reset the Web queue or introduce another workflow.
+Full BDL catalogue/history completion, the earlier old-BDL purge/portal replacement and later
+API incremental acceptance remain open. No further owner approval is needed for these routine
+changes within the existing boundaries. The lead uses connected GitHub/CI because the recorded
+Copilot quota blocker remains and this session has no Codespace terminal; local Git DNS also
+failed. No external-agent dispatch or additional paid service is claimed.
+
 ### BDL Web-only historical ingestion resumed — 15 September 2026
 
 **Full BDL history remains incomplete, but new Web-export data is now landing.** The owner
