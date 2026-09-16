@@ -53,7 +53,7 @@ class QueueExecutionTests(unittest.TestCase):
         raw = b"PK-test-fixture-" + subgroup.encode()
         (Path(env["BDL_BULK_OUT_DIR"]) / f"download-{subgroup}.zip").write_bytes(raw)
         return {"subgroupId": subgroup, "status": "downloaded_relational_export",
-                "archive": {"sha256": sha256(raw).hexdigest()}}
+                "archive": {"sha256": sha256(raw).hexdigest(), "suggestedFilename": f"native-{subgroup}.zip"}}
 
     def test_provider_error_continues_to_next_subgroup_and_retains_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -66,14 +66,18 @@ class QueueExecutionTests(unittest.TestCase):
                 return self.downloaded(script, env, timeout, result_path)
             with patch.object(queue, "invoke", side_effect=worker), patch.object(
                 bdl_bulk_ingest, "ingest_archive",
-                return_value={"status": "bdl_web_bulk_landed", "row_count": 12},
+                return_value={"status": "bdl_web_bulk_landed", "archive_bytes": 12},
             ) as publish:
                 result = queue.run(Path(directory), 600)
             self.assertEqual(["P1", "P2"], attempted)
             publish.assert_called_once()
             self.assertEqual("P2", publish.call_args.args[1])
+            self.assertEqual("native-P2.zip", publish.call_args.kwargs["source_filename"])
             self.assertEqual(1, result["completed_this_run"])
-            self.assertEqual(12, result["rows_landed_this_run"])
+            self.assertEqual(12, result["bytes_landed_this_run"])
+            self.assertNotIn("rows_landed_this_run", result)
+            self.assertEqual("native_downloads_only", result["completion_scope"])
+            self.assertEqual("not_performed", result["content_validation"])
             self.assertEqual("incomplete", result["status"])
             self.assertEqual(["P1"], result["failed_subgroups"])
             self.assertEqual(1, saves[-1]["failures"]["P1"]["attempts"])
@@ -98,7 +102,7 @@ class QueueExecutionTests(unittest.TestCase):
             self.environment(directory, landed={"P1"})
             with patch.object(queue, "invoke", side_effect=self.downloaded) as worker, patch.object(
                 bdl_bulk_ingest, "ingest_archive",
-                return_value={"status": "bdl_web_bulk_landed", "row_count": 12},
+                return_value={"status": "bdl_web_bulk_landed", "archive_bytes": 12},
             ):
                 result = queue.run(Path(directory), 600)
             self.assertEqual(1, worker.call_count)
