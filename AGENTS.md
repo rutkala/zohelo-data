@@ -2,6 +2,13 @@
 
 Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
 
+**Landing is native transfer only — all sources.**
+
+- Apply [ADR 0009](docs/decisions/0009-native-only-landing.md) to every current and future source, full loads and increments alike. Download and store the original file/response bytes in the provider's native format. Do not unpack archives, parse data, infer schemas, count records, validate business content, deduplicate observations, add provenance columns, convert to Parquet or run dbt in the ingestion step.
+- Only authentication, source navigation/discovery/pagination, quotas, bounded transfer/retries, byte integrity and small resumable control records belong in ingestion. Keep technical metadata separate from native payloads. Do not make data processing or portal queryability a prerequisite for receiving the next file.
+- Parsing/conversion/validation are separate downstream Landing-to-Bronze work with independent failures and checkpoints. Report files/bytes and native-transfer completion, not unmeasured row counts or full validated data coverage. Preserve successful native downloads for downstream replay.
+- This owner decision overrides conflicting older ingestion instructions below. Apply it to existing adapters without claiming they have all been migrated merely because this rule is documented. Keep the rollout and remaining work in `docs/deliverables.md`.
+
 **Own the technical handoff.**
 
 - The owner's initial goal and boundaries authorize the work within them. Own the complete goal and every necessary deliverable; proceed autonomously through routine design, implementation, branches, pull requests, checks, merge, deployment and production verification. Ask only when a consequential business choice, missing credential or boundary change is required.
@@ -21,7 +28,7 @@ Shared instructions for coding work in this repository. Run commands from the re
 - Use this file as the common guide for GitHub agents and Codespaces work. For a tool that does not load it automatically, include “Read AGENTS.md and docs/architecture.md before editing” in its task prompt.
 - Keep Claude/Gemini/Copilot entrypoints as pointers to this guide, not competing instruction sets. Repository instructions guide agents; executable checks and reviewed evidence establish correctness.
 - Separate observed facts, technical inferences and unresolved business decisions. Verify uncertain technical behavior against code, fixtures or current primary documentation. Ask the owner only for a consequential business choice; do not invent metric definitions, revision policy, availability promises or a new paid service.
-- Research each source's official terminology and prepare sourced business definitions before asking the owner about analytical use cases. Keep unresolved business questions, their stable IDs, researched options, and recorded answers in [docs/deliverables.md](docs/deliverables.md), the single project-status record. The owner may answer an ID in chat; update that record after an explicit decision.
+- Research each source's official terminology and prepare sourced business definitions before asking the owner about analytical use cases official docs cannot settle. Keep unresolved business questions, their stable IDs, researched options, and recorded answers in [docs/deliverables.md](docs/deliverables.md), the single project-status record. The owner may answer an ID in chat; update that record after an explicit decision.
 - Keep the portal data-first: its single native dbt catalogue shows published release data, lineage, and approved metric definitions only. Do not put project-management or owner-review flows in the portal or catalogue. Keep proposed definitions visibly distinct from approved, executable metrics, and describe a current portal change as awaiting validation and main deployment until both have occurred.
 - Apply an evidence-led improvement loop to every solution, including the portal: observe real use, correctness, coverage, failures and operating cost; reprioritize the remaining authorized work toward usefulness and owner satisfaction; then validate the next increment. Preserve operation by a human without AI, cost and secret boundaries, reuse terms, production serialization, and [the one canonical GitHub status record](docs/deliverables.md). This loop governs active authorized work and does not imply unbounded background activity.
 - Apply the owner-approved [delegation and cost policy](docs/collaboration.md#delegation-and-cost-policy): use GitHub Copilot Pro or Codespace AGY first for implementation; internal agents are a justified fallback. Keep one active engineering task and one implementation owner. The lead plans, defines architecture and acceptance, reviews, integrates and communicates. Choose lighter internal models explicitly when needed, preserve the personal-Gemini-only boundary, and report actual dispatch and results without claiming unmeasured savings.
@@ -83,7 +90,7 @@ The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use
 - Keep credentials and downloaded datasets out of Git and PR output. Never put OAuth refresh tokens, client secrets or service-account private keys in the portal bundle. Keep generated databases, `target/`, `logs/`, `node_modules/` and build output out of changes.
 - Report the commands actually run, their outcomes, skipped checks and missing prerequisites. Explain behavior changes and relevant recovery/consumer impacts in the PR. Update this guide when a task changes the documented workflow.
 
-Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-configuration/agents-md), [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-custom-instructions/add-repository-instructions).
+Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-configuration/agents-md), [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-repository-instructions).
 
 ## Audit handoff and source-defined semantics
 
