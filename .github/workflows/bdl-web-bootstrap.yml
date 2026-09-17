@@ -7,8 +7,8 @@ on:
         description: Clear BDL Web-bulk Landing/checkpoints before starting
         type: boolean
         default: false
-  schedule:
-    - cron: '17 */6 * * *'
+  # No recurring schedule until full Web-history collection is established.
+  # A marked, reviewed main-branch change is an explicit one-time resume only.
   push:
     branches: [main]
     paths:
@@ -29,7 +29,8 @@ jobs:
   ingest_web_history:
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name != 'push' || contains(github.event.head_commit.message, '[resume-bdl-web]'))
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'push' && contains(github.event.head_commit.message, '[resume-bdl-web]')))
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
