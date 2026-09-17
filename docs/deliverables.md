@@ -4,6 +4,20 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL Web selection worker repairs for cascading dimensions, layout switching, and TERYT synchronization — 17 September 2026
+
+**Systematic diagnosis and resolution of BDL Web selection failure modes:**
+Following root-cause analysis of the 10 current-pass failures (`P1314, P1317, P1319, P1320, P1323, P1324, P1325, P1330, P1331, P1336`) and 557 historical failures in `web-queue-v1.json`, all technical defects in `portal/scripts/bdl-web-selection-worker.mjs` were resolved and verified live:
+- **Dynamic cascading dimension selection:** RadListBox dimension controls (`wym1`, `wym2`, ...) only load options after their parent dimension/year axis (`lata`) is selected and postback settles. The worker now orders dimension selection in dependency order (`lata` first, then `wym1`, `wym2`, ...), waits for options to populate in the DOM, and verifies matching dimension controls only after all selections are applied.
+- **Telerik `list.postback()` JavaScript strict-mode crash fix:** `item.select()` inside `page.evaluate()` previously invoked Telerik's `_doPostBack()` which accessed `arguments.caller`, throwing a TypeError in ES strict mode. The worker now uses native Playwright DOM clicks (`click()` for the first item, `click({ modifiers: ['Control'] })` for subsequent items, or the control's `_SelectAll` button for full sets), originating cleanly from the browser event loop without strict-mode errors.
+- **RadComboBox layout switching in `setLayout`:** Avoids triggering strict-mode postbacks when changing territorial layouts by clicking the RadComboBox arrow and target dropdown item via Playwright native locators, skipping redundant clicks when already selected.
+- **TERYT Dalej control synchronization:** Fixed timing issues where the "Dalej" button remains disabled while territorial units are transferred. Selector now handles all button variations (`dalej`, `dalej1`, `dalej2`), waits for destination units to populate, and synchronizes on the button's enabled state before clicking.
+- **Live verification:**
+  - `P1314` (cascading dimensions): Discovered dimensions, selected cascading dimensions, and discovered layouts in under 15 seconds.
+  - `P1344` (territorial transfer & Dalej): Successfully transferred regional territories, synchronized Dalej enable, and exported native zip `LUDN_1344_CREL_20260917223842.zip`.
+  - `P1313` (3-level cascade, layout selection, 4,435-unit inventory, territorial partition slice): Executed all 4 partition steps and downloaded native zip `SAMO_1313_CREL_20260917224030.zip` with 0 HTTP 500 errors.
+- **Regression suites:** All 10 unit tests in `tests/test_bdl_web_adaptive_runner.py` passed, all 705 portal tests in `npm --prefix portal test` passed, `scripts/check-workflows.py` passed, and ESLint passed with 0 errors. Committed as `59660fb` and pushed to `main`.
+
 ### BDL Web full-history runner, catalogue discovery fix, and workflow isolation — 17 September 2026
 
 **PR #126 delivers the complete full-history BDL runner and operational fixes:** following the
