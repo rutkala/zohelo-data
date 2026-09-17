@@ -415,13 +415,21 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         "verified_at_utc": now()
                     }
                     save_plan(plan_store, existing_plan)
+                    consecutive_failures = 0
                     state["in_flight"] = []
                     store.save(state)
                     continue
                 except Exception:
                     existing_plan = None
 
-            plan = existing_plan if mode == "resume" else None
+            if mode == "resume" and existing_plan:
+                summ = parts.summary(existing_plan)
+                if summ["files"] == 0 and (summ["blocked_selections"] > 0 or subgroup in state.get("failures", {})):
+                    plan = None
+                else:
+                    plan = existing_plan
+            else:
+                plan = None
             if plan is None:
                 _clean_ephemeral(workspace)
                 whole_node = parts.task("download", dimensions={}, layout=None, territories=["all"])
@@ -438,6 +446,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         save_plan(plan_store, whole_plan)
                         files += 1
                         transferred += receipt["archive_object"]["size"]
+                        consecutive_failures = 0
                         state["pass_outcomes"][subgroup] = {"status": "landed", "files": 1, "bytes": receipt["archive_object"]["size"], "completed_at_utc": now()}
                         state["failures"].pop(subgroup, None)
                         state["in_flight"] = []
@@ -464,7 +473,9 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             save_plan(plan_store, plan)
 
             subgroup_tasks_processed = 0
+            subgroup_failures = 0
             max_subgroup_slice = 15
+            max_subgroup_failures = 5
             while subgroup_tasks_processed < max_subgroup_slice:
                 if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
                     break
@@ -497,6 +508,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     process_result(plan, node, result)
                 except WorkerFailure as exc:
                     consecutive_failures += 1
+                    subgroup_failures += 1
                     disposition = parts.failed(plan, node, str(exc), exc.failure_class)
                     state["failures"][subgroup] = {"last_attempt_utc": now(), "error": str(exc),
                                                    "selection_id": node["id"], "failure_class": exc.failure_class}
@@ -505,7 +517,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     if consecutive_failures >= 20:
                         reason = "interrupted"
                         raise
-                    if disposition == "stop":
+                    if subgroup_failures >= max_subgroup_failures or disposition == "stop":
                         break
                     if disposition == "retry":
                         time.sleep(2)
@@ -515,6 +527,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     receipt = persist_download(storage, session, landing_root, control, plan, node, result, workspace, part_store)
                     parts.accept_download(plan, node, receipt)
                     consecutive_failures = 0
+                    subgroup_failures = 0
                     files += 1
                     transferred += receipt["archive_object"]["size"]
                     (workspace / f"landed-{subgroup}-{node['id']}.json").write_bytes(rendered(receipt))
@@ -523,6 +536,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
             summary_val = parts.summary(plan)
             if summary_val["complete"]:
+                consecutive_failures = 0
                 state["failures"].pop(subgroup, None)
                 state["pass_outcomes"][subgroup] = {"status": "landed", "files": summary_val["files"], "bytes": summary_val["bytes"], "completed_at_utc": now()}
             elif summary_val.get("blocked_selections", 0) > 0:

@@ -477,6 +477,60 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
             # P2 must appear before the final tasks of P1
             self.assertLess(p2_indices[0], p1_indices[-1], "P2 must run before P1 finishes all slices")
 
+    def test_subgroup_repeated_failures_are_isolated_and_do_not_abort_entire_run(self):
+        """When a single subgroup repeatedly fails, it is isolated after max_subgroup_failures without killing the run."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            candidates = {"P1": make_candidate(1), "P2": make_candidate(2)}
+            self.setup_environment(workspace, candidates)
+
+            order = []
+            def fake_invoke(item, node, ws, timeout):
+                order.append(item["subgroup_id"])
+                if item["subgroup_id"] == "P1":
+                    if node["scope"]["kind"] == "download" and node["scope"].get("territories") == ["all"]:
+                        raise adaptive.WorkerFailure("Large selection", "provider_error")
+                    if node["scope"]["kind"] == "dimensions":
+                        return {"status": "dimensions", "subgroup_id": "P1", "selection_id": node["id"],
+                                "dimensions": [{"id": "years", "year_axis": True, "options": [{"value": "2024", "label": "2024"}]}]}
+                    if node["scope"]["kind"] == "layouts":
+                        return {"status": "layouts", "subgroup_id": "P1", "selection_id": node["id"],
+                                "layouts": [{"id": "l", "kind": "select", "value": "1", "label": "Standard"}]}
+                    if node["scope"]["kind"] == "territories":
+                        return {"status": "territories", "subgroup_id": "P1", "selection_id": node["id"],
+                                "items": [{"value": str(i), "label": f"T{i}"} for i in range(100)], "advertised_count": 100}
+                    if node["scope"]["kind"] == "download":
+                        raise adaptive.WorkerFailure("Timeout on P1 chunk", "provider_timeout")
+                elif item["subgroup_id"] == "P2":
+                    return {"status": "download", "subgroup_id": "P2", "selection_id": node["id"]}
+                raise ValueError(f"Unexpected invocation: {item['subgroup_id']}")
+
+            def fake_persist(storage, session, landing_root, control, p, node, result, ws, part_store):
+                raw = b"data"
+                receipt = {
+                    "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+                    "record_type": "native_partition_receipt", "subgroup_id": p["subgroup_id"],
+                    "selection_id": node["id"], "selection": node["scope"],
+                    "landing_scope": "native_bytes_only", "content_validation": "not_performed",
+                    "archive_object": {"id": f"drive-{node['id'][:8]}", "size": len(raw), "sha256": sha256(raw).hexdigest(), "md5": "a" * 32},
+                    "completed_at_utc": queue.now(),
+                }
+                if part_store:
+                    part_store.save(receipt)
+                return receipt
+
+            with patch.object(adaptive, "invoke_selection", side_effect=fake_invoke), \
+                 patch.object(adaptive, "persist_download", side_effect=fake_persist), \
+                 patch.object(adaptive, "check_stored_receipt"):
+                result = adaptive.run(workspace, max_seconds=60)
+
+            self.assertEqual("pass_complete", result["status"])
+            self.assertEqual(1, result["new_files_this_run"])
+            p1_count = order.count("P1")
+            # Whole attempt (1) + dimensions (1) + layouts (1) + territories (1) + 5 failed download chunks = 9
+            self.assertLessEqual(p1_count, 12, "P1 must be capped and not run indefinitely")
+            self.assertIn("P2", order, "P2 must still run despite P1 failures")
+
 
 if __name__ == "__main__":
     unittest.main()

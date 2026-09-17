@@ -104,7 +104,7 @@ def accept_layouts(plan, node, layouts):
             "layouts", inventory=layouts)
 
 
-def accept_territories(plan, node, items, advertised_count, initial_size=25, max_size=250, cell_budget=200000):
+def accept_territories(plan, node, items, advertised_count, initial_size=25, max_size=250, cell_budget=20000):
     if node["scope"]["kind"] != "territories":
         raise ValueError("Unexpected territory response")
     identifiers = values(items)

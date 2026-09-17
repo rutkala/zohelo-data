@@ -34,10 +34,10 @@ async function settle() {
   await page.waitForFunction(() => {
     const manager = window.Sys?.WebForms?.PageRequestManager?.getInstance?.();
     return !manager?.get_isInAsyncPostBack?.();
-  }, null, { timeout: 60000 });
+  }, null, { timeout: 120000 });
   // The ready state is rechecked after UI postback dispatch, not used as a success signal alone.
   await page.waitForTimeout(350);
-  await page.waitForFunction(() => !window.Sys?.WebForms?.PageRequestManager?.getInstance?.()?.get_isInAsyncPostBack?.(), null, { timeout: 60000 });
+  await page.waitForFunction(() => !window.Sys?.WebForms?.PageRequestManager?.getInstance?.()?.get_isInAsyncPostBack?.(), null, { timeout: 120000 });
   if (rateLimited) throw new Error('RATE_LIMIT: provider requested fewer requests');
   if (/\/errors\//i.test(new URL(page.url()).pathname)) throw new Error('PROVIDER: BDL server-error page');
 }
@@ -238,7 +238,7 @@ async function exportZip() {
   await save();
   await next();
   // A table URL alone is NOT a ready table (the old worker returned too early).
-  const deadline = Date.now() + 120000;
+  const deadline = Date.now() + 180000;
   let ready = false;
   while (Date.now() < deadline) {
     await settle();
@@ -253,7 +253,7 @@ async function exportZip() {
   const choice = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
   await choice.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
   const downloadPromise = page.waitForEvent('download', { timeout: 180000 });
-  await choice.click();
+  await choice.click({ noWaitAfter: true });
   const download = await downloadPromise;
   const name = download.suggestedFilename();
   const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -328,7 +328,7 @@ try {
         result.stage = 'download';
         await save();
         const downloadPromise = page.waitForEvent('download', { timeout: 360000 });
-        await downloadButton.click();
+        await downloadButton.click({ noWaitAfter: true });
         const download = await downloadPromise;
         const name = download.suggestedFilename();
         const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
