@@ -6,6 +6,7 @@ with chronological as (
         lag(value_json) over observation_window as previous_value_json,
         lag(status_code) over observation_window as previous_status_code,
         lag(is_missing) over observation_window as previous_is_missing,
+        lag(source_updated_at) over observation_window as previous_source_updated_at,
         row_number() over observation_window as observation_number
     from {{ ref('br_eurostat_observations') }}
     window observation_window as (
@@ -21,6 +22,7 @@ run_starts as (
             when value_json is distinct from previous_value_json then 1
             when status_code is distinct from previous_status_code then 1
             when is_missing is distinct from previous_is_missing then 1
+            when source_updated_at is distinct from previous_source_updated_at then 1
             else 0
         end as starts_revision
     from chronological
