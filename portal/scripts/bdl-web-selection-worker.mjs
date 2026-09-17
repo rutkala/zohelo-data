@@ -76,21 +76,45 @@ async function dimensions() {
   });
 }
 
-async function selectDimension(control, wanted) {
-  if (control.kind === 'select') {
-    await page.locator(`[id="${control.id}"]`).selectOption(wanted);
-  } else {
-    await page.evaluate(({ id, values }) => {
-      const list = window.$find(id);
-      const items = values.map(v => list.findItemByValue(v));
-      if (items.some(x => !x)) throw new Error('Selection value missing from dimension');
-      list.trackChanges();
-      list.clearSelection();
-      for (const item of items) item.select();
-      list.commitChanges();
-    }, { id: control.id, values: wanted });
+async function selectDimension(controlId, wanted) {
+  const id = typeof controlId === 'string' ? controlId : controlId.id;
+  const isSelect = await page.evaluate(id => document.getElementById(id)?.tagName === 'SELECT', id);
+  if (isSelect) {
+    await page.locator(`[id="${id}"]`).selectOption(wanted);
+    await settle();
+    return;
   }
-  await settle();
+
+  const totalOptions = await page.evaluate(id => window.$find(id)?.get_items?.()?.get_count?.() || 0, id);
+  const selectAllBtn = page.locator(`[id="${id.replace('_ElementsList', '_SelectAll')}"]`);
+  const canSelectAll = wanted.length === totalOptions &&
+    await selectAllBtn.isVisible().catch(() => false) &&
+    await selectAllBtn.isEnabled().catch(() => false);
+
+  if (canSelectAll) {
+    await selectAllBtn.click();
+    await settle();
+  } else {
+    const itemDomIds = await page.evaluate(({ id, values }) => {
+      const list = window.$find(id);
+      if (!list) throw new Error('Listbox not found: ' + id);
+      return values.map(v => {
+        const item = list.findItemByValue(v);
+        if (!item) throw new Error(`Item with value ${v} not found in ${id}`);
+        return item.get_element()?.id;
+      });
+    }, { id, values: wanted });
+
+    for (let i = 0; i < itemDomIds.length; i++) {
+      const locator = page.locator(`[id="${itemDomIds[i]}"]`);
+      if (i === 0) {
+        await locator.click();
+      } else {
+        await locator.click({ modifiers: ['Control'] });
+      }
+    }
+    await settle();
+  }
 }
 
 async function infoCount() {
@@ -102,8 +126,12 @@ async function infoCount() {
 }
 
 async function next() {
-  const button = page.locator('#ctl00_ContentPlaceHolder_dalej1:visible, #ctl00_ContentPlaceHolder_dalej2:visible').first();
-  await button.waitFor({ state: 'visible', timeout: 30000 });
+  const css = '#ctl00_ContentPlaceHolder_dalej, #ctl00_ContentPlaceHolder_dalej1, #ctl00_ContentPlaceHolder_dalej2';
+  await page.waitForFunction((sel) => {
+    const els = [...document.querySelectorAll(sel)];
+    return els.some(e => !e.disabled && !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length));
+  }, css, { timeout: 60000 });
+  const button = page.locator('#ctl00_ContentPlaceHolder_dalej:visible, #ctl00_ContentPlaceHolder_dalej1:visible, #ctl00_ContentPlaceHolder_dalej2:visible').first();
   await button.click({ timeout: 60000 });
   await settle();
 }
@@ -138,8 +166,19 @@ async function layouts() {
 async function setLayout(layout) {
   const available = await layouts();
   if (!available.some(x => x.id === layout.id && x.kind === layout.kind && x.value === layout.value)) throw new Error('PROTOCOL: layout inventory changed');
-  if (layout.kind === 'select') await page.locator(`[id="${layout.id}"]`).selectOption(layout.value);
-  else await page.evaluate(({ id, value }) => window.$find(id).findItemByValue(value).select(), layout);
+  const current = await page.evaluate(({ id, kind }) => kind === 'select'
+    ? document.getElementById(id).value : String(window.$find(id).get_selectedItem()?.get_value()), layout);
+  if (current === layout.value) return;
+
+  if (layout.kind === 'select') {
+    await page.locator(`[id="${layout.id}"]`).selectOption(layout.value);
+  } else {
+    const arrow = page.locator(`[id="${layout.id}_Arrow"]`);
+    if (await arrow.isVisible().catch(() => false)) await arrow.click();
+    const targetOption = available.find(x => x.value === layout.value);
+    const item = page.locator('.rcbItem').filter({ hasText: targetOption.label }).first();
+    await item.click();
+  }
   await settle();
   const selected = await page.evaluate(({ id, kind }) => kind === 'select'
     ? document.getElementById(id).value : String(window.$find(id).get_selectedItem()?.get_value()), layout);
@@ -275,6 +314,10 @@ try {
         await transferAll.waitFor({ state: 'visible', timeout: 10000 });
         await transferAll.click();
         await settle();
+        await page.waitForFunction(() => {
+          const list = window.$find('ctl00_ContentPlaceHolder_terytList_SelectedUnits');
+          return (list?.get_items?.()?.get_count?.() || 0) > 0;
+        }, null, { timeout: 45000 }).catch(() => {});
         await exportZip();
       } else {
         throw new Error('PROVIDER: TERYT menu unavailable for whole-subgroup export');
@@ -319,10 +362,28 @@ try {
     result.selected_information = await infoCount();
     result.status = 'dimensions';
   } else {
-    const current = await dimensions();
-    if (!same(current.map(d => d.id), Object.keys(scope.dimensions))) throw new Error('PROTOCOL: dimension controls changed');
-    for (const control of current) await selectDimension(control, scope.dimensions[control.id]);
+    const targetControlIds = Object.keys(scope.dimensions).sort((a, b) => {
+      const isLataA = /lata/i.test(a);
+      const isLataB = /lata/i.test(b);
+      if (isLataA && !isLataB) return -1;
+      if (!isLataA && isLataB) return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
+
+    for (const controlId of targetControlIds) {
+      await page.waitForFunction(id => {
+        const el = document.getElementById(id);
+        if (!el) return false;
+        if (el.tagName === 'SELECT') return el.options.length > 0;
+        const list = typeof window.$find === 'function' ? window.$find(id) : null;
+        return (list?.get_items?.()?.get_count?.() || 0) > 0;
+      }, controlId, { timeout: 30000 });
+
+      await selectDimension(controlId, scope.dimensions[controlId]);
+    }
+
     const selected = await dimensions();
+    if (!same(selected.map(d => d.id), targetControlIds)) throw new Error('PROTOCOL: dimension controls mismatch after selection');
     if (selected.some(d => !same(d.selected, scope.dimensions[d.id]))) throw new Error('PROTOCOL: exact dimension selection was not retained');
     result.selected_information = await infoCount();
     if (result.selected_information > 3500) throw new Error('PROTOCOL: selection still exceeds normal Web table limit');
