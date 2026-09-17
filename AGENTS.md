@@ -15,6 +15,7 @@ Shared instructions for coding work in this repository. Run commands from the re
 - Do not silently narrow scope, treat an intermediate as the requested outcome, or stop because one implementation increment works. If completion is not yet possible, record the verified progress, remaining work and either the active continuation or a concrete blocker in [docs/deliverables.md](docs/deliverables.md).
 - Creating a branch or passing tests is not the same as updating `main` or the live portal. State which of these has actually happened, and finish the authorized delivery or name the concrete blocker.
 - Mark work **Done** only when the user's outcome is validated, the change is merged and deployed where applicable, and claimed data coverage is established by actual collection and coverage evidence. Code, a workflow, a successful sample, or a running backfill is an intermediate state when more of the authorized outcome remains.
+- After each successful pull request merge into `main`, delete the feature branch on `origin` and prune local tracking branches and worktrees to keep the repository clean.
 - Keep owner-facing updates short and in plain language. Ask one necessary business question at a time. If an owner action is unavoidable, give one clear next step.
 - Do not imply that work continues after a reply unless a specific background task has actually been started.
 
