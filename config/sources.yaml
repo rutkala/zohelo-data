@@ -128,7 +128,29 @@ sources:
       description: "Complete World Development Indicators CSV archive with every supplied economy, aggregate, indicator, annual value and metadata member."
 
   # ==========================================
-  # SOURCE 7: OpenData.org (Entity Resolution)
+  # SOURCE 7: Eurostat
+  # ==========================================
+  eurostat:
+    metadata:
+      domain: "public_statistics"
+      category: "european_statistics"
+      geography: "europe"
+      provider_type: "public_governed_official"
+      display_name: "Eurostat"
+      source_name: "Statistical Office of the European Union"
+      provider_url: "https://ec.europa.eu/eurostat/"
+      documentation_url: "https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-introduction"
+      publication_schedule_url: "https://ec.europa.eu/eurostat/web/main/data/database"
+      frequency: "source-updated; catalogue and structures checked on the provider schedule"
+      coverage_start: "source_defined"
+      reuse_terms_url: "https://ec.europa.eu/eurostat/web/main/help/copyright-notice"
+      reuse_summary: "Eurostat reuse is generally permitted with attribution; dataset, third-party, geography and detailed-trade exceptions remain controlling."
+      quote_unit: "Dataset-specific units and classifications are preserved in the complete native dimensional key."
+      methodology_notes: "Values are not generically additive. The progressive API model covers only the reviewed three-dataset, 81-country-series contract and never represents complete official catalogue coverage."
+      description: "Eurostat retained JSON-stat API slices and full official distributions, with current progressive typed access while catalogue backfill continues."
+
+  # ==========================================
+  # SOURCE 8: OpenData.org (Entity Resolution)
   # ==========================================
   opendata_org:
     metadata:

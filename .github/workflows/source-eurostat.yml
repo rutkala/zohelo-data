@@ -32,6 +32,17 @@ on:
       - 'src/ingestion/eurostat_bulk_recovery.py'
       - 'src/ingestion/bulk_transport.py'
       - 'src/ingestion/bulk_publication.py'
+      - 'src/eurostat_*.py'
+      - 'src/release_protocol.py'
+      - 'src/layout_resolution.py'
+      - 'src/medallion_navigation.py'
+      - 'models/landing/sources.yml'
+      - 'models/bronze/br_eurostat_*.sql'
+      - 'models/silver/*eurostat_*.sql'
+      - 'models/gold/*eurostat_*.sql'
+      - 'models/gold/marts/mart_eurostat_*.sql'
+      - 'models/semantic/eurostat_metrics.yml'
+      - 'models/eurostat_schema.yml'
       - 'config/source-campaigns.yaml'
       - 'config/sources.yaml'
       - '.github/workflows/source-eurostat.yml'
@@ -169,3 +180,39 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: python src/source_campaign.py --source eurostat --backend drive --allow-production-write --verify-landing
+
+  platform_transform_and_release:
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
+      queue: max
+    needs: collect_and_publish
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      needs.collect_and_publish.result == 'success' &&
+      (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-source-campaigns]') || contains(github.event.head_commit.message, '[run-eurostat]'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Build and publish progressive Eurostat API platform release
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/eurostat_platform.py --allow-production-write
+      - name: Verify current Eurostat modeled release in a fresh process
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: python src/eurostat_platform.py --allow-production-write --verify-current

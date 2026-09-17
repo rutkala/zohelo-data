@@ -927,7 +927,8 @@ async function wdiPlatformFixture() {
     size: manifestBytes.byteLength,
   });
   vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) => {
-    if (id === "wdi-pointer-id" || id === "wdi-canonical-ptr" || id === "wdi-legacy-ptr") return pointerBytes;
+    if (id === "wdi-pointer-id" || id === "wdi-canonical-ptr" || id === "wdi-legacy-ptr")
+      return pointerBytes;
     if (id === "wdi-business-art") return catalogueBytes;
     return manifestBytes;
   });
@@ -953,9 +954,12 @@ describe("Canonical consolidated layout release resolution", () => {
   it("resolves canonical releases/wdi while genuinely absent source folders stay optional", async () => {
     const { pointerBytes } = await wdiPlatformFixture();
     vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
-      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name: "zohelo-data" }];
-      if (name === "releases" && parentId === "root-id") return [{ id: "releases-root-id", name: "releases" }];
-      if (name === "wdi" && parentId === "releases-root-id") return [{ id: "wdi-rel-id", name: "wdi" }];
+      if (name === "zohelo-data" && parentId === "root")
+        return [{ id: "root-id", name: "zohelo-data" }];
+      if (name === "releases" && parentId === "root-id")
+        return [{ id: "releases-root-id", name: "releases" }];
+      if (name === "wdi" && parentId === "releases-root-id")
+        return [{ id: "wdi-rel-id", name: "wdi" }];
       return [];
     });
     vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
@@ -973,10 +977,14 @@ describe("Canonical consolidated layout release resolution", () => {
   it("fails closed when conflicting pointers exist in canonical and legacy locations", async () => {
     const { pointerBytes } = await wdiPlatformFixture();
     vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
-      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name: "zohelo-data" }];
-      if (name === "releases" && parentId === "root-id") return [{ id: "releases-root-id", name: "releases" }];
-      if (name === "wdi" && parentId === "releases-root-id") return [{ id: "wdi-rel-id", name: "wdi" }];
-      if (name === "wdi-platform" && parentId === "root-id") return [{ id: "wdi-folder-id", name: "wdi-platform" }];
+      if (name === "zohelo-data" && parentId === "root")
+        return [{ id: "root-id", name: "zohelo-data" }];
+      if (name === "releases" && parentId === "root-id")
+        return [{ id: "releases-root-id", name: "releases" }];
+      if (name === "wdi" && parentId === "releases-root-id")
+        return [{ id: "wdi-rel-id", name: "wdi" }];
+      if (name === "wdi-platform" && parentId === "root-id")
+        return [{ id: "wdi-folder-id", name: "wdi-platform" }];
       return [];
     });
     vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
@@ -991,6 +999,134 @@ describe("Canonical consolidated layout release resolution", () => {
     await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
       /Conflicting current-release pointers found for WDI/
     );
+  });
+});
+
+const eurostatDatasetIds = [
+  "bronze_eurostat_observations",
+  "eurostat_observation_revisions",
+  "eurostat_observations",
+  "dim_eurostat_dataset",
+  "dim_eurostat_geography",
+  "dim_eurostat_period",
+  "fact_eurostat_observations",
+  "mart_eurostat_coverage",
+] as const;
+const eurostatDated = new Set([
+  "dim_eurostat_period",
+  "fact_eurostat_observations",
+  "mart_eurostat_coverage",
+]);
+const eurostatLayer = (datasetId: string) =>
+  datasetId.startsWith("bronze_")
+    ? "02_bronze"
+    : datasetId.startsWith("eurostat_")
+      ? "03_silver"
+      : "04_gold";
+
+describe("Eurostat progressive platform release resolution", () => {
+  it("discovers canonical releases/eurostat and exposes all eight modeled tables", async () => {
+    const releaseId = "423e4567-e89b-42d3-a456-426614174000";
+    const codeSha = "e".repeat(40);
+    const catalogueBytes = bytes({
+      format_version: 1,
+      code_sha: codeSha,
+      sources: [
+        {
+          source_id: "eurostat",
+          name: "Eurostat",
+          description: "Progressive source-shaped Eurostat API release.",
+          status: "published_snapshot",
+          checked_through: "2026-09-14",
+          latest_observation_date: "2026-08-31",
+          last_successful_ingestion_at: "2026-09-14T18:51:00Z",
+          last_attempt_at: "2026-09-14T18:51:00Z",
+          raw_response_count: 1108,
+        },
+      ],
+      lineage: { nodes: [], edges: [] },
+      metrics: [{ name: "eurostat_modeled_cell_total" }],
+    });
+    const manifest = {
+      format_version: 2,
+      release_id: releaseId,
+      release_scope: "eurostat_progressive_api_platform",
+      status: "validated",
+      code_sha: codeSha,
+      created_at_utc: "2026-09-14T19:00:00Z",
+      datasets: eurostatDatasetIds.map((dataset_id) => ({
+        dataset_id,
+        layer: eurostatLayer(dataset_id),
+        table_name: dataset_id.replace(/^bronze_/, ""),
+        row_count: 1,
+        min_date: eurostatDated.has(dataset_id) ? "2023-01-01" : null,
+        max_date: eurostatDated.has(dataset_id) ? "2026-08-31" : null,
+        columns: [
+          {
+            name: eurostatDated.has(dataset_id) ? "period_start_date" : "id",
+            type: eurostatDated.has(dataset_id) ? "DATE" : "VARCHAR",
+          },
+        ],
+        files: [
+          {
+            id: `${dataset_id}-file`,
+            name: `${dataset_id}.parquet`,
+            size: 1,
+            sha256: "a".repeat(64),
+          },
+        ],
+      })),
+      artifacts: [
+        { id: "eurostat-manifest-art", name: "manifest.json", size: 1, sha256: "c".repeat(64) },
+        { id: "eurostat-catalog-art", name: "catalog.json", size: 1, sha256: "c".repeat(64) },
+        { id: "eurostat-results-art", name: "run_results.json", size: 1, sha256: "c".repeat(64) },
+        { id: "eurostat-state-art", name: "ingestion-state.json", size: 1, sha256: "c".repeat(64) },
+        {
+          id: "eurostat-business-art",
+          name: "business-catalog.json",
+          size: catalogueBytes.byteLength,
+          sha256: await sha256Hex(catalogueBytes),
+        },
+      ],
+      inputs: [],
+      tests: { passed: true },
+    };
+    const manifestBytes = bytes(manifest);
+    const pointerBytes = bytes({
+      format_version: 1,
+      release_id: releaseId,
+      manifest_file_id: "eurostat-manifest-file",
+      manifest_sha256: await sha256Hex(manifestBytes),
+      updated_at_utc: "2026-09-14T19:01:00Z",
+    });
+    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+      if (name === "releases" && parentId === "root-id") return [{ id: "releases-id", name }];
+      if (name === "eurostat" && parentId === "releases-id") return [{ id: "eurostat-id", name }];
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) =>
+      name === "current-release.json" && parentId === "eurostat-id"
+        ? [{ id: "eurostat-pointer", name, size: pointerBytes.byteLength }]
+        : []
+    );
+    vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+      id: "eurostat-manifest-file",
+      name: "release.json",
+      size: manifestBytes.byteLength,
+    });
+    vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) => {
+      if (id === "eurostat-pointer") return pointerBytes;
+      if (id === "eurostat-business-art") return catalogueBytes;
+      return manifestBytes;
+    });
+
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog.kind).toBe("release");
+    if (catalog.kind !== "release") throw new Error();
+    expect(catalog.manifest.release_scope).toBe("eurostat_progressive_api_platform");
+    expect(catalog.manifest.datasets).toHaveLength(8);
+    expect(catalog.businessCatalogue?.sources[0].source_id).toBe("eurostat");
   });
 });
 
@@ -1010,21 +1146,20 @@ describe("Release discovery mutation safety", () => {
       return [];
     });
     vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
-      if (
-        name === "current-release.json" &&
-        parentId === (canonical ? "nbp-rel-id" : "root-id")
-      ) {
-        return [{
-          id: "pointer-folder",
-          name,
-          mimeType: "application/vnd.google-apps.folder",
-        }];
+      if (name === "current-release.json" && parentId === (canonical ? "nbp-rel-id" : "root-id")) {
+        return [
+          {
+            id: "pointer-folder",
+            name,
+            mimeType: "application/vnd.google-apps.folder",
+          },
+        ];
       }
       return [];
     });
-    await expect(
-      resolveReleaseCatalog("token", createDriveDownloadBudget())
-    ).rejects.toThrow(/ambiguous or not a file/);
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /ambiguous or not a file/
+    );
   });
 
   it("retries a source once when its pointer moves into the canonical folder", async () => {
@@ -1073,9 +1208,9 @@ describe("Release discovery mutation safety", () => {
         return [];
       });
       vi.mocked(findNamedFilesInFolder).mockResolvedValue([]);
-      await expect(
-        resolveReleaseCatalog("token", createDriveDownloadBudget())
-      ).rejects.toThrow(/Established source 'wdi'.*moving or incomplete/);
+      await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+        /Established source 'wdi'.*moving or incomplete/
+      );
     }
   );
 });

@@ -16,6 +16,7 @@ CANONICAL_CONTROL_FOLDER = "06_control"
 CANONICAL_NBP_CONTROL_FOLDER = "nbp"
 CANONICAL_SOURCE_CAMPAIGNS_FOLDER = "source_campaigns"
 CANONICAL_SOURCES = ("nbp", "bdl", "wdi")
+RELEASE_SOURCES = (*CANONICAL_SOURCES, "eurostat")
 
 # Legacy layout constants
 LEGACY_NBP_CONTROL_FOLDER = "ingestion-control"
@@ -182,8 +183,8 @@ def resolve_source_release_root(
         LayoutResolutionError: if resolution fails.
     """
     source = source.lower().strip()
-    if source not in CANONICAL_SOURCES:
-        raise ValueError(f"Unknown source '{source}'; expected one of {CANONICAL_SOURCES}")
+    if source not in RELEASE_SOURCES:
+        raise ValueError(f"Unknown source '{source}'; expected one of {RELEASE_SOURCES}")
 
     if is_writer:
         mode = detect_layout_mode(store_or_storage, root_id)
