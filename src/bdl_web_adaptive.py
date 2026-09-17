@@ -502,9 +502,11 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                                                    "selection_id": node["id"], "failure_class": exc.failure_class}
                     (workspace / f"failure-{subgroup}-{node['id']}.json").write_bytes(rendered(state["failures"][subgroup]))
                     save_plan(plan_store, plan)
-                    if disposition == "stop" or consecutive_failures >= 20:
+                    if consecutive_failures >= 20:
                         reason = "interrupted"
                         raise
+                    if disposition == "stop":
+                        break
                     if disposition == "retry":
                         time.sleep(2)
                     continue

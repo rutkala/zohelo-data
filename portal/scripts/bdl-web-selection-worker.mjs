@@ -43,6 +43,14 @@ async function settle() {
 }
 
 async function dimensions() {
+  await page.waitForFunction(() => {
+    const visible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+    const elements = Array.from(document.querySelectorAll('select[multiple], .RadListBox[id]')).filter(visible);
+    return elements.length > 0 && elements.every(el => {
+      if (el.tagName === 'SELECT') return true;
+      return typeof window.$find === 'function' && !!window.$find(el.id)?.get_items;
+    });
+  }, null, { timeout: 15000 }).catch(() => {});
   return page.evaluate(() => {
     const visible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
     const records = [];
