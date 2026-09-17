@@ -28,9 +28,15 @@ ACCEPTED_WORKER_STATUSES = {"downloaded_relational_export", "downloaded_generate
 MAX_WORKER_ATTEMPTS = 3
 
 
-def _require_production_context() -> None:
-    if os.environ.get("GITHUB_ACTIONS") != "true" or os.environ.get("GITHUB_REF") != "refs/heads/main":
-        raise PermissionError("BDL Web bootstrap must run in serialized main-branch GitHub Actions")
+def _require_production_context(allow_codespace: bool = False) -> None:
+    is_actions = os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+    is_main = os.environ.get("GITHUB_REF") == "refs/heads/main"
+    codespace_opt_in = allow_codespace or os.environ.get("ZOHELO_ALLOW_CODESPACE_EXECUTION", "").lower() == "true"
+    if is_actions and is_main:
+        return
+    if codespace_opt_in:
+        return
+    raise PermissionError("BDL Web bootstrap must run in serialized main-branch GitHub Actions or with explicit Codespace production authorization (ZOHELO_ALLOW_CODESPACE_EXECUTION=true)")
 
 
 def _clean_ephemeral(workspace: Path) -> None:

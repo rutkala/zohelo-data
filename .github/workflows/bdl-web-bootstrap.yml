@@ -7,15 +7,7 @@ on:
         description: Clear BDL Web-bulk Landing/checkpoints before starting
         type: boolean
         default: false
-  # No recurring schedule until full Web-history collection is established.
-  # A marked, reviewed main-branch change is an explicit one-time resume only.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bdl-web-bootstrap.yml'
-      - 'src/bdl_web_queue.py'
-      - 'portal/scripts/bdl-web-catalogue.mjs'
-      - 'portal/scripts/bdl-web-bulk-worker.mjs'
+  # Explicit on-demand workflow dispatch only; no recurring schedule or push trigger.
 
 permissions:
   contents: read
@@ -27,10 +19,7 @@ concurrency:
 
 jobs:
   ingest_web_history:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && contains(github.event.head_commit.message, '[resume-bdl-web]')))
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:
@@ -93,7 +82,7 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           PYTHONPATH: src
           PYTHONUNBUFFERED: '1'
-        run: python src/bdl_web_queue.py --workspace portal/test-results/bdl-web-bulk --max-seconds 18600 --seed bdl-recovery-seed/plan.json
+        run: python src/bdl_web_adaptive.py --workspace portal/test-results/bdl-web-bulk --max-seconds 18600 --seed bdl-recovery-seed/plan.json
       - name: Upload sanitized ingestion evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -101,7 +90,8 @@ jobs:
           name: bdl-web-historical-bootstrap-evidence
           path: |
             portal/test-results/bdl-web-bulk/catalogue-task.json
-            portal/test-results/bdl-web-bulk/worker-result.json
+            portal/test-results/bdl-web-bulk/selection-task.json
+            portal/test-results/bdl-web-bulk/selection-result.json
             portal/test-results/bdl-web-bulk/bootstrap-summary.json
             portal/test-results/bdl-web-bulk/landed-*.json
             portal/test-results/bdl-web-bulk/failure-*.json
