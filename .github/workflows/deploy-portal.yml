@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths:
       - 'portal/**'
+      - '!portal/scripts/**'
       - 'scripts/prepare_dbt_viewer.py'
       - 'requirements.txt'
       - '.python-version'

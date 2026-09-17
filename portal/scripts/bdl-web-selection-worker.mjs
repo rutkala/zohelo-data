@@ -12,7 +12,7 @@ const out = path.resolve(process.env.BDL_BULK_OUT_DIR);
 const scope = input.scope;
 if (!email || !password || !/^P\d+$/.test(input.subgroup_id) ||
     !/^https:\/\/bdl\.stat\.gov\.pl\/bdl\/dane\/podgrup\/wymiary\/\d+\/\d+\/\d+$/.test(input.url) ||
-    !['dimensions', 'layouts', 'territories', 'download'].includes(scope?.kind)) throw new Error('Invalid Web selection task');
+    !['dimensions', 'layouts', 'territories', 'download', 'whole'].includes(scope?.kind)) throw new Error('Invalid Web selection task');
 const result = { subgroup_id: input.subgroup_id, selection_id: input.selection_id, stage: 'login', status: 'started' };
 const save = () => fs.writeFile(path.join(out, 'selection-result.json'), JSON.stringify(result, null, 2));
 const safe = value => String(value).replaceAll(email, '[REDACTED_EMAIL]').replaceAll(password, '[REDACTED_PASSWORD]');
@@ -195,7 +195,8 @@ async function exportZip() {
   let ready = false;
   while (Date.now() < deadline) {
     await settle();
-    if (await page.getByText(/^(?:Eksport|Export)$/i, { exact: true }).first().isVisible().catch(() => false)) { ready = true; break; }
+    const exportBtn = page.getByText(/^(?:Eksport|Export)$/i, { exact: true }).first();
+    if (await exportBtn.isVisible().catch(() => false)) { ready = true; break; }
     await page.waitForTimeout(1000);
   }
   if (!ready) throw new Error('PROVIDER_TIMEOUT: result table did not expose its export control');
@@ -203,11 +204,15 @@ async function exportZip() {
   await save();
   await page.getByText(/^(?:Eksport|Export)$/i, { exact: true }).first().click();
   const choice = page.getByText(/CSV\s*[–-]\s*(?:tablica\s+)?relacyj/i).first();
+  await choice.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
   const downloadPromise = page.waitForEvent('download', { timeout: 180000 });
   await choice.click();
   const download = await downloadPromise;
   const name = download.suggestedFilename();
-  if (!name || /[/\\\r\n\0]/.test(name) || !new RegExp(`_${input.subgroup_id.slice(1)}_.*\\.zip$`, 'i').test(name)) throw new Error('PROTOCOL: unexpected provider filename');
+  const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!name || /[/\\\r\n\0]/.test(name) || !new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name) || !name.toLowerCase().endsWith('.zip')) {
+    throw new Error(`PROTOCOL: unexpected provider filename: ${name}`);
+  }
   const target = path.join(out, `download-${name}`);
   await download.saveAs(target);
   const stat = await fs.stat(target);
@@ -233,7 +238,64 @@ try {
   await save();
   await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await settle();
-  if (scope.kind === 'dimensions') {
+  if (scope.kind === 'whole' || (scope.kind === 'download' && Array.isArray(scope.territories) && scope.territories.length === 1 && scope.territories[0] === 'all')) {
+    const clicked = new Set();
+    for (let i = 0; i < 20; i++) {
+      const all = await page.locator('[id$="_SelectAll"]').evaluateAll(els => els.filter(e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length) && !e.disabled).map(e => e.id));
+      const id = all.find(id => !clicked.has(id));
+      if (!id) break;
+      await page.locator(`[id="${id}"]`).click();
+      clicked.add(id);
+      await settle();
+    }
+    const info = await infoCount();
+    result.selected_information = info;
+    if (info <= 3500) {
+      result.stage = 'territories';
+      await save();
+      await next();
+      await page.waitForURL(/\/bdl\/dane\/podgrup\/teryt/, { timeout: 45000 });
+      await settle();
+      const menu = page.locator('#ctl00_ContentPlaceHolder_terytList_MenuButton');
+      if (await menu.isVisible().catch(() => false) && await menu.isEnabled().catch(() => false)) {
+        await menu.click();
+        const selectAll = page.locator('li.rmItem').filter({ hasText: 'Zaznacz wszystkie' }).first().locator('.rmLink');
+        await selectAll.waitFor({ state: 'visible', timeout: 10000 });
+        await selectAll.click();
+        await page.waitForTimeout(500);
+        const transferAll = page.locator('button.rlbTransferAllFrom').first();
+        await transferAll.waitFor({ state: 'visible', timeout: 10000 });
+        await transferAll.click();
+        await settle();
+        await exportZip();
+      } else {
+        throw new Error('PROVIDER: TERYT menu unavailable for whole-subgroup export');
+      }
+    } else {
+      const downloadButton = page.locator('#ctl00_ContentPlaceHolder_download1:visible, #ctl00_ContentPlaceHolder_download2:visible').first();
+      if (await downloadButton.count() && await downloadButton.isEnabled().catch(() => false)) {
+        result.stage = 'download';
+        await save();
+        const downloadPromise = page.waitForEvent('download', { timeout: 360000 });
+        await downloadButton.click();
+        const download = await downloadPromise;
+        const name = download.suggestedFilename();
+        const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (!name || /[/\\\r\n\0]/.test(name) || !new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name) || !name.toLowerCase().endsWith('.zip')) {
+          throw new Error(`PROTOCOL: unexpected provider filename: ${name}`);
+        }
+        const target = path.join(out, `download-${name}`);
+        await download.saveAs(target);
+        const stat = await fs.stat(target);
+        const sha = crypto.createHash('sha256');
+        for await (const chunk of createReadStream(target)) { sha.update(chunk); }
+        result.archive = { filename: name, local_filename: path.basename(target), bytes: stat.size, sha256: sha.digest('hex') };
+        result.status = 'download';
+      } else {
+        throw new Error('PROVIDER: whole-subgroup selection requires partitioning');
+      }
+    }
+  } else if (scope.kind === 'dimensions') {
     const clicked = new Set();
     for (let i = 0; i < 20; i++) {
       const all = await page.locator('[id$="_SelectAll"]').evaluateAll(els => els.filter(e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length) && !e.disabled).map(e => e.id));

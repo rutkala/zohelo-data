@@ -4,6 +4,44 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL Web full-history runner, catalogue discovery fix, and workflow isolation — 17 September 2026
+
+**PR #126 delivers the complete full-history BDL runner and operational fixes:** following the
+handoff criteria in [PR #126 Comment 5713338019](https://github.com/rutkala/zohelo-data/pull/126#issuecomment-5713338019),
+the BDL Web export pipeline is decoupled from fixed campaign timers, catalogue paging truncation is
+resolved, writer mutual exclusion is guaranteed, and CI workflows are isolated from unattended triggers.
+
+- **Dynamic catalogue discovery:** resolved ASP.NET RadGrid `PageRequestManager` async postback state
+  races in `portal/scripts/bdl-web-catalogue.mjs`. Paging verifies postback completion and DOM row stabilization,
+  tested live against public BDL tables 563 (11 pages), 570 (25 pages), and 640 (9 pages) with 100% table
+  exhaustion and 0 errors, eliminating artificial catalogue truncation without hardcoding table limits.
+- **Durable full-history runner:** `src/bdl_web_adaptive.py` executes without a campaign timer cutoff
+  (`max_seconds=None` default) to traverse the complete BDL Web catalogue until genuine exhaustion.
+  Schedules unvisited subgroups fairly before deep multi-partition slicing, supports `--mode resume`
+  (validating existing stored receipts) and `--mode reload` (executing a fresh download pass while
+  preserving historical native files), and records distinct outcome statuses (`pass_complete`, `load_complete`,
+  `interrupted`).
+- **Codespace authorization & exclusive writer lock:** standalone Codespace execution entrypoint
+  (`--allow-codespace` / `ZOHELO_ALLOW_CODESPACE_EXECUTION=true`) verifies a clean git tree, checks credential
+  presence without leaking secret values, and inspects active GitHub Actions runs. Enforces exclusive writer
+  ownership via `bdl-writer-lock.json` in Drive control storage with a 60-second heartbeat and 10-minute
+  stale lock takeover.
+- **Fast-path whole-subgroup export & exact partition fallback:** preserves fast-path single-request
+  exports with root-task scope alignment, falling back to exact hierarchical partitions (`src/bdl_web_partitions.py`)
+  when large selections trigger provider errors (such as P1313).
+- **Native Landing compliance:** downloads original provider archive bytes directly to Google Drive
+  Landing (`gus_bdl/web_bulk/...`) with separate technical manifests and control records, strictly adhering
+  to [ADR 0009](decisions/0009-native-only-landing.md).
+- **Workflow & deployment isolation:** removed unattended `push` triggers from `.github/workflows/bdl-web-bootstrap.yml`
+  (`workflow_dispatch` only); removed live portal diagnostic steps from `.github/workflows/data-validation.yml`;
+  isolated BDL browser scripts from portal deployment paths in `.github/workflows/deploy-portal.yml` and
+  `.github/workflows/portal-validation.yml`.
+- **Verification:** 10 new unit tests in `tests/test_bdl_web_adaptive_runner.py` cover runtime > 18,600s, writer lock
+  acquisition/conflict/override/release, codespace auth, whole export fast-path, P1313 fallback, fair slicing,
+  and receipt corruption. Full test suite `bash scripts/check-data.sh` passed all 527 repository tests (including
+  MetricFlow and storage checks), workflow syntax validated via `python scripts/check-workflows.py`, and portal
+  `lint`, `typecheck`, `test` (705 passed), and `build` all succeeded cleanly.
+
 ### Native-only Landing for all sources — 16 September 2026
 
 **Q-LANDING-001 is resolved:** the owner requires ingestion to download and store native

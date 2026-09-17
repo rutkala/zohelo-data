@@ -7,17 +7,7 @@ on:
         description: Clear BDL Web-bulk Landing/checkpoints before starting
         type: boolean
         default: false
-  # No recurring schedule until full Web-history collection is established.
-  # A marked, reviewed main-branch change is an explicit one-time resume only.
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/bdl-web-bootstrap.yml'
-      - 'src/bdl_web_queue.py'
-      - 'src/bdl_web_adaptive.py'
-      - 'src/bdl_web_partitions.py'
-      - 'portal/scripts/bdl-web-catalogue.mjs'
-      - 'portal/scripts/bdl-web-selection-worker.mjs'
+  # Explicit on-demand workflow dispatch only; no recurring schedule or push trigger.
 
 permissions:
   contents: read
@@ -29,10 +19,7 @@ concurrency:
 
 jobs:
   ingest_web_history:
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'push' && contains(github.event.head_commit.message, '[resume-bdl-web]')))
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     steps:

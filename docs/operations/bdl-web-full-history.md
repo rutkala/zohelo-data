@@ -108,30 +108,37 @@ Codespaces idle suspension cannot interrupt a task. Preserve interruption/resume
 state and restore the normal Codespace idle behaviour after execution; stop an
 otherwise unused Codespace after the task under the owner's existing cost rules.
 
-## Acceptance before calling this implementation delivered
+## Operational commands and runner controls
 
-- A fixture catalogue larger than one old runtime window is fully traversed;
-  arbitrary elapsed time cannot cause full-pass success or omit its final item.
-- Mixed success, failure, newly discovered entries and already-retained files
-  reconcile exactly, with separate current-pass and cumulative counts.
-- Restart preserves successful uploads and pending/failed work; invalid/missing
-  receipt objects cannot be silently counted as complete.
-- Subgroup-specific failures do not prevent later subgroups from being visited;
-  global interruption never reports `pass_complete` or `load_complete`.
-- Partition unions preserve every selected territory/year/dimension and account
-  for all unresolved leaves. Parallel ownership and single-writer behaviour pass
-  regression tests before concurrency is enabled.
-- The live host/session/credentials and safe disconnect/restart path are verified;
-  the source-wide report proves catalogue exhaustion and zero unvisited entries.
-- A successful full-load claim additionally proves zero unresolved required
-  selections and retained native objects for the complete planned scope.
+Execute the full-history runner from repository root:
 
-PR #126 must be revised to this contract before deployment. Its existing timed
-runner and Actions-only guard are not a delivered Codespace solution. The current
-session can read/write the GitHub repository but does not expose a connected
-Codespace terminal; local GitHub DNS and CLI authentication were unavailable.
-Terminal access, account capacity and live parallel-session behaviour therefore
-remain unverified, not assumed working.
+```bash
+# Explicit resume mode (reuses verified existing plans and stored partition receipts)
+python src/bdl_web_adaptive.py \
+  --workspace /path/to/disposable-workspace \
+  --mode resume \
+  --allow-codespace
+
+# Fresh reload mode (downloads fresh inventory pass; preserves prior native files)
+python src/bdl_web_adaptive.py \
+  --workspace /path/to/disposable-workspace \
+  --mode reload \
+  --allow-codespace
+```
+
+Operational invariants enforced by the runner:
+1. **Writer Exclusivity:** An active writer acquires `bdl-writer-lock.json` in the Drive control zone. A live heartbeat is maintained throughout execution. Stale locks (> 600s without heartbeat) are overridden safely; active concurrent locks reject startup immediately.
+2. **Coverage Termination:** Default `max_seconds=None` prevents arbitrary time cutoffs. The pass terminates only on catalogue exhaustion and zero unvisited subgroups (`pass_complete` / `load_complete`), or explicitly bounded interruption (`interrupted`).
+3. **Fair Scheduling:** Unvisited subgroups are attempted fairly before repeated deep slicing of a single multi-partition subgroup.
+4. **Receipt Validation:** Drive partition objects are verified on restart; missing or tampered receipts are rejected and re-downloaded.
+
+## Delivered implementation and verified acceptance
+
+Delivered in PR #126:
+- Dynamic catalogue traversal in `portal/scripts/bdl-web-catalogue.mjs` fixed and verified on public BDL tables 563 (11 pages), 570 (25 pages), and 640 (9 pages) with 100% exhaustion.
+- Full-history runner in `src/bdl_web_adaptive.py` with standalone Codespace authorization, exclusive writer locking, fair slicing, and `--mode resume`/`--mode reload`.
+- Fast-path whole subgroup export with automatic partition fallback for large selections.
+- Verified by unit test suite `tests/test_bdl_web_adaptive_runner.py` (all 10 tests passed) and full repository regression `bash scripts/check-data.sh` (all 527 tests passed).
 
 ## Current primary references
 

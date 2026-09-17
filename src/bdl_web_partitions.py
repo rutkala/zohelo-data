@@ -37,6 +37,15 @@ def new_plan(subgroup, url):
             "root": root["id"], "nodes": {root["id"]: root}, "dimension_inventory": []}
 
 
+def new_whole_plan(subgroup, url, root_task=None):
+    if not re.fullmatch(r"P\d+", subgroup):
+        raise ValueError("Invalid subgroup")
+    root = root_task if root_task is not None else task("download", dimensions={}, layout=None, territories=["all"])
+    return {"format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+            "record_type": "selection_partition_plan", "subgroup_id": subgroup, "url": url,
+            "root": root["id"], "nodes": {root["id"]: root}, "dimension_inventory": []}
+
+
 def _expand(plan, node, children, rule, axis=None, inventory=None):
     if node["status"] not in {"pending", "retry"} or not children:
         raise ValueError("Cannot expand this selection")
