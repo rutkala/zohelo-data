@@ -36,6 +36,8 @@ const WDI_BRONZE_MODELS: readonly string[] = [
   "model.zohelo_data.br_wdi_series_time",
 ];
 
+const EUROSTAT_BRONZE_MODELS: readonly string[] = ["model.zohelo_data.br_eurostat_observations"];
+
 type JsonRecord = Record<string, unknown>;
 
 export interface DbtManifest extends JsonRecord {
@@ -321,6 +323,16 @@ export function prepareDbtManifest(
         }
       }
       releasedStatusLines.push(statusLine(wdiSource, WDI_BRONZE_MODELS[0]));
+    } else if (rel.manifest.release_scope === "eurostat_progressive_api_platform") {
+      const eurostatSource = byId.get("eurostat");
+      if (!eurostatSource) return prepared;
+      for (const modelId of EUROSTAT_BRONZE_MODELS) {
+        const node = prepared.nodes[modelId];
+        if (node) {
+          prepared.nodes[modelId] = writeIngestionMeta(node, eurostatSource);
+        }
+      }
+      releasedStatusLines.push(statusLine(eurostatSource, EUROSTAT_BRONZE_MODELS[0]));
     }
   }
 

@@ -121,6 +121,57 @@ than claiming an external-agent dispatch or enabling another paid model/account 
 Updated 14 September 2026. **The owner-approved Google Drive consolidation is live and independently verified.** Implementation [PR #101](https://github.com/rutkala/zohelo-data/pull/101) merged, the compatible portal was deployed, and [apply run 34871823795](https://github.com/rutkala/zohelo-data/actions/runs/34871823795) completed successfully. Independent verification passed at 17:21 UTC.
 The complete current WDI archive remains modeled and published; existing WDI acceptance and other source coverage records are preserved.
 
+### Progressive Eurostat API Bronze → Silver → Gold → semantic delivery — 14 September 2026
+
+This change adds the first production-gated Eurostat modeled release without narrowing or closing
+the full-source commitment. It consumes every accepted response in the complete reviewed API
+contract (three datasets × 27 current EU countries), decodes every JSON-stat cube cell including
+explicit missing positions, preserves the full native dimension key and status, reconciles
+revisions (including value reversions), and publishes eight source-shaped Bronze, Silver and Gold
+datasets. Twelve native MetricFlow coverage/accountability metrics are checked against Gold before
+promotion. Generic Eurostat values are deliberately not exposed as an additive business metric.
+The existing portal discovers the canonical Eurostat pointer, validates the exact release contract,
+and exposes its tables, catalogue, lineage and source status alongside the other releases.
+
+The release is independently restorable, hash-bound to all Landing fragments, and staged before
+its immutable `releases/eurostat` pointer is promoted. Every Landing fragment is re-read and hashed
+during staged validation. Its coverage mart also binds the current
+full-distribution campaign evidence, so the smaller modeled API contract cannot be mistaken for
+complete Eurostat: raw catalogue completion and modeled completion remain separate. All 474
+repository data-platform tests pass, including exact sparse-cell,
+revision, release-contract and native MetricFlow regressions. Production promotion and fresh
+restore remain the acceptance gate for this change; no production release is claimed in advance.
+
+Fresh orchestration evidence at 19:11 UTC: Eurostat
+[run 34880889218](https://github.com/rutkala/zohelo-data/actions/runs/34880889218) completed with all
+three inventories current, 3,540 of 21,247 current catalogue distributions validated (16.66%),
+19,161 distribution tasks pending, zero failed pending tasks, 4,127 retained accepted versions and
+13,337,432,191 raw bytes. Its API Landing has 1,108 accepted/published responses, zero publication
+backlog and no remaining API tasks. The full catalogue therefore remains incomplete and the full
+distribution payloads remain raw-only.
+
+WDI [run 34881599243](https://github.com/rutkala/zohelo-data/actions/runs/34881599243) completed its
+Landing continuation and freshly published and restored complete-archive release
+`e12f475f-9146-4fc0-9fef-bbf1b6e1b24e`: 9,015,914 of 9,015,914 populated values, 264 of 264
+geographies and 1,498 of 1,498 indicators are modeled through Gold, for a ratio of exactly 1.0.
+BDL
+[run 34879372531](https://github.com/rutkala/zohelo-data/actions/runs/34879372531) advanced Landing to
+3,996 accepted/published responses with zero publication backlog and 2,409 API tasks pending; its
+modeled job hit its configured 25-minute timeout during the build. This is not data loss, but the
+current transform timeout is shorter than the observed end-to-end build and fresh-restore path.
+[Run 34885171452](https://github.com/rutkala/zohelo-data/actions/runs/34885171452) reproduced the same
+limit: Landing succeeded, all 68 dbt build/tests passed, and the job was then cancelled at the
+25-minute limit before release completion or fresh verification. No replacement writer was started.
+The separate authenticated Web-bulk route still has no accepted bulk archive and BDL remains far
+from the 172,576-variable full scope.
+
+NBP [run 34732275848](https://github.com/rutkala/zohelo-data/actions/runs/34732275848) remains the
+latest successful daily acceptance: all four REST feeds report complete coverage through the
+12 September check window, current observations through 11 September (Table B through 9 September),
+all 15 datasets restore, and all five native metrics match Gold. Release
+`e8c025a4-a7c7-432a-84fa-8151c1479c98` contains 426,687 FX fact rows and 3,454 gold fact rows.
+Later NBP workflow invocations were path-triggered no-ops, not missed scheduled freshness work.
+
 ### Google Drive physical layout consolidation (Issue #100, PR #101) — 14 September 2026
 
 The approved layout is now in place:

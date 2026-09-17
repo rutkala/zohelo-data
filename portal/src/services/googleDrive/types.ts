@@ -134,11 +134,18 @@ export interface WdiPlatformReleaseManifest extends ReleaseManifestBase {
   release_scope: "wdi_platform";
 }
 
+/** The progressive, explicitly partial Eurostat API platform release. */
+export interface EurostatPlatformReleaseManifest extends ReleaseManifestBase {
+  format_version: 2;
+  release_scope: "eurostat_progressive_api_platform";
+}
+
 export type ReleaseManifest =
   | SilverReleaseManifest
   | PlatformReleaseManifest
   | BdlPlatformReleaseManifest
-  | WdiPlatformReleaseManifest;
+  | WdiPlatformReleaseManifest
+  | EurostatPlatformReleaseManifest;
 
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
