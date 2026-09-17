@@ -4,6 +4,16 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL Web Ingestion resumption, territorial cell budget bounding, and failure isolation — 17 September 2026
+
+**Overnight run analysis, diagnosed failure modes on heavy subgroups, and pipeline hardening:**
+- **Overnight execution results (`task-1522`):** Ran unattended for 1h 47m, successfully landed **58 new native ZIP files** (3.16 MB) and completed 8 full subgroups (`P1317`, `P1319`, `P1320`, `P1323`, `P1324`, `P1325`, `P1330`, `P1331`) with zero gaps, proving that cascading dimensions, RadListBox selection, layout selection, and TERYT transfer work reliably.
+- **Territorial chunk budget bounding (`src/bdl_web_partitions.py`):** On large subgroups like `P1341` (2,790 dimension combinations), `accept_territories` with the previous `cell_budget=200000` created chunks of 71 territories (198,090 cells per table generation), exceeding BDL's safe web table threshold and triggering timeouts. Lowering the cell budget to 20,000 bounds chunk sizes (e.g. 7 territories on `P1341`), ensuring BDL renders result tables in seconds while maintaining optimal batch throughput.
+- **Worker postback & download navigation stabilization (`portal/scripts/bdl-web-selection-worker.mjs`):** Extended `settle()` postback timeout from 60s to 120s and export deadline from 120s to 180s. Added `{ noWaitAfter: true }` to export dropdown and whole-subgroup download button clicks to prevent Playwright action timeouts when awaiting non-existent page navigations during file downloads.
+- **Subgroup failure isolation & auto-replanning (`src/bdl_web_adaptive.py`):** Capped consecutive failures per subgroup (`max_subgroup_failures=5`) so that an intractable subgroup cannot consume all 20 global failure attempts and abort the run. A failing subgroup is cleanly marked `failed`/`partial` and the runner proceeds to the next unvisited candidate. Added automatic replanning for un-landed plans that experienced failures, ensuring they pick up the updated partition budget.
+- **Verification & Deployment:** 65/65 unit tests in `tests/test_bdl*` passed (including new isolation tests), 705 portal tests and ESLint passed cleanly. Fixes merged and pushed to `main` (commit `7526efb`).
+- **Active Ingestion Run:** Launched `python3 -u src/bdl_web_adaptive.py --workspace scratch/bdl_workspace --allow-codespace --mode resume` as background task (`task-1832`). Active writer lock acquired on Drive (`host: codespace`, `status: active`). Traversal across remaining 2,409 unvisited subgroups is actively underway.
+
 ### BDL Web selection worker repairs for cascading dimensions, layout switching, and TERYT synchronization — 17 September 2026
 
 **Systematic diagnosis and resolution of BDL Web selection failure modes:**
