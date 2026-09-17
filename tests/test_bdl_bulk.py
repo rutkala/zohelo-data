@@ -239,6 +239,7 @@ class BdlBulkWorkflowTests(unittest.TestCase):
     def test_workflow_shares_provider_lock_and_excludes_archives_from_evidence(self):
         path = ROOT / ".github" / "workflows" / "bdl-web-bootstrap.yml"
         workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        self.assertEqual({"workflow_dispatch", "push"}, set(workflow["on"]))
         self.assertEqual("zohelo-pipeline-gus_bdl", workflow["concurrency"]["group"])
         self.assertEqual("false", workflow["concurrency"]["cancel-in-progress"])
         self.assertEqual({"ingest_web_history"}, set(workflow["jobs"]))
@@ -261,7 +262,7 @@ class BdlBulkWorkflowTests(unittest.TestCase):
             step for step in job["steps"]
             if step.get("name") == "Ingest BDL historical data through authenticated Web UI"
         )
-        self.assertIn("src/bdl_web_queue.py", ingestion["run"])
+        self.assertIn("src/bdl_web_adaptive.py", ingestion["run"])
         self.assertNotIn("src/bdl_web_bootstrap.py", ingestion["run"])
         self.assertFalse((ROOT / ".github/workflows/source-gus-bdl.yml").exists())
 
