@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from datetime import datetime, timezone
 import json
 import logging
@@ -68,10 +69,14 @@ def _campaign_store(backend: str, local_root: Path | None, allow_production_writ
     raise ValueError("EUROSTAT modeled publication currently supports only the drive backend")
 
 
-def _download_landing_snapshot(store, workspace: Path) -> list[Path]:
-    manifest = verify_landing(store)
-    if manifest is None:
-        raise RuntimeError("No published EUROSTAT Landing snapshot is available")
+def _download_landing_snapshot(store, workspace: Path, manifest: dict) -> list[Path]:
+    """Download the pinned manifest, never re-read the mutable current pointer.
+
+    read_landing_object verifies each descriptor's size and checksum. The same
+    descriptors are recorded in release inputs and revalidated before promotion.
+    """
+    if not manifest or not manifest.get("snapshot_id") or not manifest.get("files"):
+        raise RuntimeError("No verified EUROSTAT Landing snapshot was supplied")
     paths = []
     for index, descriptor in enumerate(manifest["files"]):
         path = workspace / f"landing-{index}.parquet"
@@ -212,13 +217,13 @@ def run_platform(backend: str = "drive", local_root: Path | None = None, allow_p
     code_sha = _code_sha()
     with tempfile.TemporaryDirectory(prefix="zohelo-eurostat-platform-") as temporary:
         workspace = Path(temporary)
-        landing_manifest = verify_landing(campaign_store)
+        landing_manifest = deepcopy(verify_landing(campaign_store))
         if landing_manifest is None:
             raise RuntimeError("No published EUROSTAT Landing snapshot is available")
         campaign_state = campaign_store.load()
         if campaign_state is None:
             raise RuntimeError("No EUROSTAT campaign state is available")
-        landing_paths = _download_landing_snapshot(campaign_store, workspace)
+        landing_paths = _download_landing_snapshot(campaign_store, workspace, landing_manifest)
         landing_inputs = [
             {
                 "source_id": EUROSTAT_SOURCE_ID,
