@@ -4,6 +4,17 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL Web Ingestion concurrency acceleration, ASP.NET AJAX dropdown race fix, and Codespace idle timeout diagnosis — 18 September 2026
+
+**Run diagnostics, Codespace idle pause analysis, bugfixes, and resumed concurrent ingestion:**
+- **Codespace Idle Timeout Diagnosis:** The Codespace automatically stopped after ~32 minutes of execution (started 05:51:52Z, stopped 06:23:34Z) due to GitHub Codespaces' default 30-minute idle inactivity timeout when no UI activity occurs in the browser tab. In GitHub account settings (`github.com -> Settings -> Codespaces -> Default idle timeout`), setting the timeout to the 240-minute (4-hour) maximum minimizes pause frequency during unattended runs.
+- **Progress in 32-minute burst (`task-2148`):** Landed **132 new native partition ZIP files** on Google Drive across 12 newly completed subgroups (`P1440, P1445, P1446, P1447, P1448, P1453, P1461, P1464, P1467, P1475, P1528, P1532`), elevating cumulative completed subgroups to 41 (and 420 total landed ZIP archives on Drive) at an effective throughput of ~44 subgroups/hour.
+- **Diagnosed failure modes & fixes merged to `main`:**
+  - *ASP.NET AJAX dropdown race condition (`portal/scripts/bdl-web-selection-worker.mjs`, commit `41904b0`):* Handled asynchronous option rebinding in Telerik `ctl00_ContentPlaceHolder_wym1_ElementsList` via `waitForFunction` ensuring all options are bound before clicking.
+  - *Provider filename normalization fallback (`portal/scripts/bdl-web-selection-worker.mjs`, commit `41904b0`):* Fallback safely normalizes generic provider filenames (`download`) to `DANE_<subgroup_id>.zip` and verifies `PK\x03\x04` magic bytes.
+  - *Whole-subgroup plan initialization fix (`src/bdl_web_adaptive.py`, commit `25b5a03`):* Fixed `KeyError: 'nodes'` in whole-subgroup export.
+- **Live Resumed Run (`task-2289`):** Running with `--concurrency 3`. The 13 previously failed subgroups were re-queued; live execution verified that `P1409, P1441, P1442, P1449` immediately completed cleanly and uploaded to Google Drive. Selection complete count reached 45+ subgroups and is progressing continuously.
+
 ### BDL Web Ingestion resumption, territorial cell budget bounding, and failure isolation — 17 September 2026
 
 **Overnight run analysis, diagnosed failure modes on heavy subgroups, and pipeline hardening:**
