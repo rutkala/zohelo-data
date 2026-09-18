@@ -7,7 +7,14 @@ on:
         description: Clear BDL Web-bulk Landing/checkpoints before starting
         type: boolean
         default: false
-  # Explicit on-demand workflow dispatch only; no recurring schedule or push trigger.
+      auto_continue:
+        description: Automatically trigger next run when time budget is reached until all subgroups are complete
+        type: boolean
+        default: true
+      concurrency:
+        description: Number of concurrent workers (default 3)
+        type: string
+        default: '3'
 
 permissions:
   contents: read
@@ -22,6 +29,9 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 330
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -82,12 +92,17 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           PYTHONPATH: src
           PYTHONUNBUFFERED: '1'
-        run: python src/bdl_web_adaptive.py --workspace portal/test-results/bdl-web-bulk --max-seconds 18600 --seed bdl-recovery-seed/plan.json
+        run: >-
+          python src/bdl_web_adaptive.py
+          --workspace portal/test-results/bdl-web-bulk
+          --max-seconds 18600
+          --seed bdl-recovery-seed/plan.json
+          --concurrency "${{ inputs.concurrency || '3' }}"
       - name: Upload sanitized ingestion evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: bdl-web-historical-bootstrap-evidence
+          name: bdl-web-historical-bootstrap-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             portal/test-results/bdl-web-bulk/catalogue-task.json
             portal/test-results/bdl-web-bulk/selection-task.json
@@ -97,3 +112,34 @@ jobs:
             portal/test-results/bdl-web-bulk/failure-*.json
           if-no-files-found: warn
           retention-days: 3
+      - name: Trigger next run if more subgroups remain
+        if: success() && (inputs.auto_continue != false)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTO_CONTINUE: ${{ inputs.auto_continue }}
+          CONCURRENCY: ${{ inputs.concurrency || '3' }}
+        run: |
+          if [ "$AUTO_CONTINUE" = "false" ]; then
+            echo "Auto-continue disabled by workflow input; stopping chain."
+            exit 0
+          fi
+          SUMMARY="portal/test-results/bdl-web-bulk/bootstrap-summary.json"
+          if [ ! -f "$SUMMARY" ]; then
+            echo "No bootstrap summary file found; stopping chain."
+            exit 0
+          fi
+          LOAD_COMPLETE=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('load_complete', False))")
+          REMAINING=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('remaining_subgroups', 'unknown'))")
+          VISITED=$(python3 -c "import json; d=json.load(open('$SUMMARY')); print(f\"{d.get('visited_subgroups_this_pass', 0)}/{d.get('known_subgroups', 0)}\")")
+          LANDED=$(python3 -c "import json; print(json.load(open('$SUMMARY')).get('selection_complete_subgroups', 0))")
+          echo "Run status: $LANDED completed, $REMAINING remaining, visited this pass: $VISITED."
+          if [ "$LOAD_COMPLETE" = "True" ]; then
+            echo "Full BDL Web historical collection is 100% complete! No further runs needed."
+          else
+            echo "Ingestion ongoing ($REMAINING subgroups remaining). Dispatching next run via workflow_dispatch..."
+            gh workflow run bdl-web-bootstrap.yml \
+              --ref main \
+              -f auto_continue=true \
+              -f concurrency="$CONCURRENCY"
+            echo "Next run queued successfully."
+          fi

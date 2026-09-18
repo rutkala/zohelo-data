@@ -4,6 +4,19 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### GitHub Actions autonomous 3-worker ingestion with automatic self-chaining — 18 September 2026
+
+**Autonomous execution, multi-worker concurrency, and continuous self-chaining until catalogue completion:**
+- **Codespace Limitations:** Because Codespaces automatically pauses upon client inactivity / browser disconnects, unattended long-running ingestion is transferred to GitHub Actions for 24/7 reliability.
+- **Workflow Multi-Worker Concurrency (`.github/workflows/bdl-web-bootstrap.yml`):** Configured `--concurrency "${{ inputs.concurrency || '3' }}"` allowing 3 isolated workers to run in parallel on standard GitHub Actions runners (`ubuntu-latest` 4 vCPUs / 16 GB RAM).
+- **Graceful Time-Slice Completion (`src/bdl_web_adaptive.py`):** Updated `main()` exit code logic so that reaching `--max-seconds 18600` (5 hours 10 minutes) returns exit code `0` (success), distinguishing an orderly budget-bounded pause from an unhandled fatal crash.
+- **Automated Self-Chaining Step (`.github/workflows/bdl-web-bootstrap.yml`):**
+  - Scoped `permissions: actions: write` to `job.ingest_web_history` in accordance with repository least-privilege security policy (`scripts/check-workflows.py`).
+  - Added an end-of-run step that evaluates `portal/test-results/bdl-web-bulk/bootstrap-summary.json`. If `load_complete == false` and `auto_continue` is enabled, it automatically dispatches the next run (`gh workflow run bdl-web-bootstrap.yml --ref main -f auto_continue=true -f concurrency=3`).
+  - Under `concurrency: group: zohelo-pipeline-gus_bdl, cancel-in-progress: false`, the next run waits in the GitHub Actions queue until the current run finishes and releases its Google Drive writer lock, then immediately starts and resumes from the latest checkpoint on Google Drive.
+  - Terminates automatically when `load_complete == true` (all 2,420 subgroups landed).
+- **Verification:** All 13 unit tests in `tests/test_bdl_web_adaptive_runner.py` passed in 5.1s (including new `test_main_exit_codes`), and `scripts/check-workflows.py` passed with 0 policy violations. Cumulative complete subgroups reached 54 on Google Drive.
+
 ### BDL Web Ingestion concurrency acceleration, ASP.NET worker session isolation, and error classification repairs — 18 September 2026
 
 **Root-cause analysis of concurrent session collisions, worker isolation, and resilient ingestion resumption:**

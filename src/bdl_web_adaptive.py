@@ -674,7 +674,11 @@ def main():
         concurrency=args.concurrency,
         allow_codespace=args.allow_codespace,
     )
-    return 0 if result["status"] in {"pass_complete", "load_complete", "complete"} else 1
+    if result["status"] in {"pass_complete", "load_complete", "complete"}:
+        return 0
+    if args.max_seconds is not None and result.get("run_stop_reason") in {"interrupted", "runtime_budget_reached"}:
+        return 0
+    return 1
 
 
 if __name__ == "__main__":

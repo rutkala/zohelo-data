@@ -571,6 +571,21 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
             worker_dirs = {Path(p).name for p in invoked_workspaces}
             self.assertTrue({"worker-0", "worker-1", "worker-2"} <= worker_dirs)
 
+    def test_main_exit_codes(self):
+        """main() returns 0 on complete load or graceful max_seconds interruption, and 1 on error."""
+        with patch.object(adaptive, "run", return_value={"status": "load_complete", "run_stop_reason": "load_complete"}):
+            with patch("sys.argv", ["bdl_web_adaptive.py", "--workspace", "fake_ws"]):
+                self.assertEqual(0, adaptive.main())
+
+        with patch.object(adaptive, "run", return_value={"status": "interrupted", "run_stop_reason": "interrupted"}):
+            with patch("sys.argv", ["bdl_web_adaptive.py", "--workspace", "fake_ws", "--max-seconds", "18600"]):
+                self.assertEqual(0, adaptive.main())
+
+        with patch.object(adaptive, "run", return_value={"status": "incomplete", "run_stop_reason": "interrupted"}):
+            with patch("sys.argv", ["bdl_web_adaptive.py", "--workspace", "fake_ws"]):
+                self.assertEqual(1, adaptive.main())
+
 
 if __name__ == "__main__":
     unittest.main()
+
