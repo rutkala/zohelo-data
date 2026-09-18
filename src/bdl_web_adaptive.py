@@ -439,8 +439,8 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 if result.get("status") == "download":
                     with ctx.lock:
                         part_store = DriveControl(storage, control, f"web-part-{subgroup}-whole.json")
-                        receipt = persist_download(storage, session, landing_root, control, {"subgroup_id": subgroup, "dimension_inventory": []}, whole_node, result, worker_ws, part_store)
                         whole_plan = parts.new_whole_plan(subgroup, item["url"], root_task=whole_node)
+                        receipt = persist_download(storage, session, landing_root, control, whole_plan, whole_node, result, worker_ws, part_store)
                         parts.accept_download(whole_plan, whole_plan["nodes"][whole_plan["root"]], receipt)
                         save_plan(plan_store, whole_plan)
                         ctx.files += 1
