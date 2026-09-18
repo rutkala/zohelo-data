@@ -65,4 +65,19 @@ sources:
     target_scope: Full OpenData.org Senzing entity resolution distribution (organizations, locations, people/business) in native ZIP archive.
     contract: docs/contracts/opendata-org.md
     permitted_operation: Public open data collection into private Drive Landing in native format; commercial redistribution requires agreement with BrightQuery Inc.
+  gus_dbw:
+    adapter: ingestion.sources.gus_dbw
+    research_id: PLS-002
+    timezone: Europe/Warsaw
+    target_scope: Complete thematic area hierarchy, groups, indicators, cross-sections, and dictionary reference sets; native landing with resumable pagination under effective anonymous or registered quota.
+    contract: docs/contracts/gus-dbw.md
+    permitted_operation: Public DBW collection under CC BY 4.0 into private Drive Landing in native format; attribution and source metadata retained.
+    min_request_interval_seconds: 1
+    max_requests: 12
+    registered_max_requests: 60
+    discovery_pause_threshold: 40
+    quota_windows:
+      - {seconds: 900, requests: 80}
+      - {seconds: 43200, requests: 800}
+      - {seconds: 604800, requests: 8000}
 

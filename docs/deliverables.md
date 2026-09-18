@@ -4,6 +4,17 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### GUS DBW (Dziedzinowe Bazy Wiedzy) onboarding, contract, adapter, and pipeline — 18 September 2026
+
+**Autonomous onboarding and technical discovery of Statistics Poland Subject-Matter Knowledge Databases (DBW):**
+- **Analysis of `https://dbw.stat.gov.pl/katalog/bulk` & `https://api-dbw.stat.gov.pl`:** Analyzed provider architecture, discovering that DBW exposes two complementary data delivery mechanisms: (1) an OpenAPI 3.0-governed public REST API on `https://api-dbw.stat.gov.pl` with 13 official endpoints covering thematic taxonomy, dictionaries, variable metadata, cross-sections, and multi-dimensional observation data; and (2) a Next.js web application on `https://dbw.stat.gov.pl/katalog/bulk` and `/katalog/hvd` providing direct table exports as native CSV, XLSX, and ZIP-CSV packages alongside dictionary bundles (`dictionary.csv`).
+- **Hierarchy & Grain Mapping:** Mapped the complete domain knowledge hierarchy: Area (`Gospodarka`, `Społeczeństwo`, `Środowisko`, etc.) -> Group (`Budownictwo`, etc.) -> Subgroup -> Indicator / Variable -> Cross-section (`przekrój`) -> Dimension & Position -> Year × Period observation cells.
+- **Source Contract (`docs/contracts/gus-dbw.md`):** Formalized full source contract specifying data scope, CC BY 4.0 licensing, endpoints, query parameters, reference dictionaries, quotas (anonymous 100 req/15min vs registered 500 req/15min with key `GUS_DBW_API_KEY`), and strict [ADR 0009](decisions/0009-native-only-landing.md) native landing layout under `01_landing/gus_dbw/`.
+- **Ingestion Adapter (`src/ingestion/sources/gus_dbw.py`):** Implemented source adapter conforming to the repository campaign framework (`initial_tasks`, `recent_tasks`, `refresh_task`, `request_for`, `interpret`), generating bounded discovery and follow-up tasks for dictionaries, areas, variables, sections, and observations while storing native payloads without mutation.
+- **Credential & Rate Limiting Integration (`src/ingestion/source_credentials.py`):** Configured transport-only `X-ClientId` header injection for `api-dbw.stat.gov.pl` when `GUS_DBW_API_KEY` is present, automatically raising request limits and adjusting quota windows.
+- **Workflow & Pipeline (`.github/workflows/source-dbw.yml`):** Added GitHub Actions workflow enabling production collection runs on GitHub-hosted runners where connectivity to GUS succeeds (bypassing cloud edge firewalls that block Codespace Azure IPs).
+- **Verification:** 7 new unit tests in `tests/test_gus_dbw.py` pass cleanly in 0.001s, `tests/test_source_credentials.py` passes (12 tests), `scripts/check-source-coverage.py` reports status `ok` across 182 sources, and configuration loads cleanly in `source_campaign.load_settings("gus_dbw")`.
+
 ### GitHub Actions autonomous 3-worker ingestion with automatic self-chaining — 18 September 2026
 
 **Autonomous execution, multi-worker concurrency, and continuous self-chaining until catalogue completion:**

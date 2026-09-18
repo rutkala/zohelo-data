@@ -16,7 +16,7 @@ from ingestion.source_credentials import effective_source_settings, make_authent
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_IDS = ("world_bank_wdi", "gus_bdl", "eurostat")
+SOURCE_IDS = ("world_bank_wdi", "gus_bdl", "eurostat", "gus_dbw")
 
 
 def landing_summary(manifest):

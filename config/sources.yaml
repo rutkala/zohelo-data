@@ -170,3 +170,25 @@ sources:
       quote_unit: "Entity records in Senzing format (organizations, locations, people)"
       methodology_notes: "Senzing JSON entity-resolved graphs linking global organizations, executives, digital identifiers, and geographic locations."
       description: "OpenData.org global business entity resolution dataset in native Senzing ZIP format."
+
+  # ==========================================
+  # SOURCE 9: GUS DBW (Dziedzinowe Bazy Wiedzy)
+  # ==========================================
+  gus_dbw:
+    metadata:
+      domain: "public_statistics"
+      category: "domain_knowledge_databases"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "GUS DBW (Subject-Matter Knowledge Databases)"
+      source_name: "Statistics Poland (GUS)"
+      provider_url: "https://stat.gov.pl/"
+      documentation_url: "https://api-dbw.stat.gov.pl/apidocs/"
+      publication_schedule_url: "https://dbw.stat.gov.pl/"
+      frequency: "thematic domain statistics, periodic series, and bulk distributions"
+      coverage_start: "source_defined"
+      reuse_terms_url: "https://api.stat.gov.pl/Home/TermsOfService?lang=en"
+      reuse_summary: "Public DBW access under Statistics Poland publication terms and CC BY 4.0 attribution requirements."
+      quote_unit: "Domain-specific measure units vary by variable; preserved as delivered."
+      methodology_notes: "Preserves exact DBW area hierarchy (Area -> Group -> Subgroup -> Indicator -> Section -> Dimension/Position) and dictionaries. Native-only transfer in landing according to ADR 0009."
+      description: "Statistics Poland Subject-Matter Knowledge Databases (Dziedzinowe Bazy Wiedzy) multi-dimensional statistical metadata, bulk exports, and observations."

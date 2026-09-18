@@ -22,7 +22,18 @@ _REGISTERED_BDL_QUOTA_WINDOWS = (
     {"seconds": 43_200, "requests": 4_000},
     {"seconds": 604_800, "requests": 40_000},
 )
-_CURRENT_SOURCE_IDS = frozenset(("world_bank_wdi", _BDL_SOURCE_ID, "eurostat"))
+
+_DBW_SOURCE_ID = "gus_dbw"
+_DBW_SECRET_NAME = "GUS_DBW_API_KEY"
+_DBW_HEADER_NAME = "X-ClientId"
+_DBW_ORIGIN = "api-dbw.stat.gov.pl"
+_DBW_PATH = "/api"
+_REGISTERED_DBW_QUOTA_WINDOWS = (
+    {"seconds": 900, "requests": 400},
+    {"seconds": 43_200, "requests": 4_000},
+    {"seconds": 604_800, "requests": 40_000},
+)
+_CURRENT_SOURCE_IDS = frozenset(("world_bank_wdi", _BDL_SOURCE_ID, "eurostat", _DBW_SOURCE_ID))
 
 
 class SourceCredentialError(ValueError):
@@ -48,14 +59,14 @@ def _environment(environ: Mapping[str, str] | None) -> Mapping[str, str]:
     return os.environ if environ is None else environ
 
 
-def _validated_bdl_credential(environ: Mapping[str, str] | None) -> _ResolvedCredential:
+def _validated_api_credential(secret_name: str, environ: Mapping[str, str] | None) -> _ResolvedCredential:
     source = _environment(environ)
     # GitHub Actions renders an unavailable expression-backed secret as an empty
     # environment value. Treat that exact value like an absent optional secret.
-    if _BDL_SECRET_NAME not in source or source[_BDL_SECRET_NAME] == "":
-        return _ResolvedCredential(SourceAccessStatus("anonymous", _BDL_SECRET_NAME))
+    if secret_name not in source or source[secret_name] == "":
+        return _ResolvedCredential(SourceAccessStatus("anonymous", secret_name))
 
-    value = source[_BDL_SECRET_NAME]
+    value = source[secret_name]
     # A bounded visible-ASCII header value excludes whitespace/control injection and
     # produces a fixed error that never contains the rejected value.
     if (
@@ -66,14 +77,16 @@ def _validated_bdl_credential(environ: Mapping[str, str] | None) -> _ResolvedCre
     ):
         raise SourceCredentialError("Configured source credential is invalid")
     return _ResolvedCredential(
-        SourceAccessStatus("registered", _BDL_SECRET_NAME),
+        SourceAccessStatus("registered", secret_name),
         value,
     )
 
 
 def _resolved(source_id: str, environ: Mapping[str, str] | None) -> _ResolvedCredential:
     if source_id == _BDL_SOURCE_ID:
-        return _validated_bdl_credential(environ)
+        return _validated_api_credential(_BDL_SECRET_NAME, environ)
+    if source_id == _DBW_SOURCE_ID:
+        return _validated_api_credential(_DBW_SECRET_NAME, environ)
     if source_id in _CURRENT_SOURCE_IDS:
         return _ResolvedCredential(SourceAccessStatus("public", None))
     raise SourceCredentialError("Source credential policy is not configured")
@@ -108,6 +121,13 @@ def effective_source_settings(
         ]
         if "registered_max_requests" in settings:
             effective["max_requests"] = int(settings["registered_max_requests"])
+    elif source_id == _DBW_SOURCE_ID and resolved.status.mode == "registered":
+        effective["min_request_interval_seconds"] = 1
+        effective["quota_windows"] = [
+            dict(window) for window in _REGISTERED_DBW_QUOTA_WINDOWS
+        ]
+        if "registered_max_requests" in settings:
+            effective["max_requests"] = int(settings["registered_max_requests"])
     return effective
 
 
@@ -126,7 +146,7 @@ def source_request_headers(
     resolved = _resolved(source_id, environ)
     if resolved._value is None:
         return {}
-    if source_id != _BDL_SOURCE_ID or not isinstance(url, str):
+    if source_id not in (_BDL_SOURCE_ID, _DBW_SOURCE_ID) or not isinstance(url, str):
         raise SourceCredentialError("Source credential cannot be sent to this request")
     try:
         parsed = urlsplit(url)
@@ -135,20 +155,25 @@ def source_request_headers(
         raise SourceCredentialError(
             "Source credential cannot be sent to this request"
         ) from None
+
+    target_origin = _BDL_ORIGIN if source_id == _BDL_SOURCE_ID else _DBW_ORIGIN
+    target_path = _BDL_PATH if source_id == _BDL_SOURCE_ID else _DBW_PATH
+    header_name = _BDL_HEADER_NAME if source_id == _BDL_SOURCE_ID else _DBW_HEADER_NAME
+
     if (
         parsed.scheme != "https"
-        or parsed.netloc != _BDL_ORIGIN
+        or parsed.netloc != target_origin
         or parsed.username is not None
         or parsed.password is not None
         or parsed.fragment
         or not valid_port
         or not (
-            parsed.path == _BDL_PATH
-            or parsed.path.startswith(_BDL_PATH + "/")
+            parsed.path == target_path
+            or parsed.path.startswith(target_path + "/")
         )
     ):
         raise SourceCredentialError("Source credential cannot be sent to this request")
-    return {_BDL_HEADER_NAME: resolved._value}
+    return {header_name: resolved._value}
 
 
 def make_authenticated_fetch(
