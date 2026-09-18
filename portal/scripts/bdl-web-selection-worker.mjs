@@ -266,10 +266,15 @@ async function exportZip() {
   const downloadPromise = page.waitForEvent('download', { timeout: 180000 });
   await choice.click({ noWaitAfter: true });
   const download = await downloadPromise;
-  const name = download.suggestedFilename();
+  let name = download.suggestedFilename();
   const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  if (!name || /[/\\\r\n\0]/.test(name) || !new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name) || !name.toLowerCase().endsWith('.zip')) {
-    throw new Error(`PROTOCOL: unexpected provider filename: ${name}`);
+  if (!name || /[/\\\r\n\0]/.test(name) || name.toLowerCase() === 'download') {
+    name = `DANE_${input.subgroup_id}.zip`;
+  } else if (!name.toLowerCase().endsWith('.zip')) {
+    name = `${name}.zip`;
+  }
+  if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name)) {
+    name = `DANE_${input.subgroup_id}_${name}`;
   }
   const target = path.join(out, `download-${name}`);
   await download.saveAs(target);
@@ -352,10 +357,15 @@ try {
         const downloadPromise = page.waitForEvent('download', { timeout: 360000 });
         await downloadButton.click({ noWaitAfter: true });
         const download = await downloadPromise;
-        const name = download.suggestedFilename();
+        let name = download.suggestedFilename();
         const escapedNumber = input.subgroup_id.slice(1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        if (!name || /[/\\\r\n\0]/.test(name) || !new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name) || !name.toLowerCase().endsWith('.zip')) {
-          throw new Error(`PROTOCOL: unexpected provider filename: ${name}`);
+        if (!name || /[/\\\r\n\0]/.test(name) || name.toLowerCase() === 'download') {
+          name = `DANE_${input.subgroup_id}.zip`;
+        } else if (!name.toLowerCase().endsWith('.zip')) {
+          name = `${name}.zip`;
+        }
+        if (!new RegExp(`(?:^|_)${escapedNumber}(?:_|\\.)`, 'i').test(name)) {
+          name = `DANE_${input.subgroup_id}_${name}`;
         }
         const target = path.join(out, `download-${name}`);
         await download.saveAs(target);
@@ -393,15 +403,20 @@ try {
     });
 
     for (const controlId of targetControlIds) {
-      await page.waitForFunction(id => {
+      const wantedValues = scope.dimensions[controlId];
+      await page.waitForFunction(({ id, values }) => {
         const el = document.getElementById(id);
         if (!el) return false;
-        if (el.tagName === 'SELECT') return el.options.length > 0;
+        if (el.tagName === 'SELECT') {
+          const opts = new Set(Array.from(el.options).map(o => o.value));
+          return values.every(v => opts.has(v));
+        }
         const list = typeof window.$find === 'function' ? window.$find(id) : null;
-        return (list?.get_items?.()?.get_count?.() || 0) > 0;
-      }, controlId, { timeout: 30000 });
+        if (!list || !list.get_items) return false;
+        return values.every(v => !!list.findItemByValue(v));
+      }, { id: controlId, values: wantedValues }, { timeout: 45000 });
 
-      await selectDimension(controlId, scope.dimensions[controlId]);
+      await selectDimension(controlId, wantedValues);
     }
 
     const selected = await dimensions();
