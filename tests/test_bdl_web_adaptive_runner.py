@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -530,6 +531,45 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
             # Whole attempt (1) + dimensions (1) + layouts (1) + territories (1) + 5 failed download chunks = 9
             self.assertLessEqual(p1_count, 12, "P1 must be capped and not run indefinitely")
             self.assertIn("P2", order, "P2 must still run despite P1 failures")
+
+    def test_concurrent_workers_process_multiple_subgroups_in_parallel(self):
+        """Multi-worker runner (concurrency=3) distributes subgroups across isolated worker workspaces."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            candidates = {f"P{i}": make_candidate(i) for i in range(1, 7)}
+            self.setup_environment(workspace, candidates)
+
+            invoked_workspaces = []
+            work_lock = threading.Lock()
+
+            def fake_invoke(item, node, ws, timeout):
+                with work_lock:
+                    invoked_workspaces.append(str(ws))
+                time.sleep(0.02)
+                return {"status": "download"}
+
+            def fake_persist(storage, session, landing_root, control, p, node, result, ws, part_store):
+                raw = b"test-raw"
+                receipt = {
+                    "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+                    "record_type": "native_partition_receipt", "subgroup_id": p["subgroup_id"],
+                    "selection_id": node["id"], "selection": node["scope"],
+                    "landing_scope": "native_bytes_only", "content_validation": "not_performed",
+                    "archive_object": {"id": f"d-{p['subgroup_id']}", "size": len(raw), "sha256": sha256(raw).hexdigest(), "md5": "b" * 32},
+                    "completed_at_utc": queue.now(),
+                }
+                if part_store:
+                    part_store.save(receipt)
+                return receipt
+
+            with patch.object(adaptive, "invoke_selection", side_effect=fake_invoke), \
+                 patch.object(adaptive, "persist_download", side_effect=fake_persist):
+                result = adaptive.run(workspace, concurrency=3)
+
+            self.assertEqual("load_complete", result["status"])
+            self.assertEqual(6, result["new_files_this_run"])
+            worker_dirs = {Path(p).name for p in invoked_workspaces}
+            self.assertTrue({"worker-0", "worker-1", "worker-2"} <= worker_dirs)
 
 
 if __name__ == "__main__":

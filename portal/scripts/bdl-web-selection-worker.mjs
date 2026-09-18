@@ -17,8 +17,19 @@ const result = { subgroup_id: input.subgroup_id, selection_id: input.selection_i
 const save = () => fs.writeFile(path.join(out, 'selection-result.json'), JSON.stringify(result, null, 2));
 const safe = value => String(value).replaceAll(email, '[REDACTED_EMAIL]').replaceAll(password, '[REDACTED_PASSWORD]');
 const same = (a, b) => a.length === b.length && new Set(a).size === a.length && [...a].sort().every((v, i) => v === [...b].sort()[i]);
+const sessionPath = process.env.BDL_SESSION_STATE_PATH || path.join(path.dirname(out), 'bdl-session-state.json');
+let hasSession = false;
+try {
+  await fs.access(sessionPath);
+  hasSession = true;
+} catch {}
+
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ acceptDownloads: true, locale: 'pl-PL' });
+const context = await browser.newContext({
+  acceptDownloads: true,
+  locale: 'pl-PL',
+  storageState: hasSession ? sessionPath : undefined
+});
 const page = await context.newPage();
 page.setDefaultTimeout(30000);
 let rateLimited = false;
@@ -275,16 +286,27 @@ async function exportZip() {
 try {
   await fs.mkdir(out, { recursive: true });
   await save();
-  await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
-  await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
-  await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
-  await settle();
-  await page.waitForFunction(() => /Użytkownik:/i.test(document.body.innerText) && !/Użytkownik:\s*Gość/i.test(document.body.innerText), null, { timeout: 30000 });
+  let loggedIn = false;
+  if (hasSession) {
+    await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await settle();
+    loggedIn = await page.evaluate(() => /Użytkownik:/i.test(document.body.innerText) && !/Użytkownik:\s*Gość/i.test(document.body.innerText));
+  }
+  if (!loggedIn) {
+    await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
+    await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
+    await page.locator('#ctl00_ContentPlaceHolder_SignIn').click();
+    await settle();
+    await page.waitForFunction(() => /Użytkownik:/i.test(document.body.innerText) && !/Użytkownik:\s*Gość/i.test(document.body.innerText), null, { timeout: 30000 });
+    try {
+      await context.storageState({ path: sessionPath });
+    } catch {}
+    await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await settle();
+  }
   result.stage = 'dimensions';
   await save();
-  await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await settle();
   if (scope.kind === 'whole' || (scope.kind === 'download' && Array.isArray(scope.territories) && scope.territories.length === 1 && scope.territories[0] === 'all')) {
     const clicked = new Set();
     for (let i = 0; i < 20; i++) {

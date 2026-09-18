@@ -20,6 +20,9 @@ import time
 import bdl_web_partitions as parts
 from bdl_web_queue import DriveControl, apply_discovery, new_state, now, rendered, invoke
 
+import threading
+from typing import Any
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -29,7 +32,7 @@ class WorkerFailure(RuntimeError):
         self.failure_class = failure_class
 
 
-def invoke_selection(item, node, workspace, timeout):
+def invoke_selection(item, node, workspace, timeout, session_path=None):
     request = {"subgroup_id": item["subgroup_id"], "url": item["url"],
                "selection_id": node["id"], "scope": node["scope"]}
     request_path = workspace / "selection-task.json"
@@ -41,6 +44,13 @@ def invoke_selection(item, node, workspace, timeout):
              "GUS_BDL_WEB_EMAIL", "GUS_BDL_WEB_PASSWORD")
     env = {key: os.environ[key] for key in names if key in os.environ}
     env.update(BDL_WEB_TASK_PATH=str(request_path), BDL_BULK_OUT_DIR=str(workspace))
+    if session_path is not None:
+        env["BDL_SESSION_STATE_PATH"] = str(session_path)
+    elif "BDL_SESSION_STATE_PATH" in os.environ:
+        env["BDL_SESSION_STATE_PATH"] = os.environ["BDL_SESSION_STATE_PATH"]
+    else:
+        parent = workspace.parent if workspace.name.startswith("worker-") else workspace
+        env["BDL_SESSION_STATE_PATH"] = str(parent / "bdl-session-state.json")
     process = subprocess.Popen(["node", str(ROOT / "portal/scripts/bdl-web-selection-worker.mjs")],
                                cwd=ROOT / "portal", env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
@@ -282,6 +292,30 @@ def campaign_summary(state, legacy, files, transferred, reason, mode="resume"):
     }
 
 
+class RunContext:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.stop_event = threading.Event()
+        self.fatal_error: Exception | None = None
+        self.files = 0
+        self.transferred = 0
+        self.consecutive_failures = 0
+        self.reason = "running"
+
+
+def select_next_candidate(state: dict[str, Any], legacy: set[str]) -> dict[str, Any] | None:
+    pass_outcomes = state.get("pass_outcomes", {})
+    in_flight = set(state.get("in_flight", []))
+    unvisited = [c for k, c in state["candidates"].items() if k not in pass_outcomes and k not in in_flight]
+    if unvisited:
+        return min(unvisited, key=lambda c: (c["subgroup_id"] != "P1313", c["subgroup_id"] in legacy, int(c["subgroup_id"][1:])))
+    partials = [state["candidates"][k] for k, v in pass_outcomes.items() if v.get("status") == "partial" and k not in in_flight]
+    if partials:
+        return min(partials, key=lambda c: int(c["subgroup_id"][1:]))
+    return None
+
+
 def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, allow_codespace=False):
     from bdl_bulk_plan import _bulk_roots, _durable_status
     from bdl_web_bootstrap import _clean_ephemeral
@@ -289,15 +323,19 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
     if max_seconds is not None and max_seconds < 1:
         raise ValueError("max_seconds must be positive when provided")
+    if concurrency < 1:
+        concurrency = 1
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
+    session_path = workspace / "bdl-session-state.json"
+    os.environ["BDL_SESSION_STATE_PATH"] = str(session_path)
     storage = StorageManager(allow_interactive_auth=False)
     storage.resolve_root(create=False)
     session = storage.begin_write_session()
     landing_root = storage.resolve_zone("landing", create=False)
     bulk, control = _bulk_roots(storage)
 
-    host_kind = authorize_production_runner(storage, allow_codespace=allow_codespace)
+    host_kind =  authorize_production_runner(storage, allow_codespace=allow_codespace)
     lock_store, lock_data = acquire_writer_lock(storage, control, host_kind)
 
     store = DriveControl(storage, control, "web-queue-v1.json")
@@ -317,18 +355,17 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         state = store.load() or new_state(seed)
         state.setdefault("pass_id", "pass-initial")
         state.setdefault("pass_outcomes", {})
-        state.setdefault("in_flight", [])
+        state["in_flight"] = []
     state.setdefault("selection_plans", {})
     state.setdefault("failures", {})
 
     legacy, _ = _durable_status(storage, bulk, control)
     start = time.monotonic()
-    files = transferred = consecutive_failures = 0
-    reason = "running"
+    ctx = RunContext()
     discovery_attempted = set()
 
     def report():
-        value = campaign_summary(state, legacy, files, transferred, reason, mode=mode)
+        value = campaign_summary(state, legacy, ctx.files, ctx.transferred, ctx.reason, mode=mode)
         (workspace / "bootstrap-summary.json").write_bytes(rendered(value))
         print(json.dumps(value, ensure_ascii=False), flush=True)
         if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -337,10 +374,10 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 f"Campaign pass: **{value['status']}**; pass complete: **{value['pass_complete']}**; full load complete: **{value['load_complete']}**.\n\n"
                 f"Visited this pass: **{value['visited_subgroups_this_pass']} / {value['known_subgroups']}**; "
                 f"selection-complete subgroups: **{value['selection_complete_subgroups']}**.\n\n"
-                f"New native files this run: **{files}**; bytes: **{transferred:,}**. "
+                f"New native files this run: **{ctx.files}**; bytes: **{ctx.transferred:,}**. "
                 f"Existing native subgroups retained: {len(legacy)}.\n\n"
                 f"Catalogue pending: {value['pending_catalogue_tables']}; blocked selections: {value['blocked_selections']}. "
-                f"Stop reason: {reason}. Mode: {mode}. Host: {host_kind}.\n\n"
+                f"Stop reason: {ctx.reason}. Mode: {mode}. Host: {host_kind}.\n\n"
                 "Native bytes only. No archive extraction, CSV parsing, row counting, Parquet, API observations or medallion processing. "
                 "Completed selections are transport coverage, not validation of their numerical contents.\n"
             )
@@ -356,56 +393,18 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         print(json.dumps({"status": "bdl_selection_progress", "subgroup_id": plan["subgroup_id"], **value}), flush=True)
         report()
 
-    try:
-        store.save(state)
-        report()
-        while True:
-            if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
-                reason = "interrupted"
-                break
+    def process_subgroup(item: dict[str, Any], worker_id: int, worker_ws: Path):
+        subgroup = item["subgroup_id"]
+        worker_ws.mkdir(parents=True, exist_ok=True)
+        _clean_ephemeral(worker_ws)
 
-            catalogue_task = next((t for t in state["discovery_pending"] if t["url"] not in discovery_attempted), None)
-            if catalogue_task:
-                discovery_attempted.add(catalogue_task["url"])
-                env = {k: os.environ[k] for k in ("PATH", "HOME", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH") if k in os.environ}
-                env.update(BDL_CATALOGUE_TASK=json.dumps(catalogue_task), BDL_CATALOGUE_OUTPUT=str(workspace / "catalogue-task.json"))
-                try:
-                    result = invoke("bdl-web-catalogue.mjs", env, 240, workspace / "catalogue-task.json")
-                    state = apply_discovery(state, catalogue_task, result)
-                except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
-                    state["catalogue_errors"][catalogue_task["url"]] = str(exc)[:1200]
-                store.save(state)
-                update_writer_heartbeat(lock_store, lock_data)
-
-            pass_outcomes = state["pass_outcomes"]
-            unvisited = [c for k, c in state["candidates"].items() if k not in pass_outcomes]
-
-            if not unvisited:
-                partials = [state["candidates"][k] for k, v in pass_outcomes.items() if v.get("status") == "partial"]
-                if partials:
-                    item = min(partials, key=lambda c: int(c["subgroup_id"][1:]))
-                else:
-                    if catalogue_task:
-                        continue
-                    catalogue_complete = bool(state["candidates"]) and not state["discovery_pending"] and not state["catalogue_errors"]
-                    if catalogue_complete:
-                        all_complete = set(state["candidates"]) <= {k for k, v in state.get("selection_plans", {}).items() if v.get("summary", {}).get("complete")}
-                        has_failures = bool(state.get("failures")) or any(v.get("summary", {}).get("blocked_selections", 0) > 0 for v in state.get("selection_plans", {}).values())
-                        reason = "load_complete" if (all_complete and not has_failures) else "pass_complete"
-                    else:
-                        reason = "catalogue_unresolved"
-                    break
-            else:
-                item = min(unvisited, key=lambda c: (c["subgroup_id"] != "P1313", c["subgroup_id"] in legacy, int(c["subgroup_id"][1:])))
-            subgroup = item["subgroup_id"]
-            state["in_flight"] = [subgroup]
-            store.save(state)
-            update_writer_heartbeat(lock_store, lock_data)
-
+        with ctx.lock:
             plan_store = DriveControl(storage, control, f"web-parts-{subgroup}-v1.json")
             existing_plan = plan_store.load()
-            if mode == "resume" and existing_plan and parts.summary(existing_plan)["complete"]:
-                try:
+
+        if mode == "resume" and existing_plan and parts.summary(existing_plan)["complete"]:
+            try:
+                with ctx.lock:
                     for node in existing_plan["nodes"].values():
                         if node.get("status") == "landed" and "receipt" in node:
                             check_stored_receipt(storage, existing_plan, node, node["receipt"])
@@ -415,78 +414,93 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         "verified_at_utc": now()
                     }
                     save_plan(plan_store, existing_plan)
-                    consecutive_failures = 0
-                    state["in_flight"] = []
-                    store.save(state)
-                    continue
-                except Exception:
-                    existing_plan = None
+                    ctx.consecutive_failures = 0
+                return
+            except Exception:
+                existing_plan = None
 
-            if mode == "resume" and existing_plan:
-                summ = parts.summary(existing_plan)
-                if summ["files"] == 0 and (summ["blocked_selections"] > 0 or subgroup in state.get("failures", {})):
-                    plan = None
-                else:
-                    plan = existing_plan
-            else:
+        if mode == "resume" and existing_plan:
+            summ = parts.summary(existing_plan)
+            if summ["files"] == 0 and (summ["blocked_selections"] > 0 or subgroup in state.get("failures", {})):
                 plan = None
-            if plan is None:
-                _clean_ephemeral(workspace)
-                whole_node = parts.task("download", dimensions={}, layout=None, territories=["all"])
-                print(json.dumps({"status": "bdl_web_whole_subgroup_attempt", "subgroup_id": subgroup}), flush=True)
-                try:
-                    rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
-                    timeout = min(600, rem) if rem > 60 else 60
-                    result = invoke_selection(item, whole_node, workspace, timeout)
-                    if result.get("status") == "download":
+            else:
+                plan = existing_plan
+        else:
+            plan = None
+
+        if plan is None:
+            _clean_ephemeral(worker_ws)
+            whole_node = parts.task("download", dimensions={}, layout=None, territories=["all"])
+            print(json.dumps({"status": "bdl_web_whole_subgroup_attempt", "subgroup_id": subgroup}), flush=True)
+            try:
+                rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
+                timeout = min(600, rem) if rem > 60 else 60
+                result = invoke_selection(item, whole_node, worker_ws, timeout)
+                if result.get("status") == "download":
+                    with ctx.lock:
                         part_store = DriveControl(storage, control, f"web-part-{subgroup}-whole.json")
-                        receipt = persist_download(storage, session, landing_root, control, {"subgroup_id": subgroup, "dimension_inventory": []}, whole_node, result, workspace, part_store)
+                        receipt = persist_download(storage, session, landing_root, control, {"subgroup_id": subgroup, "dimension_inventory": []}, whole_node, result, worker_ws, part_store)
                         whole_plan = parts.new_whole_plan(subgroup, item["url"], root_task=whole_node)
                         parts.accept_download(whole_plan, whole_plan["nodes"][whole_plan["root"]], receipt)
                         save_plan(plan_store, whole_plan)
-                        files += 1
-                        transferred += receipt["archive_object"]["size"]
-                        consecutive_failures = 0
+                        ctx.files += 1
+                        ctx.transferred += receipt["archive_object"]["size"]
+                        ctx.consecutive_failures = 0
                         state["pass_outcomes"][subgroup] = {"status": "landed", "files": 1, "bytes": receipt["archive_object"]["size"], "completed_at_utc": now()}
                         state["failures"].pop(subgroup, None)
-                        state["in_flight"] = []
-                        store.save(state)
-                        continue
-                except WorkerFailure as exc:
-                    if exc.failure_class in {"authentication_or_site", "rate_limit", "storage_error"}:
+                    return
+            except WorkerFailure as exc:
+                if exc.failure_class in {"authentication_or_site", "rate_limit", "storage_error"}:
+                    with ctx.lock:
                         state["failures"][subgroup] = {"last_attempt_utc": now(), "error": str(exc), "failure_class": exc.failure_class}
                         state["pass_outcomes"][subgroup] = {"status": "failed", "error": str(exc)}
-                        state["in_flight"] = []
-                        store.save(state)
-                        reason = "interrupted"
-                        raise
+                        ctx.reason = "interrupted"
+                        ctx.fatal_error = exc
+                        ctx.stop_event.set()
+                        ctx.condition.notify_all()
+                    raise
+                with ctx.lock:
                     plan = parts.new_plan(subgroup, item["url"])
                     save_plan(plan_store, plan)
-                except Exception:
+            except Exception:
+                with ctx.lock:
                     plan = parts.new_plan(subgroup, item["url"])
                     save_plan(plan_store, plan)
 
+        with ctx.lock:
             parts.validate(plan)
             for node in plan["nodes"].values():
                 if node["status"] == "blocked":
                     node.update(status="pending", attempts=0)
             save_plan(plan_store, plan)
 
-            subgroup_tasks_processed = 0
-            subgroup_failures = 0
-            max_subgroup_slice = 15
-            max_subgroup_failures = 5
-            while subgroup_tasks_processed < max_subgroup_slice:
-                if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
-                    break
+        subgroup_tasks_processed = 0
+        subgroup_failures = 0
+        max_subgroup_slice = 15
+        max_subgroup_failures = 5
+
+        while subgroup_tasks_processed < max_subgroup_slice:
+            if ctx.stop_event.is_set():
+                break
+            if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
+                with ctx.lock:
+                    ctx.reason = "interrupted"
+                    ctx.stop_event.set()
+                    ctx.condition.notify_all()
+                break
+
+            with ctx.lock:
                 node = parts.next_task(plan, set())
-                save_plan(plan_store, plan)
-                if node is None:
-                    break
-                subgroup_tasks_processed += 1
-                _clean_ephemeral(workspace)
-                part_store = None
-                if node["scope"]["kind"] == "download":
+                if node is not None:
+                    save_plan(plan_store, plan)
+            if node is None:
+                break
+
+            subgroup_tasks_processed += 1
+            _clean_ephemeral(worker_ws)
+            part_store = None
+            if node["scope"]["kind"] == "download":
+                with ctx.lock:
                     part_store = DriveControl(storage, control, f"web-part-{subgroup}-{node['id']}.json")
                     retained = part_store.load() if mode == "resume" else None
                     if retained:
@@ -498,45 +512,54 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         except Exception:
                             retained = None
 
-                print(json.dumps({"status": "bdl_web_selection_started", "subgroup_id": subgroup,
-                                  "selection_id": node["id"], "kind": node["scope"]["kind"],
-                                  "territories": len(node["scope"].get("territories") or [])}), flush=True)
-                try:
-                    rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
-                    timeout = min(600, rem) if rem > 60 else 60
-                    result = invoke_selection(item, node, workspace, timeout)
+            print(json.dumps({"status": "bdl_web_selection_started", "subgroup_id": subgroup,
+                              "selection_id": node["id"], "kind": node["scope"]["kind"],
+                              "territories": len(node["scope"].get("territories") or [])}), flush=True)
+
+            try:
+                rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
+                timeout = min(600, rem) if rem > 60 else 60
+                result = invoke_selection(item, node, worker_ws, timeout)
+                with ctx.lock:
                     process_result(plan, node, result)
-                except WorkerFailure as exc:
-                    consecutive_failures += 1
+            except WorkerFailure as exc:
+                with ctx.lock:
+                    ctx.consecutive_failures += 1
                     subgroup_failures += 1
                     disposition = parts.failed(plan, node, str(exc), exc.failure_class)
                     state["failures"][subgroup] = {"last_attempt_utc": now(), "error": str(exc),
                                                    "selection_id": node["id"], "failure_class": exc.failure_class}
                     (workspace / f"failure-{subgroup}-{node['id']}.json").write_bytes(rendered(state["failures"][subgroup]))
                     save_plan(plan_store, plan)
-                    if consecutive_failures >= 20:
-                        reason = "interrupted"
+                    if ctx.consecutive_failures >= 20:
+                        ctx.reason = "interrupted"
+                        ctx.fatal_error = exc
+                        ctx.stop_event.set()
+                        ctx.condition.notify_all()
                         raise
-                    if subgroup_failures >= max_subgroup_failures or disposition == "stop":
-                        break
-                    if disposition == "retry":
-                        time.sleep(2)
-                    continue
+                if subgroup_failures >= max_subgroup_failures or disposition == "stop":
+                    break
+                if disposition == "retry":
+                    time.sleep(2)
+                continue
 
-                if node["scope"]["kind"] == "download":
-                    receipt = persist_download(storage, session, landing_root, control, plan, node, result, workspace, part_store)
+            if node["scope"]["kind"] == "download":
+                with ctx.lock:
+                    receipt = persist_download(storage, session, landing_root, control, plan, node, result, worker_ws, part_store)
                     parts.accept_download(plan, node, receipt)
-                    consecutive_failures = 0
+                    ctx.consecutive_failures = 0
                     subgroup_failures = 0
-                    files += 1
-                    transferred += receipt["archive_object"]["size"]
+                    ctx.files += 1
+                    ctx.transferred += receipt["archive_object"]["size"]
                     (workspace / f"landed-{subgroup}-{node['id']}.json").write_bytes(rendered(receipt))
 
+            with ctx.lock:
                 save_plan(plan_store, plan)
 
+        with ctx.lock:
             summary_val = parts.summary(plan)
             if summary_val["complete"]:
-                consecutive_failures = 0
+                ctx.consecutive_failures = 0
                 state["failures"].pop(subgroup, None)
                 state["pass_outcomes"][subgroup] = {"status": "landed", "files": summary_val["files"], "bytes": summary_val["bytes"], "completed_at_utc": now()}
             elif summary_val.get("blocked_selections", 0) > 0:
@@ -544,9 +567,94 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             else:
                 state["pass_outcomes"][subgroup] = {"status": "partial", "files": summary_val["files"], "outstanding_selections": summary_val["outstanding_selections"], "updated_at_utc": now()}
 
-            state["in_flight"] = []
-            store.save(state)
-            update_writer_heartbeat(lock_store, lock_data)
+    def worker_loop(worker_id: int):
+        worker_ws = workspace if concurrency == 1 else (workspace / f"worker-{worker_id}")
+        while not ctx.stop_event.is_set():
+            if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
+                with ctx.lock:
+                    ctx.reason = "interrupted"
+                    ctx.stop_event.set()
+                    ctx.condition.notify_all()
+                break
+
+            with ctx.lock:
+                catalogue_task = next((t for t in state["discovery_pending"] if t["url"] not in discovery_attempted), None)
+                if catalogue_task:
+                    discovery_attempted.add(catalogue_task["url"])
+                    env = {k: os.environ[k] for k in ("PATH", "HOME", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH") if k in os.environ}
+                    env.update(BDL_CATALOGUE_TASK=json.dumps(catalogue_task), BDL_CATALOGUE_OUTPUT=str(workspace / "catalogue-task.json"))
+                    try:
+                        result = invoke("bdl-web-catalogue.mjs", env, 240, workspace / "catalogue-task.json")
+                        discovered = apply_discovery(state, catalogue_task, result)
+                        state.clear()
+                        state.update(discovered)
+                    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
+                        state["catalogue_errors"][catalogue_task["url"]] = str(exc)[:1200]
+                    store.save(state)
+                    update_writer_heartbeat(lock_store, lock_data)
+                    continue
+
+                item = select_next_candidate(state, legacy)
+                if item is None:
+                    if state.get("in_flight"):
+                        ctx.condition.wait(timeout=2.0)
+                        continue
+                    else:
+                        catalogue_complete = bool(state["candidates"]) and not state["discovery_pending"] and not state["catalogue_errors"]
+                        if catalogue_complete:
+                            all_complete = set(state["candidates"]) <= {k for k, v in state.get("selection_plans", {}).items() if v.get("summary", {}).get("complete")}
+                            has_failures = bool(state.get("failures")) or any(v.get("summary", {}).get("blocked_selections", 0) > 0 for v in state.get("selection_plans", {}).values())
+                            ctx.reason = "load_complete" if (all_complete and not has_failures) else "pass_complete"
+                        else:
+                            ctx.reason = "catalogue_unresolved"
+                        ctx.stop_event.set()
+                        ctx.condition.notify_all()
+                        break
+
+                subgroup = item["subgroup_id"]
+                state["in_flight"].append(subgroup)
+                store.save(state)
+                update_writer_heartbeat(lock_store, lock_data)
+
+            try:
+                process_subgroup(item, worker_id, worker_ws)
+            except Exception as exc:
+                with ctx.lock:
+                    if ctx.fatal_error is None:
+                        ctx.fatal_error = exc
+                    ctx.stop_event.set()
+            finally:
+                with ctx.lock:
+                    if subgroup in state.get("in_flight", []):
+                        state["in_flight"].remove(subgroup)
+                    store.save(state)
+                    update_writer_heartbeat(lock_store, lock_data)
+                    ctx.condition.notify_all()
+
+    try:
+        store.save(state)
+        report()
+
+        threads = []
+        for i in range(concurrency):
+            t = threading.Thread(target=worker_loop, args=(i,), name=f"bdl-worker-{i}")
+            threads.append(t)
+            t.start()
+
+        try:
+            while any(t.is_alive() for t in threads):
+                for t in threads:
+                    t.join(timeout=0.5)
+        except (KeyboardInterrupt, SystemExit):
+            ctx.reason = "interrupted"
+            ctx.stop_event.set()
+            with ctx.lock:
+                ctx.condition.notify_all()
+            for t in threads:
+                t.join(timeout=5.0)
+
+        if ctx.fatal_error is not None:
+            raise ctx.fatal_error
 
         return report()
     finally:
