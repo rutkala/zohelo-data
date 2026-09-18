@@ -4,16 +4,17 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
-### BDL Web Ingestion concurrency acceleration, ASP.NET AJAX dropdown race fix, and Codespace idle timeout diagnosis — 18 September 2026
+### BDL Web Ingestion concurrency acceleration, ASP.NET worker session isolation, and error classification repairs — 18 September 2026
 
-**Run diagnostics, Codespace idle pause analysis, bugfixes, and resumed concurrent ingestion:**
+**Root-cause analysis of concurrent session collisions, worker isolation, and resilient ingestion resumption:**
 - **Codespace Idle Timeout Diagnosis:** The Codespace automatically stopped after ~32 minutes of execution (started 05:51:52Z, stopped 06:23:34Z) due to GitHub Codespaces' default 30-minute idle inactivity timeout when no UI activity occurs in the browser tab. In GitHub account settings (`github.com -> Settings -> Codespaces -> Default idle timeout`), setting the timeout to the 240-minute (4-hour) maximum minimizes pause frequency during unattended runs.
-- **Progress in 32-minute burst (`task-2148`):** Landed **132 new native partition ZIP files** on Google Drive across 12 newly completed subgroups (`P1440, P1445, P1446, P1447, P1448, P1453, P1461, P1464, P1467, P1475, P1528, P1532`), elevating cumulative completed subgroups to 41 (and 420 total landed ZIP archives on Drive) at an effective throughput of ~44 subgroups/hour.
-- **Diagnosed failure modes & fixes merged to `main`:**
-  - *ASP.NET AJAX dropdown race condition (`portal/scripts/bdl-web-selection-worker.mjs`, commit `41904b0`):* Handled asynchronous option rebinding in Telerik `ctl00_ContentPlaceHolder_wym1_ElementsList` via `waitForFunction` ensuring all options are bound before clicking.
-  - *Provider filename normalization fallback (`portal/scripts/bdl-web-selection-worker.mjs`, commit `41904b0`):* Fallback safely normalizes generic provider filenames (`download`) to `DANE_<subgroup_id>.zip` and verifies `PK\x03\x04` magic bytes.
-  - *Whole-subgroup plan initialization fix (`src/bdl_web_adaptive.py`, commit `25b5a03`):* Fixed `KeyError: 'nodes'` in whole-subgroup export.
-- **Live Resumed Run (`task-2289`):** Running with `--concurrency 3`. The 13 previously failed subgroups were re-queued; live execution verified that `P1409, P1441, P1442, P1449` immediately completed cleanly and uploaded to Google Drive. Selection complete count reached 45+ subgroups and is progressing continuously.
+- **Diagnosed ASP.NET Session Collision Root Cause:** Under concurrent execution (`--concurrency 3`), workers previously shared a single `bdl-session-state.json` file, sending identical `ASP.NET_SessionId` cookies to BDL simultaneously. Because ASP.NET WebForms serializes requests for a single session and maintains wizard state in server-side session memory, concurrent requests caused severe lock contention (60s page.goto timeouts) and wizard state cross-contamination (one subgroup picking up dimensions from another subgroup navigating in the same session).
+- **Technical fixes implemented & verified:**
+  - *Worker Session Isolation (`src/bdl_web_adaptive.py`):* Configured `BDL_SESSION_STATE_PATH` to point to each worker's own isolated workspace (`workspace / "bdl-session-state.json"`). Each concurrent worker now maintains its own independent session cookie and private ASP.NET wizard state, completely eliminating cross-subgroup contamination and session lock contention.
+  - *Refined Stage Tracking & Failure Classification (`portal/scripts/bdl-web-selection-worker.mjs`):* Explicitly set `result.stage = 'navigation'` during initial subgroup page load and reserved `'login'` for the authentication endpoint. Navigation timeouts on `page.goto` are now classified as non-fatal `provider_timeout` rather than fatal `authentication_or_site`, preventing temporary network slowness from aborting the runner.
+  - *Enhanced Dimension Wait Diagnostics (`portal/scripts/bdl-web-selection-worker.mjs`):* Detailed error logging prints wanted vs actual dimension values in DOM if a timeout occurs.
+  - *Plan & Queue Reset on Google Drive:* Contaminated intermediate plans (`P1457, P1466, P1468, P1469, P1477, P1487`) were cleanly reset to root tasks, failures and pass_outcomes were cleared, in-flight state was cleared, and the writer lock was released.
+- **Verification:** All 65 unit tests across `tests/test_bdl*` passed cleanly, and ESLint passed with 0 errors. Cumulative complete subgroups reached 46 with 420+ native partition archives on Google Drive.
 
 ### BDL Web Ingestion resumption, territorial cell budget bounding, and failure isolation — 17 September 2026
 

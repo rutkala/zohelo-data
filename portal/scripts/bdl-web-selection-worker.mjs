@@ -293,11 +293,15 @@ try {
   await save();
   let loggedIn = false;
   if (hasSession) {
+    result.stage = 'navigation';
+    await save();
     await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await settle();
     loggedIn = await page.evaluate(() => /Użytkownik:/i.test(document.body.innerText) && !/Użytkownik:\s*Gość/i.test(document.body.innerText));
   }
   if (!loggedIn) {
+    result.stage = 'login';
+    await save();
     await page.goto('https://bdl.stat.gov.pl/bdl/logowanie', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.locator('#ctl00_ContentPlaceHolder_Email').fill(email);
     await page.locator('#ctl00_ContentPlaceHolder_Password').fill(password);
@@ -307,6 +311,8 @@ try {
     try {
       await context.storageState({ path: sessionPath });
     } catch {}
+    result.stage = 'navigation';
+    await save();
     await page.goto(input.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await settle();
   }
@@ -403,18 +409,25 @@ try {
     });
 
     for (const controlId of targetControlIds) {
-      const wantedValues = scope.dimensions[controlId];
-      await page.waitForFunction(({ id, values }) => {
-        const el = document.getElementById(id);
-        if (!el) return false;
-        if (el.tagName === 'SELECT') {
-          const opts = new Set(Array.from(el.options).map(o => o.value));
-          return values.every(v => opts.has(v));
-        }
-        const list = typeof window.$find === 'function' ? window.$find(id) : null;
-        if (!list || !list.get_items) return false;
-        return values.every(v => !!list.findItemByValue(v));
-      }, { id: controlId, values: wantedValues }, { timeout: 45000 });
+      try {
+        await page.waitForFunction(({ id, values }) => {
+          const el = document.getElementById(id);
+          if (!el) return false;
+          if (el.tagName === 'SELECT') {
+            const opts = new Set(Array.from(el.options).map(o => o.value));
+            return values.every(v => opts.has(v));
+          }
+          const list = typeof window.$find === 'function' ? window.$find(id) : null;
+          if (!list || !list.get_items) return false;
+          return values.every(v => !!list.findItemByValue(v));
+        }, { id: controlId, values: wantedValues }, { timeout: 45000 });
+      } catch {
+        const actual = await page.evaluate(id => {
+          const list = typeof window.$find === 'function' ? window.$find(id) : null;
+          return list?.get_items?.() ? Array.from({ length: list.get_items().get_count() }, (_, i) => list.get_items().getItem(i).get_value()) : [];
+        }, controlId);
+        throw new Error(`PROTOCOL: dimension ${controlId} options not available after 45s; wanted ${wantedValues.length} values [${wantedValues.slice(0, 5).join(',')}...], found ${actual.length} values [${actual.slice(0, 5).join(',')}]`);
+      }
 
       await selectDimension(controlId, wantedValues);
     }
@@ -450,7 +463,7 @@ try {
   result.error = safe(error?.message || error).slice(0, 1800);
   result.failure_class = rateLimited ? 'rate_limit' : result.stage === 'login' ? 'authentication_or_site' :
     /PROVIDER:/.test(result.error) ? 'provider_error' :
-      /PROVIDER_TIMEOUT:/.test(result.error) || (error?.name === 'TimeoutError' && ['table', 'download'].includes(result.stage)) ? 'provider_timeout' : 'ui_protocol';
+      /PROVIDER_TIMEOUT:/.test(result.error) || (error?.name === 'TimeoutError' && ['navigation', 'table', 'download'].includes(result.stage)) ? 'provider_timeout' : 'ui_protocol';
   result.status = 'failed';
   process.exitCode = 1;
 } finally {

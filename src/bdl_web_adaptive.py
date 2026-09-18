@@ -49,8 +49,8 @@ def invoke_selection(item, node, workspace, timeout, session_path=None):
     elif "BDL_SESSION_STATE_PATH" in os.environ:
         env["BDL_SESSION_STATE_PATH"] = os.environ["BDL_SESSION_STATE_PATH"]
     else:
-        parent = workspace.parent if workspace.name.startswith("worker-") else workspace
-        env["BDL_SESSION_STATE_PATH"] = str(parent / "bdl-session-state.json")
+        # Each worker maintains its own isolated session state to prevent ASP.NET session state collisions.
+        env["BDL_SESSION_STATE_PATH"] = str(workspace / "bdl-session-state.json")
     process = subprocess.Popen(["node", str(ROOT / "portal/scripts/bdl-web-selection-worker.mjs")],
                                cwd=ROOT / "portal", env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
