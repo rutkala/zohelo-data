@@ -44,13 +44,8 @@ def invoke_selection(item, node, workspace, timeout, session_path=None):
              "GUS_BDL_WEB_EMAIL", "GUS_BDL_WEB_PASSWORD")
     env = {key: os.environ[key] for key in names if key in os.environ}
     env.update(BDL_WEB_TASK_PATH=str(request_path), BDL_BULK_OUT_DIR=str(workspace))
-    if session_path is not None:
-        env["BDL_SESSION_STATE_PATH"] = str(session_path)
-    elif "BDL_SESSION_STATE_PATH" in os.environ:
-        env["BDL_SESSION_STATE_PATH"] = os.environ["BDL_SESSION_STATE_PATH"]
-    else:
-        # Each worker maintains its own isolated session state to prevent ASP.NET session state collisions.
-        env["BDL_SESSION_STATE_PATH"] = str(workspace / "bdl-session-state.json")
+    # Each worker workspace has its own isolated session state to prevent ASP.NET session state collisions.
+    env["BDL_SESSION_STATE_PATH"] = str(session_path if session_path is not None else (workspace / "bdl-session-state.json"))
     process = subprocess.Popen(["node", str(ROOT / "portal/scripts/bdl-web-selection-worker.mjs")],
                                cwd=ROOT / "portal", env=env, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, start_new_session=True)
@@ -327,8 +322,6 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         concurrency = 1
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
-    session_path = workspace / "bdl-session-state.json"
-    os.environ["BDL_SESSION_STATE_PATH"] = str(session_path)
     storage = StorageManager(allow_interactive_auth=False)
     storage.resolve_root(create=False)
     session = storage.begin_write_session()

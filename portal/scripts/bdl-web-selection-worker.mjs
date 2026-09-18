@@ -409,6 +409,7 @@ try {
     });
 
     for (const controlId of targetControlIds) {
+      const wantedValues = scope.dimensions[controlId];
       try {
         await page.waitForFunction(({ id, values }) => {
           const el = document.getElementById(id);
