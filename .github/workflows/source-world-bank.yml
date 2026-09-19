@@ -37,6 +37,7 @@ on:
       - 'src/ingestion/bulk_publication.py'
       - 'src/wdi_*.py'
       - 'src/release_protocol.py'
+      - 'src/layout_resolution.py'
       - 'models/landing/sources.yml'
       - 'models/bronze/br_wdi_*.sql'
       - 'models/silver/stg_wdi_*.sql'
