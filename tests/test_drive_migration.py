@@ -630,6 +630,57 @@ class DriveMigrationTests(unittest.TestCase):
         verify_res = verify_medallion_navigation(storage, "prod-root-123", "nbp", new_manifest)
         self.assertEqual(verify_res["status"], "medallion_navigation_verified")
 
+    def test_unrelated_legacy_marker_does_not_block_canonical_writers(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        DriveMigrationEngine(storage, expected_root_id="prod-root-123").apply(
+            plan=DriveMigrationEngine(storage, expected_root_id="prod-root-123").plan(),
+            confirmed=True,
+        )
+        # Simulate an empty, source-local legacy wrapper appearing after the
+        # verified cutover. It is evidence to investigate, but not an active
+        # pointer and must not create a platform-wide publishing outage.
+        svc._files["stale-bdl-wrapper"] = {
+            "id": "stale-bdl-wrapper", "name": "bdl-platform",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["prod-root-123"], "trashed": False,
+        }
+
+        for source in ("nbp", "bdl", "wdi", "eurostat"):
+            release_root, direct = resolve_source_release_root(
+                storage, "prod-root-123", source, is_writer=True
+            )
+            self.assertTrue(direct)
+            self.assertEqual(svc._files[release_root]["name"], source)
+        self.assertEqual(
+            svc._files[resolve_nbp_control_root(storage, "prod-root-123", is_writer=True)]["name"],
+            "nbp",
+        )
+
+    def test_same_source_dual_pointer_still_fails_closed_without_blast_radius(self):
+        files, _, _, _ = build_legacy_drive_state("prod-root-123")
+        storage, svc = make_storage_manager_mock(files, "prod-root-123")
+        engine = DriveMigrationEngine(storage, expected_root_id="prod-root-123")
+        engine.apply(plan=engine.plan(), confirmed=True)
+        svc._files["legacy-wdi-wrapper"] = {
+            "id": "legacy-wdi-wrapper", "name": "wdi-platform",
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": ["prod-root-123"], "trashed": False,
+        }
+        svc._files["legacy-wdi-pointer"] = {
+            "id": "legacy-wdi-pointer", "name": "current-release.json",
+            "mimeType": "application/json", "parents": ["legacy-wdi-wrapper"],
+            "content": b'{}', "trashed": False,
+        }
+
+        with self.assertRaises(AmbiguousLayoutError):
+            resolve_source_release_root(storage, "prod-root-123", "wdi", is_writer=True)
+        eurostat_root, direct = resolve_source_release_root(
+            storage, "prod-root-123", "eurostat", is_writer=True
+        )
+        self.assertTrue(direct)
+        self.assertEqual(svc._files[eurostat_root]["name"], "eurostat")
+
     def test_navigation_pruning_obsolete_shortcuts(self):
         files, nbp_id, bdl_id, wdi_id = build_legacy_drive_state("prod-root-123")
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
