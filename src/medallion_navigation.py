@@ -463,9 +463,30 @@ def _preflight_existing_source_namespace(
             continue
         if child["id"] in owned:
             if child.get("mimeType") == FOLDER_MIME_TYPE:
+                candidate_tables = [
+                    table for table in (desired.get(child.get("name")), pending_tables.get(child.get("name")))
+                    if isinstance(table, dict) and table.get("is_multi_part")
+                ]
+                wanted = {
+                    (part.get("name"), part.get("target_id"))
+                    for table in candidate_tables
+                    for part in table.get("shortcuts", [])
+                    if isinstance(part, dict)
+                }
                 nested = _list_children(store_or_storage, child["id"])
-                if any(item["id"] not in owned for item in nested):
-                    raise NavigationError("Managed navigation folder contains unowned content")
+                for item in nested:
+                    if item["id"] in owned:
+                        continue
+                    identity = (
+                        item.get("name"),
+                        (item.get("shortcutDetails") or {}).get("targetId"),
+                    )
+                    if not (
+                        recovering_pending
+                        and item.get("mimeType") == SHORTCUT_MIME_TYPE
+                        and identity in wanted
+                    ):
+                        raise NavigationError("Managed navigation folder contains unowned content")
             continue
         if recovering_pending and child.get("name") in expected_names:
             candidate_tables = [

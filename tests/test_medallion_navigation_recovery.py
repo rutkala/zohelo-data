@@ -150,6 +150,28 @@ class NavigationRecoveryTests(unittest.TestCase):
             )
         self.assertEqual(svc.mutation_count, 0)
 
+    def test_preflight_recovers_multipart_shortcut_after_lost_create_response(self):
+        storage, svc, manifest = self.canonical("wdi")
+        target = self.target(svc, manifest, "wdi-retry", "wdi-new-part-zero")
+        original = navigation._create_shortcut
+
+        def create_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("lost response")
+
+        with mock.patch.object(navigation, "_create_shortcut", side_effect=create_then_fail):
+            with self.assertRaises(RuntimeError):
+                sync_source_medallion_navigation(
+                    storage, "prod-root-123", "wdi", target,
+                )
+
+        sync_source_medallion_navigation(
+            storage, "prod-root-123", "wdi", target,
+        )
+        verify_medallion_navigation(
+            storage, "prod-root-123", "wdi", target,
+        )
+
     def test_multipart_foreign_child_blocks_before_mutation_and_owned_stale_prunes(self):
         storage, svc, manifest = self.canonical("wdi")
         indexes = [json.loads(x["content"]) for x in svc._files.values()
