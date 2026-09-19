@@ -406,6 +406,53 @@ def _remove_owned_tree(
     owned.discard(item_id)
 
 
+def _ensure_source_navigation_folders(
+    store_or_storage: Any,
+    root_id: str,
+    source_id: str,
+    by_layer: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Create empty source namespaces only after every layer passes preflight."""
+    missing: list[tuple[str, str]] = []
+    for layer in ALL_MEDALLION_LAYERS:
+        datasets = by_layer[layer]
+        layer_item = _unique_child(
+            store_or_storage, root_id, layer, FOLDER_MIME_TYPE, required=True
+        )
+        current_item = _unique_child(
+            store_or_storage, layer_item["id"], CURRENT_NAV_DIR, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if current_item is None:
+            continue
+        source_item = _unique_child(
+            store_or_storage, current_item["id"], source_id, FOLDER_MIME_TYPE,
+            required=False,
+        )
+        if source_item is None:
+            if datasets:
+                missing.append((layer, current_item["id"]))
+            continue
+        children = _list_children(store_or_storage, source_item["id"])
+        if children and not any(
+            item.get("name") == "navigation-index.json"
+            and item.get("mimeType") == "application/json"
+            for item in children
+        ):
+            raise NavigationError(
+                f"Unowned non-empty source folder exists in {layer}/current/{source_id}"
+            )
+    for layer, current_id in missing:
+        created_id = _mkdir(store_or_storage, source_id, current_id)
+        source_item = _unique_child(
+            store_or_storage, current_id, source_id, FOLDER_MIME_TYPE, required=True,
+        )
+        if source_item["id"] != created_id:
+            raise NavigationError(
+                f"Created source folder identity changed in {layer}/current/{source_id}"
+            )
+
+
 def sync_source_medallion_navigation(
     store_or_storage: Any,
     root_id: str,
@@ -416,6 +463,7 @@ def sync_source_medallion_navigation(
 ) -> dict[str, Any]:
     """Durably reconcile canonical shortcuts before a release pointer changes."""
     by_layer = _manifest_layers(source_id, manifest)
+    _ensure_source_navigation_folders(store_or_storage, root_id, source_id, by_layer)
     release_id = manifest["release_id"]
     states: list[dict[str, Any]] = []
     for layer in ALL_MEDALLION_LAYERS:
