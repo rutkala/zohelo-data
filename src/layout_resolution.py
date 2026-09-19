@@ -325,6 +325,27 @@ def resolve_nbp_control_root(
     In legacy layout: ingestion-control/
     """
     if is_writer:
+        # NBP ingestion writes native responses before publication resolves the
+        # release root. Reject a same-source dual release pointer here as well,
+        # so no ingestion state can advance under an ambiguous publication
+        # layout.
+        release_ids = _find_items(store_or_storage, CANONICAL_RELEASES_FOLDER, root_id)
+        if len(release_ids) > 1:
+            raise AmbiguousLayoutError("Multiple 'releases' folders found under root")
+        canonical_release_ids = (
+            _find_items(store_or_storage, "nbp", release_ids[0])
+            if release_ids else []
+        )
+        if len(canonical_release_ids) > 1:
+            raise AmbiguousLayoutError("Multiple 'nbp' folders found under releases")
+        root_pointers = _find_items(store_or_storage, "current-release.json", root_id)
+        if len(root_pointers) > 1:
+            raise AmbiguousLayoutError("Multiple root 'current-release.json' pointers found")
+        if canonical_release_ids and root_pointers:
+            raise AmbiguousLayoutError(
+                "Conflicting current-release locations found for 'nbp' in canonical and legacy layouts"
+            )
+
         control_ids = _find_items(store_or_storage, CANONICAL_CONTROL_FOLDER, root_id)
         if len(control_ids) > 1:
             raise AmbiguousLayoutError("Multiple '06_control' folders found under root")

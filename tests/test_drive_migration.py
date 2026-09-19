@@ -681,6 +681,14 @@ class DriveMigrationTests(unittest.TestCase):
         self.assertTrue(direct)
         self.assertEqual(svc._files[eurostat_root]["name"], "eurostat")
 
+        svc._files["legacy-nbp-pointer"] = {
+            "id": "legacy-nbp-pointer", "name": "current-release.json",
+            "mimeType": "application/json", "parents": ["prod-root-123"],
+            "content": b'{}', "trashed": False,
+        }
+        with self.assertRaises(AmbiguousLayoutError):
+            resolve_nbp_control_root(storage, "prod-root-123", is_writer=True)
+
     def test_navigation_pruning_obsolete_shortcuts(self):
         files, nbp_id, bdl_id, wdi_id = build_legacy_drive_state("prod-root-123")
         storage, svc = make_storage_manager_mock(files, "prod-root-123")
