@@ -30,10 +30,12 @@ run_starts as (
 numbered as (
     select
         *,
-        sum(starts_revision) over (
-            partition by dataset_id, dimension_key_sha256
-            order by retrieved_at_utc, response_sha256, task_id
-            rows between unbounded preceding and current row
+        cast(
+            sum(starts_revision) over (
+                partition by dataset_id, dimension_key_sha256
+                order by retrieved_at_utc, response_sha256, task_id
+                rows between unbounded preceding and current row
+            ) as bigint
         ) as revision_number
     from run_starts
 ),

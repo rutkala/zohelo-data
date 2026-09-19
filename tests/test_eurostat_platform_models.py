@@ -118,6 +118,25 @@ class EurostatPlatformModelTests(unittest.TestCase):
                 ).fetchall()
                 self.assertEqual(len(reverted_history), 3)
                 self.assertEqual(reverted_history[0][0], reverted_history[2][0])
+                revision_relation = '"03_silver"."eurostat_observation_revisions"'
+                relation_types = {
+                    row[0]: row[1]
+                    for row in connection.execute(f"describe {revision_relation}").fetchall()
+                }
+                self.assertEqual(relation_types["revision_number"], "BIGINT")
+                self.assertEqual(relation_types["revision_count"], "BIGINT")
+                exported = root / "eurostat_observation_revisions.parquet"
+                connection.execute(
+                    f"copy (select * from {revision_relation}) to ? (format parquet)",
+                    [str(exported)],
+                )
+                exported_types = {
+                    row[0]: row[1]
+                    for row in connection.execute(
+                        "describe select * from read_parquet(?)", [str(exported)]
+                    ).fetchall()
+                }
+                self.assertEqual(exported_types, relation_types)
 
     @staticmethod
     def _row(task_id, lane, retrieved_at, fixture_name, changed_first_value=False):

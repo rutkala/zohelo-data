@@ -9,7 +9,7 @@ import duckdb
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from local_release import CachedReadStore, materialize_database, restore_local_release
-from release_validation import ReleaseValidationError
+from release_validation import ReleaseValidationError, verify_local_dataset
 
 
 class Store:
@@ -62,3 +62,22 @@ class LocalReleaseTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "never overwritten"):
                     restore_local_release(Store({}), "root", temporary)
                 restore.assert_not_called()
+
+    def test_metadata_mismatch_identifies_the_failed_contract_field(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source.parquet"
+            with duckdb.connect() as connection:
+                connection.sql("SELECT 1::BIGINT AS revision_number").write_parquet(str(source))
+                dataset = {
+                    "dataset_id": "revisions",
+                    "row_count": 1,
+                    "date_column": None,
+                    "min_date": None,
+                    "max_date": None,
+                    "columns": [{"name": "revision_number", "type": "DOUBLE"}],
+                }
+                with self.assertRaisesRegex(
+                    ReleaseValidationError,
+                    r'"columns":\{"expected":.*DOUBLE.*"observed":.*BIGINT',
+                ):
+                    verify_local_dataset(connection, dataset, [source])

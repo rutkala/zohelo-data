@@ -63,9 +63,15 @@ def verify_local_dataset(connection: Any, dataset: dict[str, Any], files: list[P
         "max_date": dataset.get("max_date"),
         "columns": dataset.get("columns"),
     }
-    if {key: observed[key] for key in expected} != expected:
+    differences = {
+        key: {"expected": expected[key], "observed": observed[key]}
+        for key in expected
+        if observed[key] != expected[key]
+    }
+    if differences:
         raise ReleaseValidationError(
-            f"{dataset['dataset_id']} SQL contents differ from release metadata"
+            f"{dataset['dataset_id']} SQL contents differ from release metadata: "
+            f"{json.dumps(differences, sort_keys=True, separators=(',', ':'))}"
         )
     return observed
 
