@@ -406,6 +406,167 @@ def _remove_owned_tree(
     owned.discard(item_id)
 
 
+def _preflight_existing_source_namespace(
+    store_or_storage: Any,
+    source_item: dict[str, Any],
+    source_id: str,
+    layer: str,
+    datasets: list[dict[str, Any]],
+) -> None:
+    """Validate an existing namespace before any missing peer is created."""
+    index_item = _unique_child(
+        store_or_storage, source_item["id"], "navigation-index.json",
+        "application/json", required=False,
+    )
+    children = _list_children(store_or_storage, source_item["id"])
+    if index_item is None:
+        if children:
+            raise NavigationError(
+                f"Unowned non-empty source folder exists in {layer}/current/{source_id}"
+            )
+        return
+    old_index = _read_index(store_or_storage, index_item)
+    if (
+        old_index is None
+        or old_index.get("format_version") != 1
+        or old_index.get("source_id") != source_id
+        or old_index.get("layer") != layer
+        or old_index.get("status") not in {"pending", "current_verified"}
+        or not isinstance(old_index.get("tables"), dict)
+    ):
+        raise NavigationError(
+            f"Navigation index identity/status is invalid in {layer}/current/{source_id}"
+        )
+    recovering_pending = old_index["status"] == "pending"
+    owned = _index_owned_ids(old_index)
+    pending_tables = old_index["tables"] if recovering_pending else {}
+    desired = _desired_tables(datasets)
+    expected_names = {
+        shortcut["name"]
+        for table in desired.values()
+        if not table["is_multi_part"]
+        for shortcut in table["shortcuts"]
+    } | {
+        name for name, table in desired.items() if table["is_multi_part"]
+    } | {
+        shortcut["name"]
+        for table in pending_tables.values()
+        if isinstance(table, dict) and not table.get("is_multi_part")
+        for shortcut in table.get("shortcuts", [])
+        if isinstance(shortcut, dict) and isinstance(shortcut.get("name"), str)
+    } | {
+        name for name, table in pending_tables.items()
+        if isinstance(name, str) and isinstance(table, dict) and table.get("is_multi_part")
+    }
+    for child in children:
+        if child["id"] == index_item["id"]:
+            continue
+        if child["id"] in owned:
+            if child.get("mimeType") == FOLDER_MIME_TYPE:
+                candidate_tables = [
+                    table for table in (desired.get(child.get("name")), pending_tables.get(child.get("name")))
+                    if isinstance(table, dict) and table.get("is_multi_part")
+                ]
+                wanted = {
+                    (part.get("name"), part.get("target_id"))
+                    for table in candidate_tables
+                    for part in table.get("shortcuts", [])
+                    if isinstance(part, dict)
+                }
+                nested = _list_children(store_or_storage, child["id"])
+                for item in nested:
+                    if item["id"] in owned:
+                        continue
+                    identity = (
+                        item.get("name"),
+                        (item.get("shortcutDetails") or {}).get("targetId"),
+                    )
+                    if not (
+                        recovering_pending
+                        and item.get("mimeType") == SHORTCUT_MIME_TYPE
+                        and identity in wanted
+                    ):
+                        raise NavigationError("Managed navigation folder contains unowned content")
+            continue
+        if recovering_pending and child.get("name") in expected_names:
+            candidate_tables = [
+                table for table in (desired.get(child.get("name")), pending_tables.get(child.get("name")))
+                if isinstance(table, dict) and table.get("is_multi_part")
+            ]
+            if child.get("mimeType") == FOLDER_MIME_TYPE:
+                wanted = {
+                    (part.get("name"), part.get("target_id"))
+                    for table in candidate_tables
+                    for part in table.get("shortcuts", [])
+                    if isinstance(part, dict)
+                }
+                nested = _list_children(store_or_storage, child["id"])
+                if not candidate_tables or any(
+                    item.get("mimeType") != SHORTCUT_MIME_TYPE
+                    or (item.get("name"), (item.get("shortcutDetails") or {}).get("targetId")) not in wanted
+                    for item in nested
+                ):
+                    raise NavigationError("Pending navigation contains unowned content")
+            elif not (
+                child.get("mimeType") == SHORTCUT_MIME_TYPE
+                and any(
+                    shortcut.get("name") == child.get("name")
+                    and shortcut.get("target_id")
+                    == (child.get("shortcutDetails") or {}).get("targetId")
+                    for table in list(pending_tables.values()) + list(desired.values())
+                    if isinstance(table, dict)
+                    for shortcut in table.get("shortcuts", [])
+                    if isinstance(shortcut, dict)
+                )
+            ):
+                raise NavigationError("Pending navigation item does not match the target")
+            continue
+        raise NavigationError(
+            f"Unowned item {child.get('name')!r} exists in {layer}/current/{source_id}"
+        )
+
+
+def _ensure_source_navigation_folders(
+    store_or_storage: Any,
+    root_id: str,
+    source_id: str,
+    by_layer: dict[str, list[dict[str, Any]]],
+) -> None:
+    """Create empty source namespaces only after every layer passes preflight."""
+    missing: list[tuple[str, str]] = []
+    for layer in ALL_MEDALLION_LAYERS:
+        datasets = by_layer[layer]
+        layer_item = _unique_child(
+            store_or_storage, root_id, layer, FOLDER_MIME_TYPE, required=True
+        )
+        current_item = _unique_child(
+            store_or_storage, layer_item["id"], CURRENT_NAV_DIR, FOLDER_MIME_TYPE,
+            required=bool(datasets),
+        )
+        if current_item is None:
+            continue
+        source_item = _unique_child(
+            store_or_storage, current_item["id"], source_id, FOLDER_MIME_TYPE,
+            required=False,
+        )
+        if source_item is None:
+            if datasets:
+                missing.append((layer, current_item["id"]))
+            continue
+        _preflight_existing_source_namespace(
+            store_or_storage, source_item, source_id, layer, datasets,
+        )
+    for layer, current_id in missing:
+        created_id = _mkdir(store_or_storage, source_id, current_id)
+        source_item = _unique_child(
+            store_or_storage, current_id, source_id, FOLDER_MIME_TYPE, required=True,
+        )
+        if source_item["id"] != created_id:
+            raise NavigationError(
+                f"Created source folder identity changed in {layer}/current/{source_id}"
+            )
+
+
 def sync_source_medallion_navigation(
     store_or_storage: Any,
     root_id: str,
@@ -416,6 +577,7 @@ def sync_source_medallion_navigation(
 ) -> dict[str, Any]:
     """Durably reconcile canonical shortcuts before a release pointer changes."""
     by_layer = _manifest_layers(source_id, manifest)
+    _ensure_source_navigation_folders(store_or_storage, root_id, source_id, by_layer)
     release_id = manifest["release_id"]
     states: list[dict[str, Any]] = []
     for layer in ALL_MEDALLION_LAYERS:

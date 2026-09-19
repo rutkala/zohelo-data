@@ -64,6 +64,114 @@ class NavigationRecoveryTests(unittest.TestCase):
             and (x.get("shortcutDetails") or {}).get("targetId") == "nbp-target-two"
             for x in svc._files.values()))
 
+    def test_first_release_creates_empty_source_namespaces_and_then_owns_them(self):
+        storage, svc, manifest = self.canonical("nbp")
+        svc.mutation_count = 0
+
+        receipt = sync_source_medallion_navigation(
+            storage, "prod-root-123", "eurostat", manifest,
+        )
+
+        self.assertEqual(receipt["status"], "medallion_navigation_verified")
+        self.assertEqual(set(receipt["layers"]), {"04_gold"})
+        for layer in receipt["layers"]:
+            source_id = receipt["layers"][layer]["source_nav_id"]
+            source = svc._files[source_id]
+            self.assertEqual(source["name"], "eurostat")
+            indexes = [
+                item for item in svc._files.values()
+                if not item.get("trashed")
+                and item.get("parents") == [source_id]
+                and item.get("name") == "navigation-index.json"
+            ]
+            self.assertEqual(len(indexes), 1)
+            self.assertEqual(json.loads(indexes[0]["content"])["status"], "current_verified")
+        verify_medallion_navigation(
+            storage, "prod-root-123", "eurostat", manifest,
+        )
+
+    def test_unowned_nonempty_first_release_folder_blocks_before_mutation(self):
+        storage, svc, manifest = self.canonical("nbp")
+        silver = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "03_silver"
+            and item.get("parents") == ["prod-root-123"]
+        )
+        current = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "current"
+            and item.get("parents") == [silver["id"]]
+        )
+        svc._files["foreign-eurostat"] = {
+            "id": "foreign-eurostat", "name": "eurostat", "mimeType": navigation.FOLDER_MIME_TYPE,
+            "parents": [current["id"]], "trashed": False,
+        }
+        svc._files["foreign-content"] = {
+            "id": "foreign-content", "name": "notes.txt", "mimeType": "text/plain",
+            "parents": ["foreign-eurostat"], "content": b"foreign", "trashed": False,
+        }
+        svc.mutation_count = 0
+
+        with self.assertRaisesRegex(NavigationError, "Unowned non-empty source folder"):
+            sync_source_medallion_navigation(
+                storage, "prod-root-123", "eurostat", manifest,
+            )
+        self.assertEqual(svc.mutation_count, 0)
+
+    def test_invalid_existing_index_blocks_peer_creation_before_mutation(self):
+        storage, svc, manifest = self.canonical("nbp")
+        silver = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "03_silver"
+            and item.get("parents") == ["prod-root-123"]
+        )
+        current = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "current"
+            and item.get("parents") == [silver["id"]]
+        )
+        svc._files["foreign-eurostat"] = {
+            "id": "foreign-eurostat", "name": "eurostat", "mimeType": navigation.FOLDER_MIME_TYPE,
+            "parents": [current["id"]], "trashed": False,
+        }
+        svc._files["invalid-eurostat-index"] = {
+            "id": "invalid-eurostat-index", "name": "navigation-index.json",
+            "mimeType": "application/json", "parents": ["foreign-eurostat"],
+            "content": json.dumps({
+                "format_version": 1, "source_id": "wrong-source", "layer": "03_silver",
+                "status": "current_verified", "tables": {},
+            }).encode(), "trashed": False,
+        }
+        svc.mutation_count = 0
+
+        with self.assertRaisesRegex(NavigationError, "identity/status is invalid"):
+            sync_source_medallion_navigation(
+                storage, "prod-root-123", "eurostat", manifest,
+            )
+        self.assertEqual(svc.mutation_count, 0)
+
+    def test_preflight_recovers_multipart_shortcut_after_lost_create_response(self):
+        storage, svc, manifest = self.canonical("wdi")
+        target = self.target(svc, manifest, "wdi-retry", "wdi-new-part-zero")
+        original = navigation._create_shortcut
+
+        def create_then_fail(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError("lost response")
+
+        with mock.patch.object(navigation, "_create_shortcut", side_effect=create_then_fail):
+            with self.assertRaises(RuntimeError):
+                sync_source_medallion_navigation(
+                    storage, "prod-root-123", "wdi", target,
+                )
+
+        sync_source_medallion_navigation(
+            storage, "prod-root-123", "wdi", target,
+        )
+        verify_medallion_navigation(
+            storage, "prod-root-123", "wdi", target,
+        )
+
     def test_multipart_foreign_child_blocks_before_mutation_and_owned_stale_prunes(self):
         storage, svc, manifest = self.canonical("wdi")
         indexes = [json.loads(x["content"]) for x in svc._files.values()
