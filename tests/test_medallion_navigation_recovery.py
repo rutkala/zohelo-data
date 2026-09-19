@@ -118,6 +118,38 @@ class NavigationRecoveryTests(unittest.TestCase):
             )
         self.assertEqual(svc.mutation_count, 0)
 
+    def test_invalid_existing_index_blocks_peer_creation_before_mutation(self):
+        storage, svc, manifest = self.canonical("nbp")
+        silver = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "03_silver"
+            and item.get("parents") == ["prod-root-123"]
+        )
+        current = next(
+            item for item in svc._files.values()
+            if not item.get("trashed") and item.get("name") == "current"
+            and item.get("parents") == [silver["id"]]
+        )
+        svc._files["foreign-eurostat"] = {
+            "id": "foreign-eurostat", "name": "eurostat", "mimeType": navigation.FOLDER_MIME_TYPE,
+            "parents": [current["id"]], "trashed": False,
+        }
+        svc._files["invalid-eurostat-index"] = {
+            "id": "invalid-eurostat-index", "name": "navigation-index.json",
+            "mimeType": "application/json", "parents": ["foreign-eurostat"],
+            "content": json.dumps({
+                "format_version": 1, "source_id": "wrong-source", "layer": "03_silver",
+                "status": "current_verified", "tables": {},
+            }).encode(), "trashed": False,
+        }
+        svc.mutation_count = 0
+
+        with self.assertRaisesRegex(NavigationError, "identity/status is invalid"):
+            sync_source_medallion_navigation(
+                storage, "prod-root-123", "eurostat", manifest,
+            )
+        self.assertEqual(svc.mutation_count, 0)
+
     def test_multipart_foreign_child_blocks_before_mutation_and_owned_stale_prunes(self):
         storage, svc, manifest = self.canonical("wdi")
         indexes = [json.loads(x["content"]) for x in svc._files.values()
