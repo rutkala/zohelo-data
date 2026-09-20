@@ -29,6 +29,7 @@ from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
 from storage_manager import StorageManager
@@ -42,7 +43,8 @@ HVD_DOWNLOAD_URL = f"{DBW_WEB_BASE}/HVD"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 _CHUNK_BYTES = 8 * 1024 * 1024
-COMPLETION_PREFIX = "landing-complete-v1"
+COMPLETION_PREFIX = "landing-complete-v2"
+SNAPSHOT_PREFIX = "native-snapshot-v1"
 
 
 def _require_production_context(allow_codespace: bool = False) -> None:
@@ -88,6 +90,31 @@ def _hash_file(path: Path) -> tuple[str, str]:
             d_sha.update(chunk)
             d_md5.update(chunk)
     return d_sha.hexdigest(), d_md5.hexdigest()
+
+
+def _membership_sha256(objects: list[dict[str, Any]]) -> str:
+    canonical = sorted(
+        (
+            item["role"], item["source_name"], item["id"], item["name"],
+            item["size"], item["sha256"], item["md5"],
+        )
+        for item in objects
+    )
+    return sha256(
+        json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _snapshot_sha256(native_snapshot_id: str, memberships: dict[int, str]) -> str:
+    canonical = {
+        "native_snapshot_id": native_snapshot_id,
+        "memberships": sorted(
+            (indicator_id, digest) for indicator_id, digest in memberships.items()
+        ),
+    }
+    return sha256(
+        json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 DRIVE_LOCK = threading.Lock()
@@ -357,6 +384,7 @@ class DbwWebExtractor:
         self.allow_codespace = allow_codespace
         self.proxy = proxy
         self.catalogue_sha256: str | None = None
+        self.native_snapshot_id: str | None = None
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
@@ -374,6 +402,80 @@ class DbwWebExtractor:
         self.control_landing = storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_landing, write_session=self.session)
         self.checkpoints_dir = storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
         self.campaign_control = storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
+
+    def start_or_resume_native_snapshot(self, catalogue_sha256: str) -> str:
+        """Resume one durable full refresh, or start the next after completion."""
+        query = f"'{_escape_query(self.control_landing)}' in parents and trashed=false"
+        files: list[dict[str, Any]] = []
+        token = None
+        while True:
+            args: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,appProperties,createdTime,trashed)",
+            }
+            if token:
+                args["pageToken"] = token
+            with DRIVE_LOCK:
+                response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
+            files.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                break
+
+        completed_snapshot_ids = {
+            (item.get("appProperties") or {}).get("native_snapshot_id")
+            for item in files
+            if (item.get("appProperties") or {}).get("completion_schema") == "2"
+        }
+        open_snapshots = []
+        for item in files:
+            props = item.get("appProperties") or {}
+            snapshot_id = props.get("native_snapshot_id")
+            if (
+                props.get("record_type") == "gus_dbw_native_snapshot_start"
+                and props.get("catalogue_sha256") == catalogue_sha256
+                and isinstance(snapshot_id, str)
+                and snapshot_id not in completed_snapshot_ids
+            ):
+                open_snapshots.append(item)
+        if len(open_snapshots) > 1:
+            raise RuntimeError(
+                "Multiple open DBW native snapshots exist for the current catalogue."
+            )
+        if open_snapshots:
+            snapshot_id = (open_snapshots[0].get("appProperties") or {})["native_snapshot_id"]
+            self.native_snapshot_id = snapshot_id
+            return snapshot_id
+
+        snapshot_id = str(uuid.uuid4())
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_start",
+            "source_id": "gus_dbw",
+            "catalogue_sha256": catalogue_sha256,
+            "native_snapshot_id": snapshot_id,
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_PREFIX}-{catalogue_sha256}-{snapshot_id}.json",
+            parent_id=self.control_landing,
+            kind="snapshot_start",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_start",
+                "catalogue_sha256": catalogue_sha256,
+                "native_snapshot_id": snapshot_id,
+            },
+        )
+        self.native_snapshot_id = snapshot_id
+        return snapshot_id
 
     def fetch_indicators_tree(self) -> list[dict[str, Any]]:
         """Fetch the full indicator tree from DBW Web UI and land original JSON bytes."""
@@ -423,10 +525,12 @@ class DbwWebExtractor:
         walk(tree)
         return [indicators[k] for k in sorted(indicators)]
 
-    def load_completed_checkpoints(self, catalogue_sha256: str) -> set[int]:
-        """Read full-bulk receipts bound to the exact current catalogue revision."""
+    def load_completed_checkpoints(
+        self, catalogue_sha256: str, native_snapshot_id: str
+    ) -> dict[int, str]:
+        """Read full-bulk receipts bound to one durable native refresh snapshot."""
         query = f"'{_escape_query(self.checkpoints_dir)}' in parents and trashed=false"
-        completed = set()
+        completed: dict[int, str] = {}
         token = None
         while True:
             args: dict[str, Any] = {
@@ -441,9 +545,12 @@ class DbwWebExtractor:
             for f in response.get("files", []):
                 name = f.get("name", "")
                 match = re.fullmatch(
-                    r"completed-v3-(\d+)(?:--sha256-[0-9a-f]{64})?\.json", name
+                    rf"completed-v3-{re.escape(native_snapshot_id)}-(\d+)"
+                    r"(?:--sha256-[0-9a-f]{64})?\.json",
+                    name,
                 )
                 props = f.get("appProperties") or {}
+                membership = props.get("native_membership_sha256")
                 if (
                     match
                     and props.get("checkpoint_schema") == "3"
@@ -451,8 +558,17 @@ class DbwWebExtractor:
                     and props.get("bulk_complete") == "true"
                     and props.get("metadata_complete") == "true"
                     and props.get("catalogue_sha256") == catalogue_sha256
+                    and props.get("native_snapshot_id") == native_snapshot_id
+                    and isinstance(membership, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", membership)
                 ):
-                    completed.add(int(match.group(1)))
+                    indicator_id = int(match.group(1))
+                    prior = completed.get(indicator_id)
+                    if prior is not None and prior != membership:
+                        raise RuntimeError(
+                            "Conflicting DBW native memberships exist within one snapshot."
+                        )
+                    completed[indicator_id] = membership
             token = response.get("nextPageToken")
             if not token:
                 break
@@ -466,6 +582,8 @@ class DbwWebExtractor:
         """Process one indicator: metadata, metryka, and bulk zip packages."""
         if not self.catalogue_sha256:
             raise RuntimeError("DBW indicator processing requires a bound catalogue SHA-256.")
+        if not self.native_snapshot_id:
+            raise RuntimeError("DBW indicator processing requires a bound native snapshot.")
         ind_id = indicator["id"]
         result = {
             "indicator_id": ind_id,
@@ -560,6 +678,7 @@ class DbwWebExtractor:
 
         # 4. Record either a full-bulk completion receipt or an explicit partial receipt.
         result["status"] = "metadata_only" if skip_bulk_zips else "completed"
+        membership_sha256 = _membership_sha256(result["landed_objects"])
         checkpoint_data = {
             "schema_version": 3,
             "record_type": "gus_dbw_indicator_completion",
@@ -569,6 +688,8 @@ class DbwWebExtractor:
             "bulk_complete": not skip_bulk_zips,
             "metadata_complete": True,
             "catalogue_sha256": self.catalogue_sha256,
+            "native_snapshot_id": self.native_snapshot_id,
+            "native_membership_sha256": membership_sha256,
             "expected_bulk_files": sorted(set(expected_bulk_files)),
             "files_landed": result["files_landed"],
             "landed_objects": result["landed_objects"],
@@ -576,7 +697,9 @@ class DbwWebExtractor:
         }
         cp_bytes = json.dumps(checkpoint_data, ensure_ascii=False, indent=2).encode("utf-8")
         checkpoint_name = (
-            f"partial-v3-{ind_id}.json" if skip_bulk_zips else f"completed-v3-{ind_id}.json"
+            f"partial-v3-{self.native_snapshot_id}-{ind_id}.json"
+            if skip_bulk_zips
+            else f"completed-v3-{self.native_snapshot_id}-{ind_id}.json"
         )
         _upload_bytes(
             self.storage,
@@ -592,6 +715,8 @@ class DbwWebExtractor:
                 "metadata_complete": "true",
                 "indicator_id": str(ind_id),
                 "catalogue_sha256": self.catalogue_sha256,
+                "native_snapshot_id": self.native_snapshot_id,
+                "native_membership_sha256": membership_sha256,
             },
         )
         return result
@@ -602,10 +727,12 @@ class DbwWebExtractor:
         catalogue_indicators: int,
         completed_indicators: int,
         catalogue_sha256: str,
+        native_snapshot_id: str,
+        native_snapshot_sha256: str,
     ) -> dict[str, Any]:
         """Publish the deterministic marker that alone unlocks the Bronze stage."""
         document = {
-            "schema_version": 1,
+            "schema_version": 2,
             "record_type": "gus_dbw_landing_completion",
             "source_id": "gus_dbw",
             "status": "complete_current_catalogue",
@@ -617,18 +744,32 @@ class DbwWebExtractor:
             "bulk_complete": True,
             "metadata_complete": True,
             "catalogue_sha256": catalogue_sha256,
+            "native_snapshot_id": native_snapshot_id,
+            "native_snapshot_sha256": native_snapshot_sha256,
         }
         if catalogue_indicators <= 0 or completed_indicators != catalogue_indicators:
             raise RuntimeError("Cannot publish DBW completion before catalogue exhaustion.")
+        if re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            native_snapshot_id,
+        ) is None or re.fullmatch(r"[0-9a-f]{64}", native_snapshot_sha256) is None:
+            raise RuntimeError("Cannot publish DBW completion without a valid native snapshot identity.")
         raw = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return _upload_bytes(
             self.storage,
             raw,
-            name=f"{COMPLETION_PREFIX}-{catalogue_sha256}.json",
+            name=f"{COMPLETION_PREFIX}-{native_snapshot_sha256}.json",
             parent_id=self.control_landing,
             kind="completion",
             mime_type="application/json",
-            extra_properties={"completion_schema": "1", "completion_status": "complete_current_catalogue"},
+            extra_properties={
+                "record_type": "gus_dbw_landing_completion",
+                "completion_schema": "2",
+                "completion_status": "complete_current_catalogue",
+                "catalogue_sha256": catalogue_sha256,
+                "native_snapshot_id": native_snapshot_id,
+                "native_snapshot_sha256": native_snapshot_sha256,
+            },
         )
 
 
@@ -694,7 +835,12 @@ def main():
         print(f"Filtered to {len(all_indicators)} specified indicators: {wanted_ids}")
 
     extractor.catalogue_sha256 = catalogue_sha256
-    completed_ids = extractor.load_completed_checkpoints(catalogue_sha256)
+    native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
+    completed_memberships = extractor.load_completed_checkpoints(
+        catalogue_sha256, native_snapshot_id
+    )
+    completed_ids = set(completed_memberships)
+    print(f"Native refresh snapshot: {native_snapshot_id}")
     print(f"Found {len(completed_ids)} already completed indicators on Drive.")
 
     pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
@@ -729,6 +875,7 @@ def main():
             )
         )
         worker_extractors[-1].catalogue_sha256 = catalogue_sha256
+        worker_extractors[-1].native_snapshot_id = native_snapshot_id
 
     lock = threading.Lock()
     stop_event = threading.Event()
@@ -786,25 +933,38 @@ def main():
                 break
             process_item((i, ind))
 
-    verified_completed_ids = extractor.load_completed_checkpoints(catalogue_sha256)
+    verified_memberships = extractor.load_completed_checkpoints(
+        catalogue_sha256, native_snapshot_id
+    )
+    verified_completed_ids = set(verified_memberships)
     catalogue_ids = catalogue_indicator_ids
     catalogue_complete = (
         not args.skip_bulk_zips
         and not errors
         and bool(catalogue_ids)
-        and catalogue_ids <= verified_completed_ids
+        and catalogue_ids == verified_completed_ids
     )
     if catalogue_complete:
+        native_snapshot_sha256 = _snapshot_sha256(
+            native_snapshot_id, verified_memberships
+        )
         extractor.publish_catalogue_completion(
             catalogue_indicators=len(catalogue_ids),
             completed_indicators=len(catalogue_ids),
             catalogue_sha256=catalogue_sha256,
+            native_snapshot_id=native_snapshot_id,
+            native_snapshot_sha256=native_snapshot_sha256,
         )
 
     summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
     summary["elapsed_seconds"] = round(time.time() - start_time, 2)
     summary["errors"] = errors
     summary["catalogue_complete"] = catalogue_complete
+    summary["native_snapshot_id"] = native_snapshot_id
+    summary["native_snapshot_sha256"] = (
+        _snapshot_sha256(native_snapshot_id, verified_memberships)
+        if catalogue_complete else None
+    )
     summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
     summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
 

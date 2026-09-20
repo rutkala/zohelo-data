@@ -45,7 +45,7 @@ logging.basicConfig(
 )
 
 DRIVE_LOCK = threading.Lock()
-LANDING_COMPLETION_PREFIX = "landing-complete-v1"
+LANDING_COMPLETION_PREFIX = "landing-complete-v2"
 
 
 class DBWLandingIncompleteError(RuntimeError):
@@ -93,6 +93,31 @@ def _verify_native_bytes(content: bytes, descriptor: dict[str, Any]) -> None:
         raise DBWLandingIncompleteError(
             f"DBW Landing object failed byte verification: {descriptor['name']}"
         )
+
+
+def _membership_sha256(objects: list[dict[str, Any]]) -> str:
+    canonical = sorted(
+        (
+            item["role"], item["source_name"], item["id"], item["name"],
+            item["size"], item["sha256"], item["md5"],
+        )
+        for item in objects
+    )
+    return hashlib.sha256(
+        json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _snapshot_sha256(native_snapshot_id: str, memberships: dict[int, str]) -> str:
+    canonical = {
+        "native_snapshot_id": native_snapshot_id,
+        "memberships": sorted(
+            (indicator_id, digest) for indicator_id, digest in memberships.items()
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
 
 def _upload_file_to_drive(
@@ -184,7 +209,7 @@ def _restore_verified_drive_file(
 def validate_landing_completion(document: dict[str, Any]) -> dict[str, Any]:
     """Validate the only evidence that authorizes DBW Landing-to-Bronze work."""
     required = {
-        "schema_version": 1,
+        "schema_version": 2,
         "record_type": "gus_dbw_landing_completion",
         "source_id": "gus_dbw",
         "status": "complete_current_catalogue",
@@ -209,6 +234,15 @@ def validate_landing_completion(document: dict[str, Any]) -> dict[str, Any]:
     tree_sha = document.get("catalogue_sha256")
     if not isinstance(tree_sha, str) or len(tree_sha) != 64:
         raise DBWLandingIncompleteError("DBW Landing completion has no valid catalogue SHA-256.")
+    snapshot_id = document.get("native_snapshot_id")
+    if not isinstance(snapshot_id, str) or re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+        snapshot_id,
+    ) is None:
+        raise DBWLandingIncompleteError("DBW Landing completion has no valid native snapshot ID.")
+    snapshot_sha = document.get("native_snapshot_sha256")
+    if not isinstance(snapshot_sha, str) or re.fullmatch(r"[0-9a-f]{64}", snapshot_sha) is None:
+        raise DBWLandingIncompleteError("DBW Landing completion has no valid native snapshot SHA-256.")
     return document
 
 
@@ -306,7 +340,7 @@ class DBWBronzeLoader:
                 break
         matches = [
             item for item in files
-            if re.fullmatch(r"landing-complete-v1-[0-9a-f]{64}\.json", item.get("name", ""))
+            if re.fullmatch(r"landing-complete-v2-[0-9a-f]{64}\.json", item.get("name", ""))
         ]
         if not matches:
             raise DBWLandingIncompleteError(
@@ -324,16 +358,22 @@ class DBWBronzeLoader:
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise DBWLandingIncompleteError("DBW Landing completion is not valid UTF-8 JSON.") from exc
         document = validate_landing_completion(document)
-        expected_name = f"{LANDING_COMPLETION_PREFIX}-{document['catalogue_sha256']}.json"
+        expected_name = (
+            f"{LANDING_COMPLETION_PREFIX}-{document['native_snapshot_sha256']}.json"
+        )
         if item.get("name") != expected_name:
-            raise DBWLandingIncompleteError("DBW Landing completion name is not bound to its catalogue SHA-256.")
+            raise DBWLandingIncompleteError(
+                "DBW Landing completion name is not bound to its native snapshot SHA-256."
+            )
         document["_completion_created_at_utc"] = item.get("createdTime") or "1970-01-01T00:00:00Z"
         return document
 
     def bind_release(self, completion: dict[str, Any]) -> None:
         """Isolate Bronze output and local resume state by immutable catalogue identity."""
-        release_id = completion["catalogue_sha256"]
+        release_id = completion["native_snapshot_sha256"]
         self.release_id = release_id
+        self.catalogue_sha256 = completion["catalogue_sha256"]
+        self.native_snapshot_id = completion["native_snapshot_id"]
         self.processed_at_utc = completion["_completion_created_at_utc"]
         self.workspace = self.base_workspace / release_id
         self.workspace.mkdir(parents=True, exist_ok=True)
@@ -415,10 +455,12 @@ class DBWBronzeLoader:
         metadata_members: dict[str, dict[str, Any]] = {}
         bulk_members: dict[str, dict[str, Any]] = {}
         bound_object_ids: set[str] = set()
+        memberships: dict[int, str] = {}
         for item in files:
             props = item.get("appProperties") or {}
             if (
                 props.get("catalogue_sha256") != catalogue_sha
+                or props.get("native_snapshot_id") != completion["native_snapshot_id"]
                 or props.get("checkpoint_schema") != "3"
                 or props.get("checkpoint_status") != "completed"
                 or props.get("bulk_complete") != "true"
@@ -446,6 +488,7 @@ class DBWBronzeLoader:
                 receipt.get("schema_version") != 3
                 or receipt.get("record_type") != "gus_dbw_indicator_completion"
                 or receipt.get("catalogue_sha256") != catalogue_sha
+                or receipt.get("native_snapshot_id") != completion["native_snapshot_id"]
                 or receipt.get("status") != "completed"
                 or receipt.get("bulk_complete") is not True
                 or receipt.get("metadata_complete") is not True
@@ -535,10 +578,25 @@ class DBWBronzeLoader:
                 raise DBWLandingIncompleteError(
                     "DBW indicator receipt does not reconcile discovered and landed bulk files."
                 )
+            membership = _membership_sha256(landed_objects)
+            if (
+                receipt.get("native_membership_sha256") != membership
+                or props.get("native_membership_sha256") != membership
+            ):
+                raise DBWLandingIncompleteError(
+                    "DBW indicator receipt native membership checksum does not reconcile."
+                )
+            memberships[indicator_id] = membership
 
         if len(indicator_ids) != completion["catalogue_indicators"]:
             raise DBWLandingIncompleteError(
                 "Verified DBW indicator receipts do not reconcile the completion marker."
+            )
+        if _snapshot_sha256(
+            completion["native_snapshot_id"], memberships
+        ) != completion["native_snapshot_sha256"]:
+            raise DBWLandingIncompleteError(
+                "Verified DBW native memberships do not match the completion snapshot."
             )
         return {
             "indicator_ids": indicator_ids,
@@ -551,7 +609,7 @@ class DBWBronzeLoader:
         local_tree = self.workspace / "indicators_tree.json"
         if local_tree.exists():
             raw = local_tree.read_bytes()
-            if hashlib.sha256(raw).hexdigest() == self.release_id:
+            if hashlib.sha256(raw).hexdigest() == self.catalogue_sha256:
                 return json.loads(raw.decode("utf-8"))
             raise DBWLandingIncompleteError("Local DBW taxonomy does not match the bound catalogue release.")
 
@@ -575,7 +633,7 @@ class DBWBronzeLoader:
                 break
         matches = [
             item for item in files
-            if (item.get("appProperties") or {}).get("sha256") == self.release_id
+            if (item.get("appProperties") or {}).get("sha256") == self.catalogue_sha256
             and (item.get("appProperties") or {}).get("kind") == "taxonomy"
         ]
         if len(matches) != 1:
@@ -586,7 +644,7 @@ class DBWBronzeLoader:
         with DRIVE_LOCK:
             content = self.storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
         if (
-            hashlib.sha256(content).hexdigest() != self.release_id
+            hashlib.sha256(content).hexdigest() != self.catalogue_sha256
             or hashlib.md5(content).hexdigest() != item.get("md5Checksum")
             or len(content) != int(item.get("size", -1))
         ):

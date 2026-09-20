@@ -12,11 +12,14 @@ from dbw_web_extractor import (
     _hash_bytes,
     _hash_file,
     _require_production_context,
+    _snapshot_sha256,
     _upload_bytes,
 )
 
 
 class TestDbwWebExtractor(unittest.TestCase):
+    SNAPSHOT_ID = "123e4567-e89b-42d3-a456-426614174000"
+
     def test_production_context_guard(self):
         with patch.dict("os.environ", {"GITHUB_ACTIONS": "false", "ZOHELO_ALLOW_CODESPACE_EXECUTION": "false"}, clear=True):
             with self.assertRaises(PermissionError):
@@ -43,6 +46,13 @@ class TestDbwWebExtractor(unittest.TestCase):
             f_sha, f_md5 = _hash_file(Path(tmp.name))
             self.assertEqual(f_sha, sha)
             self.assertEqual(f_md5, md5)
+        memberships = {7: "a" * 64}
+        self.assertNotEqual(
+            _snapshot_sha256(self.SNAPSHOT_ID, memberships),
+            _snapshot_sha256(
+                "223e4567-e89b-42d3-a456-426614174000", memberships
+            ),
+        )
 
     def test_extract_indicators_tree_traversal(self):
         sample_tree = [
@@ -130,10 +140,11 @@ class TestDbwWebExtractor(unittest.TestCase):
         extractor.bulk_dir = "bulk"
         extractor.checkpoints_dir = "checkpoints"
         extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_id = self.SNAPSHOT_ID
         with self.assertRaisesRegex(RuntimeError, "recognized data.table.rows"):
             extractor.process_indicator({"id": 7, "name": "Test indicator"})
         uploaded_names = [call.kwargs["name"] for call in mock_upload.call_args_list]
-        self.assertNotIn("completed-v3-7.json", uploaded_names)
+        self.assertNotIn(f"completed-v3-{self.SNAPSHOT_ID}-7.json", uploaded_names)
 
     @patch("dbw_web_extractor.StorageManager")
     def test_extractor_initialization(self, mock_storage_cls):
@@ -155,27 +166,76 @@ class TestDbwWebExtractor(unittest.TestCase):
     def test_only_v3_identity_bound_bulk_receipts_resume_an_indicator(self):
         extractor = object.__new__(DbwWebExtractor)
         extractor.checkpoints_dir = "checkpoints"
+        extractor.native_snapshot_id = self.SNAPSHOT_ID
         extractor.storage = MagicMock()
         extractor.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
             "files": [
                 {"name": "12.json", "appProperties": {}},
-                {"name": "partial-v3-13.json", "appProperties": {
+                {"name": f"partial-v3-{self.SNAPSHOT_ID}-13.json", "appProperties": {
                     "checkpoint_schema": "3", "checkpoint_status": "metadata_only",
                     "bulk_complete": "false", "metadata_complete": "true",
+                    "native_snapshot_id": self.SNAPSHOT_ID,
                 }},
-                {"name": "completed-v3-14.json", "appProperties": {
+                {"name": f"completed-v3-{self.SNAPSHOT_ID}-14.json", "appProperties": {
                     "checkpoint_schema": "3", "checkpoint_status": "completed",
                     "bulk_complete": "true", "metadata_complete": "true",
                     "catalogue_sha256": "a" * 64,
+                    "native_snapshot_id": self.SNAPSHOT_ID,
+                    "native_membership_sha256": "c" * 64,
                 }},
-                {"name": "completed-v3-15.json", "appProperties": {
+                {"name": f"completed-v3-{self.SNAPSHOT_ID}-15.json", "appProperties": {
                     "checkpoint_schema": "3", "checkpoint_status": "completed",
                     "bulk_complete": "true", "metadata_complete": "true",
                     "catalogue_sha256": "b" * 64,
+                    "native_snapshot_id": self.SNAPSHOT_ID,
+                    "native_membership_sha256": "d" * 64,
                 }},
             ]
         }
-        self.assertEqual(extractor.load_completed_checkpoints("a" * 64), {14})
+        self.assertEqual(
+            extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID),
+            {14: "c" * 64},
+        )
+
+    @patch("dbw_web_extractor._upload_bytes")
+    @patch("dbw_web_extractor.uuid.uuid4")
+    def test_native_snapshot_resumes_until_completed_then_starts_refresh(
+        self, mock_uuid, mock_upload
+    ):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.control_landing = "control"
+        extractor.storage = MagicMock()
+        start = {
+            "name": f"native-snapshot-v1-{'a' * 64}-{self.SNAPSHOT_ID}.json",
+            "appProperties": {
+                "record_type": "gus_dbw_native_snapshot_start",
+                "catalogue_sha256": "a" * 64,
+                "native_snapshot_id": self.SNAPSHOT_ID,
+            },
+        }
+        listing = extractor.storage.drive_service.files.return_value.list.return_value.execute
+        listing.return_value = {"files": [start]}
+        self.assertEqual(
+            extractor.start_or_resume_native_snapshot("a" * 64), self.SNAPSHOT_ID
+        )
+        mock_upload.assert_not_called()
+
+        listing.return_value = {"files": [
+            start,
+            {"name": "landing-complete-v2-x.json", "appProperties": {
+                "completion_schema": "2",
+                "native_snapshot_id": self.SNAPSHOT_ID,
+            }},
+        ]}
+        next_snapshot = "223e4567-e89b-42d3-a456-426614174000"
+        mock_uuid.return_value = next_snapshot
+        self.assertEqual(
+            extractor.start_or_resume_native_snapshot("a" * 64), next_snapshot
+        )
+        self.assertEqual(
+            mock_upload.call_args.kwargs["extra_properties"]["native_snapshot_id"],
+            next_snapshot,
+        )
 
     @patch("dbw_web_extractor._find_exact_file")
     def test_changed_native_response_uses_content_addressed_revision(self, mock_find):
@@ -217,11 +277,15 @@ class TestDbwWebExtractor(unittest.TestCase):
         extractor.metadata_dir = "metadata"
         extractor.checkpoints_dir = "checkpoints"
         extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_id = self.SNAPSHOT_ID
         result = extractor.process_indicator(
             {"id": 7, "name": "Test indicator"}, skip_bulk_zips=True
         )
         self.assertEqual(result["status"], "metadata_only")
-        self.assertEqual(mock_upload.call_args.kwargs["name"], "partial-v3-7.json")
+        self.assertEqual(
+            mock_upload.call_args.kwargs["name"],
+            f"partial-v3-{self.SNAPSHOT_ID}-7.json",
+        )
         self.assertEqual(mock_upload.call_args.kwargs["extra_properties"]["bulk_complete"], "false")
         self.assertEqual(mock_upload.call_args.kwargs["extra_properties"]["catalogue_sha256"], "a" * 64)
 
@@ -232,6 +296,10 @@ class TestDbwWebExtractor(unittest.TestCase):
                 catalogue_indicators=1550,
                 completed_indicators=1549,
                 catalogue_sha256="a" * 64,
+                native_snapshot_id=self.SNAPSHOT_ID,
+                native_snapshot_sha256=_snapshot_sha256(
+                    self.SNAPSHOT_ID, {7: "b" * 64}
+                ),
             )
 
 

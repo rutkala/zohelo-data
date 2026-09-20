@@ -16,6 +16,8 @@ from dbw_bronze_loader import (
     DBWLandingIncompleteError,
     _require_production_context,
     _restore_verified_drive_file,
+    _membership_sha256,
+    _snapshot_sha256,
     _upload_file_to_drive,
     _verify_native_bytes,
     validate_landing_completion,
@@ -24,6 +26,8 @@ from dbw_bronze_loader import (
 
 
 class TestDBWBronzeLoader(unittest.TestCase):
+    SNAPSHOT_ID = "123e4567-e89b-42d3-a456-426614174000"
+
     def test_production_context_requires_main_actions_or_explicit_codespace(self):
         from unittest.mock import patch
 
@@ -37,7 +41,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
 
     def _completion(self):
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "record_type": "gus_dbw_landing_completion",
             "source_id": "gus_dbw",
             "status": "complete_current_catalogue",
@@ -49,6 +53,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
             "bulk_complete": True,
             "metadata_complete": True,
             "catalogue_sha256": "a" * 64,
+            "native_snapshot_id": self.SNAPSHOT_ID,
+            "native_snapshot_sha256": "b" * 64,
         }
 
     def test_landing_completion_gate_accepts_only_reconciled_full_scope(self):
@@ -120,6 +126,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
         receipt_files = []
         metadata_files = []
         bulk_files = []
+        memberships = {}
         for indicator_id in (7, 8):
             landed_objects = []
             for role, name, folder_files in (
@@ -159,20 +166,26 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 "bulk_complete": True,
                 "metadata_complete": True,
                 "catalogue_sha256": catalogue_sha,
+                "native_snapshot_id": self.SNAPSHOT_ID,
                 "files_landed": [item["name"] for item in landed_objects],
                 "landed_objects": landed_objects,
                 "expected_bulk_files": [f"{indicator_id}_history.zip"],
             }
+            membership = _membership_sha256(landed_objects)
+            memberships[indicator_id] = membership
+            document["native_membership_sha256"] = membership
             raw = json.dumps(document).encode()
             receipts.append(raw)
             receipt_files.append({
                 "id": f"receipt-{indicator_id}",
-                "name": f"completed-v3-{indicator_id}.json",
+                "name": f"completed-v3-{self.SNAPSHOT_ID}-{indicator_id}.json",
                 "size": str(len(raw)),
                 "md5Checksum": hashlib.md5(raw).hexdigest(),
                 "appProperties": {
                     "sha256": hashlib.sha256(raw).hexdigest(),
                     "catalogue_sha256": catalogue_sha,
+                    "native_snapshot_id": self.SNAPSHOT_ID,
+                    "native_membership_sha256": membership,
                     "checkpoint_schema": "3",
                     "checkpoint_status": "completed",
                     "bulk_complete": "true",
@@ -198,6 +211,9 @@ class TestDBWBronzeLoader(unittest.TestCase):
         completion = self._completion()
         completion["catalogue_indicators"] = 2
         completion["completed_indicators"] = 2
+        completion["native_snapshot_sha256"] = _snapshot_sha256(
+            self.SNAPSHOT_ID, memberships
+        )
         return loader, completion
 
     def test_release_receipts_bind_exact_native_object_identities(self):
@@ -235,7 +251,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
             self.assertIn("kill -0", script, relative)
             self.assertNotIn("pkill", script, relative)
 
-    def test_bronze_release_is_namespaced_by_catalogue_hash(self):
+    def test_bronze_release_is_namespaced_by_native_snapshot_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             loader = object.__new__(DBWBronzeLoader)
             loader.base_workspace = Path(tmp)
@@ -248,8 +264,9 @@ class TestDBWBronzeLoader(unittest.TestCase):
             completion = self._completion()
             completion["_completion_created_at_utc"] = "2026-09-20T18:00:00Z"
             loader.bind_release(completion)
-            self.assertEqual(loader.release_id, "a" * 64)
-            self.assertIn("a" * 64, loader.bronze_obs)
+            self.assertEqual(loader.release_id, "b" * 64)
+            self.assertEqual(loader.catalogue_sha256, "a" * 64)
+            self.assertIn("b" * 64, loader.bronze_obs)
             self.assertEqual(loader.processed_at_utc, "2026-09-20T18:00:00Z")
 
     def test_csv_semicolon_parsing(self):

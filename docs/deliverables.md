@@ -43,15 +43,18 @@ Landing folder resolution read-only, admits only v3 full-bulk indicator receipts
 checksum-bound catalogue completion record only when every discovered indicator reconciles, and
 requires that record before DBW Bronze starts. Metadata-only runs remain explicitly incomplete;
 provider revisions are retained under content-addressed native names and every indicator receipt is
-bound to the exact catalogue hash plus each native object's Drive ID, byte size, MD5 and SHA-256.
+bound to one durable native-refresh snapshot plus the exact catalogue hash and each native object's
+Drive ID, byte size, MD5 and SHA-256. An incomplete refresh resumes the same remote snapshot; after
+completion, the next run opens a new snapshot and re-fetches every indicator, so unchanged taxonomy
+cannot make revised aggregate, metryka or ZIP payloads look current.
 Bronze verifies the downloaded bytes again before parsing, rejects sampled or indicator-selected
 publication into the complete release, and writes into a separate
-`02_bronze/gus_dbw/releases/<catalogue_sha256>/` namespace, so the earlier partial files cannot be
+`02_bronze/gus_dbw/releases/<native_snapshot_sha256>/` namespace, so the earlier partial files cannot be
 silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
 on a fresh runner without depending on disposable local files. A full receipt additionally requires
 the documented aggregate discovery envelope, at least one unique safe ZIP filename, and exact
-reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors.
-launchers refuse to kill or duplicate an already running local writer (including the later BDL-only
+reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors. Launchers
+refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
 DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while
 configured workers still receive their assigned proxy.
@@ -60,7 +63,7 @@ The separately reported Codespace BDL/DBW jobs were not duplicated or interrupte
 review. Their last recorded partial counts (BDL 1,093 / 2,420 subgroups; DBW Bronze 165+ / 1,550
 indicators) remain progress, not accepted full Landing or modeled delivery. In particular, existing
 partial DBW Bronze files remain retained but cannot authorize Silver/Gold. The next DBW Bronze run
-must wait for the new full-catalogue completion record; its immutable catalogue-hash release boundary
+must wait for the new full-catalogue completion record; its immutable native-snapshot release boundary
 is now enforced in code.
 
 ### Autonomous 2-Week Multi-Source Roadmap, Stage Decoupling, and Bulk Ingestion Mandate — 20 September 2026
