@@ -128,6 +128,50 @@ def _versioned_name(name: str, sha256_hex: str) -> str:
     return f"{stem[:max_stem]}{marker}{suffix}"
 
 
+def _discover_bulk_filenames(aggregate_bytes: bytes) -> list[str]:
+    """Parse the documented DBW aggregate table without treating error shapes as empty data."""
+    try:
+        document = json.loads(aggregate_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("DBW aggregate discovery is not valid UTF-8 JSON.") from exc
+    if not isinstance(document, dict):
+        raise RuntimeError("DBW aggregate discovery root is not an object.")
+    if document.get("success") is False or document.get("error"):
+        raise RuntimeError("DBW aggregate discovery returned an error envelope.")
+    data = document.get("data")
+    table = data.get("table") if isinstance(data, dict) else None
+    rows = table.get("rows") if isinstance(table, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("DBW aggregate discovery has no recognized data.table.rows envelope.")
+
+    filenames: list[str] = []
+    for row in rows:
+        if not isinstance(row, list):
+            raise RuntimeError("DBW aggregate discovery contains an invalid table row.")
+        for cell in row:
+            if not isinstance(cell, dict) or "files" not in cell:
+                continue
+            files = cell["files"]
+            if not isinstance(files, list):
+                raise RuntimeError("DBW aggregate discovery contains an invalid files cell.")
+            for file_info in files:
+                filename = file_info.get("filename") if isinstance(file_info, dict) else None
+                if (
+                    not isinstance(filename, str)
+                    or not filename
+                    or not filename.endswith(".zip")
+                    or Path(filename).name != filename
+                    or "\\" in filename
+                ):
+                    raise RuntimeError("DBW aggregate discovery contains an invalid ZIP filename.")
+                filenames.append(filename)
+    if not filenames:
+        raise RuntimeError("DBW aggregate discovery returned no bulk ZIP files.")
+    if len(filenames) != len(set(filenames)):
+        raise RuntimeError("DBW aggregate discovery returned duplicate bulk ZIP filenames.")
+    return filenames
+
+
 def _upload_bytes(
     storage: StorageManager,
     data: bytes,
@@ -432,7 +476,7 @@ class DbwWebExtractor:
             "status": "pending",
         }
 
-        def retain_object(upload: dict[str, Any], role: str) -> None:
+        def retain_object(upload: dict[str, Any], role: str, source_name: str) -> None:
             result["files_landed"].append(upload["name"])
             result["landed_objects"].append({
                 "id": upload["id"],
@@ -441,6 +485,7 @@ class DbwWebExtractor:
                 "sha256": upload["sha256"],
                 "md5": upload["md5"],
                 "role": role,
+                "source_name": source_name,
             })
 
         # 1. Fetch and land aggregates metadata (PL)
@@ -454,7 +499,7 @@ class DbwWebExtractor:
             kind="metadata",
             mime_type="application/json",
         )
-        retain_object(agg_res, "aggregates")
+        retain_object(agg_res, "aggregates", f"aggregates_{ind_id}_pl.json")
         if not agg_res["reused"]:
             result["new_bytes"] += agg_res["size"]
 
@@ -469,7 +514,7 @@ class DbwWebExtractor:
             kind="metadata",
             mime_type="text/csv",
         )
-        retain_object(met_res, "metryka")
+        retain_object(met_res, "metryka", f"metryka_{ind_id}.csv")
         if not met_res["reused"]:
             result["new_bytes"] += met_res["size"]
 
@@ -477,38 +522,38 @@ class DbwWebExtractor:
         expected_bulk_files: list[str] = []
         if not skip_bulk_zips:
             try:
-                agg_data = json.loads(agg_bytes.decode("utf-8"))
-                rows = agg_data.get("data", {}).get("table", {}).get("rows", [])
-                for row in rows:
-                    files_cell = next((c for c in row if isinstance(c, dict) and "files" in c), None)
-                    if not files_cell:
-                        continue
-                    for file_info in files_cell.get("files", []):
-                        filename = file_info.get("filename")
-                        if not filename or not filename.endswith(".zip"):
-                            continue
-                        expected_bulk_files.append(filename)
-                        zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
-                        local_zip = self.workspace / f"worker_{ind_id}_{filename}"
-                        # Download if not present locally
-                        if not local_zip.exists() or local_zip.stat().st_size == 0:
-                            zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
-                            local_zip.write_bytes(zip_data)
+                expected_bulk_files = _discover_bulk_filenames(agg_bytes)
+                for filename in expected_bulk_files:
+                    zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
+                    local_zip = self.workspace / f"worker_{ind_id}_{filename}"
+                    # Download if not present locally
+                    if not local_zip.exists() or local_zip.stat().st_size == 0:
+                        zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
+                        local_zip.write_bytes(zip_data)
 
-                        # Upload to Drive
-                        zip_res = _upload_file(
-                            self.storage,
-                            local_zip,
-                            name=filename,
-                            parent_id=self.bulk_dir,
-                            kind="bulk_zip",
-                            mime_type="application/zip",
-                        )
-                        retain_object(zip_res, "bulk_zip")
-                        if not zip_res["reused"]:
-                            result["new_bytes"] += zip_res["size"]
-                        # Clean up temporary local file after verified Drive upload
-                        local_zip.unlink(missing_ok=True)
+                    # Upload to Drive
+                    zip_res = _upload_file(
+                        self.storage,
+                        local_zip,
+                        name=filename,
+                        parent_id=self.bulk_dir,
+                        kind="bulk_zip",
+                        mime_type="application/zip",
+                    )
+                    retain_object(zip_res, "bulk_zip", filename)
+                    if not zip_res["reused"]:
+                        result["new_bytes"] += zip_res["size"]
+                    # Clean up temporary local file after verified Drive upload
+                    local_zip.unlink(missing_ok=True)
+                landed_bulk_files = [
+                    item["source_name"]
+                    for item in result["landed_objects"]
+                    if item["role"] == "bulk_zip"
+                ]
+                if sorted(landed_bulk_files) != sorted(expected_bulk_files):
+                    raise RuntimeError(
+                        f"DBW bulk discovery did not reconcile landed files for indicator {ind_id}."
+                    )
             except Exception as exc:
                 print(f"Warning: Bulk zip download for indicator {ind_id} encountered an error: {exc}")
                 raise

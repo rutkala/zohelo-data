@@ -135,6 +135,11 @@ class TestDBWBronzeLoader(unittest.TestCase):
                     "sha256": hashlib.sha256(raw_native).hexdigest(),
                     "md5": hashlib.md5(raw_native).hexdigest(),
                     "role": role,
+                    "source_name": (
+                        f"aggregates_{indicator_id}_pl.json" if role == "aggregates"
+                        else f"metryka_{indicator_id}.csv" if role == "metryka"
+                        else f"{indicator_id}_history.zip"
+                    ),
                 }
                 landed_objects.append(descriptor)
                 folder_files.append({
@@ -156,6 +161,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 "catalogue_sha256": catalogue_sha,
                 "files_landed": [item["name"] for item in landed_objects],
                 "landed_objects": landed_objects,
+                "expected_bulk_files": [f"{indicator_id}_history.zip"],
             }
             raw = json.dumps(document).encode()
             receipts.append(raw)

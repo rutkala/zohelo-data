@@ -48,7 +48,9 @@ Bronze verifies the downloaded bytes again before parsing, rejects sampled or in
 publication into the complete release, and writes into a separate
 `02_bronze/gus_dbw/releases/<catalogue_sha256>/` namespace, so the earlier partial files cannot be
 silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
-on a fresh runner without depending on disposable local files.
+on a fresh runner without depending on disposable local files. A full receipt additionally requires
+the documented aggregate discovery envelope, at least one unique safe ZIP filename, and exact
+reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors.
 launchers refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
 DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while

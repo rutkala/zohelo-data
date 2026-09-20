@@ -462,6 +462,7 @@ class DBWBronzeLoader:
                 )
             roles: list[str] = []
             object_names: list[str] = []
+            bulk_source_names: list[str] = []
             for descriptor in landed_objects:
                 if not isinstance(descriptor, dict):
                     raise DBWLandingIncompleteError(
@@ -473,6 +474,7 @@ class DBWBronzeLoader:
                 sha256_hex = descriptor.get("sha256")
                 md5_hex = descriptor.get("md5")
                 role = descriptor.get("role")
+                source_name = descriptor.get("source_name")
                 if (
                     not isinstance(object_id, str)
                     or not object_id
@@ -485,6 +487,10 @@ class DBWBronzeLoader:
                     or not isinstance(md5_hex, str)
                     or re.fullmatch(r"[0-9a-f]{32}", md5_hex) is None
                     or role not in {"aggregates", "metryka", "bulk_zip"}
+                    or not isinstance(source_name, str)
+                    or not source_name
+                    or Path(source_name).name != source_name
+                    or "\\" in source_name
                     or object_id in bound_object_ids
                 ):
                     raise DBWLandingIncompleteError(
@@ -509,6 +515,7 @@ class DBWBronzeLoader:
                     metadata_members[object_id] = descriptor
                 elif role == "bulk_zip":
                     bulk_members[object_id] = descriptor
+                    bulk_source_names.append(source_name)
             if sorted(landed_names) != sorted(object_names):
                 raise DBWLandingIncompleteError(
                     "DBW indicator receipt file names do not match its native object descriptors."
@@ -516,6 +523,17 @@ class DBWBronzeLoader:
             if roles.count("metryka") != 1 or roles.count("aggregates") != 1:
                 raise DBWLandingIncompleteError(
                     "Each completed DBW indicator receipt must bind one aggregate and one metryka file."
+                )
+            expected_bulk_files = receipt.get("expected_bulk_files")
+            if (
+                not isinstance(expected_bulk_files, list)
+                or not expected_bulk_files
+                or any(not isinstance(name, str) for name in expected_bulk_files)
+                or len(expected_bulk_files) != len(set(expected_bulk_files))
+                or sorted(expected_bulk_files) != sorted(bulk_source_names)
+            ):
+                raise DBWLandingIncompleteError(
+                    "DBW indicator receipt does not reconcile discovered and landed bulk files."
                 )
 
         if len(indicator_ids) != completion["catalogue_indicators"]:

@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from dbw_web_extractor import (
     DbwWebExtractor,
+    _discover_bulk_filenames,
     _hash_bytes,
     _hash_file,
     _require_production_context,
@@ -81,6 +82,58 @@ class TestDbwWebExtractor(unittest.TestCase):
         self.assertEqual(extracted[0]["name"], "Izby oddane do użytkowania")
         self.assertEqual(extracted[0]["path"], "Gospodarka > Budownictwo > Izby oddane do użytkowania")
         self.assertEqual(extracted[1]["id"], 380)
+
+    def test_bulk_discovery_requires_recognized_nonempty_unique_zip_inventory(self):
+        document = {
+            "data": {"table": {"rows": [[{
+                "files": [
+                    {"filename": "7_history.zip"},
+                    {"filename": "7_recent.zip"},
+                ]
+            }]]}}
+        }
+        raw = json.dumps(document).encode()
+        self.assertEqual(
+            _discover_bulk_filenames(raw),
+            ["7_history.zip", "7_recent.zip"],
+        )
+        for invalid in (
+            b"{}",
+            b'{"success": false, "error": "provider failure"}',
+            b'{"data": {"table": {"rows": []}}}',
+            b'{"data": {"table": {"rows": [[{"files": [{"filename": "../7.zip"}]}]]}}}',
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    _discover_bulk_filenames(invalid)
+
+    @patch("dbw_web_extractor._upload_bytes")
+    @patch("dbw_web_extractor._http_get")
+    def test_invalid_aggregate_envelope_cannot_publish_completed_receipt(
+        self, mock_get, mock_upload
+    ):
+        mock_get.side_effect = [b"{}", b"id_zmienna;nazwa\n7;Test\n"]
+
+        def upload_result(_storage, data, **kwargs):
+            sha, md5 = _hash_bytes(data)
+            return {
+                "id": f"id-{kwargs['name']}", "name": kwargs["name"],
+                "size": len(data), "sha256": sha, "md5": md5, "reused": False,
+            }
+
+        mock_upload.side_effect = upload_result
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.storage = MagicMock()
+        extractor.proxy = None
+        extractor.workspace = Path("unused")
+        extractor.metadata_dir = "metadata"
+        extractor.bulk_dir = "bulk"
+        extractor.checkpoints_dir = "checkpoints"
+        extractor.catalogue_sha256 = "a" * 64
+        with self.assertRaisesRegex(RuntimeError, "recognized data.table.rows"):
+            extractor.process_indicator({"id": 7, "name": "Test indicator"})
+        uploaded_names = [call.kwargs["name"] for call in mock_upload.call_args_list]
+        self.assertNotIn("completed-v3-7.json", uploaded_names)
 
     @patch("dbw_web_extractor.StorageManager")
     def test_extractor_initialization(self, mock_storage_cls):
