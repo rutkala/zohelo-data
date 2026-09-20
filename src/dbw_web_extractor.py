@@ -48,6 +48,7 @@ SNAPSHOT_PREFIX = "native-snapshot-v1"
 SNAPSHOT_LEASE_PREFIX = "native-snapshot-lease-v1"
 SNAPSHOT_LEASE_RELEASE_PREFIX = "native-snapshot-lease-release-v1"
 SNAPSHOT_LEASE_SECONDS = 6 * 60 * 60
+SNAPSHOT_LEASE_SAFETY_SECONDS = 60 * 60
 SNAPSHOT_LEASE_SETTLE_SECONDS = 2
 
 
@@ -460,6 +461,18 @@ class DbwWebExtractor:
             },
         )
         self.native_snapshot_lease_claim = claim_id
+        try:
+            self._verify_native_snapshot_lease(claim_id)
+        except BaseException:
+            try:
+                self.release_native_snapshot_lease()
+            except Exception:
+                pass
+            raise
+        return claim_id
+
+    def _verify_native_snapshot_lease(self, claim_id: str) -> None:
+        """Verify one source-wide claim; callers tombstone it on every failure."""
         time.sleep(SNAPSHOT_LEASE_SETTLE_SECONDS)
         files = self._list_landing_control()
         released = {
@@ -475,7 +488,6 @@ class DbwWebExtractor:
             candidate = props.get("claim_id")
             if (
                 props.get("record_type") != "gus_dbw_native_snapshot_lease"
-                or props.get("catalogue_sha256") != catalogue_sha256
                 or not isinstance(candidate, str)
                 or candidate in released
             ):
@@ -488,11 +500,9 @@ class DbwWebExtractor:
             if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
                 active.append((created, candidate))
         if not active or min(active)[1] != claim_id:
-            self.release_native_snapshot_lease()
             raise RuntimeError(
                 "Another DBW writer holds the durable native-snapshot lease; retry after it releases or expires."
             )
-        return claim_id
 
     def release_native_snapshot_lease(self) -> None:
         """Close this writer claim with an immutable tombstone; source data is untouched."""
@@ -971,7 +981,7 @@ class DbwWebExtractor:
 def main():
     parser = argparse.ArgumentParser(description="GUS DBW Web bulk extractor")
     parser.add_argument("--workspace", default="portal/test-results/dbw-web-bulk", help="Local workspace directory")
-    parser.add_argument("--max-seconds", type=int, default=18600, help="Maximum execution seconds")
+    parser.add_argument("--max-seconds", type=int, default=18000, help="Maximum execution seconds")
     parser.add_argument("--concurrency", type=int, default=1, help="Concurrent workers")
     parser.add_argument("--proxies", type=str, default=None, help="Comma-separated list of proxy URLs (e.g. http://127.0.0.1:8081)")
     parser.add_argument("--max-indicators", type=int, default=None, help="Limit number of indicators to extract")
@@ -980,9 +990,10 @@ def main():
     parser.add_argument("--allow-codespace", action="store_true", help="Allow running outside main GitHub Actions")
     parser.add_argument("--summary", type=str, default=None, help="Path to write execution summary JSON")
     args = parser.parse_args()
-    if args.max_seconds >= SNAPSHOT_LEASE_SECONDS - 300:
+    if args.max_seconds > SNAPSHOT_LEASE_SECONDS - SNAPSHOT_LEASE_SAFETY_SECONDS:
         parser.error(
-            f"--max-seconds must be below {SNAPSHOT_LEASE_SECONDS - 300} so the durable writer lease cannot expire mid-run"
+            f"--max-seconds must not exceed {SNAPSHOT_LEASE_SECONDS - SNAPSHOT_LEASE_SAFETY_SECONDS}; "
+            "the remaining measured transfer margin keeps the lease valid through the last indicator"
         )
 
     start_time = time.time()

@@ -437,6 +437,17 @@ class DBWBronzeLoader:
             },
         )
         self.writer_lease_claim = claim_id
+        try:
+            self._verify_writer_lease(claim_id)
+        except BaseException:
+            try:
+                self.release_writer_lease()
+            except Exception:
+                pass
+            raise
+        return claim_id
+
+    def _verify_writer_lease(self, claim_id: str) -> None:
         time.sleep(BRONZE_LEASE_SETTLE_SECONDS)
         files = self._list_landing_control()
         released = {
@@ -464,9 +475,7 @@ class DBWBronzeLoader:
             if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
                 active.append((created, candidate))
         if not active or min(active)[1] != claim_id:
-            self.release_writer_lease()
             raise RuntimeError("Another host holds the durable DBW Bronze writer lease.")
-        return claim_id
 
     def release_writer_lease(self) -> None:
         claim_id = self.writer_lease_claim

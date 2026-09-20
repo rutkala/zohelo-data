@@ -326,7 +326,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
             self.assertIn("kill -0", script, relative)
             self.assertNotIn("pkill", script, relative)
         combined = (repo_root / "scripts/run_full_gus_parallel.sh").read_text(encoding="utf-8")
-        self.assertIn("--max-seconds 21000", combined)
+        self.assertIn("--max-seconds 18000", combined)
 
     def test_dbt_sources_require_explicit_snapshot_release(self):
         repo_root = Path(__file__).resolve().parents[1]

@@ -301,7 +301,7 @@ class TestDbwWebExtractor(unittest.TestCase):
                 }, "createdTime": "2026-09-20T20:00:01Z"},
                 {"appProperties": {
                     "record_type": "gus_dbw_native_snapshot_lease",
-                    "catalogue_sha256": "a" * 64,
+                    "catalogue_sha256": "b" * 64,
                     "claim_id": other,
                     "expires_at_utc": future,
                 }, "createdTime": "2026-09-20T20:00:00Z"},
@@ -315,6 +315,21 @@ class TestDbwWebExtractor(unittest.TestCase):
             mock_upload.call_args_list[-1].kwargs["extra_properties"]["released_claim_id"],
             own,
         )
+
+    @patch("dbw_web_extractor.time.sleep")
+    @patch("dbw_web_extractor._upload_bytes")
+    def test_snapshot_lease_tombstones_claim_when_election_listing_fails(
+        self, mock_upload, _mock_sleep
+    ):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.control_landing = "control"
+        extractor.storage = MagicMock()
+        extractor.native_snapshot_lease_claim = None
+        extractor.storage.drive_service.files.return_value.list.return_value.execute.side_effect = RuntimeError("transient")
+        with self.assertRaisesRegex(RuntimeError, "transient"):
+            extractor.acquire_native_snapshot_lease("a" * 64)
+        self.assertEqual(mock_upload.call_count, 2)
+        self.assertIsNone(extractor.native_snapshot_lease_claim)
 
     @patch("dbw_web_extractor._find_exact_file")
     def test_changed_native_response_uses_content_addressed_revision(self, mock_find):
