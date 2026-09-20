@@ -59,7 +59,12 @@ partition when the source has no dictionary rows) for fresh-runner consolidation
 release completion record only after both partition sets reconcile every indicator. The disabled-by-default
 dbt source no longer reads the retained unversioned pilot folders: an operator must select the
 verified snapshot explicitly with `ZOHELO_DBW_BRONZE_RELEASE_ID`, and all four source relations then
-resolve only under `02_bronze/gus_dbw/releases/<native_snapshot_sha256>/`.
+resolve only under `02_bronze/gus_dbw/releases/<native_snapshot_sha256>/`. Before dbt runs,
+`python scripts/restore_dbw_bronze_release.py --release-id <native_snapshot_sha256>` restores the
+marker, exact observation/dictionary partition sets, taxonomy, metadata and consolidated dictionary
+from Drive into that local path, verifying size, MD5 and SHA-256 before an atomic directory rename.
+Native snapshot selection is protected across Actions and explicitly authorized hosts by a durable,
+expiring Drive lease with immutable acquisition/release records.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

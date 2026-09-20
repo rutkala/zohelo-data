@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import md5, sha256
 import json
 import os
@@ -45,6 +45,10 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 _CHUNK_BYTES = 8 * 1024 * 1024
 COMPLETION_PREFIX = "landing-complete-v2"
 SNAPSHOT_PREFIX = "native-snapshot-v1"
+SNAPSHOT_LEASE_PREFIX = "native-snapshot-lease-v1"
+SNAPSHOT_LEASE_RELEASE_PREFIX = "native-snapshot-lease-release-v1"
+SNAPSHOT_LEASE_SECONDS = 6 * 60 * 60
+SNAPSHOT_LEASE_SETTLE_SECONDS = 2
 
 
 def _require_production_context(allow_codespace: bool = False) -> None:
@@ -385,6 +389,7 @@ class DbwWebExtractor:
         self.proxy = proxy
         self.catalogue_sha256: str | None = None
         self.native_snapshot_id: str | None = None
+        self.native_snapshot_lease_claim: str | None = None
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
@@ -403,8 +408,7 @@ class DbwWebExtractor:
         self.checkpoints_dir = storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
         self.campaign_control = storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
 
-    def start_or_resume_native_snapshot(self, catalogue_sha256: str) -> str:
-        """Resume one durable full refresh, or start the next after completion."""
+    def _list_landing_control(self) -> list[dict[str, Any]]:
         query = f"'{_escape_query(self.control_landing)}' in parents and trashed=false"
         files: list[dict[str, Any]] = []
         token = None
@@ -422,7 +426,108 @@ class DbwWebExtractor:
             files.extend(response.get("files", []))
             token = response.get("nextPageToken")
             if not token:
-                break
+                return files
+
+    def acquire_native_snapshot_lease(self, catalogue_sha256: str) -> str:
+        """Elect one durable Drive-backed snapshot writer across all hosts."""
+        claim_id = str(uuid.uuid4())
+        acquired_at = datetime.now(timezone.utc)
+        expires_at = acquired_at + timedelta(seconds=SNAPSHOT_LEASE_SECONDS)
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_lease",
+            "source_id": "gus_dbw",
+            "catalogue_sha256": catalogue_sha256,
+            "claim_id": claim_id,
+            "acquired_at_utc": acquired_at.isoformat(),
+            "expires_at_utc": expires_at.isoformat(),
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_LEASE_PREFIX}-{catalogue_sha256}-{claim_id}.json",
+            parent_id=self.control_landing,
+            kind="snapshot_lease",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_lease",
+                "catalogue_sha256": catalogue_sha256,
+                "claim_id": claim_id,
+                "expires_at_utc": expires_at.isoformat(),
+            },
+        )
+        time.sleep(SNAPSHOT_LEASE_SETTLE_SECONDS)
+        files = self._list_landing_control()
+        released = {
+            (item.get("appProperties") or {}).get("released_claim_id")
+            for item in files
+            if (item.get("appProperties") or {}).get("record_type")
+            == "gus_dbw_native_snapshot_lease_release"
+        }
+        now = datetime.now(timezone.utc)
+        active: list[tuple[datetime, str]] = []
+        for item in files:
+            props = item.get("appProperties") or {}
+            candidate = props.get("claim_id")
+            if (
+                props.get("record_type") != "gus_dbw_native_snapshot_lease"
+                or props.get("catalogue_sha256") != catalogue_sha256
+                or not isinstance(candidate, str)
+                or candidate in released
+            ):
+                continue
+            try:
+                expiry = datetime.fromisoformat(props.get("expires_at_utc", ""))
+                created = datetime.fromisoformat(item.get("createdTime", "").replace("Z", "+00:00"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
+                active.append((created, candidate))
+        if not active or min(active)[1] != claim_id:
+            raise RuntimeError(
+                "Another DBW writer holds the durable native-snapshot lease; retry after it releases or expires."
+            )
+        self.native_snapshot_lease_claim = claim_id
+        return claim_id
+
+    def release_native_snapshot_lease(self) -> None:
+        """Close this writer claim with an immutable tombstone; source data is untouched."""
+        claim_id = self.native_snapshot_lease_claim
+        if not claim_id:
+            return
+        released_at = datetime.now(timezone.utc).isoformat()
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_lease_release",
+            "source_id": "gus_dbw",
+            "released_claim_id": claim_id,
+            "released_at_utc": released_at,
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_LEASE_RELEASE_PREFIX}-{claim_id}.json",
+            parent_id=self.control_landing,
+            kind="snapshot_lease_release",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_lease_release",
+                "released_claim_id": claim_id,
+            },
+        )
+        self.native_snapshot_lease_claim = None
+
+    def start_or_resume_native_snapshot(self, catalogue_sha256: str) -> str:
+        """Resume one durable full refresh, or start the next after completion."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW native snapshot selection requires the durable writer lease.")
+        files = self._list_landing_control()
 
         completed_snapshot_ids = {
             (item.get("appProperties") or {}).get("native_snapshot_id")
@@ -785,6 +890,10 @@ def main():
     parser.add_argument("--allow-codespace", action="store_true", help="Allow running outside main GitHub Actions")
     parser.add_argument("--summary", type=str, default=None, help="Path to write execution summary JSON")
     args = parser.parse_args()
+    if args.max_seconds >= SNAPSHOT_LEASE_SECONDS - 300:
+        parser.error(
+            f"--max-seconds must be below {SNAPSHOT_LEASE_SECONDS - 300} so the durable writer lease cannot expire mid-run"
+        )
 
     start_time = time.time()
     workspace = Path(args.workspace).resolve()
@@ -835,6 +944,7 @@ def main():
         print(f"Filtered to {len(all_indicators)} specified indicators: {wanted_ids}")
 
     extractor.catalogue_sha256 = catalogue_sha256
+    extractor.acquire_native_snapshot_lease(catalogue_sha256)
     native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
     completed_memberships = extractor.load_completed_checkpoints(
         catalogue_sha256, native_snapshot_id
@@ -967,6 +1077,8 @@ def main():
     )
     summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
     summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
+
+    extractor.release_native_snapshot_lease()
 
     print("\n--- DBW Extraction Summary ---")
     print(f"Indicators completed this run: {summary['completed_this_run']}")

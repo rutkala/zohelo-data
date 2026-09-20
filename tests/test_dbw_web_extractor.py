@@ -204,6 +204,7 @@ class TestDbwWebExtractor(unittest.TestCase):
     ):
         extractor = object.__new__(DbwWebExtractor)
         extractor.control_landing = "control"
+        extractor.native_snapshot_lease_claim = "claim"
         extractor.storage = MagicMock()
         start = {
             "name": f"native-snapshot-v1-{'a' * 64}-{self.SNAPSHOT_ID}.json",
@@ -236,6 +237,41 @@ class TestDbwWebExtractor(unittest.TestCase):
             mock_upload.call_args.kwargs["extra_properties"]["native_snapshot_id"],
             next_snapshot,
         )
+
+    @patch("dbw_web_extractor.time.sleep")
+    @patch("dbw_web_extractor._upload_bytes")
+    @patch("dbw_web_extractor.uuid.uuid4")
+    def test_snapshot_lease_elects_one_cross_runner_writer(
+        self, mock_uuid, mock_upload, mock_sleep
+    ):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.control_landing = "control"
+        extractor.storage = MagicMock()
+        extractor.native_snapshot_lease_claim = None
+        own = "123e4567-e89b-42d3-a456-426614174000"
+        other = "023e4567-e89b-42d3-a456-426614174000"
+        mock_uuid.return_value = own
+        future = "2999-01-01T00:00:00+00:00"
+        extractor.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
+            "files": [
+                {"appProperties": {
+                    "record_type": "gus_dbw_native_snapshot_lease",
+                    "catalogue_sha256": "a" * 64,
+                    "claim_id": own,
+                    "expires_at_utc": future,
+                }, "createdTime": "2026-09-20T20:00:01Z"},
+                {"appProperties": {
+                    "record_type": "gus_dbw_native_snapshot_lease",
+                    "catalogue_sha256": "a" * 64,
+                    "claim_id": other,
+                    "expires_at_utc": future,
+                }, "createdTime": "2026-09-20T20:00:00Z"},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "durable native-snapshot lease"):
+            extractor.acquire_native_snapshot_lease("a" * 64)
+        mock_sleep.assert_called_once()
+        mock_upload.assert_called_once()
 
     @patch("dbw_web_extractor._find_exact_file")
     def test_changed_native_response_uses_content_addressed_revision(self, mock_find):
