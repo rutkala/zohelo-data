@@ -65,7 +65,9 @@ marker, exact observation/dictionary partition sets, taxonomy, metadata and cons
 from Drive into that local path, verifying size, MD5 and SHA-256 before an atomic directory rename.
 Native snapshot selection is protected across Actions and explicitly authorized hosts by a durable,
 expiring Drive lease with immutable acquisition/release records; losing election claims are
-tombstoned immediately. Resumed Landing receipts are re-read and reconciled to their exact native
+tombstoned immediately, taxonomy is not uploaded until after election, and every exceptional exit
+releases through `finally`. The Bronze writer has the same cross-host protection before it creates
+or writes release paths, with each resumable session bounded below lease expiry. Resumed Landing receipts are re-read and reconciled to their exact native
 Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
 receipts (never provider filenames or untrusted CSV identity alone), while its completion marker and
 dbt guard bind the exact local observation and dictionary partition-name inventories.

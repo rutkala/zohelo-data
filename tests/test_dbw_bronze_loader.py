@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import zipfile
 
 import duckdb
@@ -99,6 +99,40 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 _upload_file_to_drive(storage, path, "part_7.parquet", "parent")
         storage.drive_service.files.return_value.delete.assert_not_called()
         storage.drive_service.files.return_value.create.assert_not_called()
+
+    @patch("dbw_bronze_loader.time.sleep")
+    @patch("dbw_bronze_loader._upload_control_bytes")
+    @patch("dbw_bronze_loader.uuid.uuid4")
+    def test_bronze_writer_lease_tombstones_losing_claim(
+        self, mock_uuid, mock_upload, mock_sleep
+    ):
+        loader = object.__new__(DBWBronzeLoader)
+        loader.storage = MagicMock()
+        loader.landing_control = "control"
+        loader.writer_lease_claim = None
+        own = "123e4567-e89b-42d3-a456-426614174000"
+        other = "023e4567-e89b-42d3-a456-426614174000"
+        mock_uuid.return_value = own
+        future = "2999-01-01T00:00:00+00:00"
+        loader.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
+            "files": [
+                {"createdTime": "2026-09-20T20:00:01Z", "appProperties": {
+                    "record_type": "gus_dbw_bronze_writer_lease",
+                    "claim_id": own, "expires_at_utc": future,
+                }},
+                {"createdTime": "2026-09-20T20:00:00Z", "appProperties": {
+                    "record_type": "gus_dbw_bronze_writer_lease",
+                    "claim_id": other, "expires_at_utc": future,
+                }},
+            ]
+        }
+        with self.assertRaisesRegex(RuntimeError, "Another host"):
+            loader.acquire_writer_lease()
+        mock_sleep.assert_called_once()
+        self.assertEqual(mock_upload.call_count, 2)
+        self.assertEqual(
+            mock_upload.call_args_list[-1].kwargs["properties"]["released_claim_id"], own
+        )
 
     def test_verified_remote_output_is_restored_on_fresh_runner(self):
         raw = b"verified parquet bytes"
@@ -291,6 +325,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
             script = (repo_root / relative).read_text(encoding="utf-8")
             self.assertIn("kill -0", script, relative)
             self.assertNotIn("pkill", script, relative)
+        combined = (repo_root / "scripts/run_full_gus_parallel.sh").read_text(encoding="utf-8")
+        self.assertIn("--max-seconds 21000", combined)
 
     def test_dbt_sources_require_explicit_snapshot_release(self):
         repo_root = Path(__file__).resolve().parents[1]

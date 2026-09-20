@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import io
 import json
@@ -26,9 +26,10 @@ import threading
 import time
 from typing import Any
 import zipfile
+import uuid
 
 import duckdb
-from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -46,6 +47,10 @@ logging.basicConfig(
 
 DRIVE_LOCK = threading.Lock()
 LANDING_COMPLETION_PREFIX = "landing-complete-v2"
+BRONZE_LEASE_PREFIX = "bronze-writer-lease-v1"
+BRONZE_LEASE_RELEASE_PREFIX = "bronze-writer-lease-release-v1"
+BRONZE_LEASE_SECONDS = 6 * 60 * 60
+BRONZE_LEASE_SETTLE_SECONDS = 2
 
 
 class DBWLandingIncompleteError(RuntimeError):
@@ -204,6 +209,37 @@ def _upload_file_to_drive(
     return {"id": created["id"], "name": name, "size": int(created["size"]), "reused": False}
 
 
+def _upload_control_bytes(
+    storage: StorageManager,
+    data: bytes,
+    *,
+    name: str,
+    parent_id: str,
+    properties: dict[str, str],
+) -> None:
+    sha256_hex = hashlib.sha256(data).hexdigest()
+    md5_hex = hashlib.md5(data).hexdigest()
+    body = {
+        "name": name,
+        "parents": [parent_id],
+        "appProperties": {"sha256": sha256_hex, **properties},
+    }
+    media = MediaInMemoryUpload(data, mimetype="application/json", resumable=False)
+    with DRIVE_LOCK:
+        created = storage.drive_service.files().create(
+            body=body,
+            media_body=media,
+            fields="id,name,size,md5Checksum,appProperties",
+        ).execute(num_retries=4)
+    if (
+        created.get("name") != name
+        or int(created.get("size", -1)) != len(data)
+        or created.get("md5Checksum") != md5_hex
+        or (created.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
+        raise RuntimeError(f"DBW Bronze control upload did not verify: {name}")
+
+
 def _restore_verified_drive_file(
     storage: StorageManager,
     *,
@@ -325,12 +361,13 @@ class DBWBronzeLoader:
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.storage = storage
         self.allow_codespace = allow_codespace
+        self.writer_lease_claim: str | None = None
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
         self.landing_root = storage.resolve_zone("landing", create=False)
-        self.bronze_root = storage.resolve_zone("bronze", create=True)
-        self.control_root = storage.resolve_zone("control", create=True)
+        self.bronze_root = storage.resolve_zone("bronze", create=False)
+        self.control_root = storage.resolve_zone("control", create=False)
 
         # Resolve Landing strictly read-only. Bronze must not create or repair its input layer.
         self.dbw_landing = _resolve_existing_folder(storage, "gus_dbw", self.landing_root)
@@ -343,14 +380,117 @@ class DBWBronzeLoader:
             storage, "checkpoints", self.landing_control
         )
 
-        # Resolve Bronze directories
-        self.dbw_bronze = storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.bronze_root, write_session=self.session)
-        self.releases_root = storage.get_or_create_nested_folder(["releases"], root_id=self.dbw_bronze, write_session=self.session)
+    def prepare_write_paths(self) -> None:
+        """Create/resolve Bronze output paths only while holding the cross-host lease."""
+        if not self.writer_lease_claim:
+            raise RuntimeError("DBW Bronze write paths require the durable writer lease.")
+        self.dbw_bronze = self.storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.bronze_root, write_session=self.session)
+        self.releases_root = self.storage.get_or_create_nested_folder(["releases"], root_id=self.dbw_bronze, write_session=self.session)
 
         # Campaign control directory
-        self.campaign_control = storage.get_or_create_nested_folder(
+        self.campaign_control = self.storage.get_or_create_nested_folder(
             ["source_campaigns", "gus_dbw_bronze"], root_id=self.control_root, write_session=self.session
         )
+
+    def _list_landing_control(self) -> list[dict[str, Any]]:
+        query = f"'{_escape_query(self.landing_control)}' in parents and trashed=false"
+        files: list[dict[str, Any]] = []
+        token = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,appProperties,createdTime,trashed)",
+            }
+            if token:
+                kwargs["pageToken"] = token
+            with DRIVE_LOCK:
+                page = self.storage.drive_service.files().list(**kwargs).execute(num_retries=4)
+            files.extend(page.get("files", []))
+            token = page.get("nextPageToken")
+            if not token:
+                return files
+
+    def acquire_writer_lease(self) -> str:
+        claim_id = str(uuid.uuid4())
+        acquired = datetime.now(timezone.utc)
+        expires = acquired + timedelta(seconds=BRONZE_LEASE_SECONDS)
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_bronze_writer_lease",
+            "source_id": "gus_dbw",
+            "claim_id": claim_id,
+            "acquired_at_utc": acquired.isoformat(),
+            "expires_at_utc": expires.isoformat(),
+        }
+        raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        _upload_control_bytes(
+            self.storage,
+            raw,
+            name=f"{BRONZE_LEASE_PREFIX}-{claim_id}.json",
+            parent_id=self.landing_control,
+            properties={
+                "record_type": "gus_dbw_bronze_writer_lease",
+                "claim_id": claim_id,
+                "expires_at_utc": expires.isoformat(),
+            },
+        )
+        self.writer_lease_claim = claim_id
+        time.sleep(BRONZE_LEASE_SETTLE_SECONDS)
+        files = self._list_landing_control()
+        released = {
+            (item.get("appProperties") or {}).get("released_claim_id")
+            for item in files
+            if (item.get("appProperties") or {}).get("record_type")
+            == "gus_dbw_bronze_writer_lease_release"
+        }
+        now = datetime.now(timezone.utc)
+        active: list[tuple[datetime, str]] = []
+        for item in files:
+            props = item.get("appProperties") or {}
+            candidate = props.get("claim_id")
+            if (
+                props.get("record_type") != "gus_dbw_bronze_writer_lease"
+                or not isinstance(candidate, str)
+                or candidate in released
+            ):
+                continue
+            try:
+                expiry = datetime.fromisoformat(props.get("expires_at_utc", ""))
+                created = datetime.fromisoformat(item.get("createdTime", "").replace("Z", "+00:00"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
+                active.append((created, candidate))
+        if not active or min(active)[1] != claim_id:
+            self.release_writer_lease()
+            raise RuntimeError("Another host holds the durable DBW Bronze writer lease.")
+        return claim_id
+
+    def release_writer_lease(self) -> None:
+        claim_id = self.writer_lease_claim
+        if not claim_id:
+            return
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_bronze_writer_lease_release",
+            "source_id": "gus_dbw",
+            "released_claim_id": claim_id,
+            "released_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        raw = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+        _upload_control_bytes(
+            self.storage,
+            raw,
+            name=f"{BRONZE_LEASE_RELEASE_PREFIX}-{claim_id}.json",
+            parent_id=self.landing_control,
+            properties={
+                "record_type": "gus_dbw_bronze_writer_lease_release",
+                "released_claim_id": claim_id,
+            },
+        )
+        self.writer_lease_claim = None
 
     def require_complete_landing(self) -> dict[str, Any]:
         """Fail closed unless the Web bulk writer exhausted and reconciled its catalogue."""
@@ -835,7 +975,13 @@ def main():
     parser.add_argument("--sample-indicators", type=int, default=None, help="Limit to N indicators for pilot run")
     parser.add_argument("--indicator-ids", type=int, nargs="+", default=None, help="Specific indicator IDs to process")
     parser.add_argument("--skip-bulk", action="store_true", help="Only build taxonomy and metadata tables")
+    parser.add_argument("--max-seconds", type=int, default=21000, help="Bound one resumable writer lease session")
     args = parser.parse_args()
+    if args.max_seconds <= 0 or args.max_seconds >= BRONZE_LEASE_SECONDS - 300:
+        parser.error(
+            f"--max-seconds must be between 1 and {BRONZE_LEASE_SECONDS - 301}"
+        )
+    started_at = time.monotonic()
 
     try:
         validate_full_release_selection(args.sample_indicators, args.indicator_ids)
@@ -844,550 +990,558 @@ def main():
 
     sm = StorageManager()
     loader = DBWBronzeLoader(workspace=args.workspace, storage=sm, allow_codespace=args.allow_codespace)
-    completion = loader.require_complete_landing()
-    loader.bind_release(completion)
-    args.workspace = loader.workspace
-    release_receipts = loader.load_release_receipts(completion)
-    logger.info(
-        "Verified complete DBW Landing catalogue: %s/%s indicators; Bronze release %s.",
-        completion["completed_indicators"],
-        completion["catalogue_indicators"],
-        loader.release_id,
-    )
-
-    # 1. Discover Bulk Archives in Landing
-    logger.info("=== Discovering Bulk Archives in Landing ===")
-    query = f"'{_escape_query(loader.landing_bulk)}' in parents and trashed=false"
-    token = None
-    all_zips = []
-    while True:
-        with DRIVE_LOCK:
-            res = sm.drive_service.files().list(
-                q=query, pageSize=1000, pageToken=token, fields="nextPageToken, files(id, name, size)"
-            ).execute()
-        all_zips.extend(res.get("files", []))
-        token = res.get("nextPageToken")
-        if not token:
-            break
-    logger.info(f"Discovered {len(all_zips)} bulk zip files in Landing.")
-    all_zips = [
-        item for item in all_zips
-        if item.get("id") in release_receipts["bulk_members"]
-    ]
-    if (
-        len(all_zips) != len(release_receipts["bulk_members"])
-        or {item.get("id") for item in all_zips}
-        != set(release_receipts["bulk_members"])
-    ):
-        raise DBWLandingIncompleteError(
-            "DBW Landing bulk objects do not match the bound completion receipts."
+    loader.acquire_writer_lease()
+    try:
+        loader.prepare_write_paths()
+        completion = loader.require_complete_landing()
+        loader.bind_release(completion)
+        args.workspace = loader.workspace
+        release_receipts = loader.load_release_receipts(completion)
+        logger.info(
+            "Verified complete DBW Landing catalogue: %s/%s indicators; Bronze release %s.",
+            completion["completed_indicators"],
+            completion["catalogue_indicators"],
+            loader.release_id,
         )
-    logger.info(f"Bound {len(all_zips)} bulk zip files to Bronze release {loader.release_id}.")
 
-    zip_objects = {item["id"]: item for item in all_zips}
-    zips_by_indicator: dict[int, list[dict[str, Any]]] = {}
-    for indicator_id, descriptors in release_receipts["bulk_by_indicator"].items():
-        zips_by_indicator[indicator_id] = [zip_objects[item["id"]] for item in descriptors]
-
-    known_indicators = sorted(zips_by_indicator)
-    if set(known_indicators) != release_receipts["indicator_ids"]:
-        raise DBWLandingIncompleteError(
-            "DBW bulk ownership does not reconcile every receipt indicator."
-        )
-    logger.info(f"Grouped into {len(known_indicators)} distinct indicators.")
-
-    targets = known_indicators
-    logger.info(f"Targeting {len(targets)} indicators for Bronze processing.")
-
-    # 2. Build or restore release-bound Taxonomy Table
-    tax_parquet = args.workspace / "br_dbw_indicators.parquet"
-    if _restore_verified_drive_file(
-        sm, name=tax_parquet.name, parent_id=loader.bronze_tax, local_path=tax_parquet
-    ):
-        logger.info(f"Phase A: Restored verified {tax_parquet.name} from release {loader.release_id}.")
-    else:
-        logger.info("=== Phase A: Building br_dbw_indicators (Taxonomy) ===")
-        tax_parquet = loader.build_taxonomy_table()
-        tax_res = _upload_file_to_drive(
-            sm, tax_parquet, name="br_dbw_indicators.parquet", parent_id=loader.bronze_tax, mime_type="application/octet-stream"
-        )
-        logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
-    _validate_parquet_indicator_coverage(
-        tax_parquet, release_receipts["indicator_ids"], "taxonomy"
-    )
-
-    # 3. Build or restore release-bound Metadata Table
-    met_parquet = args.workspace / "br_dbw_metadata.parquet"
-    if _restore_verified_drive_file(
-        sm, name=met_parquet.name, parent_id=loader.bronze_met, local_path=met_parquet
-    ):
-        logger.info(f"Phase B: Restored verified {met_parquet.name} from release {loader.release_id}.")
-    else:
-        logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
-        met_parquet = loader.build_metadata_table(
-            allowed_objects=release_receipts["metadata_members"],
-            object_owners=release_receipts["metadata_owners"],
-        )
-        met_res = _upload_file_to_drive(
-            sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
-        )
-        logger.info(f"Uploaded br_dbw_metadata.parquet to Drive ({met_res['size']} bytes, reused={met_res['reused']}).")
-    _validate_parquet_indicator_coverage(
-        met_parquet, release_receipts["indicator_ids"], "metadata"
-    )
-
-    if args.skip_bulk:
-        logger.info("Skipping bulk observations per --skip-bulk.")
-        return
-
-    # 4. Process Bulk Archives with Vectorized DuckDB
-    logger.info("=== Phase C: Vectorized Bulk Extraction into Bronze ===")
-    dict_dir = args.workspace / "dicts"
-    dict_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize DuckDB with robust memory bounds and disk spillage
-    duckdb_tmp = args.workspace / "duckdb_tmp"
-    duckdb_tmp.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(":memory:")
-    con.execute("PRAGMA memory_limit = '2GB'")
-    con.execute(f"PRAGMA temp_directory = '{duckdb_tmp}'")
-    con.execute("PRAGMA preserve_insertion_order = false")
-    con.execute("PRAGMA threads = 4")
-
-    # Scan already completed indicator partitions on Drive with pagination
-    query_obs = f"'{_escape_query(loader.bronze_obs)}' in parents and trashed=false"
-    existing_obs_files = {}
-    page_token = None
-    with DRIVE_LOCK:
+        # 1. Discover Bulk Archives in Landing
+        logger.info("=== Discovering Bulk Archives in Landing ===")
+        query = f"'{_escape_query(loader.landing_bulk)}' in parents and trashed=false"
+        token = None
+        all_zips = []
         while True:
-            resp = sm.drive_service.files().list(
-                q=query_obs,
-                fields="nextPageToken, files(id, name, size,md5Checksum,appProperties)",
-                pageSize=1000,
-                pageToken=page_token
-            ).execute()
-            for f in resp.get("files", []):
-                existing_obs_files[f["name"]] = f
-            page_token = resp.get("nextPageToken")
+            with DRIVE_LOCK:
+                res = sm.drive_service.files().list(
+                    q=query, pageSize=1000, pageToken=token, fields="nextPageToken, files(id, name, size)"
+                ).execute()
+            all_zips.extend(res.get("files", []))
+            token = res.get("nextPageToken")
+            if not token:
+                break
+        logger.info(f"Discovered {len(all_zips)} bulk zip files in Landing.")
+        all_zips = [
+            item for item in all_zips
+            if item.get("id") in release_receipts["bulk_members"]
+        ]
+        if (
+            len(all_zips) != len(release_receipts["bulk_members"])
+            or {item.get("id") for item in all_zips}
+            != set(release_receipts["bulk_members"])
+        ):
+            raise DBWLandingIncompleteError(
+                "DBW Landing bulk objects do not match the bound completion receipts."
+            )
+        logger.info(f"Bound {len(all_zips)} bulk zip files to Bronze release {loader.release_id}.")
+
+        zip_objects = {item["id"]: item for item in all_zips}
+        zips_by_indicator: dict[int, list[dict[str, Any]]] = {}
+        for indicator_id, descriptors in release_receipts["bulk_by_indicator"].items():
+            zips_by_indicator[indicator_id] = [zip_objects[item["id"]] for item in descriptors]
+
+        known_indicators = sorted(zips_by_indicator)
+        if set(known_indicators) != release_receipts["indicator_ids"]:
+            raise DBWLandingIncompleteError(
+                "DBW bulk ownership does not reconcile every receipt indicator."
+            )
+        logger.info(f"Grouped into {len(known_indicators)} distinct indicators.")
+
+        targets = known_indicators
+        logger.info(f"Targeting {len(targets)} indicators for Bronze processing.")
+
+        # 2. Build or restore release-bound Taxonomy Table
+        tax_parquet = args.workspace / "br_dbw_indicators.parquet"
+        if _restore_verified_drive_file(
+            sm, name=tax_parquet.name, parent_id=loader.bronze_tax, local_path=tax_parquet
+        ):
+            logger.info(f"Phase A: Restored verified {tax_parquet.name} from release {loader.release_id}.")
+        else:
+            logger.info("=== Phase A: Building br_dbw_indicators (Taxonomy) ===")
+            tax_parquet = loader.build_taxonomy_table()
+            tax_res = _upload_file_to_drive(
+                sm, tax_parquet, name="br_dbw_indicators.parquet", parent_id=loader.bronze_tax, mime_type="application/octet-stream"
+            )
+            logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
+        _validate_parquet_indicator_coverage(
+            tax_parquet, release_receipts["indicator_ids"], "taxonomy"
+        )
+
+        # 3. Build or restore release-bound Metadata Table
+        met_parquet = args.workspace / "br_dbw_metadata.parquet"
+        if _restore_verified_drive_file(
+            sm, name=met_parquet.name, parent_id=loader.bronze_met, local_path=met_parquet
+        ):
+            logger.info(f"Phase B: Restored verified {met_parquet.name} from release {loader.release_id}.")
+        else:
+            logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
+            met_parquet = loader.build_metadata_table(
+                allowed_objects=release_receipts["metadata_members"],
+                object_owners=release_receipts["metadata_owners"],
+            )
+            met_res = _upload_file_to_drive(
+                sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
+            )
+            logger.info(f"Uploaded br_dbw_metadata.parquet to Drive ({met_res['size']} bytes, reused={met_res['reused']}).")
+        _validate_parquet_indicator_coverage(
+            met_parquet, release_receipts["indicator_ids"], "metadata"
+        )
+
+        if args.skip_bulk:
+            logger.info("Skipping bulk observations per --skip-bulk.")
+            return
+
+        # 4. Process Bulk Archives with Vectorized DuckDB
+        logger.info("=== Phase C: Vectorized Bulk Extraction into Bronze ===")
+        dict_dir = args.workspace / "dicts"
+        dict_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize DuckDB with robust memory bounds and disk spillage
+        duckdb_tmp = args.workspace / "duckdb_tmp"
+        duckdb_tmp.mkdir(parents=True, exist_ok=True)
+        con = duckdb.connect(":memory:")
+        con.execute("PRAGMA memory_limit = '2GB'")
+        con.execute(f"PRAGMA temp_directory = '{duckdb_tmp}'")
+        con.execute("PRAGMA preserve_insertion_order = false")
+        con.execute("PRAGMA threads = 4")
+
+        # Scan already completed indicator partitions on Drive with pagination
+        query_obs = f"'{_escape_query(loader.bronze_obs)}' in parents and trashed=false"
+        existing_obs_files = {}
+        page_token = None
+        with DRIVE_LOCK:
+            while True:
+                resp = sm.drive_service.files().list(
+                    q=query_obs,
+                    fields="nextPageToken, files(id, name, size,md5Checksum,appProperties)",
+                    pageSize=1000,
+                    pageToken=page_token
+                ).execute()
+                for f in resp.get("files", []):
+                    existing_obs_files[f["name"]] = f
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
+        logger.info(f"Discovered {len(existing_obs_files)} existing observation partitions on Drive.")
+
+        query_dict = f"'{_escape_query(loader.bronze_dict)}' in parents and trashed=false"
+        existing_dict_files: dict[str, dict[str, Any]] = {}
+        page_token = None
+        while True:
+            with DRIVE_LOCK:
+                response = sm.drive_service.files().list(
+                    q=query_dict,
+                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    pageSize=1000,
+                    pageToken=page_token,
+                ).execute(num_retries=4)
+            for item in response.get("files", []):
+                name = item.get("name", "")
+                if not re.fullmatch(r"dict_\d+\.parquet", name):
+                    continue
+                if name in existing_dict_files:
+                    raise RuntimeError(
+                        "Ambiguous DBW dictionary partitions exist in the bound release."
+                    )
+                existing_dict_files[name] = item
+            page_token = response.get("nextPageToken")
             if not page_token:
                 break
-    logger.info(f"Discovered {len(existing_obs_files)} existing observation partitions on Drive.")
-
-    query_dict = f"'{_escape_query(loader.bronze_dict)}' in parents and trashed=false"
-    existing_dict_files: dict[str, dict[str, Any]] = {}
-    page_token = None
-    while True:
-        with DRIVE_LOCK:
-            response = sm.drive_service.files().list(
-                q=query_dict,
-                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
-                pageSize=1000,
-                pageToken=page_token,
-            ).execute(num_retries=4)
-        for item in response.get("files", []):
-            name = item.get("name", "")
-            if not re.fullmatch(r"dict_\d+\.parquet", name):
-                continue
-            if name in existing_dict_files:
-                raise RuntimeError(
-                    "Ambiguous DBW dictionary partitions exist in the bound release."
-                )
-            existing_dict_files[name] = item
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
-    logger.info(
-        "Discovered %s existing dictionary partitions on Drive.",
-        len(existing_dict_files),
-    )
-
-    # Historical pilot objects are retained. Cleanup is a separate, explicitly
-    # authorized lifecycle operation and never belongs in a Bronze build.
-
-    total_obs_rows = 0
-    cp_path = args.workspace / "checkpoint.json"
-    if cp_path.is_file():
-        try:
-            prior_cp = json.loads(cp_path.read_text(encoding="utf-8"))
-            total_obs_rows = prior_cp.get("total_observations_rows", 0)
-            logger.info(f"Resuming with prior total_observations_rows = {total_obs_rows:,}")
-        except Exception:
-            total_obs_rows = 0
-
-    completed_indicators = 0
-    total_targets = len(targets)
-
-    for idx, ind_id in enumerate(targets, 1):
-        part_name = f"part_{ind_id}.parquet"
-        dict_part_name = f"dict_{ind_id}.parquet"
-
-        existing_part = existing_obs_files.get(part_name)
-        existing_dict_part = existing_dict_files.get(dict_part_name)
-        if existing_part and not _has_integrity_metadata(existing_part, min_size=1000):
-            raise RuntimeError(
-                f"Existing DBW observation partition is not verifiable: {part_name}"
-            )
-        if existing_dict_part and not _has_integrity_metadata(existing_dict_part):
-            raise RuntimeError(
-                f"Existing DBW dictionary partition is not verifiable: {dict_part_name}"
-            )
-        if existing_part and existing_dict_part:
-            logger.info(
-                f"[{idx}/{total_targets}] Indicator {ind_id} has verified observation "
-                "and dictionary partitions on Drive. Skipping."
-            )
-            completed_indicators += 1
-            continue
-
-        zfiles = zips_by_indicator.get(ind_id, [])
-        if not zfiles:
-            continue
-
-        t_start = time.time()
-        (args.workspace / part_name).unlink(missing_ok=True)
-        # Initialize fresh temporary DuckDB tables
-        con.execute("DROP TABLE IF EXISTS current_obs")
-        con.execute("DROP TABLE IF EXISTS current_dict")
-        con.execute("""
-            CREATE TEMP TABLE current_obs (
-                indicator_id BIGINT,
-                przekroj_id BIGINT,
-                wymiar_1 BIGINT,
-                pozycja_1 BIGINT,
-                wymiar_2 BIGINT,
-                pozycja_2 BIGINT,
-                wymiar_3 BIGINT,
-                pozycja_3 BIGINT,
-                wymiar_4 BIGINT,
-                pozycja_4 BIGINT,
-                wymiar_5 BIGINT,
-                pozycja_5 BIGINT,
-                wymiar_6 BIGINT,
-                pozycja_6 BIGINT,
-                wymiar_7 BIGINT,
-                pozycja_7 BIGINT,
-                wymiar_8 BIGINT,
-                pozycja_8 BIGINT,
-                wymiar_9 BIGINT,
-                pozycja_9 BIGINT,
-                okres_id INTEGER,
-                sposob_prezentacji_miara_id INTEGER,
-                period_year INTEGER,
-                wartosc_raw VARCHAR,
-                wartosc_numeric DOUBLE,
-                precyzja INTEGER,
-                brak_wartosci_id INTEGER,
-                tajnosci_id INTEGER,
-                flaga_id INTEGER,
-                raw_archive_file VARCHAR,
-                source_row_number BIGINT,
-                processed_at_utc VARCHAR
-            )
-        """)
-        con.execute("""
-            CREATE TEMP TABLE current_dict (
-                indicator_id BIGINT,
-                column_name VARCHAR,
-                dictionary_name VARCHAR,
-                element_id BIGINT,
-                element_name VARCHAR,
-                processed_at_utc VARCHAR
-            )
-        """)
-
-        # Download zip archives in parallel
-        def fetch_zip(zf_meta):
-            with DRIVE_LOCK:
-                content = sm.drive_service.files().get_media(
-                    fileId=zf_meta["id"]
-                ).execute(num_retries=4)
-            _verify_native_bytes(
-                content, release_receipts["bulk_members"][zf_meta["id"]]
-            )
-            return zf_meta["name"], content
-
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            download_futures = [executor.submit(fetch_zip, zf) for zf in zfiles]
-            
-            with tempfile.TemporaryDirectory() as tmpdir:
-                for future in as_completed(download_futures):
-                    fname, content = future.result()
-                    try:
-                        zf = zipfile.ZipFile(io.BytesIO(content))
-                        csv_names = [n for n in zf.namelist() if not "Slowniki" in n and n.endswith(".csv")]
-                        dict_names = [n for n in zf.namelist() if "Slowniki" in n and n.endswith(".csv")]
-
-                        # 1. Observations
-                        if csv_names:
-                            csv_path = os.path.join(tmpdir, f"obs_{fname}.csv")
-                            with open(csv_path, "wb") as f_out:
-                                f_out.write(zf.read(csv_names[0]))
-
-                            con.execute(f"""
-                                INSERT INTO current_obs
-                                SELECT 
-                                    {ind_id}::BIGINT,
-                                    TRY_CAST(id_przekroj AS BIGINT),
-                                    TRY_CAST(id_wymiar_1 AS BIGINT),
-                                    TRY_CAST(id_pozycja_1 AS BIGINT),
-                                    TRY_CAST(id_wymiar_2 AS BIGINT),
-                                    TRY_CAST(id_pozycja_2 AS BIGINT),
-                                    TRY_CAST(id_wymiar_3 AS BIGINT),
-                                    TRY_CAST(id_pozycja_3 AS BIGINT),
-                                    TRY_CAST(id_wymiar_4 AS BIGINT),
-                                    TRY_CAST(id_pozycja_4 AS BIGINT),
-                                    TRY_CAST(id_wymiar_5 AS BIGINT),
-                                    TRY_CAST(id_pozycja_5 AS BIGINT),
-                                    TRY_CAST(id_wymiar_6 AS BIGINT),
-                                    TRY_CAST(id_pozycja_6 AS BIGINT),
-                                    TRY_CAST(id_wymiar_7 AS BIGINT),
-                                    TRY_CAST(id_pozycja_7 AS BIGINT),
-                                    TRY_CAST(id_wymiar_8 AS BIGINT),
-                                    TRY_CAST(id_pozycja_8 AS BIGINT),
-                                    TRY_CAST(id_wymiar_9 AS BIGINT),
-                                    TRY_CAST(id_pozycja_9 AS BIGINT),
-                                    TRY_CAST(id_okres AS INTEGER),
-                                    TRY_CAST(id_sposob_prezentacji_miara AS INTEGER),
-                                    TRY_CAST(id_daty AS INTEGER),
-                                    wartosc as wartosc_raw,
-                                    TRY_CAST(REPLACE(wartosc, ',', '.') AS DOUBLE),
-                                    TRY_CAST(precyzja AS INTEGER),
-                                    TRY_CAST(id_brak_wartosci AS INTEGER),
-                                    TRY_CAST(id_tajnosci AS INTEGER),
-                                    TRY_CAST(id_flaga AS INTEGER),
-                                    '{fname}' as raw_archive_file,
-                                    TRY_CAST(rowNumber AS BIGINT),
-                                    '{loader.processed_at_utc}'
-                                FROM read_csv('{csv_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
-                            """)
-                            os.remove(csv_path)
-
-                        # 2. Dictionaries
-                        if dict_names:
-                            dict_path = os.path.join(tmpdir, f"dict_{fname}.csv")
-                            with open(dict_path, "wb") as f_out:
-                                f_out.write(zf.read(dict_names[0]))
-
-                            con.execute(f"""
-                                INSERT INTO current_dict
-                                SELECT DISTINCT
-                                    {ind_id}::BIGINT,
-                                    TRIM(nazwa_kolumny),
-                                    TRIM(nazwa_slownika),
-                                    TRY_CAST(id_elementu AS BIGINT),
-                                    TRIM(opis),
-                                    '{loader.processed_at_utc}'
-                                FROM read_csv('{dict_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
-                                WHERE id_elementu IS NOT NULL
-                            """)
-                            os.remove(dict_path)
-                    except Exception as exc:
-                        raise DBWLandingIncompleteError(
-                            f"DBW bulk archive could not be parsed completely: {fname}"
-                        ) from exc
-
-        obs_count = con.execute("SELECT count(*) FROM current_obs").fetchone()[0]
-        dict_count = con.execute("SELECT count(*) FROM current_dict").fetchone()[0]
-
-        # Write Parquet and upload to Google Drive
-        if obs_count <= 0:
-            raise RuntimeError(
-                f"DBW indicator {ind_id} produced no observation rows."
-            )
-        if not existing_part:
-            part_path = args.workspace / part_name
-            con.execute(f"COPY current_obs TO '{part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-            res = _upload_file_to_drive(
-                sm, part_path, name=part_name, parent_id=loader.bronze_obs, mime_type="application/octet-stream"
-            )
-            part_path.unlink(missing_ok=True)
-            total_obs_rows += obs_count
-
-        if not existing_dict_part:
-            dict_part_path = dict_dir / dict_part_name
-            con.execute(f"COPY (SELECT DISTINCT * FROM current_dict) TO '{dict_part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
-            _upload_file_to_drive(
-                sm,
-                dict_part_path,
-                name=dict_part_name,
-                parent_id=loader.bronze_dict,
-                mime_type="application/octet-stream",
-            )
-            dict_part_path.unlink(missing_ok=True)
-
-        con.execute("DROP TABLE current_obs")
-        con.execute("DROP TABLE current_dict")
-
-        completed_indicators += 1
-        elapsed = time.time() - t_start
         logger.info(
-            f"[{idx}/{total_targets}] Indicator {ind_id}: {obs_count:,} observations, {dict_count} dicts from {len(zfiles)} archives ({elapsed:.1f}s)."
+            "Discovered %s existing dictionary partitions on Drive.",
+            len(existing_dict_files),
         )
 
-        # Update checkpoint every 5 indicators
-        if completed_indicators % 5 == 0 or idx == total_targets:
-            cp_data = {
-                "source_id": "gus_dbw_bronze",
-                "release_id": loader.release_id,
-                "total_indicators": total_targets,
-                "completed_indicators": completed_indicators,
-                "total_observations_rows": total_obs_rows,
-                "last_indicator_id": ind_id,
-                "status": "completed" if completed_indicators >= total_targets else "running",
-                "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-            }
-            cp_bytes = json.dumps(cp_data, indent=2).encode("utf-8")
-            cp_path = args.workspace / "checkpoint.json"
-            cp_path.write_bytes(cp_bytes)
-            checkpoint_sha = hashlib.sha256(cp_bytes).hexdigest()
-            checkpoint_name = (
-                f"checkpoint-{completed_indicators:06d}-{checkpoint_sha[:16]}.json"
+        # Historical pilot objects are retained. Cleanup is a separate, explicitly
+        # authorized lifecycle operation and never belongs in a Bronze build.
+
+        total_obs_rows = 0
+        cp_path = args.workspace / "checkpoint.json"
+        if cp_path.is_file():
+            try:
+                prior_cp = json.loads(cp_path.read_text(encoding="utf-8"))
+                total_obs_rows = prior_cp.get("total_observations_rows", 0)
+                logger.info(f"Resuming with prior total_observations_rows = {total_obs_rows:,}")
+            except Exception:
+                total_obs_rows = 0
+
+        completed_indicators = 0
+        total_targets = len(targets)
+
+        for idx, ind_id in enumerate(targets, 1):
+            if time.monotonic() - started_at >= args.max_seconds:
+                logger.info("DBW Bronze writer lease budget reached; stopping for resumable continuation.")
+                break
+            part_name = f"part_{ind_id}.parquet"
+            dict_part_name = f"dict_{ind_id}.parquet"
+
+            existing_part = existing_obs_files.get(part_name)
+            existing_dict_part = existing_dict_files.get(dict_part_name)
+            if existing_part and not _has_integrity_metadata(existing_part, min_size=1000):
+                raise RuntimeError(
+                    f"Existing DBW observation partition is not verifiable: {part_name}"
+                )
+            if existing_dict_part and not _has_integrity_metadata(existing_dict_part):
+                raise RuntimeError(
+                    f"Existing DBW dictionary partition is not verifiable: {dict_part_name}"
+                )
+            if existing_part and existing_dict_part:
+                logger.info(
+                    f"[{idx}/{total_targets}] Indicator {ind_id} has verified observation "
+                    "and dictionary partitions on Drive. Skipping."
+                )
+                completed_indicators += 1
+                continue
+
+            zfiles = zips_by_indicator.get(ind_id, [])
+            if not zfiles:
+                continue
+
+            t_start = time.time()
+            (args.workspace / part_name).unlink(missing_ok=True)
+            # Initialize fresh temporary DuckDB tables
+            con.execute("DROP TABLE IF EXISTS current_obs")
+            con.execute("DROP TABLE IF EXISTS current_dict")
+            con.execute("""
+                CREATE TEMP TABLE current_obs (
+                    indicator_id BIGINT,
+                    przekroj_id BIGINT,
+                    wymiar_1 BIGINT,
+                    pozycja_1 BIGINT,
+                    wymiar_2 BIGINT,
+                    pozycja_2 BIGINT,
+                    wymiar_3 BIGINT,
+                    pozycja_3 BIGINT,
+                    wymiar_4 BIGINT,
+                    pozycja_4 BIGINT,
+                    wymiar_5 BIGINT,
+                    pozycja_5 BIGINT,
+                    wymiar_6 BIGINT,
+                    pozycja_6 BIGINT,
+                    wymiar_7 BIGINT,
+                    pozycja_7 BIGINT,
+                    wymiar_8 BIGINT,
+                    pozycja_8 BIGINT,
+                    wymiar_9 BIGINT,
+                    pozycja_9 BIGINT,
+                    okres_id INTEGER,
+                    sposob_prezentacji_miara_id INTEGER,
+                    period_year INTEGER,
+                    wartosc_raw VARCHAR,
+                    wartosc_numeric DOUBLE,
+                    precyzja INTEGER,
+                    brak_wartosci_id INTEGER,
+                    tajnosci_id INTEGER,
+                    flaga_id INTEGER,
+                    raw_archive_file VARCHAR,
+                    source_row_number BIGINT,
+                    processed_at_utc VARCHAR
+                )
+            """)
+            con.execute("""
+                CREATE TEMP TABLE current_dict (
+                    indicator_id BIGINT,
+                    column_name VARCHAR,
+                    dictionary_name VARCHAR,
+                    element_id BIGINT,
+                    element_name VARCHAR,
+                    processed_at_utc VARCHAR
+                )
+            """)
+
+            # Download zip archives in parallel
+            def fetch_zip(zf_meta):
+                with DRIVE_LOCK:
+                    content = sm.drive_service.files().get_media(
+                        fileId=zf_meta["id"]
+                    ).execute(num_retries=4)
+                _verify_native_bytes(
+                    content, release_receipts["bulk_members"][zf_meta["id"]]
+                )
+                return zf_meta["name"], content
+
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                download_futures = [executor.submit(fetch_zip, zf) for zf in zfiles]
+
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    for future in as_completed(download_futures):
+                        fname, content = future.result()
+                        try:
+                            zf = zipfile.ZipFile(io.BytesIO(content))
+                            csv_names = [n for n in zf.namelist() if not "Slowniki" in n and n.endswith(".csv")]
+                            dict_names = [n for n in zf.namelist() if "Slowniki" in n and n.endswith(".csv")]
+
+                            # 1. Observations
+                            if csv_names:
+                                csv_path = os.path.join(tmpdir, f"obs_{fname}.csv")
+                                with open(csv_path, "wb") as f_out:
+                                    f_out.write(zf.read(csv_names[0]))
+
+                                con.execute(f"""
+                                    INSERT INTO current_obs
+                                    SELECT
+                                        {ind_id}::BIGINT,
+                                        TRY_CAST(id_przekroj AS BIGINT),
+                                        TRY_CAST(id_wymiar_1 AS BIGINT),
+                                        TRY_CAST(id_pozycja_1 AS BIGINT),
+                                        TRY_CAST(id_wymiar_2 AS BIGINT),
+                                        TRY_CAST(id_pozycja_2 AS BIGINT),
+                                        TRY_CAST(id_wymiar_3 AS BIGINT),
+                                        TRY_CAST(id_pozycja_3 AS BIGINT),
+                                        TRY_CAST(id_wymiar_4 AS BIGINT),
+                                        TRY_CAST(id_pozycja_4 AS BIGINT),
+                                        TRY_CAST(id_wymiar_5 AS BIGINT),
+                                        TRY_CAST(id_pozycja_5 AS BIGINT),
+                                        TRY_CAST(id_wymiar_6 AS BIGINT),
+                                        TRY_CAST(id_pozycja_6 AS BIGINT),
+                                        TRY_CAST(id_wymiar_7 AS BIGINT),
+                                        TRY_CAST(id_pozycja_7 AS BIGINT),
+                                        TRY_CAST(id_wymiar_8 AS BIGINT),
+                                        TRY_CAST(id_pozycja_8 AS BIGINT),
+                                        TRY_CAST(id_wymiar_9 AS BIGINT),
+                                        TRY_CAST(id_pozycja_9 AS BIGINT),
+                                        TRY_CAST(id_okres AS INTEGER),
+                                        TRY_CAST(id_sposob_prezentacji_miara AS INTEGER),
+                                        TRY_CAST(id_daty AS INTEGER),
+                                        wartosc as wartosc_raw,
+                                        TRY_CAST(REPLACE(wartosc, ',', '.') AS DOUBLE),
+                                        TRY_CAST(precyzja AS INTEGER),
+                                        TRY_CAST(id_brak_wartosci AS INTEGER),
+                                        TRY_CAST(id_tajnosci AS INTEGER),
+                                        TRY_CAST(id_flaga AS INTEGER),
+                                        '{fname}' as raw_archive_file,
+                                        TRY_CAST(rowNumber AS BIGINT),
+                                        '{loader.processed_at_utc}'
+                                    FROM read_csv('{csv_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
+                                """)
+                                os.remove(csv_path)
+
+                            # 2. Dictionaries
+                            if dict_names:
+                                dict_path = os.path.join(tmpdir, f"dict_{fname}.csv")
+                                with open(dict_path, "wb") as f_out:
+                                    f_out.write(zf.read(dict_names[0]))
+
+                                con.execute(f"""
+                                    INSERT INTO current_dict
+                                    SELECT DISTINCT
+                                        {ind_id}::BIGINT,
+                                        TRIM(nazwa_kolumny),
+                                        TRIM(nazwa_slownika),
+                                        TRY_CAST(id_elementu AS BIGINT),
+                                        TRIM(opis),
+                                        '{loader.processed_at_utc}'
+                                    FROM read_csv('{dict_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
+                                    WHERE id_elementu IS NOT NULL
+                                """)
+                                os.remove(dict_path)
+                        except Exception as exc:
+                            raise DBWLandingIncompleteError(
+                                f"DBW bulk archive could not be parsed completely: {fname}"
+                            ) from exc
+
+            obs_count = con.execute("SELECT count(*) FROM current_obs").fetchone()[0]
+            dict_count = con.execute("SELECT count(*) FROM current_dict").fetchone()[0]
+
+            # Write Parquet and upload to Google Drive
+            if obs_count <= 0:
+                raise RuntimeError(
+                    f"DBW indicator {ind_id} produced no observation rows."
+                )
+            if not existing_part:
+                part_path = args.workspace / part_name
+                con.execute(f"COPY current_obs TO '{part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+                res = _upload_file_to_drive(
+                    sm, part_path, name=part_name, parent_id=loader.bronze_obs, mime_type="application/octet-stream"
+                )
+                part_path.unlink(missing_ok=True)
+                total_obs_rows += obs_count
+
+            if not existing_dict_part:
+                dict_part_path = dict_dir / dict_part_name
+                con.execute(f"COPY (SELECT DISTINCT * FROM current_dict) TO '{dict_part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+                _upload_file_to_drive(
+                    sm,
+                    dict_part_path,
+                    name=dict_part_name,
+                    parent_id=loader.bronze_dict,
+                    mime_type="application/octet-stream",
+                )
+                dict_part_path.unlink(missing_ok=True)
+
+            con.execute("DROP TABLE current_obs")
+            con.execute("DROP TABLE current_dict")
+
+            completed_indicators += 1
+            elapsed = time.time() - t_start
+            logger.info(
+                f"[{idx}/{total_targets}] Indicator {ind_id}: {obs_count:,} observations, {dict_count} dicts from {len(zfiles)} archives ({elapsed:.1f}s)."
             )
-            _upload_file_to_drive(
-                sm,
-                cp_path,
-                name=checkpoint_name,
-                parent_id=loader.bronze_control,
-                mime_type="application/json",
+
+            # Update checkpoint every 5 indicators
+            if completed_indicators % 5 == 0 or idx == total_targets:
+                cp_data = {
+                    "source_id": "gus_dbw_bronze",
+                    "release_id": loader.release_id,
+                    "total_indicators": total_targets,
+                    "completed_indicators": completed_indicators,
+                    "total_observations_rows": total_obs_rows,
+                    "last_indicator_id": ind_id,
+                    "status": "completed" if completed_indicators >= total_targets else "running",
+                    "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+                }
+                cp_bytes = json.dumps(cp_data, indent=2).encode("utf-8")
+                cp_path = args.workspace / "checkpoint.json"
+                cp_path.write_bytes(cp_bytes)
+                checkpoint_sha = hashlib.sha256(cp_bytes).hexdigest()
+                checkpoint_name = (
+                    f"checkpoint-{completed_indicators:06d}-{checkpoint_sha[:16]}.json"
+                )
+                _upload_file_to_drive(
+                    sm,
+                    cp_path,
+                    name=checkpoint_name,
+                    parent_id=loader.bronze_control,
+                    mime_type="application/json",
+                )
+                _upload_file_to_drive(
+                    sm,
+                    cp_path,
+                    name=checkpoint_name,
+                    parent_id=loader.campaign_control,
+                    mime_type="application/json",
+                )
+
+        # Restore every persisted dictionary partition before deterministic consolidation.
+        token = None
+        remote_dict_parts: list[dict[str, Any]] = []
+        while True:
+            with DRIVE_LOCK:
+                response = sm.drive_service.files().list(
+                    q=query_dict,
+                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    pageSize=1000,
+                    pageToken=token,
+                ).execute(num_retries=4)
+            remote_dict_parts.extend(
+                item for item in response.get("files", [])
+                if re.fullmatch(r"dict_\d+\.parquet", item.get("name", ""))
             )
-            _upload_file_to_drive(
-                sm,
-                cp_path,
-                name=checkpoint_name,
-                parent_id=loader.campaign_control,
-                mime_type="application/json",
+            token = response.get("nextPageToken")
+            if not token:
+                break
+        if len({item["name"] for item in remote_dict_parts}) != len(remote_dict_parts):
+            raise RuntimeError("Ambiguous DBW dictionary partitions exist in the bound release.")
+        expected_dict_names = {f"dict_{indicator_id}.parquet" for indicator_id in targets}
+        verified_dict_names = {
+            item["name"] for item in remote_dict_parts if _has_integrity_metadata(item)
+        }
+        if verified_dict_names != expected_dict_names:
+            raise RuntimeError(
+                "DBW Bronze dictionary partitions do not reconcile the complete native snapshot."
+            )
+        for item in remote_dict_parts:
+            local_part = dict_dir / item["name"]
+            if not _restore_verified_drive_file(
+                sm, name=item["name"], parent_id=loader.bronze_dict, local_path=local_part
+            ):
+                raise RuntimeError(f"DBW dictionary partition disappeared: {item['name']}")
+
+        # Final dictionary consolidation
+        dict_parts = list(dict_dir.glob("dict_*.parquet"))
+        dict_cons_path = args.workspace / "br_dbw_dictionaries.parquet"
+        if dict_parts:
+            logger.info(f"Consolidating {len(dict_parts)} dictionary partition files...")
+            con.execute(f"""
+                COPY (
+                    SELECT DISTINCT indicator_id, column_name, dictionary_name, element_id, element_name, processed_at_utc
+                    FROM read_parquet('{dict_dir}/dict_*.parquet')
+                ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """)
+        else:
+            con.execute(f"""
+                COPY (
+                    SELECT
+                        NULL::BIGINT AS indicator_id,
+                        NULL::VARCHAR AS column_name,
+                        NULL::VARCHAR AS dictionary_name,
+                        NULL::BIGINT AS element_id,
+                        NULL::VARCHAR AS element_name,
+                        NULL::VARCHAR AS processed_at_utc
+                    WHERE false
+                ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """)
+        dict_res = _upload_file_to_drive(
+            sm, dict_cons_path, name="br_dbw_dictionaries.parquet",
+            parent_id=loader.bronze_dict, mime_type="application/octet-stream"
+        )
+        logger.info(f"Uploaded consolidated br_dbw_dictionaries.parquet ({dict_res['size']} bytes).")
+
+        if completed_indicators != total_targets:
+            raise RuntimeError("DBW Bronze cannot complete before every indicator is processed.")
+        final_obs: list[dict[str, Any]] = []
+        token = None
+        while True:
+            with DRIVE_LOCK:
+                response = sm.drive_service.files().list(
+                    q=query_obs,
+                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    pageSize=1000,
+                    pageToken=token,
+                ).execute(num_retries=4)
+            final_obs.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                break
+        part_items = [
+            item for item in final_obs
+            if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
+        ]
+        if len({item["name"] for item in part_items}) != len(part_items):
+            raise RuntimeError("Ambiguous DBW observation partitions exist in the bound release.")
+        verified_part_names = {
+            item["name"] for item in part_items
+            if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
+            and int(item.get("size", 0)) > 1000
+            and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", ""))
+            and re.fullmatch(r"[0-9a-f]{64}", (item.get("appProperties") or {}).get("sha256", ""))
+        }
+        expected_part_names = {f"part_{indicator_id}.parquet" for indicator_id in targets}
+        if verified_part_names != expected_part_names:
+            raise RuntimeError(
+                "DBW Bronze observation partitions do not reconcile the complete native snapshot."
             )
 
-    # Restore every persisted dictionary partition before deterministic consolidation.
-    token = None
-    remote_dict_parts: list[dict[str, Any]] = []
-    while True:
-        with DRIVE_LOCK:
-            response = sm.drive_service.files().list(
-                q=query_dict,
-                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
-                pageSize=1000,
-                pageToken=token,
-            ).execute(num_retries=4)
-        remote_dict_parts.extend(
-            item for item in response.get("files", [])
-            if re.fullmatch(r"dict_\d+\.parquet", item.get("name", ""))
+        completion_document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_bronze_completion",
+            "source_id": "gus_dbw",
+            "status": "complete_native_snapshot",
+            "release_id": loader.release_id,
+            "native_snapshot_id": loader.native_snapshot_id,
+            "catalogue_sha256": loader.catalogue_sha256,
+            "completed_indicators": completed_indicators,
+            "observation_partitions": len(verified_part_names),
+            "dictionary_partitions": len(verified_dict_names),
+            "observation_inventory_sha256": _inventory_sha256(verified_part_names),
+            "dictionary_inventory_sha256": _inventory_sha256(verified_dict_names),
+            "processed_at_utc": loader.processed_at_utc,
+        }
+        completion_path = args.workspace / f"bronze-complete-v1-{loader.release_id}.json"
+        completion_path.write_text(
+            json.dumps(completion_document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
         )
-        token = response.get("nextPageToken")
-        if not token:
-            break
-    if len({item["name"] for item in remote_dict_parts}) != len(remote_dict_parts):
-        raise RuntimeError("Ambiguous DBW dictionary partitions exist in the bound release.")
-    expected_dict_names = {f"dict_{indicator_id}.parquet" for indicator_id in targets}
-    verified_dict_names = {
-        item["name"] for item in remote_dict_parts if _has_integrity_metadata(item)
-    }
-    if verified_dict_names != expected_dict_names:
-        raise RuntimeError(
-            "DBW Bronze dictionary partitions do not reconcile the complete native snapshot."
-        )
-    for item in remote_dict_parts:
-        local_part = dict_dir / item["name"]
-        if not _restore_verified_drive_file(
-            sm, name=item["name"], parent_id=loader.bronze_dict, local_path=local_part
-        ):
-            raise RuntimeError(f"DBW dictionary partition disappeared: {item['name']}")
-
-    # Final dictionary consolidation
-    dict_parts = list(dict_dir.glob("dict_*.parquet"))
-    dict_cons_path = args.workspace / "br_dbw_dictionaries.parquet"
-    if dict_parts:
-        logger.info(f"Consolidating {len(dict_parts)} dictionary partition files...")
-        con.execute(f"""
-            COPY (
-                SELECT DISTINCT indicator_id, column_name, dictionary_name, element_id, element_name, processed_at_utc
-                FROM read_parquet('{dict_dir}/dict_*.parquet')
-            ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
-        """)
-    else:
-        con.execute(f"""
-            COPY (
-                SELECT
-                    NULL::BIGINT AS indicator_id,
-                    NULL::VARCHAR AS column_name,
-                    NULL::VARCHAR AS dictionary_name,
-                    NULL::BIGINT AS element_id,
-                    NULL::VARCHAR AS element_name,
-                    NULL::VARCHAR AS processed_at_utc
-                WHERE false
-            ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
-        """)
-    dict_res = _upload_file_to_drive(
-        sm, dict_cons_path, name="br_dbw_dictionaries.parquet",
-        parent_id=loader.bronze_dict, mime_type="application/octet-stream"
-    )
-    logger.info(f"Uploaded consolidated br_dbw_dictionaries.parquet ({dict_res['size']} bytes).")
-
-    if completed_indicators != total_targets:
-        raise RuntimeError("DBW Bronze cannot complete before every indicator is processed.")
-    final_obs: list[dict[str, Any]] = []
-    token = None
-    while True:
-        with DRIVE_LOCK:
-            response = sm.drive_service.files().list(
-                q=query_obs,
-                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
-                pageSize=1000,
-                pageToken=token,
-            ).execute(num_retries=4)
-        final_obs.extend(response.get("files", []))
-        token = response.get("nextPageToken")
-        if not token:
-            break
-    part_items = [
-        item for item in final_obs
-        if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
-    ]
-    if len({item["name"] for item in part_items}) != len(part_items):
-        raise RuntimeError("Ambiguous DBW observation partitions exist in the bound release.")
-    verified_part_names = {
-        item["name"] for item in part_items
-        if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
-        and int(item.get("size", 0)) > 1000
-        and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", ""))
-        and re.fullmatch(r"[0-9a-f]{64}", (item.get("appProperties") or {}).get("sha256", ""))
-    }
-    expected_part_names = {f"part_{indicator_id}.parquet" for indicator_id in targets}
-    if verified_part_names != expected_part_names:
-        raise RuntimeError(
-            "DBW Bronze observation partitions do not reconcile the complete native snapshot."
+        _upload_file_to_drive(
+            sm,
+            completion_path,
+            name=completion_path.name,
+            parent_id=loader.bronze_control,
+            mime_type="application/json",
         )
 
-    completion_document = {
-        "schema_version": 1,
-        "record_type": "gus_dbw_bronze_completion",
-        "source_id": "gus_dbw",
-        "status": "complete_native_snapshot",
-        "release_id": loader.release_id,
-        "native_snapshot_id": loader.native_snapshot_id,
-        "catalogue_sha256": loader.catalogue_sha256,
-        "completed_indicators": completed_indicators,
-        "observation_partitions": len(verified_part_names),
-        "dictionary_partitions": len(verified_dict_names),
-        "observation_inventory_sha256": _inventory_sha256(verified_part_names),
-        "dictionary_inventory_sha256": _inventory_sha256(verified_dict_names),
-        "processed_at_utc": loader.processed_at_utc,
-    }
-    completion_path = args.workspace / f"bronze-complete-v1-{loader.release_id}.json"
-    completion_path.write_text(
-        json.dumps(completion_document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        encoding="utf-8",
-    )
-    _upload_file_to_drive(
-        sm,
-        completion_path,
-        name=completion_path.name,
-        parent_id=loader.bronze_control,
-        mime_type="application/json",
-    )
-
-    con.close()
-    logger.info(f"GUS DBW Bronze transformation completed successfully: {total_obs_rows:,} total observations across {completed_indicators} indicators.")
+        con.close()
+        logger.info(f"GUS DBW Bronze transformation completed successfully: {total_obs_rows:,} total observations across {completed_indicators} indicators.")
+    finally:
+        loader.release_writer_lease()
 
 
 if __name__ == "__main__":

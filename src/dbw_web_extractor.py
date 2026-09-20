@@ -583,8 +583,8 @@ class DbwWebExtractor:
         self.native_snapshot_id = snapshot_id
         return snapshot_id
 
-    def fetch_indicators_tree(self) -> list[dict[str, Any]]:
-        """Fetch the full indicator tree from DBW Web UI and land original JSON bytes."""
+    def fetch_indicators_tree(self, *, land: bool = True) -> list[dict[str, Any]]:
+        """Fetch the full indicator tree, optionally deferring its first Drive mutation."""
         print("Fetching DBW indicators tree from Web UI...")
         tree_bytes = _http_get(TREE_URL, timeout=30, proxy=self.proxy)
         tree_json = json.loads(tree_bytes.decode("utf-8"))
@@ -593,7 +593,12 @@ class DbwWebExtractor:
         local_tree = self.workspace / "indicators_tree.json"
         local_tree.write_bytes(tree_bytes)
 
-        # Land to Drive native/taxonomy/
+        if land:
+            self.land_indicators_tree(tree_bytes)
+        return tree_json
+
+    def land_indicators_tree(self, tree_bytes: bytes) -> None:
+        """Land already-fetched taxonomy bytes after the durable writer election."""
         res = _upload_bytes(
             self.storage,
             tree_bytes,
@@ -603,7 +608,6 @@ class DbwWebExtractor:
             mime_type="application/json",
         )
         print(f"Landed indicators_tree.json ({len(tree_bytes)} bytes, reused={res['reused']})")
-        return tree_json
 
     @staticmethod
     def extract_indicators(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1017,7 +1021,7 @@ def main():
         proxy=primary_proxy,
     )
 
-    tree = extractor.fetch_indicators_tree()
+    tree = extractor.fetch_indicators_tree(land=False)
     catalogue_sha256, _ = _hash_file(workspace / "indicators_tree.json")
     all_indicators = extractor.extract_indicators(tree)
     catalogue_indicator_ids = {item["id"] for item in all_indicators}
@@ -1031,152 +1035,154 @@ def main():
 
     extractor.catalogue_sha256 = catalogue_sha256
     extractor.acquire_native_snapshot_lease(catalogue_sha256)
-    native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
-    completed_memberships = extractor.load_completed_checkpoints(
-        catalogue_sha256, native_snapshot_id
-    )
-    completed_ids = set(completed_memberships)
-    print(f"Native refresh snapshot: {native_snapshot_id}")
-    print(f"Found {len(completed_ids)} already completed indicators on Drive.")
-
-    pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
-    if args.max_indicators:
-        pending_indicators = pending_indicators[:args.max_indicators]
-    print(f"Scheduled {len(pending_indicators)} indicators for extraction in this run.")
-
-    summary = {
-        "source_id": "gus_dbw",
-        "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "total_indicators_known": len(catalogue_indicator_ids),
-        "previously_completed": len(completed_ids),
-        "scheduled_this_run": len(pending_indicators),
-        "completed_this_run": 0,
-        "failed_this_run": 0,
-        "new_files": 0,
-        "new_bytes": 0,
-        "status": "running",
-    }
-
-    errors = []
-    num_workers = max(1, args.concurrency)
-    worker_extractors = []
-    for w in range(num_workers):
-        p = proxies[w % len(proxies)] if proxies else None
-        worker_extractors.append(
-            DbwWebExtractor(
-                workspace=workspace,
-                storage=storage,
-                allow_codespace=args.allow_codespace,
-                proxy=p,
-            )
+    try:
+        extractor.land_indicators_tree((workspace / "indicators_tree.json").read_bytes())
+        native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
+        completed_memberships = extractor.load_completed_checkpoints(
+            catalogue_sha256, native_snapshot_id
         )
-        worker_extractors[-1].catalogue_sha256 = catalogue_sha256
-        worker_extractors[-1].native_snapshot_id = native_snapshot_id
+        completed_ids = set(completed_memberships)
+        print(f"Native refresh snapshot: {native_snapshot_id}")
+        print(f"Found {len(completed_ids)} already completed indicators on Drive.")
 
-    lock = threading.Lock()
-    stop_event = threading.Event()
-    consecutive_errors = 0
+        pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
+        if args.max_indicators:
+            pending_indicators = pending_indicators[:args.max_indicators]
+        print(f"Scheduled {len(pending_indicators)} indicators for extraction in this run.")
 
-    def process_item(item_and_index):
-        nonlocal consecutive_errors
-        idx, ind = item_and_index
-        if stop_event.is_set():
-            return
-        elapsed = time.time() - start_time
-        if elapsed > args.max_seconds:
-            with lock:
-                if not stop_event.is_set():
-                    print(f"Time budget reached ({elapsed:.1f}s > {args.max_seconds}s). Stopping run.")
-                    stop_event.set()
-            return
+        summary = {
+            "source_id": "gus_dbw",
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "total_indicators_known": len(catalogue_indicator_ids),
+            "previously_completed": len(completed_ids),
+            "scheduled_this_run": len(pending_indicators),
+            "completed_this_run": 0,
+            "failed_this_run": 0,
+            "new_files": 0,
+            "new_bytes": 0,
+            "status": "running",
+        }
 
-        worker_id = idx % num_workers
-        ext = worker_extractors[worker_id]
-        try:
-            res = ext.process_indicator(ind, skip_bulk_zips=args.skip_bulk_zips)
-            with lock:
-                if res["status"] == "completed":
-                    summary["completed_this_run"] += 1
-                summary["new_files"] += len(res["files_landed"])
-                summary["new_bytes"] += res["new_bytes"]
-                consecutive_errors = 0
-                proxy_label = f" [Proxy: {proxies[worker_id % len(proxies)]}]" if proxies else ""
-                print(
-                    f"[{summary['completed_this_run']}/{len(pending_indicators)}] (Worker {worker_id}{proxy_label}) "
-                    f"Indicator {ind['id']} ({ind['name'][:30]}): "
-                    f"{len(res['files_landed'])} files landed, {res['new_bytes']:,} new bytes."
+        errors = []
+        num_workers = max(1, args.concurrency)
+        worker_extractors = []
+        for w in range(num_workers):
+            p = proxies[w % len(proxies)] if proxies else None
+            worker_extractors.append(
+                DbwWebExtractor(
+                    workspace=workspace,
+                    storage=storage,
+                    allow_codespace=args.allow_codespace,
+                    proxy=p,
                 )
-        except Exception as exc:
-            with lock:
-                summary["failed_this_run"] += 1
-                consecutive_errors += 1
-                errors.append({"indicator_id": ind["id"], "error": str(exc)})
-                print(f"Error processing indicator {ind['id']} (Worker {worker_id}): {exc}", file=sys.stderr)
-                if consecutive_errors >= 10:
-                    print(f"Encountered {consecutive_errors} consecutive failures. Pausing run.")
-                    stop_event.set()
+            )
+            worker_extractors[-1].catalogue_sha256 = catalogue_sha256
+            worker_extractors[-1].native_snapshot_id = native_snapshot_id
 
-    if num_workers > 1 and len(pending_indicators) > 1:
-        print(f"Launching {num_workers} concurrent DBW extraction workers...")
-        with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            futures = [pool.submit(process_item, (i, ind)) for i, ind in enumerate(pending_indicators)]
-            for f in as_completed(futures):
+        lock = threading.Lock()
+        stop_event = threading.Event()
+        consecutive_errors = 0
+
+        def process_item(item_and_index):
+            nonlocal consecutive_errors
+            idx, ind = item_and_index
+            if stop_event.is_set():
+                return
+            elapsed = time.time() - start_time
+            if elapsed > args.max_seconds:
+                with lock:
+                    if not stop_event.is_set():
+                        print(f"Time budget reached ({elapsed:.1f}s > {args.max_seconds}s). Stopping run.")
+                        stop_event.set()
+                return
+
+            worker_id = idx % num_workers
+            ext = worker_extractors[worker_id]
+            try:
+                res = ext.process_indicator(ind, skip_bulk_zips=args.skip_bulk_zips)
+                with lock:
+                    if res["status"] == "completed":
+                        summary["completed_this_run"] += 1
+                    summary["new_files"] += len(res["files_landed"])
+                    summary["new_bytes"] += res["new_bytes"]
+                    consecutive_errors = 0
+                    proxy_label = f" [Proxy: {proxies[worker_id % len(proxies)]}]" if proxies else ""
+                    print(
+                        f"[{summary['completed_this_run']}/{len(pending_indicators)}] (Worker {worker_id}{proxy_label}) "
+                        f"Indicator {ind['id']} ({ind['name'][:30]}): "
+                        f"{len(res['files_landed'])} files landed, {res['new_bytes']:,} new bytes."
+                    )
+            except Exception as exc:
+                with lock:
+                    summary["failed_this_run"] += 1
+                    consecutive_errors += 1
+                    errors.append({"indicator_id": ind["id"], "error": str(exc)})
+                    print(f"Error processing indicator {ind['id']} (Worker {worker_id}): {exc}", file=sys.stderr)
+                    if consecutive_errors >= 10:
+                        print(f"Encountered {consecutive_errors} consecutive failures. Pausing run.")
+                        stop_event.set()
+
+        if num_workers > 1 and len(pending_indicators) > 1:
+            print(f"Launching {num_workers} concurrent DBW extraction workers...")
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = [pool.submit(process_item, (i, ind)) for i, ind in enumerate(pending_indicators)]
+                for f in as_completed(futures):
+                    if stop_event.is_set():
+                        break
+        else:
+            for i, ind in enumerate(pending_indicators):
                 if stop_event.is_set():
                     break
-    else:
-        for i, ind in enumerate(pending_indicators):
-            if stop_event.is_set():
-                break
-            process_item((i, ind))
+                process_item((i, ind))
 
-    verified_memberships = extractor.load_completed_checkpoints(
-        catalogue_sha256, native_snapshot_id
-    )
-    verified_completed_ids = set(verified_memberships)
-    catalogue_ids = catalogue_indicator_ids
-    catalogue_complete = (
-        not args.skip_bulk_zips
-        and not errors
-        and bool(catalogue_ids)
-        and catalogue_ids == verified_completed_ids
-    )
-    if catalogue_complete:
-        native_snapshot_sha256 = _snapshot_sha256(
-            native_snapshot_id, verified_memberships
+        verified_memberships = extractor.load_completed_checkpoints(
+            catalogue_sha256, native_snapshot_id
         )
-        extractor.publish_catalogue_completion(
-            catalogue_indicators=len(catalogue_ids),
-            completed_indicators=len(catalogue_ids),
-            catalogue_sha256=catalogue_sha256,
-            native_snapshot_id=native_snapshot_id,
-            native_snapshot_sha256=native_snapshot_sha256,
+        verified_completed_ids = set(verified_memberships)
+        catalogue_ids = catalogue_indicator_ids
+        catalogue_complete = (
+            not args.skip_bulk_zips
+            and not errors
+            and bool(catalogue_ids)
+            and catalogue_ids == verified_completed_ids
         )
+        if catalogue_complete:
+            native_snapshot_sha256 = _snapshot_sha256(
+                native_snapshot_id, verified_memberships
+            )
+            extractor.publish_catalogue_completion(
+                catalogue_indicators=len(catalogue_ids),
+                completed_indicators=len(catalogue_ids),
+                catalogue_sha256=catalogue_sha256,
+                native_snapshot_id=native_snapshot_id,
+                native_snapshot_sha256=native_snapshot_sha256,
+            )
 
-    summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
-    summary["elapsed_seconds"] = round(time.time() - start_time, 2)
-    summary["errors"] = errors
-    summary["catalogue_complete"] = catalogue_complete
-    summary["native_snapshot_id"] = native_snapshot_id
-    summary["native_snapshot_sha256"] = (
-        _snapshot_sha256(native_snapshot_id, verified_memberships)
-        if catalogue_complete else None
-    )
-    summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
-    summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
+        summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+        summary["elapsed_seconds"] = round(time.time() - start_time, 2)
+        summary["errors"] = errors
+        summary["catalogue_complete"] = catalogue_complete
+        summary["native_snapshot_id"] = native_snapshot_id
+        summary["native_snapshot_sha256"] = (
+            _snapshot_sha256(native_snapshot_id, verified_memberships)
+            if catalogue_complete else None
+        )
+        summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
+        summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
 
-    extractor.release_native_snapshot_lease()
+        print("\n--- DBW Extraction Summary ---")
+        print(f"Indicators completed this run: {summary['completed_this_run']}")
+        print(f"New files landed: {summary['new_files']}")
+        print(f"New bytes landed: {summary['new_bytes']:,}")
+        print(f"Errors encountered: {summary['failed_this_run']}")
+        print(f"Elapsed time: {summary['elapsed_seconds']}s")
 
-    print("\n--- DBW Extraction Summary ---")
-    print(f"Indicators completed this run: {summary['completed_this_run']}")
-    print(f"New files landed: {summary['new_files']}")
-    print(f"New bytes landed: {summary['new_bytes']:,}")
-    print(f"Errors encountered: {summary['failed_this_run']}")
-    print(f"Elapsed time: {summary['elapsed_seconds']}s")
-
-    # Write summary
-    summary_path = Path(args.summary) if args.summary else workspace / "dbw-extraction-summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"Summary written to {summary_path}")
+        # Write summary
+        summary_path = Path(args.summary) if args.summary else workspace / "dbw-extraction-summary.json"
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"Summary written to {summary_path}")
+    finally:
+        extractor.release_native_snapshot_lease()
 
 
 if __name__ == "__main__":
