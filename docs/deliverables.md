@@ -14,15 +14,20 @@ are 18 September (Table B: 16 September), and Gold contains 427,028 FX rows plus
 WDI [run 35511129843](https://github.com/rutkala/zohelo-data/actions/runs/35511129843)
 published and freshly restored release `47933158-569a-44f5-a474-44594c5d501e`: the current
 six-member official archive still reconciles all 9,015,914 modeled values at ratio 1.0. The
-separate API reconciliation queue remains incomplete at 1,203 tasks; it is not needed to claim
+later scheduled [run 35529367207](https://github.com/rutkala/zohelo-data/actions/runs/35529367207)
+also succeeded and freshly restored release `6900c12a-b63c-448b-8d30-d124e6b46535`; the archive
+SHA-256 remains `2ab1d0d250ebe986ac8a9f7163f6e177fbe4cfb2750f822b18578d902aeb134f` and modeled
+coverage remains 9,015,914 / 9,015,914. That run advanced the separate API reconciliation to
+3,922 accepted responses with 1,202 tasks pending and no pending publication backlog. It remains
+incomplete and is not needed to claim
 the current bulk archive product complete and is not being confused with every World Bank product.
 
-Eurostat [run 35525470409](https://github.com/rutkala/zohelo-data/actions/runs/35525470409)
-published and freshly restored modeled release `fbdd40ab-ab0c-47d2-baaf-8a485d45c8be`. Its complete
+Eurostat [run 35528999652](https://github.com/rutkala/zohelo-data/actions/runs/35528999652)
+published and freshly restored modeled release `526be40b-e070-483e-adb3-833186671e80`. Its complete
 reviewed progressive contract remains three datasets / 81 country-series with admitted dataset
 and series coverage ratios of 1.0 and latest observation date 31 August 2026. Full-distribution
-Landing advanced to 6,072 / 21,238 validated current distributions (28.5903%), 7,453 accepted
-versions, 22,650,005,468 raw bytes, 18,126 pending tasks and zero failed pending tasks. Earlier
+Landing advanced to 6,089 / 21,238 validated current distributions (28.6703%), 7,477 accepted
+versions, 22,833,356,544 raw bytes, 18,102 pending tasks and zero failed pending tasks. Earlier
 [run 35491496570](https://github.com/rutkala/zohelo-data/actions/runs/35491496570) stopped after two
 transient bulk transport failures; subsequent scheduled runs recovered them and have remained green.
 Full Eurostat catalogue modeling is still not Done.
