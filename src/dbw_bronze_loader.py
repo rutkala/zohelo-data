@@ -50,6 +50,7 @@ LANDING_COMPLETION_PREFIX = "landing-complete-v2"
 BRONZE_LEASE_PREFIX = "bronze-writer-lease-v1"
 BRONZE_LEASE_RELEASE_PREFIX = "bronze-writer-lease-release-v1"
 BRONZE_LEASE_SECONDS = 6 * 60 * 60
+BRONZE_LEASE_SAFETY_SECONDS = 60 * 60
 BRONZE_LEASE_SETTLE_SECONDS = 2
 
 
@@ -984,11 +985,12 @@ def main():
     parser.add_argument("--sample-indicators", type=int, default=None, help="Limit to N indicators for pilot run")
     parser.add_argument("--indicator-ids", type=int, nargs="+", default=None, help="Specific indicator IDs to process")
     parser.add_argument("--skip-bulk", action="store_true", help="Only build taxonomy and metadata tables")
-    parser.add_argument("--max-seconds", type=int, default=21000, help="Bound one resumable writer lease session")
+    parser.add_argument("--max-seconds", type=int, default=18000, help="Bound one resumable writer lease session")
     args = parser.parse_args()
-    if args.max_seconds <= 0 or args.max_seconds >= BRONZE_LEASE_SECONDS - 300:
+    if args.max_seconds <= 0 or args.max_seconds > BRONZE_LEASE_SECONDS - BRONZE_LEASE_SAFETY_SECONDS:
         parser.error(
-            f"--max-seconds must be between 1 and {BRONZE_LEASE_SECONDS - 301}"
+            f"--max-seconds must be between 1 and {BRONZE_LEASE_SECONDS - BRONZE_LEASE_SAFETY_SECONDS} "
+            "so a full measured indicator fits before lease expiry"
         )
     started_at = time.monotonic()
 

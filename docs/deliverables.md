@@ -67,9 +67,8 @@ Native snapshot selection is protected across Actions and explicitly authorized 
 source-wide expiring Drive lease with immutable acquisition/release records; losing election claims are
 tombstoned immediately, taxonomy is not uploaded until after election, and every exceptional exit
 releases through `finally`. The Bronze writer has the same cross-host protection before it creates
-or writes release paths, with each resumable session bounded below lease expiry. The source launcher
-retains a one-hour end-of-run lease margin, exceeding twice the measured 1,410-second largest-indicator
-transfer. Resumed Landing receipts are re-read and reconciled to their exact native
+or writes release paths, with both stages retaining a one-hour end-of-run lease margin, exceeding
+twice the measured 1,410-second largest-indicator transfer. Resumed Landing receipts are re-read and reconciled to their exact native
 Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
 receipts (never provider filenames or untrusted CSV identity alone), while its completion marker and
 dbt guard bind the exact local observation and dictionary partition-name inventories.

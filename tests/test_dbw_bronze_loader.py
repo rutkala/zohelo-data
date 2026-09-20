@@ -327,6 +327,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
             self.assertNotIn("pkill", script, relative)
         combined = (repo_root / "scripts/run_full_gus_parallel.sh").read_text(encoding="utf-8")
         self.assertIn("--max-seconds 18000", combined)
+        loader_source = (repo_root / "src/dbw_bronze_loader.py").read_text(encoding="utf-8")
+        self.assertIn('default=18000, help="Bound one resumable writer lease session"', loader_source)
 
     def test_dbt_sources_require_explicit_snapshot_release(self):
         repo_root = Path(__file__).resolve().parents[1]
