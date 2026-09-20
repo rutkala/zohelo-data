@@ -110,6 +110,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
         loader.storage = MagicMock()
         loader.landing_control = "control"
         loader.writer_lease_claim = None
+        loader.writer_lease_claims = set()
         own = "123e4567-e89b-42d3-a456-426614174000"
         other = "023e4567-e89b-42d3-a456-426614174000"
         mock_uuid.return_value = own
@@ -138,6 +139,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
         loader = object.__new__(DBWBronzeLoader)
         loader.writer_lease_owner = "owner"
         loader.writer_lease_claim = "old"
+        loader.writer_lease_claims = {"old"}
         with patch.object(loader, "_create_writer_lease_claim", return_value="new") as create, \
              patch.object(loader, "_verify_writer_lease") as verify, \
              patch.object(loader, "_release_writer_claim") as release:
@@ -146,6 +148,28 @@ class TestDBWBronzeLoader(unittest.TestCase):
         verify.assert_called_once_with("owner")
         release.assert_called_once_with("old")
         self.assertEqual(loader.writer_lease_claim, "new")
+        self.assertEqual(loader.writer_lease_claims, {"new"})
+
+    def test_bronze_lease_renewal_retains_both_claims_until_cleanup_succeeds(self):
+        loader = object.__new__(DBWBronzeLoader)
+        loader.writer_lease_owner = "owner"
+        loader.writer_lease_claim = "old"
+        loader.writer_lease_claims = {"old"}
+        with patch.object(loader, "_create_writer_lease_claim", return_value="new"), \
+             patch.object(loader, "_verify_writer_lease"), \
+             patch.object(
+                 loader,
+                 "_release_writer_claim",
+                 side_effect=[RuntimeError("transient"), None, None],
+             ) as release:
+            with self.assertRaisesRegex(RuntimeError, "transient"):
+                loader.renew_writer_lease()
+            self.assertEqual(loader.writer_lease_claims, {"old", "new"})
+            loader.release_writer_lease()
+        self.assertEqual(release.call_count, 3)
+        self.assertEqual(loader.writer_lease_claims, set())
+        self.assertIsNone(loader.writer_lease_claim)
+        self.assertIsNone(loader.writer_lease_owner)
 
     def test_incomplete_session_stops_before_lease_renewal_and_finalization(self):
         source = (

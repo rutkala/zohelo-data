@@ -70,7 +70,8 @@ releases through `finally`. The Bronze writer has the same cross-host protection
 or writes release paths, with both stages retaining a one-hour end-of-run lease margin, exceeding
 twice the measured 1,410-second largest-indicator transfer. Bronze publishes an immutable successor
 claim for the same elected owner before whole-release reconciliation, giving finalization a fresh
-six-hour window without opening a second-writer gap. Resumed Landing receipts are re-read and reconciled to their exact native
+six-hour window without opening a second-writer gap; both claims remain tracked until their individual
+release tombstones succeed, including a retry from the session `finally`. Resumed Landing receipts are re-read and reconciled to their exact native
 Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
 receipts (never provider filenames or untrusted CSV identity alone), while its completion marker and
 dbt guard bind the exact local observation and dictionary partition-name inventories.

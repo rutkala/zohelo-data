@@ -364,6 +364,7 @@ class DBWBronzeLoader:
         self.allow_codespace = allow_codespace
         self.writer_lease_claim: str | None = None
         self.writer_lease_owner: str | None = None
+        self.writer_lease_claims: set[str] = set()
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
@@ -447,6 +448,7 @@ class DBWBronzeLoader:
         claim_id = self._create_writer_lease_claim(owner_id)
         self.writer_lease_owner = owner_id
         self.writer_lease_claim = claim_id
+        self.writer_lease_claims.add(claim_id)
         try:
             self._verify_writer_lease(owner_id)
         except BaseException:
@@ -501,16 +503,19 @@ class DBWBronzeLoader:
         if not owner_id or not old_claim:
             raise RuntimeError("Cannot renew an unheld DBW Bronze writer lease.")
         new_claim = self._create_writer_lease_claim(owner_id)
+        self.writer_lease_claims.add(new_claim)
         try:
             self._verify_writer_lease(owner_id)
         except BaseException:
             try:
                 self._release_writer_claim(new_claim)
+                self.writer_lease_claims.discard(new_claim)
             except Exception:
                 pass
             raise
         self.writer_lease_claim = new_claim
         self._release_writer_claim(old_claim)
+        self.writer_lease_claims.discard(old_claim)
         return new_claim
 
     def _release_writer_claim(self, claim_id: str) -> None:
@@ -534,10 +539,23 @@ class DBWBronzeLoader:
         )
 
     def release_writer_lease(self) -> None:
-        claim_id = self.writer_lease_claim
-        if not claim_id:
+        if not self.writer_lease_claims:
             return
-        self._release_writer_claim(claim_id)
+        failures: list[tuple[str, Exception]] = []
+        for claim_id in sorted(self.writer_lease_claims):
+            try:
+                self._release_writer_claim(claim_id)
+            except Exception as exc:
+                failures.append((claim_id, exc))
+            else:
+                self.writer_lease_claims.discard(claim_id)
+        if failures:
+            if self.writer_lease_claim not in self.writer_lease_claims:
+                self.writer_lease_claim = next(iter(self.writer_lease_claims), None)
+            raise RuntimeError(
+                "Failed to release every durable DBW Bronze writer claim: "
+                + ", ".join(claim_id for claim_id, _ in failures)
+            ) from failures[0][1]
         self.writer_lease_claim = None
         self.writer_lease_owner = None
 
