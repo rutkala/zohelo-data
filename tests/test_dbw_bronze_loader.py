@@ -235,6 +235,10 @@ class TestDBWBronzeLoader(unittest.TestCase):
         self.assertEqual(bound["indicator_ids"], {7, 8})
         self.assertEqual(set(bound["metadata_members"]), {"metryka-7", "metryka-8"})
         self.assertEqual(set(bound["bulk_members"]), {"bulk_zip-7", "bulk_zip-8"})
+        self.assertEqual(
+            {key: [item["id"] for item in value] for key, value in bound["bulk_by_indicator"].items()},
+            {7: ["bulk_zip-7"], 8: ["bulk_zip-8"]},
+        )
 
     def test_native_bytes_are_verified_before_parsing(self):
         raw = b"native bytes"

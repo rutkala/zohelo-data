@@ -470,6 +470,7 @@ class DBWBronzeLoader:
         indicator_ids: set[int] = set()
         metadata_members: dict[str, dict[str, Any]] = {}
         bulk_members: dict[str, dict[str, Any]] = {}
+        bulk_by_indicator: dict[int, list[dict[str, Any]]] = {}
         bound_object_ids: set[str] = set()
         memberships: dict[int, str] = {}
         for item in files:
@@ -574,6 +575,7 @@ class DBWBronzeLoader:
                     metadata_members[object_id] = descriptor
                 elif role == "bulk_zip":
                     bulk_members[object_id] = descriptor
+                    bulk_by_indicator.setdefault(indicator_id, []).append(descriptor)
                     bulk_source_names.append(source_name)
             if sorted(landed_names) != sorted(object_names):
                 raise DBWLandingIncompleteError(
@@ -618,6 +620,7 @@ class DBWBronzeLoader:
             "indicator_ids": indicator_ids,
             "metadata_members": metadata_members,
             "bulk_members": bulk_members,
+            "bulk_by_indicator": bulk_by_indicator,
         }
 
     def load_taxonomy_tree(self) -> list[dict[str, Any]]:
@@ -834,21 +837,26 @@ def main():
         item for item in all_zips
         if item.get("id") in release_receipts["bulk_members"]
     ]
-    if len(all_zips) != len(release_receipts["bulk_members"]):
+    if (
+        len(all_zips) != len(release_receipts["bulk_members"])
+        or {item.get("id") for item in all_zips}
+        != set(release_receipts["bulk_members"])
+    ):
         raise DBWLandingIncompleteError(
             "DBW Landing bulk objects do not match the bound completion receipts."
         )
     logger.info(f"Bound {len(all_zips)} bulk zip files to Bronze release {loader.release_id}.")
 
-    from collections import defaultdict
-    zips_by_indicator: dict[int, list[dict[str, Any]]] = defaultdict(list)
-    for z in all_zips:
-        name = z["name"]
-        prefix = name.split("_")[0]
-        if prefix.isdigit():
-            zips_by_indicator[int(prefix)].append(z)
+    zip_objects = {item["id"]: item for item in all_zips}
+    zips_by_indicator: dict[int, list[dict[str, Any]]] = {}
+    for indicator_id, descriptors in release_receipts["bulk_by_indicator"].items():
+        zips_by_indicator[indicator_id] = [zip_objects[item["id"]] for item in descriptors]
 
-    known_indicators = sorted(zips_by_indicator.keys())
+    known_indicators = sorted(zips_by_indicator)
+    if set(known_indicators) != release_receipts["indicator_ids"]:
+        raise DBWLandingIncompleteError(
+            "DBW bulk ownership does not reconcile every receipt indicator."
+        )
     logger.info(f"Grouped into {len(known_indicators)} distinct indicators.")
 
     targets = known_indicators
