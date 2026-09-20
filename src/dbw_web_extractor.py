@@ -42,6 +42,7 @@ HVD_DOWNLOAD_URL = f"{DBW_WEB_BASE}/HVD"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 _CHUNK_BYTES = 8 * 1024 * 1024
+COMPLETION_PREFIX = "landing-complete-v1"
 
 
 def _require_production_context(allow_codespace: bool = False) -> None:
@@ -117,6 +118,16 @@ def _find_exact_file(storage: StorageManager, name: str, parent_id: str) -> list
     return [item for item in result if item.get("name") == name and item.get("trashed") is not True]
 
 
+def _versioned_name(name: str, sha256_hex: str) -> str:
+    """Keep a provider/logical name recognizable while making revisions immutable."""
+    path = Path(name)
+    suffix = "".join(path.suffixes)
+    stem = name[: -len(suffix)] if suffix else name
+    marker = f"--sha256-{sha256_hex}"
+    max_stem = max(1, 240 - len(marker) - len(suffix))
+    return f"{stem[:max_stem]}{marker}{suffix}"
+
+
 def _upload_bytes(
     storage: StorageManager,
     data: bytes,
@@ -125,9 +136,11 @@ def _upload_bytes(
     parent_id: str,
     kind: str,
     mime_type: str = "application/octet-stream",
+    extra_properties: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     sha256_hex, md5_hex = _hash_bytes(data)
-    existing = _find_exact_file(storage, name, parent_id)
+    logical_name = name
+    existing = _find_exact_file(storage, logical_name, parent_id)
     if len(existing) > 1:
         raise RuntimeError(f"Ambiguous existing DBW bulk object: {name}")
     if existing:
@@ -140,21 +153,40 @@ def _upload_bytes(
         ):
             return {
                 "id": item["id"],
-                "name": name,
+                "name": logical_name,
                 "size": len(data),
                 "sha256": sha256_hex,
                 "md5": md5_hex,
                 "reused": True,
             }
+        name = _versioned_name(logical_name, sha256_hex)
+        existing = _find_exact_file(storage, name, parent_id)
+        if len(existing) > 1:
+            raise RuntimeError(f"Ambiguous existing DBW revision object: {name}")
+        if existing:
+            item = existing[0]
+            props = item.get("appProperties") or {}
+            if (
+                props.get("sha256") == sha256_hex
+                and item.get("md5Checksum") == md5_hex
+                and int(item.get("size", -1)) == len(data)
+            ):
+                return {
+                    "id": item["id"], "name": name, "size": len(data),
+                    "sha256": sha256_hex, "md5": md5_hex, "reused": True,
+                }
+            raise RuntimeError(f"Existing DBW revision object failed verification: {name}")
+    properties = {
+        "sha256": sha256_hex,
+        "kind": kind,
+        "source_id": "gus_dbw",
+        "transport": "web_bulk",
+    }
+    properties.update(extra_properties or {})
     metadata = {
         "name": name,
         "parents": [parent_id],
-        "appProperties": {
-            "sha256": sha256_hex,
-            "kind": kind,
-            "source_id": "gus_dbw",
-            "transport": "web_bulk",
-        },
+        "appProperties": properties,
     }
     media = MediaInMemoryUpload(data, mimetype=mime_type, resumable=False)
     with DRIVE_LOCK:
@@ -163,7 +195,13 @@ def _upload_bytes(
             .create(body=metadata, media_body=media, fields="id,name,size,md5Checksum,appProperties")
             .execute(num_retries=4)
         )
-    if not response or response.get("name") != name or int(response.get("size", -1)) != len(data):
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != len(data)
+        or response.get("md5Checksum") != md5_hex
+        or (response.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
         raise RuntimeError(f"DBW Drive bytes upload did not verify: {name}")
     return {
         "id": response["id"],
@@ -186,7 +224,8 @@ def _upload_file(
 ) -> dict[str, Any]:
     sha256_hex, md5_hex = _hash_file(local_path)
     file_size = local_path.stat().st_size
-    existing = _find_exact_file(storage, name, parent_id)
+    logical_name = name
+    existing = _find_exact_file(storage, logical_name, parent_id)
     if len(existing) > 1:
         raise RuntimeError(f"Ambiguous existing DBW bulk object: {name}")
     if existing:
@@ -199,12 +238,29 @@ def _upload_file(
         ):
             return {
                 "id": item["id"],
-                "name": name,
+                "name": logical_name,
                 "size": file_size,
                 "sha256": sha256_hex,
                 "md5": md5_hex,
                 "reused": True,
             }
+        name = _versioned_name(logical_name, sha256_hex)
+        existing = _find_exact_file(storage, name, parent_id)
+        if len(existing) > 1:
+            raise RuntimeError(f"Ambiguous existing DBW revision object: {name}")
+        if existing:
+            item = existing[0]
+            props = item.get("appProperties") or {}
+            if (
+                props.get("sha256") == sha256_hex
+                and item.get("md5Checksum") == md5_hex
+                and int(item.get("size", -1)) == file_size
+            ):
+                return {
+                    "id": item["id"], "name": name, "size": file_size,
+                    "sha256": sha256_hex, "md5": md5_hex, "reused": True,
+                }
+            raise RuntimeError(f"Existing DBW revision object failed verification: {name}")
     metadata = {
         "name": name,
         "parents": [parent_id],
@@ -223,7 +279,13 @@ def _upload_file(
         response = None
         while response is None:
             _, response = request.next_chunk(num_retries=4)
-    if not response or response.get("name") != name or int(response.get("size", -1)) != file_size:
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != file_size
+        or response.get("md5Checksum") != md5_hex
+        or (response.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
         raise RuntimeError(f"DBW Drive file upload did not verify: {name}")
     return {
         "id": response["id"],
@@ -250,6 +312,7 @@ class DbwWebExtractor:
         self.storage = storage
         self.allow_codespace = allow_codespace
         self.proxy = proxy
+        self.catalogue_sha256: str | None = None
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
@@ -316,8 +379,8 @@ class DbwWebExtractor:
         walk(tree)
         return [indicators[k] for k in sorted(indicators)]
 
-    def load_completed_checkpoints(self) -> set[int]:
-        """Scan Drive checkpoints to identify already completed indicators."""
+    def load_completed_checkpoints(self, catalogue_sha256: str) -> set[int]:
+        """Read full-bulk receipts bound to the exact current catalogue revision."""
         query = f"'{_escape_query(self.checkpoints_dir)}' in parents and trashed=false"
         completed = set()
         token = None
@@ -325,7 +388,7 @@ class DbwWebExtractor:
             args: dict[str, Any] = {
                 "q": query,
                 "spaces": "drive",
-                "fields": "nextPageToken, files(id,name)",
+                "fields": "nextPageToken, files(id,name,appProperties,trashed)",
             }
             if token:
                 args["pageToken"] = token
@@ -333,9 +396,19 @@ class DbwWebExtractor:
                 response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
             for f in response.get("files", []):
                 name = f.get("name", "")
-                base = name.removesuffix(".json")
-                if base.isdigit():
-                    completed.add(int(base))
+                match = re.fullmatch(
+                    r"completed-v2-(\d+)(?:--sha256-[0-9a-f]{64})?\.json", name
+                )
+                props = f.get("appProperties") or {}
+                if (
+                    match
+                    and props.get("checkpoint_schema") == "2"
+                    and props.get("checkpoint_status") == "completed"
+                    and props.get("bulk_complete") == "true"
+                    and props.get("metadata_complete") == "true"
+                    and props.get("catalogue_sha256") == catalogue_sha256
+                ):
+                    completed.add(int(match.group(1)))
             token = response.get("nextPageToken")
             if not token:
                 break
@@ -347,6 +420,8 @@ class DbwWebExtractor:
         skip_bulk_zips: bool = False,
     ) -> dict[str, Any]:
         """Process one indicator: metadata, metryka, and bulk zip packages."""
+        if not self.catalogue_sha256:
+            raise RuntimeError("DBW indicator processing requires a bound catalogue SHA-256.")
         ind_id = indicator["id"]
         result = {
             "indicator_id": ind_id,
@@ -373,23 +448,21 @@ class DbwWebExtractor:
 
         # 2. Fetch and land Metryka CSV
         met_url = f"{METRYKA_URL}?id_zmienne={ind_id}"
-        try:
-            met_bytes = _http_get(met_url, timeout=20, proxy=self.proxy)
-            met_res = _upload_bytes(
-                self.storage,
-                met_bytes,
-                name=f"metryka_{ind_id}.csv",
-                parent_id=self.metadata_dir,
-                kind="metadata",
-                mime_type="text/csv",
-            )
-            result["files_landed"].append(met_res["name"])
-            if not met_res["reused"]:
-                result["new_bytes"] += met_res["size"]
-        except Exception as exc:
-            print(f"Warning: Metryka CSV for indicator {ind_id} failed: {exc}")
+        met_bytes = _http_get(met_url, timeout=20, proxy=self.proxy)
+        met_res = _upload_bytes(
+            self.storage,
+            met_bytes,
+            name=f"metryka_{ind_id}.csv",
+            parent_id=self.metadata_dir,
+            kind="metadata",
+            mime_type="text/csv",
+        )
+        result["files_landed"].append(met_res["name"])
+        if not met_res["reused"]:
+            result["new_bytes"] += met_res["size"]
 
         # 3. Parse bulk zip filenames from aggregates response
+        expected_bulk_files: list[str] = []
         if not skip_bulk_zips:
             try:
                 agg_data = json.loads(agg_bytes.decode("utf-8"))
@@ -402,6 +475,7 @@ class DbwWebExtractor:
                         filename = file_info.get("filename")
                         if not filename or not filename.endswith(".zip"):
                             continue
+                        expected_bulk_files.append(filename)
                         zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
                         local_zip = self.workspace / f"worker_{ind_id}_{filename}"
                         # Download if not present locally
@@ -427,25 +501,77 @@ class DbwWebExtractor:
                 print(f"Warning: Bulk zip download for indicator {ind_id} encountered an error: {exc}")
                 raise
 
-        # 4. Record and upload checkpoint for this indicator
-        result["status"] = "completed"
+        # 4. Record either a full-bulk completion receipt or an explicit partial receipt.
+        result["status"] = "metadata_only" if skip_bulk_zips else "completed"
         checkpoint_data = {
+            "schema_version": 2,
+            "record_type": "gus_dbw_indicator_completion",
             "indicator_id": ind_id,
             "name": indicator["name"],
-            "status": "completed",
+            "status": result["status"],
+            "bulk_complete": not skip_bulk_zips,
+            "metadata_complete": True,
+            "catalogue_sha256": self.catalogue_sha256,
+            "expected_bulk_files": sorted(set(expected_bulk_files)),
             "files_landed": result["files_landed"],
             "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         cp_bytes = json.dumps(checkpoint_data, ensure_ascii=False, indent=2).encode("utf-8")
+        checkpoint_name = (
+            f"partial-v2-{ind_id}.json" if skip_bulk_zips else f"completed-v2-{ind_id}.json"
+        )
         _upload_bytes(
             self.storage,
             cp_bytes,
-            name=f"{ind_id}.json",
+            name=checkpoint_name,
             parent_id=self.checkpoints_dir,
             kind="checkpoint",
             mime_type="application/json",
+            extra_properties={
+                "checkpoint_schema": "2",
+                "checkpoint_status": result["status"],
+                "bulk_complete": str(not skip_bulk_zips).lower(),
+                "metadata_complete": "true",
+                "indicator_id": str(ind_id),
+                "catalogue_sha256": self.catalogue_sha256,
+            },
         )
         return result
+
+    def publish_catalogue_completion(
+        self,
+        *,
+        catalogue_indicators: int,
+        completed_indicators: int,
+        catalogue_sha256: str,
+    ) -> dict[str, Any]:
+        """Publish the deterministic marker that alone unlocks the Bronze stage."""
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_landing_completion",
+            "source_id": "gus_dbw",
+            "status": "complete_current_catalogue",
+            "landing_scope": "native_bytes_only",
+            "catalogue_indicators": catalogue_indicators,
+            "completed_indicators": completed_indicators,
+            "pending_indicators": catalogue_indicators - completed_indicators,
+            "failed_indicators": 0,
+            "bulk_complete": True,
+            "metadata_complete": True,
+            "catalogue_sha256": catalogue_sha256,
+        }
+        if catalogue_indicators <= 0 or completed_indicators != catalogue_indicators:
+            raise RuntimeError("Cannot publish DBW completion before catalogue exhaustion.")
+        raw = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{COMPLETION_PREFIX}-{catalogue_sha256}.json",
+            parent_id=self.control_landing,
+            kind="completion",
+            mime_type="application/json",
+            extra_properties={"completion_schema": "1", "completion_status": "complete_current_catalogue"},
+        )
 
 
 def main():
@@ -498,7 +624,9 @@ def main():
     )
 
     tree = extractor.fetch_indicators_tree()
+    catalogue_sha256, _ = _hash_file(workspace / "indicators_tree.json")
     all_indicators = extractor.extract_indicators(tree)
+    catalogue_indicator_ids = {item["id"] for item in all_indicators}
     print(f"Discovered {len(all_indicators)} total indicators across all DBW thematic areas.")
 
     # Filter indicators if specific IDs requested
@@ -507,7 +635,8 @@ def main():
         all_indicators = [ind for ind in all_indicators if ind["id"] in wanted_ids]
         print(f"Filtered to {len(all_indicators)} specified indicators: {wanted_ids}")
 
-    completed_ids = extractor.load_completed_checkpoints()
+    extractor.catalogue_sha256 = catalogue_sha256
+    completed_ids = extractor.load_completed_checkpoints(catalogue_sha256)
     print(f"Found {len(completed_ids)} already completed indicators on Drive.")
 
     pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
@@ -518,7 +647,7 @@ def main():
     summary = {
         "source_id": "gus_dbw",
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "total_indicators_known": len(all_indicators),
+        "total_indicators_known": len(catalogue_indicator_ids),
         "previously_completed": len(completed_ids),
         "scheduled_this_run": len(pending_indicators),
         "completed_this_run": 0,
@@ -541,6 +670,7 @@ def main():
                 proxy=p,
             )
         )
+        worker_extractors[-1].catalogue_sha256 = catalogue_sha256
 
     lock = threading.Lock()
     stop_event = threading.Event()
@@ -564,7 +694,8 @@ def main():
         try:
             res = ext.process_indicator(ind, skip_bulk_zips=args.skip_bulk_zips)
             with lock:
-                summary["completed_this_run"] += 1
+                if res["status"] == "completed":
+                    summary["completed_this_run"] += 1
                 summary["new_files"] += len(res["files_landed"])
                 summary["new_bytes"] += res["new_bytes"]
                 consecutive_errors = 0
@@ -597,10 +728,27 @@ def main():
                 break
             process_item((i, ind))
 
+    verified_completed_ids = extractor.load_completed_checkpoints(catalogue_sha256)
+    catalogue_ids = catalogue_indicator_ids
+    catalogue_complete = (
+        not args.skip_bulk_zips
+        and not errors
+        and bool(catalogue_ids)
+        and catalogue_ids <= verified_completed_ids
+    )
+    if catalogue_complete:
+        extractor.publish_catalogue_completion(
+            catalogue_indicators=len(catalogue_ids),
+            completed_indicators=len(catalogue_ids),
+            catalogue_sha256=catalogue_sha256,
+        )
+
     summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
     summary["elapsed_seconds"] = round(time.time() - start_time, 2)
     summary["errors"] = errors
-    summary["status"] = "completed" if summary["completed_this_run"] == len(pending_indicators) else "incomplete"
+    summary["catalogue_complete"] = catalogue_complete
+    summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
+    summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
 
     print("\n--- DBW Extraction Summary ---")
     print(f"Indicators completed this run: {summary['completed_this_run']}")

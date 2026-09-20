@@ -4,6 +4,56 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Fresh production acceptance and fail-closed GUS stage boundary — 20 September 2026
+
+**Accepted current releases:** no GitHub Actions writer was active or pending at the 18:09 UTC
+inspection. NBP [run 35483182223](https://github.com/rutkala/zohelo-data/actions/runs/35483182223)
+published and freshly restored release `33fc1114-c8d3-48f6-b0e6-d7626b28f67a`: all four
+Tables A/B/C/gold sources are coverage-complete through 19 September, the latest observations
+are 18 September (Table B: 16 September), and Gold contains 427,028 FX rows plus 3,459 gold rows.
+WDI [run 35511129843](https://github.com/rutkala/zohelo-data/actions/runs/35511129843)
+published and freshly restored release `47933158-569a-44f5-a474-44594c5d501e`: the current
+six-member official archive still reconciles all 9,015,914 modeled values at ratio 1.0. The
+separate API reconciliation queue remains incomplete at 1,203 tasks; it is not needed to claim
+the current bulk archive product complete and is not being confused with every World Bank product.
+
+Eurostat [run 35525470409](https://github.com/rutkala/zohelo-data/actions/runs/35525470409)
+published and freshly restored modeled release `fbdd40ab-ab0c-47d2-baaf-8a485d45c8be`. Its complete
+reviewed progressive contract remains three datasets / 81 country-series with admitted dataset
+and series coverage ratios of 1.0 and latest observation date 31 August 2026. Full-distribution
+Landing advanced to 6,072 / 21,238 validated current distributions (28.5903%), 7,453 accepted
+versions, 22,650,005,468 raw bytes, 18,126 pending tasks and zero failed pending tasks. Earlier
+[run 35491496570](https://github.com/rutkala/zohelo-data/actions/runs/35491496570) stopped after two
+transient bulk transport failures; subsequent scheduled runs recovered them and have remained green.
+Full Eurostat catalogue modeling is still not Done.
+
+**Unreviewed GUS changes were not accepted as completion:** direct main commits `dc6e7bb` and
+`9f54ec7` introduced DBW Web/Bronze and BDL proxy/runner changes without pull-request validation.
+Review found that the
+Bronze path could start on the currently available subset, delete a retained pilot object, replace
+an existing stable-name object before a replacement was proven, and let a metadata-only DBW run
+create the same completion-shaped checkpoint used by bulk collection. The BDL proxy call also broke
+five established adaptive-runner regressions. The repair now preserves every prior object, makes
+Landing folder resolution read-only, admits only v2 full-bulk indicator receipts, publishes a
+checksum-bound catalogue completion record only when every discovered indicator reconciles, and
+requires that record before DBW Bronze starts. Metadata-only runs remain explicitly incomplete;
+provider revisions are retained under content-addressed native names and every indicator receipt is
+bound to the exact catalogue hash. Bronze validates those receipts and writes into a separate
+`02_bronze/gus_dbw/releases/<catalogue_sha256>/` namespace, so the earlier partial files cannot be
+silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
+on a fresh runner without depending on disposable local files.
+launchers refuse to kill or duplicate an already running local writer (including the later BDL-only
+launcher); DBW Web shares the existing
+DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while
+configured workers still receive their assigned proxy.
+
+The separately reported Codespace BDL/DBW jobs were not duplicated or interrupted during this
+review. Their last recorded partial counts (BDL 1,093 / 2,420 subgroups; DBW Bronze 165+ / 1,550
+indicators) remain progress, not accepted full Landing or modeled delivery. In particular, existing
+partial DBW Bronze files remain retained but cannot authorize Silver/Gold. The next DBW Bronze run
+must wait for the new full-catalogue completion record; its immutable catalogue-hash release boundary
+is now enforced in code.
+
 ### Autonomous 2-Week Multi-Source Roadmap, Stage Decoupling, and Bulk Ingestion Mandate — 20 September 2026
 
 **Autonomous execution authorized for full multi-source data platform expansion (GitHub Issues #130–#135):**

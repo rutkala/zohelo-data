@@ -8,15 +8,20 @@ OUT_DIR="${REPO_ROOT}/portal/test-results/dbw-bronze"
 mkdir -p "${OUT_DIR}"
 
 LOG_FILE="${OUT_DIR}/bronze_loader.log"
-EXTRA_ARGS="${@}"
-
 echo "Starting DBW Bronze Loader in background..."
-echo "Args: ${EXTRA_ARGS:-<FULL_BATCH>}"
 echo "Log: ${LOG_FILE}"
 
 cd "${REPO_ROOT}"
-pkill -f "src/dbw_bronze_loader.py" 2>/dev/null || true
+if pgrep -f "[s]rc/dbw_bronze_loader.py" >/dev/null; then
+  echo "A DBW Bronze loader is already active; no second writer was started." >&2
+  exit 1
+fi
 
-setsid -f bash -c "PYTHONPATH=src PYTHONUNBUFFERED=1 '${REPO_ROOT}/.venv/bin/python' src/dbw_bronze_loader.py --workspace '${OUT_DIR}' --allow-codespace ${EXTRA_ARGS} >> '${LOG_FILE}' 2>&1"
+nohup flock -n "${OUT_DIR}/runner.lock" \
+  env PYTHONPATH=src PYTHONUNBUFFERED=1 \
+  "${REPO_ROOT}/.venv/bin/python" src/dbw_bronze_loader.py \
+  --workspace "${OUT_DIR}" --allow-codespace "$@" \
+  >> "${LOG_FILE}" 2>&1 < /dev/null &
+RUNNER_PID=$!
 
-echo "DBW Bronze Loader background session initiated."
+echo "DBW Bronze Loader background session initiated with PID ${RUNNER_PID}."

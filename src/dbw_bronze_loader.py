@@ -19,6 +19,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import threading
@@ -44,13 +45,28 @@ logging.basicConfig(
 )
 
 DRIVE_LOCK = threading.Lock()
+LANDING_COMPLETION_PREFIX = "landing-complete-v1"
+
+
+class DBWLandingIncompleteError(RuntimeError):
+    """The DBW bulk Landing contract has not been completed and verified."""
 
 
 def _require_production_context(allow_codespace: bool = False):
     in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
-    if in_actions or allow_codespace:
+    on_main = os.environ.get("GITHUB_REF") == "refs/heads/main"
+    codespace_opt_in = (
+        allow_codespace
+        or os.environ.get("ZOHELO_ALLOW_CODESPACE_EXECUTION", "").lower() == "true"
+    )
+    if in_actions and on_main:
         return
-    raise PermissionError("Writes to Google Drive require --allow-codespace or GITHUB_ACTIONS=true.")
+    if codespace_opt_in:
+        return
+    raise PermissionError(
+        "DBW Bronze writes require serialized main-branch GitHub Actions or explicit "
+        "Codespace production authorization."
+    )
 
 
 def _escape_query(value: str) -> str:
@@ -81,6 +97,8 @@ def _upload_file_to_drive(
             q=query, spaces="drive", fields="files(id,name,size,md5Checksum,appProperties)"
         ).execute().get("files", [])
 
+    if len(existing) > 1:
+        raise RuntimeError(f"Ambiguous existing DBW Bronze object: {name}")
     if existing:
         item = existing[0]
         props = item.get("appProperties") or {}
@@ -90,16 +108,114 @@ def _upload_file_to_drive(
             and int(item.get("size", -1)) == local_path.stat().st_size
         ):
             return {"id": item["id"], "name": name, "size": local_path.stat().st_size, "reused": True}
-        with DRIVE_LOCK:
-            storage.drive_service.files().delete(fileId=item["id"]).execute()
+        raise RuntimeError(
+            f"Existing DBW Bronze object differs from the candidate: {name}. "
+            "The prior object was preserved; publish a versioned release instead of replacing it."
+        )
 
     media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=True)
     body = {"name": name, "parents": [parent_id], "appProperties": {"sha256": sha256_hex}}
     with DRIVE_LOCK:
         created = storage.drive_service.files().create(
-            body=body, media_body=media, fields="id,name,size,md5Checksum"
+            body=body, media_body=media, fields="id,name,size,md5Checksum,appProperties"
         ).execute(num_retries=4)
-    return {"id": created["id"], "name": name, "size": int(created.get("size", 0)), "reused": False}
+    if (
+        not created
+        or created.get("name") != name
+        or int(created.get("size", -1)) != local_path.stat().st_size
+        or created.get("md5Checksum") != md5_hex
+        or (created.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
+        raise RuntimeError(f"DBW Bronze upload did not verify: {name}")
+    return {"id": created["id"], "name": name, "size": int(created["size"]), "reused": False}
+
+
+def _restore_verified_drive_file(
+    storage: StorageManager,
+    *,
+    name: str,
+    parent_id: str,
+    local_path: Path,
+) -> bool:
+    """Restore an immutable output only after Drive metadata and bytes agree."""
+    query = f"name='{_escape_query(name)}' and '{_escape_query(parent_id)}' in parents and trashed=false"
+    with DRIVE_LOCK:
+        files = storage.drive_service.files().list(
+            q=query,
+            spaces="drive",
+            fields="files(id,name,size,md5Checksum,appProperties,trashed)",
+        ).execute(num_retries=4).get("files", [])
+    matches = [item for item in files if item.get("name") == name and item.get("trashed") is not True]
+    if not matches:
+        return False
+    if len(matches) != 1:
+        raise RuntimeError(f"Ambiguous existing DBW Bronze object: {name}")
+    item = matches[0]
+    expected_sha = (item.get("appProperties") or {}).get("sha256")
+    if not isinstance(expected_sha, str) or len(expected_sha) != 64:
+        raise RuntimeError(f"Existing DBW Bronze object has no verified SHA-256: {name}")
+    with DRIVE_LOCK:
+        raw = storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
+    sha = hashlib.sha256(raw).hexdigest()
+    md5 = hashlib.md5(raw).hexdigest()
+    if (
+        sha != expected_sha
+        or md5 != item.get("md5Checksum")
+        or len(raw) != int(item.get("size", -1))
+    ):
+        raise RuntimeError(f"Existing DBW Bronze object failed byte verification: {name}")
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_bytes(raw)
+    return True
+
+
+def validate_landing_completion(document: dict[str, Any]) -> dict[str, Any]:
+    """Validate the only evidence that authorizes DBW Landing-to-Bronze work."""
+    required = {
+        "schema_version": 1,
+        "record_type": "gus_dbw_landing_completion",
+        "source_id": "gus_dbw",
+        "status": "complete_current_catalogue",
+        "landing_scope": "native_bytes_only",
+        "bulk_complete": True,
+        "metadata_complete": True,
+        "pending_indicators": 0,
+        "failed_indicators": 0,
+    }
+    for key, expected in required.items():
+        if document.get(key) != expected:
+            raise DBWLandingIncompleteError(
+                f"DBW Landing completion field {key!r} must be {expected!r}; "
+                f"received {document.get(key)!r}."
+            )
+    catalogue = document.get("catalogue_indicators")
+    completed = document.get("completed_indicators")
+    if not isinstance(catalogue, int) or catalogue <= 0 or completed != catalogue:
+        raise DBWLandingIncompleteError(
+            "DBW Landing completion must reconcile every catalogue indicator."
+        )
+    tree_sha = document.get("catalogue_sha256")
+    if not isinstance(tree_sha, str) or len(tree_sha) != 64:
+        raise DBWLandingIncompleteError("DBW Landing completion has no valid catalogue SHA-256.")
+    return document
+
+
+def _resolve_existing_folder(storage: StorageManager, name: str, parent_id: str) -> str:
+    query = (
+        f"name='{_escape_query(name)}' and "
+        "mimeType='application/vnd.google-apps.folder' and "
+        f"'{_escape_query(parent_id)}' in parents and trashed=false"
+    )
+    with DRIVE_LOCK:
+        items = storage.drive_service.files().list(
+            q=query, spaces="drive", fields="files(id,name,mimeType,trashed)"
+        ).execute(num_retries=4).get("files", [])
+    matches = [item for item in items if item.get("name") == name and item.get("trashed") is not True]
+    if len(matches) != 1:
+        raise DBWLandingIncompleteError(
+            f"Expected exactly one existing DBW Landing folder {name!r}; found {len(matches)}."
+        )
+    return matches[0]["id"]
 
 
 class DBWBronzeLoader:
@@ -109,6 +225,7 @@ class DBWBronzeLoader:
         storage: StorageManager,
         allow_codespace: bool = False,
     ):
+        self.base_workspace = workspace
         self.workspace = workspace
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.storage = storage
@@ -120,44 +237,241 @@ class DBWBronzeLoader:
         self.bronze_root = storage.resolve_zone("bronze", create=True)
         self.control_root = storage.resolve_zone("control", create=True)
 
-        # Resolve Landing directories
-        self.dbw_landing = storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.landing_root)
-        self.landing_native = storage.get_or_create_nested_folder(["native"], root_id=self.dbw_landing)
-        self.landing_taxonomy = storage.get_or_create_nested_folder(["taxonomy"], root_id=self.landing_native)
-        self.landing_metadata = storage.get_or_create_nested_folder(["metadata"], root_id=self.landing_native)
-        self.landing_bulk = storage.get_or_create_nested_folder(["bulk"], root_id=self.landing_native)
+        # Resolve Landing strictly read-only. Bronze must not create or repair its input layer.
+        self.dbw_landing = _resolve_existing_folder(storage, "gus_dbw", self.landing_root)
+        self.landing_native = _resolve_existing_folder(storage, "native", self.dbw_landing)
+        self.landing_taxonomy = _resolve_existing_folder(storage, "taxonomy", self.landing_native)
+        self.landing_metadata = _resolve_existing_folder(storage, "metadata", self.landing_native)
+        self.landing_bulk = _resolve_existing_folder(storage, "bulk", self.landing_native)
+        self.landing_control = _resolve_existing_folder(storage, "_control", self.dbw_landing)
+        self.landing_checkpoints = _resolve_existing_folder(
+            storage, "checkpoints", self.landing_control
+        )
 
         # Resolve Bronze directories
         self.dbw_bronze = storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.bronze_root, write_session=self.session)
-        self.bronze_obs = storage.get_or_create_nested_folder(["observations"], root_id=self.dbw_bronze, write_session=self.session)
-        self.bronze_dict = storage.get_or_create_nested_folder(["dictionaries"], root_id=self.dbw_bronze, write_session=self.session)
-        self.bronze_tax = storage.get_or_create_nested_folder(["taxonomy"], root_id=self.dbw_bronze, write_session=self.session)
-        self.bronze_met = storage.get_or_create_nested_folder(["metadata"], root_id=self.dbw_bronze, write_session=self.session)
-        self.bronze_control = storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_bronze, write_session=self.session)
+        self.releases_root = storage.get_or_create_nested_folder(["releases"], root_id=self.dbw_bronze, write_session=self.session)
 
         # Campaign control directory
         self.campaign_control = storage.get_or_create_nested_folder(
             ["source_campaigns", "gus_dbw_bronze"], root_id=self.control_root, write_session=self.session
         )
 
+    def require_complete_landing(self) -> dict[str, Any]:
+        """Fail closed unless the Web bulk writer exhausted and reconciled its catalogue."""
+        query = (
+            f"name contains '{LANDING_COMPLETION_PREFIX}' and "
+            f"'{_escape_query(self.landing_control)}' in parents and trashed=false"
+        )
+        files: list[dict[str, Any]] = []
+        token = None
+        while True:
+            args: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,createdTime,trashed)",
+            }
+            if token:
+                args["pageToken"] = token
+            with DRIVE_LOCK:
+                response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
+            files.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                break
+        matches = [
+            item for item in files
+            if re.fullmatch(r"landing-complete-v1-[0-9a-f]{64}\.json", item.get("name", ""))
+        ]
+        if not matches:
+            raise DBWLandingIncompleteError(
+                "DBW Bronze requires a content-addressed full-catalogue Landing completion record."
+            )
+        matches.sort(key=lambda item: (item.get("createdTime", ""), item.get("name", "")), reverse=True)
+        item = matches[0]
+        with DRIVE_LOCK:
+            raw = self.storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
+        digest = hashlib.sha256(raw).hexdigest()
+        if (item.get("appProperties") or {}).get("sha256") != digest:
+            raise DBWLandingIncompleteError("DBW Landing completion checksum does not match Drive metadata.")
+        try:
+            document = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DBWLandingIncompleteError("DBW Landing completion is not valid UTF-8 JSON.") from exc
+        document = validate_landing_completion(document)
+        expected_name = f"{LANDING_COMPLETION_PREFIX}-{document['catalogue_sha256']}.json"
+        if item.get("name") != expected_name:
+            raise DBWLandingIncompleteError("DBW Landing completion name is not bound to its catalogue SHA-256.")
+        document["_completion_created_at_utc"] = item.get("createdTime") or "1970-01-01T00:00:00Z"
+        return document
+
+    def bind_release(self, completion: dict[str, Any]) -> None:
+        """Isolate Bronze output and local resume state by immutable catalogue identity."""
+        release_id = completion["catalogue_sha256"]
+        self.release_id = release_id
+        self.processed_at_utc = completion["_completion_created_at_utc"]
+        self.workspace = self.base_workspace / release_id
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.release_root = self.storage.get_or_create_nested_folder(
+            [release_id], root_id=self.releases_root, write_session=self.session
+        )
+        self.bronze_obs = self.storage.get_or_create_nested_folder(
+            ["observations"], root_id=self.release_root, write_session=self.session
+        )
+        self.bronze_dict = self.storage.get_or_create_nested_folder(
+            ["dictionaries"], root_id=self.release_root, write_session=self.session
+        )
+        self.bronze_tax = self.storage.get_or_create_nested_folder(
+            ["taxonomy"], root_id=self.release_root, write_session=self.session
+        )
+        self.bronze_met = self.storage.get_or_create_nested_folder(
+            ["metadata"], root_id=self.release_root, write_session=self.session
+        )
+        self.bronze_control = self.storage.get_or_create_nested_folder(
+            ["_control"], root_id=self.release_root, write_session=self.session
+        )
+
+    def load_release_receipts(self, completion: dict[str, Any]) -> dict[str, set[Any]]:
+        """Verify every per-indicator receipt and return its exact native membership."""
+        query = f"'{_escape_query(self.landing_checkpoints)}' in parents and trashed=false"
+        token = None
+        files: list[dict[str, Any]] = []
+        while True:
+            args: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+            }
+            if token:
+                args["pageToken"] = token
+            with DRIVE_LOCK:
+                response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
+            files.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                break
+
+        catalogue_sha = completion["catalogue_sha256"]
+        indicator_ids: set[int] = set()
+        metadata_names: set[str] = set()
+        bulk_names: set[str] = set()
+        for item in files:
+            props = item.get("appProperties") or {}
+            if (
+                props.get("catalogue_sha256") != catalogue_sha
+                or props.get("checkpoint_schema") != "2"
+                or props.get("checkpoint_status") != "completed"
+                or props.get("bulk_complete") != "true"
+                or props.get("metadata_complete") != "true"
+            ):
+                continue
+            with DRIVE_LOCK:
+                raw = self.storage.drive_service.files().get_media(
+                    fileId=item["id"]
+                ).execute(num_retries=4)
+            if (
+                hashlib.sha256(raw).hexdigest() != props.get("sha256")
+                or hashlib.md5(raw).hexdigest() != item.get("md5Checksum")
+                or len(raw) != int(item.get("size", -1))
+            ):
+                raise DBWLandingIncompleteError(
+                    f"DBW indicator receipt failed verification: {item.get('name')}"
+                )
+            try:
+                receipt = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise DBWLandingIncompleteError("DBW indicator receipt is not valid JSON.") from exc
+            indicator_id = receipt.get("indicator_id")
+            if (
+                receipt.get("catalogue_sha256") != catalogue_sha
+                or receipt.get("status") != "completed"
+                or receipt.get("bulk_complete") is not True
+                or receipt.get("metadata_complete") is not True
+                or not isinstance(indicator_id, int)
+                or indicator_id in indicator_ids
+            ):
+                raise DBWLandingIncompleteError("DBW indicator receipts do not form a unique complete catalogue.")
+            indicator_ids.add(indicator_id)
+            landed_names = receipt.get("files_landed", [])
+            if not isinstance(landed_names, list):
+                raise DBWLandingIncompleteError("DBW indicator receipt has no valid file membership.")
+            receipt_metadata_names = [
+                name for name in landed_names
+                if isinstance(name, str) and name.startswith("metryka_") and name.endswith(".csv")
+            ]
+            receipt_aggregate_names = [
+                name for name in landed_names
+                if isinstance(name, str) and name.startswith("aggregates_") and name.endswith(".json")
+            ]
+            if len(receipt_metadata_names) != 1 or len(receipt_aggregate_names) != 1:
+                raise DBWLandingIncompleteError(
+                    "Each completed DBW indicator receipt must bind one aggregate and one metryka file."
+                )
+            for name in landed_names:
+                if not isinstance(name, str):
+                    raise DBWLandingIncompleteError("DBW indicator receipt contains an invalid file name.")
+                if name.startswith("metryka_") and name.endswith(".csv"):
+                    metadata_names.add(name)
+                elif name.endswith(".zip"):
+                    bulk_names.add(name)
+
+        if len(indicator_ids) != completion["catalogue_indicators"]:
+            raise DBWLandingIncompleteError(
+                "Verified DBW indicator receipts do not reconcile the completion marker."
+            )
+        return {
+            "indicator_ids": indicator_ids,
+            "metadata_names": metadata_names,
+            "bulk_names": bulk_names,
+        }
+
     def load_taxonomy_tree(self) -> list[dict[str, Any]]:
-        """Load indicators tree from local file or Drive."""
+        """Load only the taxonomy bytes bound to this Bronze release."""
         local_tree = self.workspace / "indicators_tree.json"
         if local_tree.exists():
-            return json.loads(local_tree.read_text(encoding="utf-8"))
+            raw = local_tree.read_bytes()
+            if hashlib.sha256(raw).hexdigest() == self.release_id:
+                return json.loads(raw.decode("utf-8"))
+            raise DBWLandingIncompleteError("Local DBW taxonomy does not match the bound catalogue release.")
 
-        fallback = Path("portal/test-results/dbw-web-bulk/indicators_tree.json")
-        if fallback.exists():
-            local_tree.write_bytes(fallback.read_bytes())
-            return json.loads(local_tree.read_text(encoding="utf-8"))
-
-        query = f"name='indicators_tree.json' and '{_escape_query(self.landing_taxonomy)}' in parents and trashed=false"
+        query = f"'{_escape_query(self.landing_taxonomy)}' in parents and trashed=false"
+        files: list[dict[str, Any]] = []
+        token = None
+        while True:
+            args: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+            }
+            if token:
+                args["pageToken"] = token
+            with DRIVE_LOCK:
+                response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
+            files.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                break
+        matches = [
+            item for item in files
+            if (item.get("appProperties") or {}).get("sha256") == self.release_id
+            and (item.get("appProperties") or {}).get("kind") == "taxonomy"
+        ]
+        if len(matches) != 1:
+            raise DBWLandingIncompleteError(
+                f"Expected one taxonomy object for catalogue {self.release_id}; found {len(matches)}."
+            )
+        item = matches[0]
         with DRIVE_LOCK:
-            files = self.storage.drive_service.files().list(q=query, fields="files(id, name)").execute().get("files", [])
-        if not files:
-            raise FileNotFoundError("indicators_tree.json not found in Landing taxonomy directory.")
-        
-        content = self.storage.drive_service.files().get_media(fileId=files[0]["id"]).execute()
+            content = self.storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
+        if (
+            hashlib.sha256(content).hexdigest() != self.release_id
+            or hashlib.md5(content).hexdigest() != item.get("md5Checksum")
+            or len(content) != int(item.get("size", -1))
+        ):
+            raise DBWLandingIncompleteError("Bound DBW taxonomy bytes failed verification.")
         local_tree.write_bytes(content)
         return json.loads(content.decode("utf-8"))
 
@@ -188,7 +502,7 @@ class DBWBronzeLoader:
                         "taxonomy_path": cur_path,
                         "node_id": str(n["id"]) if n.get("id") else None,
                         "parent_id": str(n["parrent_id"]) if n.get("parrent_id") else None,
-                        "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+                        "processed_at_utc": self.processed_at_utc,
                     })
                 if "children" in n and n["children"]:
                     walk(n["children"], cur_area, cur_domain, cur_path)
@@ -204,7 +518,11 @@ class DBWBronzeLoader:
         con.close()
         return out_path
 
-    def build_metadata_table(self, sample_ids: set[int] | None = None) -> Path:
+    def build_metadata_table(
+        self,
+        sample_ids: set[int] | None = None,
+        allowed_names: set[str] | None = None,
+    ) -> Path:
         """Parse metryka CSVs into br_dbw_metadata Parquet table."""
         query = f"'{_escape_query(self.landing_metadata)}' in parents and name contains 'metryka' and trashed=false"
         token = None
@@ -220,6 +538,12 @@ class DBWBronzeLoader:
                 break
 
         logger.info(f"Found {len(met_files)} metryka CSV files in Landing metadata.")
+        if allowed_names is not None:
+            met_files = [item for item in met_files if item.get("name") in allowed_names]
+            if len(met_files) != len(allowed_names):
+                raise DBWLandingIncompleteError(
+                    "DBW Landing metadata objects do not match the bound completion receipts."
+                )
         if sample_ids is not None:
             met_files = [
                 f for f in met_files
@@ -253,7 +577,7 @@ class DBWBronzeLoader:
                     "data_source": entry.get("temat_badanie", "").strip(),
                     "legal_basis": entry.get("tytul_akt", "").strip(),
                     "last_update": entry.get("aktualizacja_ostatnia", "").strip(),
-                    "processed_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "processed_at_utc": self.processed_at_utc,
                 }
             except Exception as exc:
                 logger.warning(f"Error processing metryka file {mf['name']}: {exc}")
@@ -288,6 +612,16 @@ def main():
 
     sm = StorageManager()
     loader = DBWBronzeLoader(workspace=args.workspace, storage=sm, allow_codespace=args.allow_codespace)
+    completion = loader.require_complete_landing()
+    loader.bind_release(completion)
+    args.workspace = loader.workspace
+    release_receipts = loader.load_release_receipts(completion)
+    logger.info(
+        "Verified complete DBW Landing catalogue: %s/%s indicators; Bronze release %s.",
+        completion["completed_indicators"],
+        completion["catalogue_indicators"],
+        loader.release_id,
+    )
 
     # 1. Discover Bulk Archives in Landing
     logger.info("=== Discovering Bulk Archives in Landing ===")
@@ -304,6 +638,12 @@ def main():
         if not token:
             break
     logger.info(f"Discovered {len(all_zips)} bulk zip files in Landing.")
+    all_zips = [item for item in all_zips if item.get("name") in release_receipts["bulk_names"]]
+    if len(all_zips) != len(release_receipts["bulk_names"]):
+        raise DBWLandingIncompleteError(
+            "DBW Landing bulk objects do not match the bound completion receipts."
+        )
+    logger.info(f"Bound {len(all_zips)} bulk zip files to Bronze release {loader.release_id}.")
 
     from collections import defaultdict
     zips_by_indicator: dict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -326,10 +666,12 @@ def main():
     sample_set = set(targets) if (args.indicator_ids or args.sample_indicators) else None
     logger.info(f"Targeting {len(targets)} indicators for Bronze processing.")
 
-    # 2. Build Taxonomy Table (Skip if already on Drive/local)
+    # 2. Build or restore release-bound Taxonomy Table
     tax_parquet = args.workspace / "br_dbw_indicators.parquet"
-    if tax_parquet.is_file() and tax_parquet.stat().st_size > 1000:
-        logger.info(f"Phase A: Reusing existing {tax_parquet.name} ({tax_parquet.stat().st_size} bytes).")
+    if _restore_verified_drive_file(
+        sm, name=tax_parquet.name, parent_id=loader.bronze_tax, local_path=tax_parquet
+    ):
+        logger.info(f"Phase A: Restored verified {tax_parquet.name} from release {loader.release_id}.")
     else:
         logger.info("=== Phase A: Building br_dbw_indicators (Taxonomy) ===")
         tax_parquet = loader.build_taxonomy_table()
@@ -338,13 +680,18 @@ def main():
         )
         logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
 
-    # 3. Build Metadata Table (Skip if already on Drive/local)
+    # 3. Build or restore release-bound Metadata Table
     met_parquet = args.workspace / "br_dbw_metadata.parquet"
-    if met_parquet.is_file() and met_parquet.stat().st_size > 1000:
-        logger.info(f"Phase B: Reusing existing {met_parquet.name} ({met_parquet.stat().st_size} bytes).")
+    if _restore_verified_drive_file(
+        sm, name=met_parquet.name, parent_id=loader.bronze_met, local_path=met_parquet
+    ):
+        logger.info(f"Phase B: Restored verified {met_parquet.name} from release {loader.release_id}.")
     else:
         logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
-        met_parquet = loader.build_metadata_table(sample_ids=sample_set)
+        met_parquet = loader.build_metadata_table(
+            sample_ids=sample_set,
+            allowed_names=release_receipts["metadata_names"],
+        )
         met_res = _upload_file_to_drive(
             sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
         )
@@ -387,11 +734,8 @@ def main():
                 break
     logger.info(f"Discovered {len(existing_obs_files)} existing observation partitions on Drive.")
 
-    # Clean up obsolete pilot file if present
-    if "part_1_6.parquet" in existing_obs_files:
-        with DRIVE_LOCK:
-            sm.drive_service.files().delete(fileId=existing_obs_files["part_1_6.parquet"]["id"]).execute()
-        existing_obs_files.pop("part_1_6.parquet", None)
+    # Historical pilot objects are retained. Cleanup is a separate, explicitly
+    # authorized lifecycle operation and never belongs in a Bronze build.
 
     total_obs_rows = 0
     cp_path = args.workspace / "checkpoint.json"
@@ -534,7 +878,7 @@ def main():
                                     TRY_CAST(id_flaga AS INTEGER),
                                     '{fname}' as raw_archive_file,
                                     TRY_CAST(rowNumber AS BIGINT),
-                                    CURRENT_TIMESTAMP::VARCHAR
+                                    '{loader.processed_at_utc}'
                                 FROM read_csv('{csv_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
                             """)
                             os.remove(csv_path)
@@ -553,7 +897,7 @@ def main():
                                     TRIM(nazwa_slownika),
                                     TRY_CAST(id_elementu AS BIGINT),
                                     TRIM(opis),
-                                    CURRENT_TIMESTAMP::VARCHAR
+                                    '{loader.processed_at_utc}'
                                 FROM read_csv('{dict_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
                                 WHERE id_elementu IS NOT NULL
                             """)
@@ -591,6 +935,7 @@ def main():
         if completed_indicators % 5 == 0 or idx == total_targets:
             cp_data = {
                 "source_id": "gus_dbw_bronze",
+                "release_id": loader.release_id,
                 "total_indicators": total_targets,
                 "completed_indicators": completed_indicators,
                 "total_observations_rows": total_obs_rows,
@@ -601,8 +946,24 @@ def main():
             cp_bytes = json.dumps(cp_data, indent=2).encode("utf-8")
             cp_path = args.workspace / "checkpoint.json"
             cp_path.write_bytes(cp_bytes)
-            _upload_file_to_drive(sm, cp_path, name="checkpoint.json", parent_id=loader.bronze_control, mime_type="application/json")
-            _upload_file_to_drive(sm, cp_path, name="checkpoint.json", parent_id=loader.campaign_control, mime_type="application/json")
+            checkpoint_sha = hashlib.sha256(cp_bytes).hexdigest()
+            checkpoint_name = (
+                f"checkpoint-{completed_indicators:06d}-{checkpoint_sha[:16]}.json"
+            )
+            _upload_file_to_drive(
+                sm,
+                cp_path,
+                name=checkpoint_name,
+                parent_id=loader.bronze_control,
+                mime_type="application/json",
+            )
+            _upload_file_to_drive(
+                sm,
+                cp_path,
+                name=checkpoint_name,
+                parent_id=loader.campaign_control,
+                mime_type="application/json",
+            )
 
     # Final dictionary consolidation
     dict_parts = list(dict_dir.glob("dict_*.parquet"))

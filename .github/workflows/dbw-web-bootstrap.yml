@@ -20,7 +20,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: zohelo-pipeline-gus_dbw_web
+  # Share the provider lane with the existing DBW campaign. Web and API
+  # transports must never become concurrent production writers.
+  group: zohelo-pipeline-gus_dbw
   cancel-in-progress: false
 
 jobs:
