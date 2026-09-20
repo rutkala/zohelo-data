@@ -39,16 +39,18 @@ Bronze path could start on the currently available subset, delete a retained pil
 an existing stable-name object before a replacement was proven, and let a metadata-only DBW run
 create the same completion-shaped checkpoint used by bulk collection. The BDL proxy call also broke
 five established adaptive-runner regressions. The repair now preserves every prior object, makes
-Landing folder resolution read-only, admits only v2 full-bulk indicator receipts, publishes a
+Landing folder resolution read-only, admits only v3 full-bulk indicator receipts, publishes a
 checksum-bound catalogue completion record only when every discovered indicator reconciles, and
 requires that record before DBW Bronze starts. Metadata-only runs remain explicitly incomplete;
 provider revisions are retained under content-addressed native names and every indicator receipt is
-bound to the exact catalogue hash. Bronze validates those receipts and writes into a separate
+bound to the exact catalogue hash plus each native object's Drive ID, byte size, MD5 and SHA-256.
+Bronze verifies the downloaded bytes again before parsing, rejects sampled or indicator-selected
+publication into the complete release, and writes into a separate
 `02_bronze/gus_dbw/releases/<catalogue_sha256>/` namespace, so the earlier partial files cannot be
 silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
 on a fresh runner without depending on disposable local files.
 launchers refuse to kill or duplicate an already running local writer (including the later BDL-only
-launcher); DBW Web shares the existing
+launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
 DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while
 configured workers still receive their assigned proxy.
 

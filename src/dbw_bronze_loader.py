@@ -83,6 +83,18 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
+def _verify_native_bytes(content: bytes, descriptor: dict[str, Any]) -> None:
+    """Verify downloaded Landing bytes against the identity-bound receipt."""
+    if (
+        len(content) != descriptor["size"]
+        or hashlib.sha256(content).hexdigest() != descriptor["sha256"]
+        or hashlib.md5(content).hexdigest() != descriptor["md5"]
+    ):
+        raise DBWLandingIncompleteError(
+            f"DBW Landing object failed byte verification: {descriptor['name']}"
+        )
+
+
 def _upload_file_to_drive(
     storage: StorageManager,
     local_path: Path,
@@ -198,6 +210,18 @@ def validate_landing_completion(document: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(tree_sha, str) or len(tree_sha) != 64:
         raise DBWLandingIncompleteError("DBW Landing completion has no valid catalogue SHA-256.")
     return document
+
+
+def validate_full_release_selection(
+    sample_indicators: int | None,
+    indicator_ids: list[int] | None,
+) -> None:
+    """Reject ad-hoc subsets that could masquerade as an immutable production release."""
+    if sample_indicators is not None or indicator_ids:
+        raise ValueError(
+            "Partial DBW Bronze selections are not permitted in the complete production release. "
+            "Use the resumable full-catalogue run instead."
+        )
 
 
 def _resolve_existing_folder(storage: StorageManager, name: str, parent_id: str) -> str:
@@ -332,8 +356,41 @@ class DBWBronzeLoader:
             ["_control"], root_id=self.release_root, write_session=self.session
         )
 
-    def load_release_receipts(self, completion: dict[str, Any]) -> dict[str, set[Any]]:
+    def load_release_receipts(self, completion: dict[str, Any]) -> dict[str, Any]:
         """Verify every per-indicator receipt and return its exact native membership."""
+        def list_folder(parent_id: str) -> dict[str, dict[str, Any]]:
+            folder_query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
+            objects: dict[str, dict[str, Any]] = {}
+            page_token = None
+            while True:
+                list_args: dict[str, Any] = {
+                    "q": folder_query,
+                    "spaces": "drive",
+                    "pageSize": 1000,
+                    "fields": (
+                        "nextPageToken,files("
+                        "id,name,size,md5Checksum,appProperties,trashed)"
+                    ),
+                }
+                if page_token:
+                    list_args["pageToken"] = page_token
+                with DRIVE_LOCK:
+                    page = self.storage.drive_service.files().list(
+                        **list_args
+                    ).execute(num_retries=4)
+                for obj in page.get("files", []):
+                    object_id = obj.get("id")
+                    if not isinstance(object_id, str) or not object_id or object_id in objects:
+                        raise DBWLandingIncompleteError(
+                            "DBW Landing contains an invalid or duplicated Drive object identity."
+                        )
+                    objects[object_id] = obj
+                page_token = page.get("nextPageToken")
+                if not page_token:
+                    return objects
+
+        metadata_objects = list_folder(self.landing_metadata)
+        bulk_objects = list_folder(self.landing_bulk)
         query = f"'{_escape_query(self.landing_checkpoints)}' in parents and trashed=false"
         token = None
         files: list[dict[str, Any]] = []
@@ -355,13 +412,14 @@ class DBWBronzeLoader:
 
         catalogue_sha = completion["catalogue_sha256"]
         indicator_ids: set[int] = set()
-        metadata_names: set[str] = set()
-        bulk_names: set[str] = set()
+        metadata_members: dict[str, dict[str, Any]] = {}
+        bulk_members: dict[str, dict[str, Any]] = {}
+        bound_object_ids: set[str] = set()
         for item in files:
             props = item.get("appProperties") or {}
             if (
                 props.get("catalogue_sha256") != catalogue_sha
-                or props.get("checkpoint_schema") != "2"
+                or props.get("checkpoint_schema") != "3"
                 or props.get("checkpoint_status") != "completed"
                 or props.get("bulk_complete") != "true"
                 or props.get("metadata_complete") != "true"
@@ -385,7 +443,9 @@ class DBWBronzeLoader:
                 raise DBWLandingIncompleteError("DBW indicator receipt is not valid JSON.") from exc
             indicator_id = receipt.get("indicator_id")
             if (
-                receipt.get("catalogue_sha256") != catalogue_sha
+                receipt.get("schema_version") != 3
+                or receipt.get("record_type") != "gus_dbw_indicator_completion"
+                or receipt.get("catalogue_sha256") != catalogue_sha
                 or receipt.get("status") != "completed"
                 or receipt.get("bulk_complete") is not True
                 or receipt.get("metadata_complete") is not True
@@ -395,27 +455,68 @@ class DBWBronzeLoader:
                 raise DBWLandingIncompleteError("DBW indicator receipts do not form a unique complete catalogue.")
             indicator_ids.add(indicator_id)
             landed_names = receipt.get("files_landed", [])
-            if not isinstance(landed_names, list):
-                raise DBWLandingIncompleteError("DBW indicator receipt has no valid file membership.")
-            receipt_metadata_names = [
-                name for name in landed_names
-                if isinstance(name, str) and name.startswith("metryka_") and name.endswith(".csv")
-            ]
-            receipt_aggregate_names = [
-                name for name in landed_names
-                if isinstance(name, str) and name.startswith("aggregates_") and name.endswith(".json")
-            ]
-            if len(receipt_metadata_names) != 1 or len(receipt_aggregate_names) != 1:
+            landed_objects = receipt.get("landed_objects")
+            if not isinstance(landed_names, list) or not isinstance(landed_objects, list):
+                raise DBWLandingIncompleteError(
+                    "DBW indicator receipt has no verifiable native object membership."
+                )
+            roles: list[str] = []
+            object_names: list[str] = []
+            for descriptor in landed_objects:
+                if not isinstance(descriptor, dict):
+                    raise DBWLandingIncompleteError(
+                        "DBW indicator receipt contains an invalid native object descriptor."
+                    )
+                object_id = descriptor.get("id")
+                name = descriptor.get("name")
+                size = descriptor.get("size")
+                sha256_hex = descriptor.get("sha256")
+                md5_hex = descriptor.get("md5")
+                role = descriptor.get("role")
+                if (
+                    not isinstance(object_id, str)
+                    or not object_id
+                    or not isinstance(name, str)
+                    or not name
+                    or not isinstance(size, int)
+                    or size < 0
+                    or not isinstance(sha256_hex, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", sha256_hex) is None
+                    or not isinstance(md5_hex, str)
+                    or re.fullmatch(r"[0-9a-f]{32}", md5_hex) is None
+                    or role not in {"aggregates", "metryka", "bulk_zip"}
+                    or object_id in bound_object_ids
+                ):
+                    raise DBWLandingIncompleteError(
+                        "DBW indicator receipt contains an invalid or duplicated native identity."
+                    )
+                source_objects = bulk_objects if role == "bulk_zip" else metadata_objects
+                actual = source_objects.get(object_id)
+                if (
+                    actual is None
+                    or actual.get("name") != name
+                    or int(actual.get("size", -1)) != size
+                    or actual.get("md5Checksum") != md5_hex
+                    or (actual.get("appProperties") or {}).get("sha256") != sha256_hex
+                ):
+                    raise DBWLandingIncompleteError(
+                        f"DBW receipt/native object mismatch for indicator {indicator_id}: {name}"
+                    )
+                roles.append(role)
+                object_names.append(name)
+                bound_object_ids.add(object_id)
+                if role == "metryka":
+                    metadata_members[object_id] = descriptor
+                elif role == "bulk_zip":
+                    bulk_members[object_id] = descriptor
+            if sorted(landed_names) != sorted(object_names):
+                raise DBWLandingIncompleteError(
+                    "DBW indicator receipt file names do not match its native object descriptors."
+                )
+            if roles.count("metryka") != 1 or roles.count("aggregates") != 1:
                 raise DBWLandingIncompleteError(
                     "Each completed DBW indicator receipt must bind one aggregate and one metryka file."
                 )
-            for name in landed_names:
-                if not isinstance(name, str):
-                    raise DBWLandingIncompleteError("DBW indicator receipt contains an invalid file name.")
-                if name.startswith("metryka_") and name.endswith(".csv"):
-                    metadata_names.add(name)
-                elif name.endswith(".zip"):
-                    bulk_names.add(name)
 
         if len(indicator_ids) != completion["catalogue_indicators"]:
             raise DBWLandingIncompleteError(
@@ -423,8 +524,8 @@ class DBWBronzeLoader:
             )
         return {
             "indicator_ids": indicator_ids,
-            "metadata_names": metadata_names,
-            "bulk_names": bulk_names,
+            "metadata_members": metadata_members,
+            "bulk_members": bulk_members,
         }
 
     def load_taxonomy_tree(self) -> list[dict[str, Any]]:
@@ -520,8 +621,7 @@ class DBWBronzeLoader:
 
     def build_metadata_table(
         self,
-        sample_ids: set[int] | None = None,
-        allowed_names: set[str] | None = None,
+        allowed_objects: dict[str, dict[str, Any]] | None = None,
     ) -> Path:
         """Parse metryka CSVs into br_dbw_metadata Parquet table."""
         query = f"'{_escape_query(self.landing_metadata)}' in parents and name contains 'metryka' and trashed=false"
@@ -538,58 +638,53 @@ class DBWBronzeLoader:
                 break
 
         logger.info(f"Found {len(met_files)} metryka CSV files in Landing metadata.")
-        if allowed_names is not None:
-            met_files = [item for item in met_files if item.get("name") in allowed_names]
-            if len(met_files) != len(allowed_names):
+        if allowed_objects is not None:
+            met_files = [item for item in met_files if item.get("id") in allowed_objects]
+            if len(met_files) != len(allowed_objects):
                 raise DBWLandingIncompleteError(
                     "DBW Landing metadata objects do not match the bound completion receipts."
                 )
-        if sample_ids is not None:
-            met_files = [
-                f for f in met_files
-                if f["name"].replace("metryka_", "").replace(".csv", "").isdigit()
-                and int(f["name"].replace("metryka_", "").replace(".csv", "")) in sample_ids
-            ]
-            logger.info(f"Filtered to {len(met_files)} sample metryka files.")
 
-        def download_and_parse(mf: dict[str, Any]) -> dict[str, Any] | None:
-            try:
-                with DRIVE_LOCK:
-                    content = self.storage.drive_service.files().get_media(fileId=mf["id"]).execute()
-                text = content.decode("utf-8-sig", errors="replace")
-                lines = text.splitlines()
-                if len(lines) < 2:
-                    return None
-                reader = csv.reader(io.StringIO(text), delimiter=";", quotechar='"')
-                headers = next(reader)
-                vals = next(reader)
-                entry = {headers[i]: vals[i] if i < len(vals) else "" for i in range(len(headers))}
-                iid_str = entry.get("id_zmienna", "").strip()
-                if not iid_str.isdigit():
-                    return None
-                return {
-                    "indicator_id": int(iid_str),
-                    "metric_name": entry.get("nazwa", "").strip(),
-                    "metric_name_en": entry.get("nazwa_ang", "").strip(),
-                    "description": entry.get("definicja_pojecie", "").strip(),
-                    "frequency": entry.get("nazwa_czestotliwosc", "").strip(),
-                    "measure_unit": entry.get("nazwa_jednostki", "").strip(),
-                    "data_source": entry.get("temat_badanie", "").strip(),
-                    "legal_basis": entry.get("tytul_akt", "").strip(),
-                    "last_update": entry.get("aktualizacja_ostatnia", "").strip(),
-                    "processed_at_utc": self.processed_at_utc,
-                }
-            except Exception as exc:
-                logger.warning(f"Error processing metryka file {mf['name']}: {exc}")
-                return None
+        def download_and_parse(mf: dict[str, Any]) -> dict[str, Any]:
+            with DRIVE_LOCK:
+                content = self.storage.drive_service.files().get_media(
+                    fileId=mf["id"]
+                ).execute(num_retries=4)
+            if allowed_objects is not None:
+                _verify_native_bytes(content, allowed_objects[mf["id"]])
+            text = content.decode("utf-8-sig")
+            lines = text.splitlines()
+            if len(lines) < 2:
+                raise DBWLandingIncompleteError(
+                    f"DBW metryka object has no data row: {mf['name']}"
+                )
+            reader = csv.reader(io.StringIO(text), delimiter=";", quotechar='"')
+            headers = next(reader)
+            vals = next(reader)
+            entry = {headers[i]: vals[i] if i < len(vals) else "" for i in range(len(headers))}
+            iid_str = entry.get("id_zmienna", "").strip()
+            if not iid_str.isdigit():
+                raise DBWLandingIncompleteError(
+                    f"DBW metryka object has no valid indicator identity: {mf['name']}"
+                )
+            return {
+                "indicator_id": int(iid_str),
+                "metric_name": entry.get("nazwa", "").strip(),
+                "metric_name_en": entry.get("nazwa_ang", "").strip(),
+                "description": entry.get("definicja_pojecie", "").strip(),
+                "frequency": entry.get("nazwa_czestotliwosc", "").strip(),
+                "measure_unit": entry.get("nazwa_jednostki", "").strip(),
+                "data_source": entry.get("temat_badanie", "").strip(),
+                "legal_basis": entry.get("tytul_akt", "").strip(),
+                "last_update": entry.get("aktualizacja_ostatnia", "").strip(),
+                "processed_at_utc": self.processed_at_utc,
+            }
 
         rows: list[dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=8) as executor:
             futures = [executor.submit(download_and_parse, mf) for mf in met_files]
             for f in as_completed(futures):
-                res = f.result()
-                if res:
-                    rows.append(res)
+                rows.append(f.result())
 
         out_path = self.workspace / "br_dbw_metadata.parquet"
         con = duckdb.connect(":memory:")
@@ -609,6 +704,11 @@ def main():
     parser.add_argument("--indicator-ids", type=int, nargs="+", default=None, help="Specific indicator IDs to process")
     parser.add_argument("--skip-bulk", action="store_true", help="Only build taxonomy and metadata tables")
     args = parser.parse_args()
+
+    try:
+        validate_full_release_selection(args.sample_indicators, args.indicator_ids)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     sm = StorageManager()
     loader = DBWBronzeLoader(workspace=args.workspace, storage=sm, allow_codespace=args.allow_codespace)
@@ -638,8 +738,11 @@ def main():
         if not token:
             break
     logger.info(f"Discovered {len(all_zips)} bulk zip files in Landing.")
-    all_zips = [item for item in all_zips if item.get("name") in release_receipts["bulk_names"]]
-    if len(all_zips) != len(release_receipts["bulk_names"]):
+    all_zips = [
+        item for item in all_zips
+        if item.get("id") in release_receipts["bulk_members"]
+    ]
+    if len(all_zips) != len(release_receipts["bulk_members"]):
         raise DBWLandingIncompleteError(
             "DBW Landing bulk objects do not match the bound completion receipts."
         )
@@ -656,14 +759,7 @@ def main():
     known_indicators = sorted(zips_by_indicator.keys())
     logger.info(f"Grouped into {len(known_indicators)} distinct indicators.")
 
-    # Filter target indicators
     targets = known_indicators
-    if args.indicator_ids:
-        targets = [i for i in targets if i in args.indicator_ids]
-    elif args.sample_indicators:
-        targets = targets[:args.sample_indicators]
-
-    sample_set = set(targets) if (args.indicator_ids or args.sample_indicators) else None
     logger.info(f"Targeting {len(targets)} indicators for Bronze processing.")
 
     # 2. Build or restore release-bound Taxonomy Table
@@ -689,8 +785,7 @@ def main():
     else:
         logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
         met_parquet = loader.build_metadata_table(
-            sample_ids=sample_set,
-            allowed_names=release_receipts["metadata_names"],
+            allowed_objects=release_receipts["metadata_members"],
         )
         met_res = _upload_file_to_drive(
             sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
@@ -817,13 +912,14 @@ def main():
 
         # Download zip archives in parallel
         def fetch_zip(zf_meta):
-            try:
-                with DRIVE_LOCK:
-                    content = sm.drive_service.files().get_media(fileId=zf_meta["id"]).execute()
-                return zf_meta["name"], content
-            except Exception as exc:
-                logger.warning(f"Error fetching zip {zf_meta['name']}: {exc}")
-                return zf_meta["name"], None
+            with DRIVE_LOCK:
+                content = sm.drive_service.files().get_media(
+                    fileId=zf_meta["id"]
+                ).execute(num_retries=4)
+            _verify_native_bytes(
+                content, release_receipts["bulk_members"][zf_meta["id"]]
+            )
+            return zf_meta["name"], content
 
         with ThreadPoolExecutor(max_workers=6) as executor:
             download_futures = [executor.submit(fetch_zip, zf) for zf in zfiles]
@@ -831,8 +927,6 @@ def main():
             with tempfile.TemporaryDirectory() as tmpdir:
                 for future in as_completed(download_futures):
                     fname, content = future.result()
-                    if not content:
-                        continue
                     try:
                         zf = zipfile.ZipFile(io.BytesIO(content))
                         csv_names = [n for n in zf.namelist() if not "Slowniki" in n and n.endswith(".csv")]
@@ -903,7 +997,9 @@ def main():
                             """)
                             os.remove(dict_path)
                     except Exception as exc:
-                        logger.warning(f"Error processing {fname}: {exc}")
+                        raise DBWLandingIncompleteError(
+                            f"DBW bulk archive could not be parsed completely: {fname}"
+                        ) from exc
 
         obs_count = con.execute("SELECT count(*) FROM current_obs").fetchone()[0]
         dict_count = con.execute("SELECT count(*) FROM current_dict").fetchone()[0]

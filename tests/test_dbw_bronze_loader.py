@@ -17,7 +17,9 @@ from dbw_bronze_loader import (
     _require_production_context,
     _restore_verified_drive_file,
     _upload_file_to_drive,
+    _verify_native_bytes,
     validate_landing_completion,
+    validate_full_release_selection,
 )
 
 
@@ -57,6 +59,13 @@ class TestDBWBronzeLoader(unittest.TestCase):
         document["completed_indicators"] -= 1
         with self.assertRaises(DBWLandingIncompleteError):
             validate_landing_completion(document)
+
+    def test_partial_release_selection_is_rejected_before_writes(self):
+        validate_full_release_selection(None, None)
+        with self.assertRaisesRegex(ValueError, "complete production release"):
+            validate_full_release_selection(10, None)
+        with self.assertRaisesRegex(ValueError, "complete production release"):
+            validate_full_release_selection(None, [7, 8])
 
         document = self._completion()
         document["bulk_complete"] = False
@@ -100,47 +109,81 @@ class TestDBWBronzeLoader(unittest.TestCase):
             ))
             self.assertEqual(path.read_bytes(), raw)
 
-    def test_release_receipts_bind_exact_metadata_and_bulk_membership(self):
+    def _release_receipt_fixture(self, *, corrupt_native_size: bool = False):
         loader = object.__new__(DBWBronzeLoader)
         loader.landing_checkpoints = "checkpoints"
+        loader.landing_metadata = "metadata"
+        loader.landing_bulk = "bulk"
         loader.storage = MagicMock()
         catalogue_sha = "a" * 64
         receipts = []
-        files = []
+        receipt_files = []
+        metadata_files = []
+        bulk_files = []
         for indicator_id in (7, 8):
+            landed_objects = []
+            for role, name, folder_files in (
+                ("aggregates", f"aggregates_{indicator_id}_pl--sha256-{'d' * 64}.json", metadata_files),
+                ("metryka", f"metryka_{indicator_id}--sha256-{'b' * 64}.csv", metadata_files),
+                ("bulk_zip", f"{indicator_id}_history--sha256-{'c' * 64}.zip", bulk_files),
+            ):
+                raw_native = f"{role}-{indicator_id}".encode()
+                descriptor = {
+                    "id": f"{role}-{indicator_id}",
+                    "name": name,
+                    "size": len(raw_native),
+                    "sha256": hashlib.sha256(raw_native).hexdigest(),
+                    "md5": hashlib.md5(raw_native).hexdigest(),
+                    "role": role,
+                }
+                landed_objects.append(descriptor)
+                folder_files.append({
+                    "id": descriptor["id"],
+                    "name": name,
+                    "size": str(
+                        len(raw_native) + (1 if corrupt_native_size and role == "bulk_zip" and indicator_id == 8 else 0)
+                    ),
+                    "md5Checksum": descriptor["md5"],
+                    "appProperties": {"sha256": descriptor["sha256"]},
+                })
             document = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "record_type": "gus_dbw_indicator_completion",
                 "indicator_id": indicator_id,
                 "status": "completed",
                 "bulk_complete": True,
                 "metadata_complete": True,
                 "catalogue_sha256": catalogue_sha,
-                "files_landed": [
-                    f"aggregates_{indicator_id}_pl--sha256-{'d' * 64}.json",
-                    f"metryka_{indicator_id}--sha256-{'b' * 64}.csv",
-                    f"{indicator_id}_history--sha256-{'c' * 64}.zip",
-                ],
+                "files_landed": [item["name"] for item in landed_objects],
+                "landed_objects": landed_objects,
             }
             raw = json.dumps(document).encode()
             receipts.append(raw)
-            files.append({
+            receipt_files.append({
                 "id": f"receipt-{indicator_id}",
-                "name": f"completed-v2-{indicator_id}.json",
+                "name": f"completed-v3-{indicator_id}.json",
                 "size": str(len(raw)),
                 "md5Checksum": hashlib.md5(raw).hexdigest(),
                 "appProperties": {
                     "sha256": hashlib.sha256(raw).hexdigest(),
                     "catalogue_sha256": catalogue_sha,
-                    "checkpoint_schema": "2",
+                    "checkpoint_schema": "3",
                     "checkpoint_status": "completed",
                     "bulk_complete": "true",
                     "metadata_complete": "true",
                 },
             })
-        loader.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
-            "files": files
-        }
+        def list_response(**kwargs):
+            query = kwargs["q"]
+            if "'metadata' in parents" in query:
+                files = metadata_files
+            elif "'bulk' in parents" in query:
+                files = bulk_files
+            else:
+                files = receipt_files
+            return MagicMock(execute=MagicMock(return_value={"files": files}))
+
+        loader.storage.drive_service.files.return_value.list.side_effect = list_response
         media = loader.storage.drive_service.files.return_value.get_media
         media.side_effect = [
             MagicMock(execute=MagicMock(return_value=receipts[0])),
@@ -149,10 +192,42 @@ class TestDBWBronzeLoader(unittest.TestCase):
         completion = self._completion()
         completion["catalogue_indicators"] = 2
         completion["completed_indicators"] = 2
+        return loader, completion
+
+    def test_release_receipts_bind_exact_native_object_identities(self):
+        loader, completion = self._release_receipt_fixture()
         bound = loader.load_release_receipts(completion)
         self.assertEqual(bound["indicator_ids"], {7, 8})
-        self.assertEqual(len(bound["metadata_names"]), 2)
-        self.assertEqual(len(bound["bulk_names"]), 2)
+        self.assertEqual(set(bound["metadata_members"]), {"metryka-7", "metryka-8"})
+        self.assertEqual(set(bound["bulk_members"]), {"bulk_zip-7", "bulk_zip-8"})
+
+    def test_native_bytes_are_verified_before_parsing(self):
+        raw = b"native bytes"
+        descriptor = {
+            "name": "7_history.zip",
+            "size": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "md5": hashlib.md5(raw).hexdigest(),
+        }
+        _verify_native_bytes(raw, descriptor)
+        with self.assertRaisesRegex(DBWLandingIncompleteError, "byte verification"):
+            _verify_native_bytes(raw + b" changed", descriptor)
+
+    def test_release_receipt_rejects_native_identity_mismatch(self):
+        loader, completion = self._release_receipt_fixture(corrupt_native_size=True)
+        with self.assertRaisesRegex(DBWLandingIncompleteError, "receipt/native object mismatch"):
+            loader.load_release_receipts(completion)
+
+    def test_local_launchers_verify_background_lock_acquisition(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        for relative in (
+            "scripts/run_dbw_bronze.sh",
+            "scripts/run_bdl_web.sh",
+            "scripts/run_full_gus_parallel.sh",
+        ):
+            script = (repo_root / relative).read_text(encoding="utf-8")
+            self.assertIn("kill -0", script, relative)
+            self.assertNotIn("pkill", script, relative)
 
     def test_bronze_release_is_namespaced_by_catalogue_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

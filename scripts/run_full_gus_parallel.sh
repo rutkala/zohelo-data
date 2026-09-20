@@ -5,6 +5,23 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+verify_background_started() {
+  local pid="$1"
+  local label="$2"
+  local log_file="$3"
+  local status
+  sleep 1
+  if ! kill -0 "${pid}" 2>/dev/null; then
+    if wait "${pid}"; then
+      status=1
+    else
+      status=$?
+    fi
+    echo "${label} did not stay active; it may have lost the runner lock. See ${log_file}." >&2
+    return "${status}"
+  fi
+}
+
 echo "=== 1. Checking and activating 10 WireGuard proxy tunnels ==="
 python3 "${REPO_ROOT}/scripts/multi_vpn_manager.py"
 
@@ -23,6 +40,7 @@ else
     --summary portal/test-results/dbw-web-bulk/dbw-summary.json \
     --concurrency 10 --max-seconds 86400 > "${DBW_DIR}/dbw_extractor.log" 2>&1 < /dev/null &
   DBW_PID=$!
+  verify_background_started "${DBW_PID}" "GUS DBW" "${DBW_DIR}/dbw_extractor.log"
   echo "GUS DBW started with PID ${DBW_PID}. Logs: ${DBW_DIR}/dbw_extractor.log"
 fi
 
@@ -36,12 +54,13 @@ else
     --allow-codespace --concurrency 10 --max-seconds 86400 \
     > "${BDL_DIR}/bdl_extractor.log" 2>&1 < /dev/null &
   BDL_PID=$!
+  verify_background_started "${BDL_PID}" "GUS BDL" "${BDL_DIR}/bdl_extractor.log"
   echo "GUS BDL started with PID ${BDL_PID}. Logs: ${BDL_DIR}/bdl_extractor.log"
 fi
 
 echo ""
 echo "=== Summary ==="
-echo "Both pipelines are now actively ingesting concurrently:"
+echo "Both pipelines are active or were already active:"
 echo "  * DBW: 10 concurrent workers -> 10 Polish IPs"
 echo "  * BDL: 10 concurrent workers -> 10 Polish IPs"
 echo "Monitor live logs with:"

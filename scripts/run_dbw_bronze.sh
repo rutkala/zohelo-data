@@ -24,4 +24,15 @@ nohup flock -n "${OUT_DIR}/runner.lock" \
   >> "${LOG_FILE}" 2>&1 < /dev/null &
 RUNNER_PID=$!
 
+sleep 1
+if ! kill -0 "${RUNNER_PID}" 2>/dev/null; then
+  if wait "${RUNNER_PID}"; then
+    START_STATUS=1
+  else
+    START_STATUS=$?
+  fi
+  echo "DBW Bronze Loader did not stay active; it may have lost the runner lock. See ${LOG_FILE}." >&2
+  exit "${START_STATUS}"
+fi
+
 echo "DBW Bronze Loader background session initiated with PID ${RUNNER_PID}."

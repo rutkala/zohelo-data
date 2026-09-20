@@ -99,24 +99,24 @@ class TestDbwWebExtractor(unittest.TestCase):
             self.assertEqual(extractor.bulk_dir, "folder_bulk")
             self.assertEqual(extractor.checkpoints_dir, "folder_checkpoints")
 
-    def test_only_v2_full_bulk_receipts_resume_an_indicator(self):
+    def test_only_v3_identity_bound_bulk_receipts_resume_an_indicator(self):
         extractor = object.__new__(DbwWebExtractor)
         extractor.checkpoints_dir = "checkpoints"
         extractor.storage = MagicMock()
         extractor.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
             "files": [
                 {"name": "12.json", "appProperties": {}},
-                {"name": "partial-v2-13.json", "appProperties": {
-                    "checkpoint_schema": "2", "checkpoint_status": "metadata_only",
+                {"name": "partial-v3-13.json", "appProperties": {
+                    "checkpoint_schema": "3", "checkpoint_status": "metadata_only",
                     "bulk_complete": "false", "metadata_complete": "true",
                 }},
-                {"name": "completed-v2-14.json", "appProperties": {
-                    "checkpoint_schema": "2", "checkpoint_status": "completed",
+                {"name": "completed-v3-14.json", "appProperties": {
+                    "checkpoint_schema": "3", "checkpoint_status": "completed",
                     "bulk_complete": "true", "metadata_complete": "true",
                     "catalogue_sha256": "a" * 64,
                 }},
-                {"name": "completed-v2-15.json", "appProperties": {
-                    "checkpoint_schema": "2", "checkpoint_status": "completed",
+                {"name": "completed-v3-15.json", "appProperties": {
+                    "checkpoint_schema": "3", "checkpoint_status": "completed",
                     "bulk_complete": "true", "metadata_complete": "true",
                     "catalogue_sha256": "b" * 64,
                 }},
@@ -150,9 +150,14 @@ class TestDbwWebExtractor(unittest.TestCase):
     @patch("dbw_web_extractor._http_get")
     def test_metadata_only_run_cannot_create_full_completion_receipt(self, mock_get, mock_upload):
         mock_get.side_effect = [b'{}', b'id_zmienna;nazwa\n7;Test\n']
-        mock_upload.side_effect = lambda _storage, data, **kwargs: {
-            "id": "id", "name": kwargs["name"], "size": len(data), "reused": False
-        }
+        def upload_result(_storage, data, **kwargs):
+            sha, md5 = _hash_bytes(data)
+            return {
+                "id": f"id-{kwargs['name']}", "name": kwargs["name"],
+                "size": len(data), "sha256": sha, "md5": md5, "reused": False,
+            }
+
+        mock_upload.side_effect = upload_result
         extractor = object.__new__(DbwWebExtractor)
         extractor.storage = MagicMock()
         extractor.proxy = None
@@ -163,7 +168,7 @@ class TestDbwWebExtractor(unittest.TestCase):
             {"id": 7, "name": "Test indicator"}, skip_bulk_zips=True
         )
         self.assertEqual(result["status"], "metadata_only")
-        self.assertEqual(mock_upload.call_args.kwargs["name"], "partial-v2-7.json")
+        self.assertEqual(mock_upload.call_args.kwargs["name"], "partial-v3-7.json")
         self.assertEqual(mock_upload.call_args.kwargs["extra_properties"]["bulk_complete"], "false")
         self.assertEqual(mock_upload.call_args.kwargs["extra_properties"]["catalogue_sha256"], "a" * 64)
 

@@ -397,12 +397,12 @@ class DbwWebExtractor:
             for f in response.get("files", []):
                 name = f.get("name", "")
                 match = re.fullmatch(
-                    r"completed-v2-(\d+)(?:--sha256-[0-9a-f]{64})?\.json", name
+                    r"completed-v3-(\d+)(?:--sha256-[0-9a-f]{64})?\.json", name
                 )
                 props = f.get("appProperties") or {}
                 if (
                     match
-                    and props.get("checkpoint_schema") == "2"
+                    and props.get("checkpoint_schema") == "3"
                     and props.get("checkpoint_status") == "completed"
                     and props.get("bulk_complete") == "true"
                     and props.get("metadata_complete") == "true"
@@ -427,9 +427,21 @@ class DbwWebExtractor:
             "indicator_id": ind_id,
             "name": indicator["name"],
             "files_landed": [],
+            "landed_objects": [],
             "new_bytes": 0,
             "status": "pending",
         }
+
+        def retain_object(upload: dict[str, Any], role: str) -> None:
+            result["files_landed"].append(upload["name"])
+            result["landed_objects"].append({
+                "id": upload["id"],
+                "name": upload["name"],
+                "size": upload["size"],
+                "sha256": upload["sha256"],
+                "md5": upload["md5"],
+                "role": role,
+            })
 
         # 1. Fetch and land aggregates metadata (PL)
         agg_url = f"{AGGREGATES_URL}?id={ind_id}&czy_pl=true"
@@ -442,7 +454,7 @@ class DbwWebExtractor:
             kind="metadata",
             mime_type="application/json",
         )
-        result["files_landed"].append(agg_res["name"])
+        retain_object(agg_res, "aggregates")
         if not agg_res["reused"]:
             result["new_bytes"] += agg_res["size"]
 
@@ -457,7 +469,7 @@ class DbwWebExtractor:
             kind="metadata",
             mime_type="text/csv",
         )
-        result["files_landed"].append(met_res["name"])
+        retain_object(met_res, "metryka")
         if not met_res["reused"]:
             result["new_bytes"] += met_res["size"]
 
@@ -492,7 +504,7 @@ class DbwWebExtractor:
                             kind="bulk_zip",
                             mime_type="application/zip",
                         )
-                        result["files_landed"].append(zip_res["name"])
+                        retain_object(zip_res, "bulk_zip")
                         if not zip_res["reused"]:
                             result["new_bytes"] += zip_res["size"]
                         # Clean up temporary local file after verified Drive upload
@@ -504,7 +516,7 @@ class DbwWebExtractor:
         # 4. Record either a full-bulk completion receipt or an explicit partial receipt.
         result["status"] = "metadata_only" if skip_bulk_zips else "completed"
         checkpoint_data = {
-            "schema_version": 2,
+            "schema_version": 3,
             "record_type": "gus_dbw_indicator_completion",
             "indicator_id": ind_id,
             "name": indicator["name"],
@@ -514,11 +526,12 @@ class DbwWebExtractor:
             "catalogue_sha256": self.catalogue_sha256,
             "expected_bulk_files": sorted(set(expected_bulk_files)),
             "files_landed": result["files_landed"],
+            "landed_objects": result["landed_objects"],
             "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         cp_bytes = json.dumps(checkpoint_data, ensure_ascii=False, indent=2).encode("utf-8")
         checkpoint_name = (
-            f"partial-v2-{ind_id}.json" if skip_bulk_zips else f"completed-v2-{ind_id}.json"
+            f"partial-v3-{ind_id}.json" if skip_bulk_zips else f"completed-v3-{ind_id}.json"
         )
         _upload_bytes(
             self.storage,
@@ -528,7 +541,7 @@ class DbwWebExtractor:
             kind="checkpoint",
             mime_type="application/json",
             extra_properties={
-                "checkpoint_schema": "2",
+                "checkpoint_schema": "3",
                 "checkpoint_status": result["status"],
                 "bulk_complete": str(not skip_bulk_zips).lower(),
                 "metadata_complete": "true",
