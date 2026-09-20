@@ -163,9 +163,9 @@ def restore_dbw_release(
         item for item in inventories["dictionaries"]
         if re.fullmatch(r"dict_\d+\.parquet", item.get("name", ""))
     ]
-    if len({item["name"] for item in observations}) != completed:
+    if len(observations) != completed or len({item["name"] for item in observations}) != completed:
         raise RuntimeError("Remote DBW observation partitions do not reconcile completion.")
-    if len({item["name"] for item in dictionary_parts}) != completed:
+    if len(dictionary_parts) != completed or len({item["name"] for item in dictionary_parts}) != completed:
         raise RuntimeError("Remote DBW dictionary partitions do not reconcile completion.")
     if marker.get("observation_inventory_sha256") != _inventory_sha256(
         {item["name"] for item in observations}

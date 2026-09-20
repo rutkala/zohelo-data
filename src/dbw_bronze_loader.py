@@ -363,6 +363,7 @@ class DBWBronzeLoader:
         self.storage = storage
         self.allow_codespace = allow_codespace
         self.writer_lease_claim: str | None = None
+        self.writer_lease_owner: str | None = None
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
@@ -413,7 +414,7 @@ class DBWBronzeLoader:
             if not token:
                 return files
 
-    def acquire_writer_lease(self) -> str:
+    def _create_writer_lease_claim(self, owner_id: str) -> str:
         claim_id = str(uuid.uuid4())
         acquired = datetime.now(timezone.utc)
         expires = acquired + timedelta(seconds=BRONZE_LEASE_SECONDS)
@@ -421,6 +422,7 @@ class DBWBronzeLoader:
             "schema_version": 1,
             "record_type": "gus_dbw_bronze_writer_lease",
             "source_id": "gus_dbw",
+            "owner_id": owner_id,
             "claim_id": claim_id,
             "acquired_at_utc": acquired.isoformat(),
             "expires_at_utc": expires.isoformat(),
@@ -433,13 +435,20 @@ class DBWBronzeLoader:
             parent_id=self.landing_control,
             properties={
                 "record_type": "gus_dbw_bronze_writer_lease",
+                "owner_id": owner_id,
                 "claim_id": claim_id,
                 "expires_at_utc": expires.isoformat(),
             },
         )
+        return claim_id
+
+    def acquire_writer_lease(self) -> str:
+        owner_id = str(uuid.uuid4())
+        claim_id = self._create_writer_lease_claim(owner_id)
+        self.writer_lease_owner = owner_id
         self.writer_lease_claim = claim_id
         try:
-            self._verify_writer_lease(claim_id)
+            self._verify_writer_lease(owner_id)
         except BaseException:
             try:
                 self.release_writer_lease()
@@ -448,7 +457,7 @@ class DBWBronzeLoader:
             raise
         return claim_id
 
-    def _verify_writer_lease(self, claim_id: str) -> None:
+    def _verify_writer_lease(self, owner_id: str) -> None:
         time.sleep(BRONZE_LEASE_SETTLE_SECONDS)
         files = self._list_landing_control()
         released = {
@@ -458,13 +467,15 @@ class DBWBronzeLoader:
             == "gus_dbw_bronze_writer_lease_release"
         }
         now = datetime.now(timezone.utc)
-        active: list[tuple[datetime, str]] = []
+        active_by_owner: dict[str, datetime] = {}
         for item in files:
             props = item.get("appProperties") or {}
             candidate = props.get("claim_id")
+            candidate_owner = props.get("owner_id") or candidate
             if (
                 props.get("record_type") != "gus_dbw_bronze_writer_lease"
                 or not isinstance(candidate, str)
+                or not isinstance(candidate_owner, str)
                 or candidate in released
             ):
                 continue
@@ -474,14 +485,35 @@ class DBWBronzeLoader:
             except (AttributeError, TypeError, ValueError):
                 continue
             if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
-                active.append((created, candidate))
-        if not active or min(active)[1] != claim_id:
+                prior = active_by_owner.get(candidate_owner)
+                if prior is None or created < prior:
+                    active_by_owner[candidate_owner] = created
+        if not active_by_owner or min(
+            (created, candidate_owner)
+            for candidate_owner, created in active_by_owner.items()
+        )[1] != owner_id:
             raise RuntimeError("Another host holds the durable DBW Bronze writer lease.")
 
-    def release_writer_lease(self) -> None:
-        claim_id = self.writer_lease_claim
-        if not claim_id:
-            return
+    def renew_writer_lease(self) -> str:
+        """Publish a successor claim for the same elected owner before finalization."""
+        owner_id = self.writer_lease_owner
+        old_claim = self.writer_lease_claim
+        if not owner_id or not old_claim:
+            raise RuntimeError("Cannot renew an unheld DBW Bronze writer lease.")
+        new_claim = self._create_writer_lease_claim(owner_id)
+        try:
+            self._verify_writer_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_writer_claim(new_claim)
+            except Exception:
+                pass
+            raise
+        self.writer_lease_claim = new_claim
+        self._release_writer_claim(old_claim)
+        return new_claim
+
+    def _release_writer_claim(self, claim_id: str) -> None:
         document = {
             "schema_version": 1,
             "record_type": "gus_dbw_bronze_writer_lease_release",
@@ -500,7 +532,14 @@ class DBWBronzeLoader:
                 "released_claim_id": claim_id,
             },
         )
+
+    def release_writer_lease(self) -> None:
+        claim_id = self.writer_lease_claim
+        if not claim_id:
+            return
+        self._release_writer_claim(claim_id)
         self.writer_lease_claim = None
+        self.writer_lease_owner = None
 
     def require_complete_landing(self) -> dict[str, Any]:
         """Fail closed unless the Web bulk writer exhausted and reconciled its catalogue."""
@@ -1421,6 +1460,16 @@ def main():
                     mime_type="application/json",
                 )
 
+        if completed_indicators != total_targets:
+            raise RuntimeError(
+                "DBW Bronze session ended before every indicator was processed; "
+                "resume the same release before finalization."
+            )
+
+        # Whole-release reconciliation can outlast one indicator; renew first so
+        # finalization receives a fresh full lease window without changing owner.
+        loader.renew_writer_lease()
+
         # Restore every persisted dictionary partition before deterministic consolidation.
         token = None
         remote_dict_parts: list[dict[str, Any]] = []
@@ -1486,8 +1535,6 @@ def main():
         )
         logger.info(f"Uploaded consolidated br_dbw_dictionaries.parquet ({dict_res['size']} bytes).")
 
-        if completed_indicators != total_targets:
-            raise RuntimeError("DBW Bronze cannot complete before every indicator is processed.")
         final_obs: list[dict[str, Any]] = []
         token = None
         while True:

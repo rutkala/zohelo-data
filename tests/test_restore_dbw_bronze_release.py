@@ -41,6 +41,8 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
         self.assertIn("hashlib.sha256(raw)", source)
         self.assertIn('os.replace(staging, target)', source)
         self.assertIn('"02_bronze" / "gus_dbw" / "releases"', source)
+        self.assertIn("len(observations) != completed", source)
+        self.assertIn("len(dictionary_parts) != completed", source)
 
 
 if __name__ == "__main__":

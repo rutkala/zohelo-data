@@ -134,6 +134,29 @@ class TestDBWBronzeLoader(unittest.TestCase):
             mock_upload.call_args_list[-1].kwargs["properties"]["released_claim_id"], own
         )
 
+    def test_bronze_writer_lease_renews_same_owner_before_finalization(self):
+        loader = object.__new__(DBWBronzeLoader)
+        loader.writer_lease_owner = "owner"
+        loader.writer_lease_claim = "old"
+        with patch.object(loader, "_create_writer_lease_claim", return_value="new") as create, \
+             patch.object(loader, "_verify_writer_lease") as verify, \
+             patch.object(loader, "_release_writer_claim") as release:
+            self.assertEqual(loader.renew_writer_lease(), "new")
+        create.assert_called_once_with("owner")
+        verify.assert_called_once_with("owner")
+        release.assert_called_once_with("old")
+        self.assertEqual(loader.writer_lease_claim, "new")
+
+    def test_incomplete_session_stops_before_lease_renewal_and_finalization(self):
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "dbw_bronze_loader.py"
+        ).read_text(encoding="utf-8")
+        incomplete_gate = source.index("if completed_indicators != total_targets:")
+        renewal = source.index("loader.renew_writer_lease()", incomplete_gate)
+        consolidation = source.index("# Restore every persisted dictionary partition", renewal)
+        self.assertLess(incomplete_gate, renewal)
+        self.assertLess(renewal, consolidation)
+
     def test_verified_remote_output_is_restored_on_fresh_runner(self):
         raw = b"verified parquet bytes"
         storage = MagicMock()
