@@ -26,6 +26,11 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
             "dictionary_partitions": 2,
             "observation_inventory_sha256": "a" * 64,
             "dictionary_inventory_sha256": "b" * 64,
+            "observation_content_inventory_sha256": "c" * 64,
+            "dictionary_content_inventory_sha256": "d" * 64,
+            "taxonomy_sha256": "e" * 64,
+            "metadata_sha256": "f" * 64,
+            "consolidated_dictionary_sha256": "0" * 64,
         }
         self.assertEqual(
             MODULE._completion(json.dumps(marker).encode(), release_id), marker
@@ -43,6 +48,9 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
         self.assertIn('"02_bronze" / "gus_dbw" / "releases"', source)
         self.assertIn("len(observations) != completed", source)
         self.assertIn("len(dictionary_parts) != completed", source)
+        self.assertIn("observation_content_inventory_sha256", source)
+        self.assertIn("dictionary_content_inventory_sha256", source)
+        self.assertIn("consolidated_dictionary_sha256", source)
 
 
 if __name__ == "__main__":

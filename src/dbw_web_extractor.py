@@ -50,6 +50,8 @@ SNAPSHOT_LEASE_RELEASE_PREFIX = "native-snapshot-lease-release-v1"
 SNAPSHOT_LEASE_SECONDS = 6 * 60 * 60
 SNAPSHOT_LEASE_SAFETY_SECONDS = 60 * 60
 SNAPSHOT_LEASE_SETTLE_SECONDS = 2
+DEFAULT_EXTRACTION_SECONDS = 3 * 60 * 60 + 30 * 60
+FINALIZATION_DEADLINE_SECONDS = 5 * 60 * 60
 
 
 def _require_production_context(allow_codespace: bool = False) -> None:
@@ -391,26 +393,31 @@ class DbwWebExtractor:
         self.catalogue_sha256: str | None = None
         self.native_snapshot_id: str | None = None
         self.native_snapshot_lease_claim: str | None = None
+        self.native_snapshot_lease_owner: str | None = None
+        self.native_snapshot_lease_claims: set[str] = set()
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
         self.landing_root = storage.resolve_zone("landing", create=False)
         self.control_root = storage.resolve_zone("control", create=False)
 
-        # Build folder hierarchy according to ADR 0009 & DBW contract
-        self.dbw_landing = storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.landing_root, write_session=self.session)
-        self.native_root = storage.get_or_create_nested_folder(["native"], root_id=self.dbw_landing, write_session=self.session)
-        self.taxonomy_dir = storage.get_or_create_nested_folder(["taxonomy"], root_id=self.native_root, write_session=self.session)
-        self.metadata_dir = storage.get_or_create_nested_folder(["metadata"], root_id=self.native_root, write_session=self.session)
-        self.bulk_dir = storage.get_or_create_nested_folder(["bulk"], root_id=self.native_root, write_session=self.session)
-        self.hvd_dir = storage.get_or_create_nested_folder(["hvd"], root_id=self.native_root, write_session=self.session)
+    def prepare_write_paths(self) -> None:
+        """Create Landing paths only after winning the source-wide control-root lease."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW Landing write paths require the durable writer lease.")
+        self.dbw_landing = self.storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.landing_root, write_session=self.session)
+        self.native_root = self.storage.get_or_create_nested_folder(["native"], root_id=self.dbw_landing, write_session=self.session)
+        self.taxonomy_dir = self.storage.get_or_create_nested_folder(["taxonomy"], root_id=self.native_root, write_session=self.session)
+        self.metadata_dir = self.storage.get_or_create_nested_folder(["metadata"], root_id=self.native_root, write_session=self.session)
+        self.bulk_dir = self.storage.get_or_create_nested_folder(["bulk"], root_id=self.native_root, write_session=self.session)
+        self.hvd_dir = self.storage.get_or_create_nested_folder(["hvd"], root_id=self.native_root, write_session=self.session)
 
-        self.control_landing = storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_landing, write_session=self.session)
-        self.checkpoints_dir = storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
-        self.campaign_control = storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
+        self.control_landing = self.storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_landing, write_session=self.session)
+        self.checkpoints_dir = self.storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
+        self.campaign_control = self.storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
 
-    def _list_landing_control(self) -> list[dict[str, Any]]:
-        query = f"'{_escape_query(self.control_landing)}' in parents and trashed=false"
+    def _list_control(self, parent_id: str) -> list[dict[str, Any]]:
+        query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
         files: list[dict[str, Any]] = []
         token = None
         while True:
@@ -429,8 +436,10 @@ class DbwWebExtractor:
             if not token:
                 return files
 
-    def acquire_native_snapshot_lease(self, catalogue_sha256: str) -> str:
-        """Elect one durable Drive-backed snapshot writer across all hosts."""
+    def _list_landing_control(self) -> list[dict[str, Any]]:
+        return self._list_control(self.control_landing)
+
+    def _create_native_snapshot_lease_claim(self, owner_id: str, catalogue_sha256: str) -> str:
         claim_id = str(uuid.uuid4())
         acquired_at = datetime.now(timezone.utc)
         expires_at = acquired_at + timedelta(seconds=SNAPSHOT_LEASE_SECONDS)
@@ -439,6 +448,7 @@ class DbwWebExtractor:
             "record_type": "gus_dbw_native_snapshot_lease",
             "source_id": "gus_dbw",
             "catalogue_sha256": catalogue_sha256,
+            "owner_id": owner_id,
             "claim_id": claim_id,
             "acquired_at_utc": acquired_at.isoformat(),
             "expires_at_utc": expires_at.isoformat(),
@@ -450,19 +460,28 @@ class DbwWebExtractor:
             self.storage,
             raw,
             name=f"{SNAPSHOT_LEASE_PREFIX}-{catalogue_sha256}-{claim_id}.json",
-            parent_id=self.control_landing,
+            parent_id=self.control_root,
             kind="snapshot_lease",
             mime_type="application/json",
             extra_properties={
                 "record_type": "gus_dbw_native_snapshot_lease",
                 "catalogue_sha256": catalogue_sha256,
+                "owner_id": owner_id,
                 "claim_id": claim_id,
                 "expires_at_utc": expires_at.isoformat(),
             },
         )
+        return claim_id
+
+    def acquire_native_snapshot_lease(self, catalogue_sha256: str) -> str:
+        """Elect one durable Drive-backed snapshot writer across all hosts."""
+        owner_id = str(uuid.uuid4())
+        claim_id = self._create_native_snapshot_lease_claim(owner_id, catalogue_sha256)
+        self.native_snapshot_lease_owner = owner_id
         self.native_snapshot_lease_claim = claim_id
+        self.native_snapshot_lease_claims.add(claim_id)
         try:
-            self._verify_native_snapshot_lease(claim_id)
+            self._verify_native_snapshot_lease(owner_id)
         except BaseException:
             try:
                 self.release_native_snapshot_lease()
@@ -471,10 +490,10 @@ class DbwWebExtractor:
             raise
         return claim_id
 
-    def _verify_native_snapshot_lease(self, claim_id: str) -> None:
+    def _verify_native_snapshot_lease(self, owner_id: str) -> None:
         """Verify one source-wide claim; callers tombstone it on every failure."""
         time.sleep(SNAPSHOT_LEASE_SETTLE_SECONDS)
-        files = self._list_landing_control()
+        files = self._list_control(self.control_root)
         released = {
             (item.get("appProperties") or {}).get("released_claim_id")
             for item in files
@@ -482,13 +501,15 @@ class DbwWebExtractor:
             == "gus_dbw_native_snapshot_lease_release"
         }
         now = datetime.now(timezone.utc)
-        active: list[tuple[datetime, str]] = []
+        active_by_owner: dict[str, datetime] = {}
         for item in files:
             props = item.get("appProperties") or {}
             candidate = props.get("claim_id")
+            candidate_owner = props.get("owner_id") or candidate
             if (
                 props.get("record_type") != "gus_dbw_native_snapshot_lease"
                 or not isinstance(candidate, str)
+                or not isinstance(candidate_owner, str)
                 or candidate in released
             ):
                 continue
@@ -498,17 +519,42 @@ class DbwWebExtractor:
             except (AttributeError, TypeError, ValueError):
                 continue
             if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
-                active.append((created, candidate))
-        if not active or min(active)[1] != claim_id:
+                prior = active_by_owner.get(candidate_owner)
+                if prior is None or created < prior:
+                    active_by_owner[candidate_owner] = created
+        if not active_by_owner or min(
+            (created, candidate_owner)
+            for candidate_owner, created in active_by_owner.items()
+        )[1] != owner_id:
             raise RuntimeError(
                 "Another DBW writer holds the durable native-snapshot lease; retry after it releases or expires."
             )
 
-    def release_native_snapshot_lease(self) -> None:
-        """Close this writer claim with an immutable tombstone; source data is untouched."""
-        claim_id = self.native_snapshot_lease_claim
-        if not claim_id:
-            return
+    def renew_native_snapshot_lease(self) -> str:
+        """Give the elected owner a fresh lease window before catalogue finalization."""
+        owner_id = self.native_snapshot_lease_owner
+        old_claim = self.native_snapshot_lease_claim
+        if not owner_id or not old_claim or not self.catalogue_sha256:
+            raise RuntimeError("Cannot renew an unheld DBW native-snapshot lease.")
+        new_claim = self._create_native_snapshot_lease_claim(owner_id, self.catalogue_sha256)
+        self.native_snapshot_lease_claims.add(new_claim)
+        try:
+            self._verify_native_snapshot_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_native_snapshot_claim(new_claim)
+                self.native_snapshot_lease_claims.discard(new_claim)
+            except Exception:
+                pass
+            raise
+        self.native_snapshot_lease_claim = new_claim
+        self._release_native_snapshot_claim(old_claim)
+        self.native_snapshot_lease_claims.discard(old_claim)
+        return new_claim
+
+    def _release_native_snapshot_claim(self, claim_id: str) -> None:
+        """Publish one immutable source-wide release tombstone."""
+
         released_at = datetime.now(timezone.utc).isoformat()
         document = {
             "schema_version": 1,
@@ -524,7 +570,7 @@ class DbwWebExtractor:
             self.storage,
             raw,
             name=f"{SNAPSHOT_LEASE_RELEASE_PREFIX}-{claim_id}.json",
-            parent_id=self.control_landing,
+            parent_id=self.control_root,
             kind="snapshot_lease_release",
             mime_type="application/json",
             extra_properties={
@@ -532,7 +578,30 @@ class DbwWebExtractor:
                 "released_claim_id": claim_id,
             },
         )
+
+    def release_native_snapshot_lease(self) -> None:
+        """Close every live writer claim; source data is untouched."""
+        if not self.native_snapshot_lease_claims:
+            return
+        failures: list[tuple[str, Exception]] = []
+        for claim_id in sorted(self.native_snapshot_lease_claims):
+            try:
+                self._release_native_snapshot_claim(claim_id)
+            except Exception as exc:
+                failures.append((claim_id, exc))
+            else:
+                self.native_snapshot_lease_claims.discard(claim_id)
+        if failures:
+            if self.native_snapshot_lease_claim not in self.native_snapshot_lease_claims:
+                self.native_snapshot_lease_claim = next(
+                    iter(self.native_snapshot_lease_claims), None
+                )
+            raise RuntimeError(
+                "Failed to release every durable DBW native-snapshot claim: "
+                + ", ".join(claim_id for claim_id, _ in failures)
+            ) from failures[0][1]
         self.native_snapshot_lease_claim = None
+        self.native_snapshot_lease_owner = None
 
     def start_or_resume_native_snapshot(self, catalogue_sha256: str) -> str:
         """Resume one durable full refresh, or start the next after completion."""
@@ -593,7 +662,7 @@ class DbwWebExtractor:
         self.native_snapshot_id = snapshot_id
         return snapshot_id
 
-    def fetch_indicators_tree(self, *, land: bool = True) -> list[dict[str, Any]]:
+    def fetch_indicators_tree(self, *, land: bool = False) -> list[dict[str, Any]]:
         """Fetch the full indicator tree, optionally deferring its first Drive mutation."""
         print("Fetching DBW indicators tree from Web UI...")
         tree_bytes = _http_get(TREE_URL, timeout=30, proxy=self.proxy)
@@ -609,6 +678,8 @@ class DbwWebExtractor:
 
     def land_indicators_tree(self, tree_bytes: bytes) -> None:
         """Land already-fetched taxonomy bytes after the durable writer election."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW taxonomy publication requires the durable writer lease.")
         res = _upload_bytes(
             self.storage,
             tree_bytes,
@@ -646,14 +717,26 @@ class DbwWebExtractor:
         return [indicators[k] for k in sorted(indicators)]
 
     def load_completed_checkpoints(
-        self, catalogue_sha256: str, native_snapshot_id: str
+        self,
+        catalogue_sha256: str,
+        native_snapshot_id: str,
+        *,
+        deadline_monotonic: float | None = None,
     ) -> dict[int, str]:
         """Revalidate full-bulk receipts and their exact native objects before resume."""
+        def require_time() -> None:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                raise RuntimeError(
+                    "DBW catalogue verification reached its bounded finalization deadline; "
+                    "resume before publishing completion."
+                )
+
         def list_objects(parent_id: str) -> dict[str, dict[str, Any]]:
             folder_query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
             objects: dict[str, dict[str, Any]] = {}
             page_token = None
             while True:
+                require_time()
                 kwargs: dict[str, Any] = {
                     "q": folder_query,
                     "spaces": "drive",
@@ -679,6 +762,7 @@ class DbwWebExtractor:
         completed: dict[int, str] = {}
         token = None
         while True:
+            require_time()
             args: dict[str, Any] = {
                 "q": query,
                 "spaces": "drive",
@@ -709,6 +793,7 @@ class DbwWebExtractor:
                     and re.fullmatch(r"[0-9a-f]{64}", membership)
                 ):
                     indicator_id = int(match.group(1))
+                    require_time()
                     with DRIVE_LOCK:
                         raw = self.storage.drive_service.files().get_media(
                             fileId=f["id"]
@@ -848,7 +933,9 @@ class DbwWebExtractor:
                 expected_bulk_files = _discover_bulk_filenames(agg_bytes)
                 for filename in expected_bulk_files:
                     zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
-                    local_zip = self.workspace / f"worker_{ind_id}_{filename}"
+                    snapshot_workspace = self.workspace / "snapshots" / self.native_snapshot_id
+                    snapshot_workspace.mkdir(parents=True, exist_ok=True)
+                    local_zip = snapshot_workspace / f"worker_{ind_id}_{filename}"
                     # Download if not present locally
                     if not local_zip.exists() or local_zip.stat().st_size == 0:
                         zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
@@ -981,7 +1068,10 @@ class DbwWebExtractor:
 def main():
     parser = argparse.ArgumentParser(description="GUS DBW Web bulk extractor")
     parser.add_argument("--workspace", default="portal/test-results/dbw-web-bulk", help="Local workspace directory")
-    parser.add_argument("--max-seconds", type=int, default=18000, help="Maximum execution seconds")
+    parser.add_argument(
+        "--max-seconds", type=int, default=DEFAULT_EXTRACTION_SECONDS,
+        help="Maximum indicator-scheduling seconds before bounded finalization",
+    )
     parser.add_argument("--concurrency", type=int, default=1, help="Concurrent workers")
     parser.add_argument("--proxies", type=str, default=None, help="Comma-separated list of proxy URLs (e.g. http://127.0.0.1:8081)")
     parser.add_argument("--max-indicators", type=int, default=None, help="Limit number of indicators to extract")
@@ -997,6 +1087,7 @@ def main():
         )
 
     start_time = time.time()
+    finalization_deadline = time.monotonic() + FINALIZATION_DEADLINE_SECONDS
     workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -1047,10 +1138,13 @@ def main():
     extractor.catalogue_sha256 = catalogue_sha256
     extractor.acquire_native_snapshot_lease(catalogue_sha256)
     try:
+        extractor.prepare_write_paths()
         extractor.land_indicators_tree((workspace / "indicators_tree.json").read_bytes())
         native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
         completed_memberships = extractor.load_completed_checkpoints(
-            catalogue_sha256, native_snapshot_id
+            catalogue_sha256,
+            native_snapshot_id,
+            deadline_monotonic=finalization_deadline,
         )
         completed_ids = set(completed_memberships)
         print(f"Native refresh snapshot: {native_snapshot_id}")
@@ -1087,6 +1181,12 @@ def main():
                     proxy=p,
                 )
             )
+            for attr in (
+                "dbw_landing", "native_root", "taxonomy_dir", "metadata_dir",
+                "bulk_dir", "hvd_dir", "control_landing", "checkpoints_dir",
+                "campaign_control",
+            ):
+                setattr(worker_extractors[-1], attr, getattr(extractor, attr))
             worker_extractors[-1].catalogue_sha256 = catalogue_sha256
             worker_extractors[-1].native_snapshot_id = native_snapshot_id
 
@@ -1146,8 +1246,11 @@ def main():
                     break
                 process_item((i, ind))
 
+        extractor.renew_native_snapshot_lease()
         verified_memberships = extractor.load_completed_checkpoints(
-            catalogue_sha256, native_snapshot_id
+            catalogue_sha256,
+            native_snapshot_id,
+            deadline_monotonic=finalization_deadline,
         )
         verified_completed_ids = set(verified_memberships)
         catalogue_ids = catalogue_indicator_ids

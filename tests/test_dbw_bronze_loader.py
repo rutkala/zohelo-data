@@ -373,7 +373,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
             self.assertIn("kill -0", script, relative)
             self.assertNotIn("pkill", script, relative)
         combined = (repo_root / "scripts/run_full_gus_parallel.sh").read_text(encoding="utf-8")
-        self.assertIn("--max-seconds 18000", combined)
+        self.assertIn("--max-seconds 12600", combined)
         loader_source = (repo_root / "src/dbw_bronze_loader.py").read_text(encoding="utf-8")
         self.assertIn('default=18000, help="Bound one resumable writer lease session"', loader_source)
 
@@ -390,6 +390,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
         self.assertIn("observation_partitions = completed_indicators", guard)
         self.assertIn("dictionary_partitions = completed_indicators", guard)
         self.assertIn("observation_inventory_sha256", guard)
+        self.assertIn("observation_content_inventory_sha256", guard)
+        self.assertIn("from read_blob(", guard)
         self.assertIn("from glob(", guard)
         for model_path in (repo_root / "models/bronze").glob("br_dbw_*.sql"):
             self.assertIn("assert_dbw_bronze_release()", model_path.read_text(encoding="utf-8"))
@@ -458,6 +460,12 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 release_root / "dictionaries/br_dbw_dictionaries.parquet",
                 release_root / "dictionaries/dict_7.parquet",
             )
+            observation_sha = hashlib.sha256(
+                (release_root / "observations/part_7.parquet").read_bytes()
+            ).hexdigest()
+            dictionary_sha = hashlib.sha256(
+                (release_root / "dictionaries/dict_7.parquet").read_bytes()
+            ).hexdigest()
             marker = {
                 "schema_version": 1,
                 "record_type": "gus_dbw_bronze_completion",
@@ -469,6 +477,19 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 "dictionary_partitions": 1,
                 "observation_inventory_sha256": hashlib.sha256(b"part_7.parquet").hexdigest(),
                 "dictionary_inventory_sha256": hashlib.sha256(b"dict_7.parquet").hexdigest(),
+                "observation_content_inventory_sha256": hashlib.sha256(
+                    f"part_7.parquet\0{observation_sha}".encode()
+                ).hexdigest(),
+                "dictionary_content_inventory_sha256": hashlib.sha256(
+                    f"dict_7.parquet\0{dictionary_sha}".encode()
+                ).hexdigest(),
+                "taxonomy_sha256": hashlib.sha256(
+                    (release_root / "taxonomy/br_dbw_indicators.parquet").read_bytes()
+                ).hexdigest(),
+                "metadata_sha256": hashlib.sha256(
+                    (release_root / "metadata/br_dbw_metadata.parquet").read_bytes()
+                ).hexdigest(),
+                "consolidated_dictionary_sha256": dictionary_sha,
             }
             (release_root / "_control" / f"bronze-complete-v1-{release_id}.json").write_text(
                 json.dumps(marker), encoding="utf-8"
@@ -492,6 +513,33 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            altered = release_root / "observations/altered.parquet"
+            con = duckdb.connect()
+            con.execute(f"""
+                COPY (
+                    SELECT * REPLACE (2.0::DOUBLE AS wartosc_numeric)
+                    FROM read_parquet('{release_root / 'observations/part_7.parquet'}')
+                ) TO '{altered}' (FORMAT PARQUET)
+            """)
+            con.close()
+            os.replace(altered, release_root / "observations/part_7.parquet")
+            tampered = subprocess.run(
+                [
+                    str(repo_root / ".venv/bin/dbt"), "build", "--profiles-dir", str(repo_root),
+                    "--project-dir", str(repo_root), "--select", "br_dbw_observations",
+                    "--vars", '{"enable_gus_dbw": true}',
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+            self.assertNotEqual(tampered.returncode, 0)
+            self.assertIn(
+                "Selected DBW Bronze release has no valid complete-snapshot marker",
+                tampered.stdout + tampered.stderr,
+            )
 
     def test_bronze_release_is_namespaced_by_native_snapshot_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

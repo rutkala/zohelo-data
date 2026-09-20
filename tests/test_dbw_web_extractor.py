@@ -160,6 +160,9 @@ class TestDbwWebExtractor(unittest.TestCase):
                 storage=mock_storage,
                 allow_codespace=True,
             )
+            mock_storage.get_or_create_nested_folder.assert_not_called()
+            extractor.native_snapshot_lease_claim = "claim"
+            extractor.prepare_write_paths()
             self.assertEqual(extractor.dbw_landing, "folder_gus_dbw")
             self.assertEqual(extractor.bulk_dir, "folder_bulk")
             self.assertEqual(extractor.checkpoints_dir, "folder_checkpoints")
@@ -284,9 +287,11 @@ class TestDbwWebExtractor(unittest.TestCase):
         self, mock_uuid, mock_upload, mock_sleep
     ):
         extractor = object.__new__(DbwWebExtractor)
-        extractor.control_landing = "control"
+        extractor.control_root = "control"
         extractor.storage = MagicMock()
         extractor.native_snapshot_lease_claim = None
+        extractor.native_snapshot_lease_owner = None
+        extractor.native_snapshot_lease_claims = set()
         own = "123e4567-e89b-42d3-a456-426614174000"
         other = "023e4567-e89b-42d3-a456-426614174000"
         mock_uuid.return_value = own
@@ -322,14 +327,71 @@ class TestDbwWebExtractor(unittest.TestCase):
         self, mock_upload, _mock_sleep
     ):
         extractor = object.__new__(DbwWebExtractor)
-        extractor.control_landing = "control"
+        extractor.control_root = "control"
         extractor.storage = MagicMock()
         extractor.native_snapshot_lease_claim = None
+        extractor.native_snapshot_lease_owner = None
+        extractor.native_snapshot_lease_claims = set()
         extractor.storage.drive_service.files.return_value.list.return_value.execute.side_effect = RuntimeError("transient")
         with self.assertRaisesRegex(RuntimeError, "transient"):
             extractor.acquire_native_snapshot_lease("a" * 64)
         self.assertEqual(mock_upload.call_count, 2)
         self.assertIsNone(extractor.native_snapshot_lease_claim)
+
+    def test_snapshot_lease_renewal_retains_claims_until_cleanup(self):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_lease_owner = "owner"
+        extractor.native_snapshot_lease_claim = "old"
+        extractor.native_snapshot_lease_claims = {"old"}
+        with patch.object(
+            extractor, "_create_native_snapshot_lease_claim", return_value="new"
+        ), patch.object(extractor, "_verify_native_snapshot_lease"), patch.object(
+            extractor,
+            "_release_native_snapshot_claim",
+            side_effect=[RuntimeError("transient"), None, None],
+        ) as release:
+            with self.assertRaisesRegex(RuntimeError, "transient"):
+                extractor.renew_native_snapshot_lease()
+            self.assertEqual(extractor.native_snapshot_lease_claims, {"old", "new"})
+            extractor.release_native_snapshot_lease()
+        self.assertEqual(release.call_count, 3)
+        self.assertEqual(extractor.native_snapshot_lease_claims, set())
+        self.assertIsNone(extractor.native_snapshot_lease_claim)
+
+    def test_bulk_zip_cache_is_namespaced_by_native_snapshot(self):
+        source = (Path(__file__).resolve().parents[1] / "src/dbw_web_extractor.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'self.workspace / "snapshots" / self.native_snapshot_id', source
+        )
+        self.assertNotIn('self.workspace / f"worker_{ind_id}_{filename}"', source)
+
+    @patch("dbw_web_extractor.time.monotonic", return_value=10.0)
+    def test_catalogue_verification_deadline_stops_before_drive_reads(self, _clock):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.storage = MagicMock()
+        extractor.metadata_dir = "metadata"
+        extractor.bulk_dir = "bulk"
+        extractor.checkpoints_dir = "checkpoints"
+        with self.assertRaisesRegex(RuntimeError, "bounded finalization deadline"):
+            extractor.load_completed_checkpoints(
+                "a" * 64, self.SNAPSHOT_ID, deadline_monotonic=10.0
+            )
+        extractor.storage.drive_service.files.return_value.list.assert_not_called()
+
+    def test_landing_finalization_renews_and_fits_actions_timeout(self):
+        repo = Path(__file__).resolve().parents[1]
+        source = (repo / "src/dbw_web_extractor.py").read_text(encoding="utf-8")
+        renewal = source.index("extractor.renew_native_snapshot_lease()")
+        final_scan = source.index("verified_memberships = extractor.load_completed_checkpoints", renewal)
+        self.assertLess(renewal, final_scan)
+        workflow = (repo / ".github/workflows/dbw-web-bootstrap.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("timeout-minutes: 360", workflow)
+        self.assertIn("--max-seconds 12600", workflow)
 
     @patch("dbw_web_extractor._find_exact_file")
     def test_changed_native_response_uses_content_addressed_revision(self, mock_find):

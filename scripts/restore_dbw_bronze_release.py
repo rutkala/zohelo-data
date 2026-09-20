@@ -114,6 +114,11 @@ def _completion(raw: bytes, release_id: str) -> dict[str, Any]:
         or document.get("dictionary_partitions") != completed
         or re.fullmatch(r"[0-9a-f]{64}", document.get("observation_inventory_sha256", "")) is None
         or re.fullmatch(r"[0-9a-f]{64}", document.get("dictionary_inventory_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("observation_content_inventory_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("dictionary_content_inventory_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("taxonomy_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("metadata_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("consolidated_dictionary_sha256", "")) is None
     ):
         raise RuntimeError("DBW Bronze completion marker does not reconcile all partitions.")
     return document
@@ -130,6 +135,17 @@ def _tree_sha256(root: Path) -> str:
 
 def _inventory_sha256(names: set[str]) -> str:
     return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
+
+
+def _content_inventory_sha256(items: list[dict[str, Any]]) -> str:
+    entries: list[str] = []
+    for item in items:
+        name = item.get("name")
+        digest = (item.get("appProperties") or {}).get("sha256")
+        if not isinstance(name, str) or re.fullmatch(r"[0-9a-f]{64}", digest or "") is None:
+            raise RuntimeError("Remote DBW partition lacks a verified content identity.")
+        entries.append(f"{name}\0{digest}")
+    return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
 
 
 def restore_dbw_release(
@@ -175,6 +191,25 @@ def restore_dbw_release(
         {item["name"] for item in dictionary_parts}
     ):
         raise RuntimeError("Remote DBW dictionary inventory hash does not reconcile completion.")
+    if marker.get("observation_content_inventory_sha256") != _content_inventory_sha256(
+        observations
+    ):
+        raise RuntimeError("Remote DBW observation content inventory does not reconcile completion.")
+    if marker.get("dictionary_content_inventory_sha256") != _content_inventory_sha256(
+        dictionary_parts
+    ):
+        raise RuntimeError("Remote DBW dictionary content inventory does not reconcile completion.")
+
+    fixed_items = {
+        "taxonomy_sha256": _unique(inventories["taxonomy"], "br_dbw_indicators.parquet"),
+        "metadata_sha256": _unique(inventories["metadata"], "br_dbw_metadata.parquet"),
+        "consolidated_dictionary_sha256": _unique(
+            inventories["dictionaries"], "br_dbw_dictionaries.parquet"
+        ),
+    }
+    for marker_field, item in fixed_items.items():
+        if marker.get(marker_field) != (item.get("appProperties") or {}).get("sha256"):
+            raise RuntimeError(f"Remote DBW {marker_field} does not reconcile completion.")
 
     target = data_root / "02_bronze" / "gus_dbw" / "releases" / release_id
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -186,12 +221,12 @@ def restore_dbw_release(
         for item in dictionary_parts:
             _download_verified(storage, item, staging / "dictionaries" / item["name"])
         fixed = (
-            ("taxonomy", "br_dbw_indicators.parquet"),
-            ("metadata", "br_dbw_metadata.parquet"),
-            ("dictionaries", "br_dbw_dictionaries.parquet"),
+            ("taxonomy", "br_dbw_indicators.parquet", "taxonomy_sha256"),
+            ("metadata", "br_dbw_metadata.parquet", "metadata_sha256"),
+            ("dictionaries", "br_dbw_dictionaries.parquet", "consolidated_dictionary_sha256"),
         )
-        for folder, name in fixed:
-            _download_verified(storage, _unique(inventories[folder], name), staging / folder / name)
+        for folder, name, marker_field in fixed:
+            _download_verified(storage, fixed_items[marker_field], staging / folder / name)
         (staging / "_control").mkdir(parents=True, exist_ok=True)
         (staging / "_control" / marker_name).write_bytes(marker_raw)
 

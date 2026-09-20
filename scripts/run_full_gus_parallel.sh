@@ -38,7 +38,7 @@ else
     .venv/bin/python src/dbw_web_extractor.py --allow-codespace \
     --workspace portal/test-results/dbw-web-bulk \
     --summary portal/test-results/dbw-web-bulk/dbw-summary.json \
-    --concurrency 10 --max-seconds 18000 > "${DBW_DIR}/dbw_extractor.log" 2>&1 < /dev/null &
+    --concurrency 10 --max-seconds 12600 > "${DBW_DIR}/dbw_extractor.log" 2>&1 < /dev/null &
   DBW_PID=$!
   verify_background_started "${DBW_PID}" "GUS DBW" "${DBW_DIR}/dbw_extractor.log"
   echo "GUS DBW started with PID ${DBW_PID}. Logs: ${DBW_DIR}/dbw_extractor.log"

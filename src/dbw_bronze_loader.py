@@ -146,6 +146,17 @@ def _inventory_sha256(names: set[str]) -> str:
     return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
 
 
+def _content_inventory_sha256(items: list[dict[str, Any]]) -> str:
+    entries: list[str] = []
+    for item in items:
+        name = item.get("name")
+        digest = (item.get("appProperties") or {}).get("sha256")
+        if not isinstance(name, str) or re.fullmatch(r"[0-9a-f]{64}", digest or "") is None:
+            raise RuntimeError("DBW partition content inventory lacks a verified identity.")
+        entries.append(f"{name}\0{digest}")
+    return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
+
+
 def _validate_parquet_indicator_coverage(
     path: Path, expected: set[int], label: str
 ) -> None:
@@ -1599,6 +1610,11 @@ def main():
             "dictionary_partitions": len(verified_dict_names),
             "observation_inventory_sha256": _inventory_sha256(verified_part_names),
             "dictionary_inventory_sha256": _inventory_sha256(verified_dict_names),
+            "observation_content_inventory_sha256": _content_inventory_sha256(part_items),
+            "dictionary_content_inventory_sha256": _content_inventory_sha256(remote_dict_parts),
+            "taxonomy_sha256": _hash_file(tax_parquet)[0],
+            "metadata_sha256": _hash_file(met_parquet)[0],
+            "consolidated_dictionary_sha256": _hash_file(dict_cons_path)[0],
             "processed_at_utc": loader.processed_at_utc,
         }
         completion_path = args.workspace / f"bronze-complete-v1-{loader.release_id}.json"

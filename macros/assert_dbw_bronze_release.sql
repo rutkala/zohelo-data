@@ -37,6 +37,32 @@
           select sha256(string_agg(regexp_extract(file, '[^/]+$'), chr(10) order by regexp_extract(file, '[^/]+$')))
           from glob('{{ release_root | replace("'", "''") }}/dictionaries/dict_*.parquet')
         )
+        and observation_content_inventory_sha256 = (
+          select sha256(string_agg(
+            regexp_extract(filename, '[^/]+$') || chr(0) || sha256(content),
+            chr(10) order by regexp_extract(filename, '[^/]+$')
+          ))
+          from read_blob('{{ release_root | replace("'", "''") }}/observations/part_*.parquet')
+        )
+        and dictionary_content_inventory_sha256 = (
+          select sha256(string_agg(
+            regexp_extract(filename, '[^/]+$') || chr(0) || sha256(content),
+            chr(10) order by regexp_extract(filename, '[^/]+$')
+          ))
+          from read_blob('{{ release_root | replace("'", "''") }}/dictionaries/dict_*.parquet')
+        )
+        and taxonomy_sha256 = (
+          select sha256(content)
+          from read_blob('{{ release_root | replace("'", "''") }}/taxonomy/br_dbw_indicators.parquet')
+        )
+        and metadata_sha256 = (
+          select sha256(content)
+          from read_blob('{{ release_root | replace("'", "''") }}/metadata/br_dbw_metadata.parquet')
+        )
+        and consolidated_dictionary_sha256 = (
+          select sha256(content)
+          from read_blob('{{ release_root | replace("'", "''") }}/dictionaries/br_dbw_dictionaries.parquet')
+        )
     {% endset %}
     {% set verification = run_query(verification_query) %}
     {% if verification.columns[0].values()[0] != 1 %}

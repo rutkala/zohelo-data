@@ -29,7 +29,7 @@ jobs:
   ingest_dbw_web:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -58,7 +58,7 @@ jobs:
           PYTHONPATH: src
           PYTHONUNBUFFERED: '1'
         run: |
-          args=(--workspace portal/test-results/dbw-web-bulk --concurrency "${{ inputs.concurrency || '3' }}" --summary dbw-summary.json)
+          args=(--workspace portal/test-results/dbw-web-bulk --concurrency "${{ inputs.concurrency || '3' }}" --max-seconds 12600 --summary dbw-summary.json)
           if [ -n "${{ inputs.max_indicators }}" ]; then
             args+=(--max-indicators "${{ inputs.max_indicators }}")
           fi

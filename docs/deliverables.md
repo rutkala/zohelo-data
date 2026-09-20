@@ -65,16 +65,21 @@ marker, exact observation/dictionary partition sets, taxonomy, metadata and cons
 from Drive into that local path, verifying size, MD5 and SHA-256 before an atomic directory rename.
 Native snapshot selection is protected across Actions and explicitly authorized hosts by a durable,
 source-wide expiring Drive lease with immutable acquisition/release records; losing election claims are
-tombstoned immediately, taxonomy is not uploaded until after election, and every exceptional exit
-releases through `finally`. The Bronze writer has the same cross-host protection before it creates
+tombstoned immediately, the lease is elected in the already-existing control root before any Landing
+folder or taxonomy mutation, and every exceptional exit releases through `finally`. Local ZIP resume
+files are isolated by native snapshot identity. Landing renews the same elected owner before its
+bounded whole-catalogue receipt sweep; Actions schedules indicators for at most 12,600 seconds and
+stops verification at five hours inside a six-hour job, leaving shutdown time for the release tombstone.
+The Bronze writer has the same cross-host protection before it creates
 or writes release paths, with both stages retaining a one-hour end-of-run lease margin, exceeding
 twice the measured 1,410-second largest-indicator transfer. Bronze publishes an immutable successor
 claim for the same elected owner before whole-release reconciliation, giving finalization a fresh
 six-hour window without opening a second-writer gap; both claims remain tracked until their individual
 release tombstones succeed, including a retry from the session `finally`. Resumed Landing receipts are re-read and reconciled to their exact native
 Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
-receipts (never provider filenames or untrusted CSV identity alone), while its completion marker and
-dbt guard bind the exact local observation and dictionary partition-name inventories.
+receipts (never provider filenames or untrusted CSV identity alone), while its completion marker,
+restore boundary and dbt guard bind both partition names and the SHA-256 of every local observation
+and dictionary partition, plus the taxonomy, metadata and consolidated dictionary files read by dbt.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
