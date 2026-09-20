@@ -60,17 +60,17 @@ sources:
         description: "GUS DBW Bronze observations partitioned by indicator."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/observations/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/observations/part_*.parquet', union_by_name = true)"
       - name: indicators
         description: "GUS DBW Bronze indicators taxonomy mapped to areas and domains."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/taxonomy/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/taxonomy/br_dbw_indicators.parquet', union_by_name = true)"
       - name: metadata
         description: "GUS DBW Bronze methodological metryka for indicators."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/metadata/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/metadata/br_dbw_metadata.parquet', union_by_name = true)"
       - name: dictionaries
         description: "GUS DBW Bronze dimension and element dictionaries."
         meta:

@@ -386,7 +386,13 @@ class TestDbwWebExtractor(unittest.TestCase):
         source = (repo / "src/dbw_web_extractor.py").read_text(encoding="utf-8")
         renewal = source.index("extractor.renew_native_snapshot_lease()")
         final_scan = source.index("verified_memberships = extractor.load_completed_checkpoints", renewal)
+        post_scan_deadline = source.index(
+            "if time.monotonic() >= finalization_deadline:", final_scan
+        )
+        publication = source.index("extractor.publish_catalogue_completion(", post_scan_deadline)
         self.assertLess(renewal, final_scan)
+        self.assertLess(final_scan, post_scan_deadline)
+        self.assertLess(post_scan_deadline, publication)
         workflow = (repo / ".github/workflows/dbw-web-bootstrap.yml").read_text(
             encoding="utf-8"
         )

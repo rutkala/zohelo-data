@@ -80,6 +80,8 @@ Drive objects before they count as complete. Bronze derives ZIP and metryka owne
 receipts (never provider filenames or untrusted CSV identity alone), while its completion marker,
 restore boundary and dbt guard bind both partition names and the SHA-256 of every local observation
 and dictionary partition, plus the taxonomy, metadata and consolidated dictionary files read by dbt.
+The dbt external sources use only those sealed filenames; additional Parquet files are not readable
+through the DBW source contract.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

@@ -383,6 +383,11 @@ class TestDBWBronzeLoader(unittest.TestCase):
         self.assertEqual(sources.count("ZOHELO_DBW_BRONZE_RELEASE_ID"), 4)
         self.assertNotIn("gus_dbw/observations/*.parquet", sources)
         self.assertIn("gus_dbw/releases/", sources)
+        self.assertIn("observations/part_*.parquet", sources)
+        self.assertIn("taxonomy/br_dbw_indicators.parquet", sources)
+        self.assertIn("metadata/br_dbw_metadata.parquet", sources)
+        self.assertNotIn("/taxonomy/*.parquet", sources)
+        self.assertNotIn("/metadata/*.parquet", sources)
         guard = (repo_root / "macros/assert_dbw_bronze_release.sql").read_text(
             encoding="utf-8"
         )

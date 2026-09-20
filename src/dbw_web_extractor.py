@@ -1252,6 +1252,11 @@ def main():
             native_snapshot_id,
             deadline_monotonic=finalization_deadline,
         )
+        if time.monotonic() >= finalization_deadline:
+            raise RuntimeError(
+                "DBW final receipt verification finished after its publication deadline; "
+                "resume before publishing completion."
+            )
         verified_completed_ids = set(verified_memberships)
         catalogue_ids = catalogue_indicator_ids
         catalogue_complete = (
