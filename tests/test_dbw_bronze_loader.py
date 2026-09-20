@@ -2,7 +2,9 @@
 import io
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import MagicMock
@@ -16,6 +18,7 @@ from dbw_bronze_loader import (
     DBWLandingIncompleteError,
     _require_production_context,
     _restore_verified_drive_file,
+    _has_integrity_metadata,
     _membership_sha256,
     _snapshot_sha256,
     _upload_file_to_drive,
@@ -114,6 +117,16 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 storage, name=path.name, parent_id="taxonomy", local_path=path
             ))
             self.assertEqual(path.read_bytes(), raw)
+
+    def test_resume_requires_both_verified_per_indicator_partitions(self):
+        valid = {
+            "size": "1001",
+            "md5Checksum": "a" * 32,
+            "appProperties": {"sha256": "b" * 64},
+        }
+        self.assertTrue(_has_integrity_metadata(valid, min_size=1000))
+        self.assertFalse(_has_integrity_metadata({**valid, "md5Checksum": ""}, min_size=1000))
+        self.assertFalse(_has_integrity_metadata(None, min_size=1000))
 
     def _release_receipt_fixture(self, *, corrupt_native_size: bool = False):
         loader = object.__new__(DBWBronzeLoader)
@@ -250,6 +263,114 @@ class TestDBWBronzeLoader(unittest.TestCase):
             script = (repo_root / relative).read_text(encoding="utf-8")
             self.assertIn("kill -0", script, relative)
             self.assertNotIn("pkill", script, relative)
+
+    def test_dbt_sources_require_explicit_snapshot_release(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        sources = (repo_root / "models/bronze/sources.yml").read_text(encoding="utf-8")
+        self.assertEqual(sources.count("ZOHELO_DBW_BRONZE_RELEASE_ID"), 4)
+        self.assertNotIn("gus_dbw/observations/*.parquet", sources)
+        self.assertIn("gus_dbw/releases/", sources)
+        guard = (repo_root / "macros/assert_dbw_bronze_release.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("bronze-complete-v1-", guard)
+        self.assertIn("observation_partitions = completed_indicators", guard)
+        self.assertIn("dictionary_partitions = completed_indicators", guard)
+        for model_path in (repo_root / "models/bronze").glob("br_dbw_*.sql"):
+            self.assertIn("assert_dbw_bronze_release()", model_path.read_text(encoding="utf-8"))
+        indicators = (repo_root / "models/bronze/br_dbw_indicators.sql").read_text(
+            encoding="utf-8"
+        )
+        for column in ("thematic_area", "domain", "taxonomy_path", "node_id", "parent_id"):
+            self.assertIn(column, indicators)
+        self.assertNotIn("domain_id", indicators)
+
+    def test_selected_complete_snapshot_is_consumable_by_dbw_dbt_models(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        release_id = "b" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp) / "data"
+            release_root = data_root / "02_bronze/gus_dbw/releases" / release_id
+            for folder in ("observations", "taxonomy", "metadata", "dictionaries", "_control"):
+                (release_root / folder).mkdir(parents=True, exist_ok=True)
+            con = duckdb.connect()
+            con.execute(f"""
+                COPY (SELECT
+                    7::BIGINT indicator_id, 1::BIGINT przekroj_id,
+                    NULL::BIGINT wymiar_1, NULL::BIGINT pozycja_1,
+                    NULL::BIGINT wymiar_2, NULL::BIGINT pozycja_2,
+                    NULL::BIGINT wymiar_3, NULL::BIGINT pozycja_3,
+                    NULL::BIGINT wymiar_4, NULL::BIGINT pozycja_4,
+                    NULL::BIGINT wymiar_5, NULL::BIGINT pozycja_5,
+                    NULL::BIGINT wymiar_6, NULL::BIGINT pozycja_6,
+                    NULL::BIGINT wymiar_7, NULL::BIGINT pozycja_7,
+                    NULL::BIGINT wymiar_8, NULL::BIGINT pozycja_8,
+                    NULL::BIGINT wymiar_9, NULL::BIGINT pozycja_9,
+                    1::INTEGER okres_id, 1::INTEGER sposob_prezentacji_miara_id,
+                    2026::INTEGER period_year, '1'::VARCHAR wartosc_raw,
+                    1.0::DOUBLE wartosc_numeric, 0::INTEGER precyzja,
+                    NULL::INTEGER brak_wartosci_id, NULL::INTEGER tajnosci_id,
+                    NULL::INTEGER flaga_id, '7.zip'::VARCHAR raw_archive_file,
+                    1::BIGINT source_row_number, '2026-09-20T00:00:00Z'::VARCHAR processed_at_utc
+                ) TO '{release_root / 'observations/part_7.parquet'}' (FORMAT PARQUET)
+            """)
+            con.execute(f"""
+                COPY (SELECT 7::BIGINT indicator_id, 'Indicator'::VARCHAR indicator_name,
+                    ''::VARCHAR indicator_name_en, 'Area'::VARCHAR thematic_area,
+                    'Domain'::VARCHAR "domain", 'Area > Domain > Indicator'::VARCHAR taxonomy_path,
+                    'node'::VARCHAR node_id, 'parent'::VARCHAR parent_id,
+                    '2026-09-20T00:00:00Z'::VARCHAR processed_at_utc
+                ) TO '{release_root / 'taxonomy/br_dbw_indicators.parquet'}' (FORMAT PARQUET)
+            """)
+            con.execute(f"""
+                COPY (SELECT 7::BIGINT indicator_id, 'Metric'::VARCHAR metric_name,
+                    ''::VARCHAR metric_name_en, ''::VARCHAR description,
+                    'annual'::VARCHAR frequency, 'unit'::VARCHAR measure_unit,
+                    'GUS'::VARCHAR data_source, ''::VARCHAR legal_basis,
+                    '2026-09-20'::VARCHAR last_update,
+                    '2026-09-20T00:00:00Z'::VARCHAR processed_at_utc
+                ) TO '{release_root / 'metadata/br_dbw_metadata.parquet'}' (FORMAT PARQUET)
+            """)
+            con.execute(f"""
+                COPY (SELECT 7::BIGINT indicator_id, 'column'::VARCHAR column_name,
+                    'dictionary'::VARCHAR dictionary_name, 1::BIGINT element_id,
+                    'element'::VARCHAR element_name,
+                    '2026-09-20T00:00:00Z'::VARCHAR processed_at_utc
+                ) TO '{release_root / 'dictionaries/br_dbw_dictionaries.parquet'}' (FORMAT PARQUET)
+            """)
+            con.close()
+            marker = {
+                "schema_version": 1,
+                "record_type": "gus_dbw_bronze_completion",
+                "source_id": "gus_dbw",
+                "status": "complete_native_snapshot",
+                "release_id": release_id,
+                "completed_indicators": 1,
+                "observation_partitions": 1,
+                "dictionary_partitions": 1,
+            }
+            (release_root / "_control" / f"bronze-complete-v1-{release_id}.json").write_text(
+                json.dumps(marker), encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env.update({
+                "ZOHELO_DATA_ROOT": str(data_root),
+                "ZOHELO_DBW_BRONZE_RELEASE_ID": release_id,
+                "ZOHELO_DUCKDB_PATH": str(Path(tmp) / "dbw.duckdb"),
+            })
+            result = subprocess.run(
+                [
+                    str(repo_root / ".venv/bin/dbt"), "build", "--profiles-dir", str(repo_root),
+                    "--project-dir", str(repo_root), "--select", "br_dbw_observations",
+                    "br_dbw_indicators", "br_dbw_metadata", "br_dbw_dictionaries",
+                    "--vars", '{"enable_gus_dbw": true}',
+                ],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_bronze_release_is_namespaced_by_native_snapshot_hash(self):
         with tempfile.TemporaryDirectory() as tmp:

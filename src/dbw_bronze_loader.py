@@ -83,6 +83,22 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
+def _has_integrity_metadata(item: dict[str, Any] | None, *, min_size: int = 0) -> bool:
+    """Return whether a Drive object has the checksums required for safe resume."""
+    if not item:
+        return False
+    try:
+        size = int(item.get("size", -1))
+    except (TypeError, ValueError):
+        return False
+    props = item.get("appProperties") or {}
+    return (
+        size > min_size
+        and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", "")) is not None
+        and re.fullmatch(r"[0-9a-f]{64}", props.get("sha256", "")) is not None
+    )
+
+
 def _verify_native_bytes(content: bytes, descriptor: dict[str, Any]) -> None:
     """Verify downloaded Landing bytes against the identity-bound receipt."""
     if (
@@ -894,7 +910,7 @@ def main():
         while True:
             resp = sm.drive_service.files().list(
                 q=query_obs,
-                fields="nextPageToken, files(id, name, size)",
+                fields="nextPageToken, files(id, name, size,md5Checksum,appProperties)",
                 pageSize=1000,
                 pageToken=page_token
             ).execute()
@@ -904,6 +920,34 @@ def main():
             if not page_token:
                 break
     logger.info(f"Discovered {len(existing_obs_files)} existing observation partitions on Drive.")
+
+    query_dict = f"'{_escape_query(loader.bronze_dict)}' in parents and trashed=false"
+    existing_dict_files: dict[str, dict[str, Any]] = {}
+    page_token = None
+    while True:
+        with DRIVE_LOCK:
+            response = sm.drive_service.files().list(
+                q=query_dict,
+                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                pageSize=1000,
+                pageToken=page_token,
+            ).execute(num_retries=4)
+        for item in response.get("files", []):
+            name = item.get("name", "")
+            if not re.fullmatch(r"dict_\d+\.parquet", name):
+                continue
+            if name in existing_dict_files:
+                raise RuntimeError(
+                    "Ambiguous DBW dictionary partitions exist in the bound release."
+                )
+            existing_dict_files[name] = item
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    logger.info(
+        "Discovered %s existing dictionary partitions on Drive.",
+        len(existing_dict_files),
+    )
 
     # Historical pilot objects are retained. Cleanup is a separate, explicitly
     # authorized lifecycle operation and never belongs in a Bronze build.
@@ -925,8 +969,21 @@ def main():
         part_name = f"part_{ind_id}.parquet"
         dict_part_name = f"dict_{ind_id}.parquet"
 
-        if part_name in existing_obs_files and int(existing_obs_files[part_name].get("size", 0)) > 1000:
-            logger.info(f"[{idx}/{total_targets}] Indicator {ind_id} ({part_name}) already exists on Drive. Skipping.")
+        existing_part = existing_obs_files.get(part_name)
+        existing_dict_part = existing_dict_files.get(dict_part_name)
+        if existing_part and not _has_integrity_metadata(existing_part, min_size=1000):
+            raise RuntimeError(
+                f"Existing DBW observation partition is not verifiable: {part_name}"
+            )
+        if existing_dict_part and not _has_integrity_metadata(existing_dict_part):
+            raise RuntimeError(
+                f"Existing DBW dictionary partition is not verifiable: {dict_part_name}"
+            )
+        if existing_part and existing_dict_part:
+            logger.info(
+                f"[{idx}/{total_targets}] Indicator {ind_id} has verified observation "
+                "and dictionary partitions on Drive. Skipping."
+            )
             completed_indicators += 1
             continue
 
@@ -1081,7 +1138,11 @@ def main():
         dict_count = con.execute("SELECT count(*) FROM current_dict").fetchone()[0]
 
         # Write Parquet and upload to Google Drive
-        if obs_count > 0:
+        if obs_count <= 0:
+            raise RuntimeError(
+                f"DBW indicator {ind_id} produced no observation rows."
+            )
+        if not existing_part:
             part_path = args.workspace / part_name
             con.execute(f"COPY current_obs TO '{part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
             res = _upload_file_to_drive(
@@ -1090,9 +1151,17 @@ def main():
             part_path.unlink(missing_ok=True)
             total_obs_rows += obs_count
 
-        if dict_count > 0:
+        if not existing_dict_part:
             dict_part_path = dict_dir / dict_part_name
             con.execute(f"COPY (SELECT DISTINCT * FROM current_dict) TO '{dict_part_path}' (FORMAT PARQUET, COMPRESSION ZSTD)")
+            _upload_file_to_drive(
+                sm,
+                dict_part_path,
+                name=dict_part_name,
+                parent_id=loader.bronze_dict,
+                mime_type="application/octet-stream",
+            )
+            dict_part_path.unlink(missing_ok=True)
 
         con.execute("DROP TABLE current_obs")
         con.execute("DROP TABLE current_dict")
@@ -1137,21 +1206,131 @@ def main():
                 mime_type="application/json",
             )
 
+    # Restore every persisted dictionary partition before deterministic consolidation.
+    token = None
+    remote_dict_parts: list[dict[str, Any]] = []
+    while True:
+        with DRIVE_LOCK:
+            response = sm.drive_service.files().list(
+                q=query_dict,
+                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                pageSize=1000,
+                pageToken=token,
+            ).execute(num_retries=4)
+        remote_dict_parts.extend(
+            item for item in response.get("files", [])
+            if re.fullmatch(r"dict_\d+\.parquet", item.get("name", ""))
+        )
+        token = response.get("nextPageToken")
+        if not token:
+            break
+    if len({item["name"] for item in remote_dict_parts}) != len(remote_dict_parts):
+        raise RuntimeError("Ambiguous DBW dictionary partitions exist in the bound release.")
+    expected_dict_names = {f"dict_{indicator_id}.parquet" for indicator_id in targets}
+    verified_dict_names = {
+        item["name"] for item in remote_dict_parts if _has_integrity_metadata(item)
+    }
+    if verified_dict_names != expected_dict_names:
+        raise RuntimeError(
+            "DBW Bronze dictionary partitions do not reconcile the complete native snapshot."
+        )
+    for item in remote_dict_parts:
+        local_part = dict_dir / item["name"]
+        if not _restore_verified_drive_file(
+            sm, name=item["name"], parent_id=loader.bronze_dict, local_path=local_part
+        ):
+            raise RuntimeError(f"DBW dictionary partition disappeared: {item['name']}")
+
     # Final dictionary consolidation
     dict_parts = list(dict_dir.glob("dict_*.parquet"))
+    dict_cons_path = args.workspace / "br_dbw_dictionaries.parquet"
     if dict_parts:
         logger.info(f"Consolidating {len(dict_parts)} dictionary partition files...")
-        dict_cons_path = args.workspace / "br_dbw_dictionaries.parquet"
         con.execute(f"""
             COPY (
                 SELECT DISTINCT indicator_id, column_name, dictionary_name, element_id, element_name, processed_at_utc
                 FROM read_parquet('{dict_dir}/dict_*.parquet')
             ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
         """)
-        dict_res = _upload_file_to_drive(
-            sm, dict_cons_path, name="br_dbw_dictionaries.parquet", parent_id=loader.bronze_dict, mime_type="application/octet-stream"
+    else:
+        con.execute(f"""
+            COPY (
+                SELECT
+                    NULL::BIGINT AS indicator_id,
+                    NULL::VARCHAR AS column_name,
+                    NULL::VARCHAR AS dictionary_name,
+                    NULL::BIGINT AS element_id,
+                    NULL::VARCHAR AS element_name,
+                    NULL::VARCHAR AS processed_at_utc
+                WHERE false
+            ) TO '{dict_cons_path}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """)
+    dict_res = _upload_file_to_drive(
+        sm, dict_cons_path, name="br_dbw_dictionaries.parquet",
+        parent_id=loader.bronze_dict, mime_type="application/octet-stream"
+    )
+    logger.info(f"Uploaded consolidated br_dbw_dictionaries.parquet ({dict_res['size']} bytes).")
+
+    if completed_indicators != total_targets:
+        raise RuntimeError("DBW Bronze cannot complete before every indicator is processed.")
+    final_obs: list[dict[str, Any]] = []
+    token = None
+    while True:
+        with DRIVE_LOCK:
+            response = sm.drive_service.files().list(
+                q=query_obs,
+                fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                pageSize=1000,
+                pageToken=token,
+            ).execute(num_retries=4)
+        final_obs.extend(response.get("files", []))
+        token = response.get("nextPageToken")
+        if not token:
+            break
+    part_items = [
+        item for item in final_obs
+        if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
+    ]
+    if len({item["name"] for item in part_items}) != len(part_items):
+        raise RuntimeError("Ambiguous DBW observation partitions exist in the bound release.")
+    verified_part_names = {
+        item["name"] for item in part_items
+        if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
+        and int(item.get("size", 0)) > 1000
+        and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", ""))
+        and re.fullmatch(r"[0-9a-f]{64}", (item.get("appProperties") or {}).get("sha256", ""))
+    }
+    expected_part_names = {f"part_{indicator_id}.parquet" for indicator_id in targets}
+    if verified_part_names != expected_part_names:
+        raise RuntimeError(
+            "DBW Bronze observation partitions do not reconcile the complete native snapshot."
         )
-        logger.info(f"Uploaded consolidated br_dbw_dictionaries.parquet ({dict_res['size']} bytes).")
+
+    completion_document = {
+        "schema_version": 1,
+        "record_type": "gus_dbw_bronze_completion",
+        "source_id": "gus_dbw",
+        "status": "complete_native_snapshot",
+        "release_id": loader.release_id,
+        "native_snapshot_id": loader.native_snapshot_id,
+        "catalogue_sha256": loader.catalogue_sha256,
+        "completed_indicators": completed_indicators,
+        "observation_partitions": len(verified_part_names),
+        "dictionary_partitions": len(verified_dict_names),
+        "processed_at_utc": loader.processed_at_utc,
+    }
+    completion_path = args.workspace / f"bronze-complete-v1-{loader.release_id}.json"
+    completion_path.write_text(
+        json.dumps(completion_document, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    _upload_file_to_drive(
+        sm,
+        completion_path,
+        name=completion_path.name,
+        parent_id=loader.bronze_control,
+        mime_type="application/json",
+    )
 
     con.close()
     logger.info(f"GUS DBW Bronze transformation completed successfully: {total_obs_rows:,} total observations across {completed_indicators} indicators.")

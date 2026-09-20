@@ -53,7 +53,14 @@ publication into the complete release, and writes into a separate
 silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
 on a fresh runner without depending on disposable local files. A full receipt additionally requires
 the documented aggregate discovery envelope, at least one unique safe ZIP filename, and exact
-reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors. Launchers
+reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors. Bronze
+persists one checksum-bearing dictionary partition per indicator (including an empty-schema
+partition when the source has no dictionary rows) for fresh-runner consolidation and publishes its
+release completion record only after both partition sets reconcile every indicator. The disabled-by-default
+dbt source no longer reads the retained unversioned pilot folders: an operator must select the
+verified snapshot explicitly with `ZOHELO_DBW_BRONZE_RELEASE_ID`, and all four source relations then
+resolve only under `02_bronze/gus_dbw/releases/<native_snapshot_sha256>/`.
+Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
 DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while
