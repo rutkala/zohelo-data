@@ -136,6 +136,27 @@ def _snapshot_sha256(native_snapshot_id: str, memberships: dict[int, str]) -> st
     ).hexdigest()
 
 
+def _inventory_sha256(names: set[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
+
+
+def _validate_parquet_indicator_coverage(
+    path: Path, expected: set[int], label: str
+) -> None:
+    con = duckdb.connect(":memory:")
+    try:
+        rows = con.execute(
+            f"SELECT indicator_id FROM read_parquet('{str(path).replace(chr(39), chr(39) * 2)}')"
+        ).fetchall()
+    finally:
+        con.close()
+    values = [row[0] for row in rows]
+    if len(values) != len(expected) or set(values) != expected:
+        raise DBWLandingIncompleteError(
+            f"DBW {label} does not contain exactly one row for every receipt indicator."
+        )
+
+
 def _upload_file_to_drive(
     storage: StorageManager,
     local_path: Path,
@@ -469,6 +490,7 @@ class DBWBronzeLoader:
         catalogue_sha = completion["catalogue_sha256"]
         indicator_ids: set[int] = set()
         metadata_members: dict[str, dict[str, Any]] = {}
+        metadata_owners: dict[str, int] = {}
         bulk_members: dict[str, dict[str, Any]] = {}
         bulk_by_indicator: dict[int, list[dict[str, Any]]] = {}
         bound_object_ids: set[str] = set()
@@ -573,6 +595,7 @@ class DBWBronzeLoader:
                 bound_object_ids.add(object_id)
                 if role == "metryka":
                     metadata_members[object_id] = descriptor
+                    metadata_owners[object_id] = indicator_id
                 elif role == "bulk_zip":
                     bulk_members[object_id] = descriptor
                     bulk_by_indicator.setdefault(indicator_id, []).append(descriptor)
@@ -619,6 +642,7 @@ class DBWBronzeLoader:
         return {
             "indicator_ids": indicator_ids,
             "metadata_members": metadata_members,
+            "metadata_owners": metadata_owners,
             "bulk_members": bulk_members,
             "bulk_by_indicator": bulk_by_indicator,
         }
@@ -717,6 +741,7 @@ class DBWBronzeLoader:
     def build_metadata_table(
         self,
         allowed_objects: dict[str, dict[str, Any]] | None = None,
+        object_owners: dict[str, int] | None = None,
     ) -> Path:
         """Parse metryka CSVs into br_dbw_metadata Parquet table."""
         query = f"'{_escape_query(self.landing_metadata)}' in parents and name contains 'metryka' and trashed=false"
@@ -762,8 +787,13 @@ class DBWBronzeLoader:
                 raise DBWLandingIncompleteError(
                     f"DBW metryka object has no valid indicator identity: {mf['name']}"
                 )
+            indicator_id = int(iid_str)
+            if object_owners is not None and object_owners.get(mf["id"]) != indicator_id:
+                raise DBWLandingIncompleteError(
+                    f"DBW metryka indicator does not match receipt ownership: {mf['name']}"
+                )
             return {
-                "indicator_id": int(iid_str),
+                "indicator_id": indicator_id,
                 "metric_name": entry.get("nazwa", "").strip(),
                 "metric_name_en": entry.get("nazwa_ang", "").strip(),
                 "description": entry.get("definicja_pojecie", "").strip(),
@@ -780,6 +810,13 @@ class DBWBronzeLoader:
             futures = [executor.submit(download_and_parse, mf) for mf in met_files]
             for f in as_completed(futures):
                 rows.append(f.result())
+        if object_owners is not None and (
+            len(rows) != len(object_owners)
+            or {row["indicator_id"] for row in rows} != set(object_owners.values())
+        ):
+            raise DBWLandingIncompleteError(
+                "DBW metryka rows do not reconcile the receipt-owned indicator catalogue."
+            )
 
         out_path = self.workspace / "br_dbw_metadata.parquet"
         con = duckdb.connect(":memory:")
@@ -875,6 +912,9 @@ def main():
             sm, tax_parquet, name="br_dbw_indicators.parquet", parent_id=loader.bronze_tax, mime_type="application/octet-stream"
         )
         logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
+    _validate_parquet_indicator_coverage(
+        tax_parquet, release_receipts["indicator_ids"], "taxonomy"
+    )
 
     # 3. Build or restore release-bound Metadata Table
     met_parquet = args.workspace / "br_dbw_metadata.parquet"
@@ -886,11 +926,15 @@ def main():
         logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
         met_parquet = loader.build_metadata_table(
             allowed_objects=release_receipts["metadata_members"],
+            object_owners=release_receipts["metadata_owners"],
         )
         met_res = _upload_file_to_drive(
             sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
         )
         logger.info(f"Uploaded br_dbw_metadata.parquet to Drive ({met_res['size']} bytes, reused={met_res['reused']}).")
+    _validate_parquet_indicator_coverage(
+        met_parquet, release_receipts["indicator_ids"], "metadata"
+    )
 
     if args.skip_bulk:
         logger.info("Skipping bulk observations per --skip-bulk.")
@@ -1325,6 +1369,8 @@ def main():
         "completed_indicators": completed_indicators,
         "observation_partitions": len(verified_part_names),
         "dictionary_partitions": len(verified_dict_names),
+        "observation_inventory_sha256": _inventory_sha256(verified_part_names),
+        "dictionary_inventory_sha256": _inventory_sha256(verified_dict_names),
         "processed_at_utc": loader.processed_at_utc,
     }
     completion_path = args.workspace / f"bronze-complete-v1-{loader.release_id}.json"

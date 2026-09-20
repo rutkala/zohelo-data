@@ -64,7 +64,11 @@ resolve only under `02_bronze/gus_dbw/releases/<native_snapshot_sha256>/`. Befor
 marker, exact observation/dictionary partition sets, taxonomy, metadata and consolidated dictionary
 from Drive into that local path, verifying size, MD5 and SHA-256 before an atomic directory rename.
 Native snapshot selection is protected across Actions and explicitly authorized hosts by a durable,
-expiring Drive lease with immutable acquisition/release records.
+expiring Drive lease with immutable acquisition/release records; losing election claims are
+tombstoned immediately. Resumed Landing receipts are re-read and reconciled to their exact native
+Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
+receipts (never provider filenames or untrusted CSV identity alone), while its completion marker and
+dbt guard bind the exact local observation and dictionary partition-name inventories.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

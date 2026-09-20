@@ -112,6 +112,8 @@ def _completion(raw: bytes, release_id: str) -> dict[str, Any]:
         or completed <= 0
         or document.get("observation_partitions") != completed
         or document.get("dictionary_partitions") != completed
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("observation_inventory_sha256", "")) is None
+        or re.fullmatch(r"[0-9a-f]{64}", document.get("dictionary_inventory_sha256", "")) is None
     ):
         raise RuntimeError("DBW Bronze completion marker does not reconcile all partitions.")
     return document
@@ -124,6 +126,10 @@ def _tree_sha256(root: Path) -> str:
         digest.update(b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+def _inventory_sha256(names: set[str]) -> str:
+    return hashlib.sha256("\n".join(sorted(names)).encode("utf-8")).hexdigest()
 
 
 def restore_dbw_release(
@@ -161,6 +167,14 @@ def restore_dbw_release(
         raise RuntimeError("Remote DBW observation partitions do not reconcile completion.")
     if len({item["name"] for item in dictionary_parts}) != completed:
         raise RuntimeError("Remote DBW dictionary partitions do not reconcile completion.")
+    if marker.get("observation_inventory_sha256") != _inventory_sha256(
+        {item["name"] for item in observations}
+    ):
+        raise RuntimeError("Remote DBW observation inventory hash does not reconcile completion.")
+    if marker.get("dictionary_inventory_sha256") != _inventory_sha256(
+        {item["name"] for item in dictionary_parts}
+    ):
+        raise RuntimeError("Remote DBW dictionary inventory hash does not reconcile completion.")
 
     target = data_root / "02_bronze" / "gus_dbw" / "releases" / release_id
     target.parent.mkdir(parents=True, exist_ok=True)

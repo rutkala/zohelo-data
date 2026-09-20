@@ -24,6 +24,8 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
             "completed_indicators": 2,
             "observation_partitions": 2,
             "dictionary_partitions": 2,
+            "observation_inventory_sha256": "a" * 64,
+            "dictionary_inventory_sha256": "b" * 64,
         }
         self.assertEqual(
             MODULE._completion(json.dumps(marker).encode(), release_id), marker

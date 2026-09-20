@@ -11,6 +11,7 @@ from dbw_web_extractor import (
     _discover_bulk_filenames,
     _hash_bytes,
     _hash_file,
+    _membership_sha256,
     _require_production_context,
     _snapshot_sha256,
     _upload_bytes,
@@ -166,35 +167,73 @@ class TestDbwWebExtractor(unittest.TestCase):
     def test_only_v3_identity_bound_bulk_receipts_resume_an_indicator(self):
         extractor = object.__new__(DbwWebExtractor)
         extractor.checkpoints_dir = "checkpoints"
+        extractor.metadata_dir = "metadata"
+        extractor.bulk_dir = "bulk"
         extractor.native_snapshot_id = self.SNAPSHOT_ID
         extractor.storage = MagicMock()
-        extractor.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
-            "files": [
-                {"name": "12.json", "appProperties": {}},
-                {"name": f"partial-v3-{self.SNAPSHOT_ID}-13.json", "appProperties": {
-                    "checkpoint_schema": "3", "checkpoint_status": "metadata_only",
-                    "bulk_complete": "false", "metadata_complete": "true",
-                    "native_snapshot_id": self.SNAPSHOT_ID,
-                }},
-                {"name": f"completed-v3-{self.SNAPSHOT_ID}-14.json", "appProperties": {
-                    "checkpoint_schema": "3", "checkpoint_status": "completed",
-                    "bulk_complete": "true", "metadata_complete": "true",
-                    "catalogue_sha256": "a" * 64,
-                    "native_snapshot_id": self.SNAPSHOT_ID,
-                    "native_membership_sha256": "c" * 64,
-                }},
-                {"name": f"completed-v3-{self.SNAPSHOT_ID}-15.json", "appProperties": {
-                    "checkpoint_schema": "3", "checkpoint_status": "completed",
-                    "bulk_complete": "true", "metadata_complete": "true",
-                    "catalogue_sha256": "b" * 64,
-                    "native_snapshot_id": self.SNAPSHOT_ID,
-                    "native_membership_sha256": "d" * 64,
-                }},
-            ]
+        descriptors = []
+        metadata = []
+        bulk = []
+        for role, object_id, name, source_name, target in (
+            ("aggregates", "agg", "agg.json", "aggregates_14_pl.json", metadata),
+            ("metryka", "met", "met.csv", "metryka_14.csv", metadata),
+            ("bulk_zip", "zip", "history.zip", "history.zip", bulk),
+        ):
+            descriptor = {
+                "id": object_id, "name": name, "size": 10,
+                "sha256": "b" * 64, "md5": "c" * 32,
+                "role": role, "source_name": source_name,
+            }
+            descriptors.append(descriptor)
+            target.append({
+                "id": object_id, "name": name, "size": "10",
+                "md5Checksum": "c" * 32,
+                "appProperties": {"sha256": "b" * 64},
+            })
+        membership = _membership_sha256(descriptors)
+        receipt = {
+            "schema_version": 3,
+            "record_type": "gus_dbw_indicator_completion",
+            "indicator_id": 14,
+            "status": "completed",
+            "bulk_complete": True,
+            "metadata_complete": True,
+            "catalogue_sha256": "a" * 64,
+            "native_snapshot_id": self.SNAPSHOT_ID,
+            "native_membership_sha256": membership,
+            "expected_bulk_files": ["history.zip"],
+            "landed_objects": descriptors,
         }
+        raw = json.dumps(receipt).encode()
+        receipt_sha, receipt_md5 = _hash_bytes(raw)
+        checkpoint = {
+            "id": "receipt", "name": f"completed-v3-{self.SNAPSHOT_ID}-14.json",
+            "size": str(len(raw)), "md5Checksum": receipt_md5,
+            "appProperties": {
+                "sha256": receipt_sha,
+                "checkpoint_schema": "3", "checkpoint_status": "completed",
+                "bulk_complete": "true", "metadata_complete": "true",
+                "catalogue_sha256": "a" * 64,
+                "native_snapshot_id": self.SNAPSHOT_ID,
+                "native_membership_sha256": membership,
+            },
+        }
+
+        def list_response(**kwargs):
+            query = kwargs["q"]
+            if "'metadata' in parents" in query:
+                result = metadata
+            elif "'bulk' in parents" in query:
+                result = bulk
+            else:
+                result = [checkpoint]
+            return MagicMock(execute=MagicMock(return_value={"files": result}))
+
+        extractor.storage.drive_service.files.return_value.list.side_effect = list_response
+        extractor.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
         self.assertEqual(
             extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID),
-            {14: "c" * 64},
+            {14: membership},
         )
 
     @patch("dbw_web_extractor._upload_bytes")
@@ -271,7 +310,11 @@ class TestDbwWebExtractor(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "durable native-snapshot lease"):
             extractor.acquire_native_snapshot_lease("a" * 64)
         mock_sleep.assert_called_once()
-        mock_upload.assert_called_once()
+        self.assertEqual(mock_upload.call_count, 2)
+        self.assertEqual(
+            mock_upload.call_args_list[-1].kwargs["extra_properties"]["released_claim_id"],
+            own,
+        )
 
     @patch("dbw_web_extractor._find_exact_file")
     def test_changed_native_response_uses_content_addressed_revision(self, mock_find):

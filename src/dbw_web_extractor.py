@@ -459,6 +459,7 @@ class DbwWebExtractor:
                 "expires_at_utc": expires_at.isoformat(),
             },
         )
+        self.native_snapshot_lease_claim = claim_id
         time.sleep(SNAPSHOT_LEASE_SETTLE_SECONDS)
         files = self._list_landing_control()
         released = {
@@ -487,10 +488,10 @@ class DbwWebExtractor:
             if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
                 active.append((created, candidate))
         if not active or min(active)[1] != claim_id:
+            self.release_native_snapshot_lease()
             raise RuntimeError(
                 "Another DBW writer holds the durable native-snapshot lease; retry after it releases or expires."
             )
-        self.native_snapshot_lease_claim = claim_id
         return claim_id
 
     def release_native_snapshot_lease(self) -> None:
@@ -633,7 +634,33 @@ class DbwWebExtractor:
     def load_completed_checkpoints(
         self, catalogue_sha256: str, native_snapshot_id: str
     ) -> dict[int, str]:
-        """Read full-bulk receipts bound to one durable native refresh snapshot."""
+        """Revalidate full-bulk receipts and their exact native objects before resume."""
+        def list_objects(parent_id: str) -> dict[str, dict[str, Any]]:
+            folder_query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
+            objects: dict[str, dict[str, Any]] = {}
+            page_token = None
+            while True:
+                kwargs: dict[str, Any] = {
+                    "q": folder_query,
+                    "spaces": "drive",
+                    "pageSize": 1000,
+                    "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+                }
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                with DRIVE_LOCK:
+                    page = self.storage.drive_service.files().list(**kwargs).execute(num_retries=4)
+                for item in page.get("files", []):
+                    object_id = item.get("id")
+                    if not isinstance(object_id, str) or not object_id or object_id in objects:
+                        raise RuntimeError("DBW native object inventory has an invalid identity.")
+                    objects[object_id] = item
+                page_token = page.get("nextPageToken")
+                if not page_token:
+                    return objects
+
+        metadata_objects = list_objects(self.metadata_dir)
+        bulk_objects = list_objects(self.bulk_dir)
         query = f"'{_escape_query(self.checkpoints_dir)}' in parents and trashed=false"
         completed: dict[int, str] = {}
         token = None
@@ -641,7 +668,7 @@ class DbwWebExtractor:
             args: dict[str, Any] = {
                 "q": query,
                 "spaces": "drive",
-                "fields": "nextPageToken, files(id,name,appProperties,trashed)",
+                "fields": "nextPageToken, files(id,name,size,md5Checksum,appProperties,trashed)",
             }
             if token:
                 args["pageToken"] = token
@@ -668,6 +695,65 @@ class DbwWebExtractor:
                     and re.fullmatch(r"[0-9a-f]{64}", membership)
                 ):
                     indicator_id = int(match.group(1))
+                    with DRIVE_LOCK:
+                        raw = self.storage.drive_service.files().get_media(
+                            fileId=f["id"]
+                        ).execute(num_retries=4)
+                    if (
+                        len(raw) != int(f.get("size", -1))
+                        or md5(raw).hexdigest() != f.get("md5Checksum")
+                        or sha256(raw).hexdigest() != props.get("sha256")
+                    ):
+                        raise RuntimeError("DBW completed receipt failed byte verification.")
+                    try:
+                        receipt = json.loads(raw.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("DBW completed receipt is not valid JSON.") from exc
+                    descriptors = receipt.get("landed_objects")
+                    if (
+                        receipt.get("schema_version") != 3
+                        or receipt.get("record_type") != "gus_dbw_indicator_completion"
+                        or receipt.get("indicator_id") != indicator_id
+                        or receipt.get("status") != "completed"
+                        or receipt.get("bulk_complete") is not True
+                        or receipt.get("metadata_complete") is not True
+                        or receipt.get("catalogue_sha256") != catalogue_sha256
+                        or receipt.get("native_snapshot_id") != native_snapshot_id
+                        or not isinstance(descriptors, list)
+                    ):
+                        raise RuntimeError("DBW completed receipt content does not match its identity.")
+                    roles: list[str] = []
+                    source_names: list[str] = []
+                    for descriptor in descriptors:
+                        if not isinstance(descriptor, dict):
+                            raise RuntimeError("DBW completed receipt has an invalid descriptor.")
+                        role = descriptor.get("role")
+                        object_id = descriptor.get("id")
+                        actual = (bulk_objects if role == "bulk_zip" else metadata_objects).get(object_id)
+                        if (
+                            role not in {"aggregates", "metryka", "bulk_zip"}
+                            or actual is None
+                            or actual.get("name") != descriptor.get("name")
+                            or int(actual.get("size", -1)) != descriptor.get("size")
+                            or actual.get("md5Checksum") != descriptor.get("md5")
+                            or (actual.get("appProperties") or {}).get("sha256")
+                            != descriptor.get("sha256")
+                        ):
+                            raise RuntimeError(
+                                "DBW completed receipt no longer matches its native object inventory."
+                            )
+                        roles.append(role)
+                        if role == "bulk_zip":
+                            source_names.append(descriptor.get("source_name"))
+                    if (
+                        roles.count("aggregates") != 1
+                        or roles.count("metryka") != 1
+                        or not source_names
+                        or sorted(source_names) != sorted(receipt.get("expected_bulk_files", []))
+                        or _membership_sha256(descriptors) != membership
+                        or receipt.get("native_membership_sha256") != membership
+                    ):
+                        raise RuntimeError("DBW completed receipt membership does not reconcile.")
                     prior = completed.get(indicator_id)
                     if prior is not None and prior != membership:
                         raise RuntimeError(

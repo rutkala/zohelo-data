@@ -10,7 +10,8 @@
       {% endif %}
     {% endfor %}
     {% set data_root = env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') %}
-    {% set marker_path = data_root ~ '/02_bronze/gus_dbw/releases/' ~ release_id ~ '/_control/bronze-complete-v1-' ~ release_id ~ '.json' %}
+    {% set release_root = data_root ~ '/02_bronze/gus_dbw/releases/' ~ release_id %}
+    {% set marker_path = release_root ~ '/_control/bronze-complete-v1-' ~ release_id ~ '.json' %}
     {% set verification_query %}
       select count(*)
       from read_json_auto('{{ marker_path | replace("'", "''") }}')
@@ -22,6 +23,20 @@
         and completed_indicators > 0
         and observation_partitions = completed_indicators
         and dictionary_partitions = completed_indicators
+        and observation_partitions = (
+          select count(*) from glob('{{ release_root | replace("'", "''") }}/observations/part_*.parquet')
+        )
+        and dictionary_partitions = (
+          select count(*) from glob('{{ release_root | replace("'", "''") }}/dictionaries/dict_*.parquet')
+        )
+        and observation_inventory_sha256 = (
+          select sha256(string_agg(regexp_extract(file, '[^/]+$'), chr(10) order by regexp_extract(file, '[^/]+$')))
+          from glob('{{ release_root | replace("'", "''") }}/observations/part_*.parquet')
+        )
+        and dictionary_inventory_sha256 = (
+          select sha256(string_agg(regexp_extract(file, '[^/]+$'), chr(10) order by regexp_extract(file, '[^/]+$')))
+          from glob('{{ release_root | replace("'", "''") }}/dictionaries/dict_*.parquet')
+        )
     {% endset %}
     {% set verification = run_query(verification_query) %}
     {% if verification.columns[0].values()[0] != 1 %}

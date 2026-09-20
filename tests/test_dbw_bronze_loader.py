@@ -234,6 +234,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
         bound = loader.load_release_receipts(completion)
         self.assertEqual(bound["indicator_ids"], {7, 8})
         self.assertEqual(set(bound["metadata_members"]), {"metryka-7", "metryka-8"})
+        self.assertEqual(bound["metadata_owners"], {"metryka-7": 7, "metryka-8": 8})
         self.assertEqual(set(bound["bulk_members"]), {"bulk_zip-7", "bulk_zip-8"})
         self.assertEqual(
             {key: [item["id"] for item in value] for key, value in bound["bulk_by_indicator"].items()},
@@ -251,6 +252,29 @@ class TestDBWBronzeLoader(unittest.TestCase):
         _verify_native_bytes(raw, descriptor)
         with self.assertRaisesRegex(DBWLandingIncompleteError, "byte verification"):
             _verify_native_bytes(raw + b" changed", descriptor)
+
+    def test_metadata_indicator_must_match_receipt_owner(self):
+        raw = b"id_zmienna;nazwa;\n7;Wrong indicator;\n"
+        loader = object.__new__(DBWBronzeLoader)
+        loader.workspace = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(loader.workspace))
+        loader.processed_at_utc = "2026-09-20T00:00:00Z"
+        loader.landing_metadata = "metadata"
+        loader.storage = MagicMock()
+        loader.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
+            "files": [{"id": "metryka-8", "name": "metryka_8.csv"}]
+        }
+        loader.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
+        descriptor = {
+            "name": "metryka_8.csv", "size": len(raw),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "md5": hashlib.md5(raw).hexdigest(),
+        }
+        with self.assertRaisesRegex(DBWLandingIncompleteError, "receipt ownership"):
+            loader.build_metadata_table(
+                allowed_objects={"metryka-8": descriptor},
+                object_owners={"metryka-8": 8},
+            )
 
     def test_release_receipt_rejects_native_identity_mismatch(self):
         loader, completion = self._release_receipt_fixture(corrupt_native_size=True)
@@ -280,6 +304,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
         self.assertIn("bronze-complete-v1-", guard)
         self.assertIn("observation_partitions = completed_indicators", guard)
         self.assertIn("dictionary_partitions = completed_indicators", guard)
+        self.assertIn("observation_inventory_sha256", guard)
+        self.assertIn("from glob(", guard)
         for model_path in (repo_root / "models/bronze").glob("br_dbw_*.sql"):
             self.assertIn("assert_dbw_bronze_release()", model_path.read_text(encoding="utf-8"))
         indicators = (repo_root / "models/bronze/br_dbw_indicators.sql").read_text(
@@ -343,6 +369,10 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 ) TO '{release_root / 'dictionaries/br_dbw_dictionaries.parquet'}' (FORMAT PARQUET)
             """)
             con.close()
+            __import__("shutil").copyfile(
+                release_root / "dictionaries/br_dbw_dictionaries.parquet",
+                release_root / "dictionaries/dict_7.parquet",
+            )
             marker = {
                 "schema_version": 1,
                 "record_type": "gus_dbw_bronze_completion",
@@ -352,6 +382,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 "completed_indicators": 1,
                 "observation_partitions": 1,
                 "dictionary_partitions": 1,
+                "observation_inventory_sha256": hashlib.sha256(b"part_7.parquet").hexdigest(),
+                "dictionary_inventory_sha256": hashlib.sha256(b"dict_7.parquet").hexdigest(),
             }
             (release_root / "_control" / f"bronze-complete-v1-{release_id}.json").write_text(
                 json.dumps(marker), encoding="utf-8"
