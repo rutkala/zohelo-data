@@ -520,20 +520,21 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     process_result(plan, node, result)
             except WorkerFailure as exc:
                 with ctx.lock:
-                    ctx.consecutive_failures += 1
                     subgroup_failures += 1
                     disposition = parts.failed(plan, node, str(exc), exc.failure_class)
                     state["failures"][subgroup] = {"last_attempt_utc": now(), "error": str(exc),
                                                    "selection_id": node["id"], "failure_class": exc.failure_class}
                     (workspace / f"failure-{subgroup}-{node['id']}.json").write_bytes(rendered(state["failures"][subgroup]))
                     save_plan(plan_store, plan)
-                    if ctx.consecutive_failures >= 20:
-                        ctx.reason = "interrupted"
-                        ctx.fatal_error = exc
-                        ctx.stop_event.set()
-                        ctx.condition.notify_all()
-                        raise
                 if subgroup_failures >= max_subgroup_failures or disposition == "stop":
+                    with ctx.lock:
+                        ctx.consecutive_failures += 1
+                        if ctx.consecutive_failures >= 100:
+                            ctx.reason = "interrupted"
+                            ctx.fatal_error = exc
+                            ctx.stop_event.set()
+                            ctx.condition.notify_all()
+                            raise
                     break
                 if disposition == "retry":
                     time.sleep(2)
@@ -632,9 +633,20 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 process_subgroup(item, worker_id, worker_ws, proxy=worker_proxy)
             except Exception as exc:
                 with ctx.lock:
-                    if ctx.fatal_error is None:
-                        ctx.fatal_error = exc
-                    ctx.stop_event.set()
+                    state.setdefault("failures", {})[subgroup] = {
+                        "last_attempt_utc": now(),
+                        "error": f"Unhandled worker exception: {exc}",
+                        "failure_class": "unhandled_worker_error"
+                    }
+                    state.setdefault("pass_outcomes", {})[subgroup] = {
+                        "status": "failed",
+                        "error": str(exc)[:500]
+                    }
+                    ctx.consecutive_failures += 1
+                    if ctx.consecutive_failures >= 50:
+                        if ctx.fatal_error is None:
+                            ctx.fatal_error = exc
+                        ctx.stop_event.set()
             finally:
                 with ctx.lock:
                     if subgroup in state.get("in_flight", []):

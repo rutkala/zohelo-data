@@ -326,21 +326,29 @@ def main():
     sample_set = set(targets) if (args.indicator_ids or args.sample_indicators) else None
     logger.info(f"Targeting {len(targets)} indicators for Bronze processing.")
 
-    # 2. Build Taxonomy Table (Skip if already on Drive)
-    logger.info("=== Phase A: Building br_dbw_indicators (Taxonomy) ===")
-    tax_parquet = loader.build_taxonomy_table()
-    tax_res = _upload_file_to_drive(
-        sm, tax_parquet, name="br_dbw_indicators.parquet", parent_id=loader.bronze_tax, mime_type="application/octet-stream"
-    )
-    logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
+    # 2. Build Taxonomy Table (Skip if already on Drive/local)
+    tax_parquet = args.workspace / "br_dbw_indicators.parquet"
+    if tax_parquet.is_file() and tax_parquet.stat().st_size > 1000:
+        logger.info(f"Phase A: Reusing existing {tax_parquet.name} ({tax_parquet.stat().st_size} bytes).")
+    else:
+        logger.info("=== Phase A: Building br_dbw_indicators (Taxonomy) ===")
+        tax_parquet = loader.build_taxonomy_table()
+        tax_res = _upload_file_to_drive(
+            sm, tax_parquet, name="br_dbw_indicators.parquet", parent_id=loader.bronze_tax, mime_type="application/octet-stream"
+        )
+        logger.info(f"Uploaded br_dbw_indicators.parquet to Drive ({tax_res['size']} bytes, reused={tax_res['reused']}).")
 
-    # 3. Build Metadata Table (Skip if already on Drive)
-    logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
-    met_parquet = loader.build_metadata_table(sample_ids=sample_set)
-    met_res = _upload_file_to_drive(
-        sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
-    )
-    logger.info(f"Uploaded br_dbw_metadata.parquet to Drive ({met_res['size']} bytes, reused={met_res['reused']}).")
+    # 3. Build Metadata Table (Skip if already on Drive/local)
+    met_parquet = args.workspace / "br_dbw_metadata.parquet"
+    if met_parquet.is_file() and met_parquet.stat().st_size > 1000:
+        logger.info(f"Phase B: Reusing existing {met_parquet.name} ({met_parquet.stat().st_size} bytes).")
+    else:
+        logger.info("=== Phase B: Building br_dbw_metadata (Metryka) ===")
+        met_parquet = loader.build_metadata_table(sample_ids=sample_set)
+        met_res = _upload_file_to_drive(
+            sm, met_parquet, name="br_dbw_metadata.parquet", parent_id=loader.bronze_met, mime_type="application/octet-stream"
+        )
+        logger.info(f"Uploaded br_dbw_metadata.parquet to Drive ({met_res['size']} bytes, reused={met_res['reused']}).")
 
     if args.skip_bulk:
         logger.info("Skipping bulk observations per --skip-bulk.")
@@ -351,15 +359,33 @@ def main():
     dict_dir = args.workspace / "dicts"
     dict_dir.mkdir(parents=True, exist_ok=True)
 
-    # Initialize DuckDB with strict memory bounds
+    # Initialize DuckDB with robust memory bounds and disk spillage
+    duckdb_tmp = args.workspace / "duckdb_tmp"
+    duckdb_tmp.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(":memory:")
-    con.execute("PRAGMA memory_limit = '350MB'")
+    con.execute("PRAGMA memory_limit = '2GB'")
+    con.execute(f"PRAGMA temp_directory = '{duckdb_tmp}'")
+    con.execute("PRAGMA preserve_insertion_order = false")
     con.execute("PRAGMA threads = 4")
 
-    # Scan already completed indicator partitions on Drive
+    # Scan already completed indicator partitions on Drive with pagination
     query_obs = f"'{_escape_query(loader.bronze_obs)}' in parents and trashed=false"
+    existing_obs_files = {}
+    page_token = None
     with DRIVE_LOCK:
-        existing_obs_files = {f["name"]: f for f in sm.drive_service.files().list(q=query_obs, fields="files(id, name, size)").execute().get("files", [])}
+        while True:
+            resp = sm.drive_service.files().list(
+                q=query_obs,
+                fields="nextPageToken, files(id, name, size)",
+                pageSize=1000,
+                pageToken=page_token
+            ).execute()
+            for f in resp.get("files", []):
+                existing_obs_files[f["name"]] = f
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+    logger.info(f"Discovered {len(existing_obs_files)} existing observation partitions on Drive.")
 
     # Clean up obsolete pilot file if present
     if "part_1_6.parquet" in existing_obs_files:
@@ -368,6 +394,15 @@ def main():
         existing_obs_files.pop("part_1_6.parquet", None)
 
     total_obs_rows = 0
+    cp_path = args.workspace / "checkpoint.json"
+    if cp_path.is_file():
+        try:
+            prior_cp = json.loads(cp_path.read_text(encoding="utf-8"))
+            total_obs_rows = prior_cp.get("total_observations_rows", 0)
+            logger.info(f"Resuming with prior total_observations_rows = {total_obs_rows:,}")
+        except Exception:
+            total_obs_rows = 0
+
     completed_indicators = 0
     total_targets = len(targets)
 
@@ -385,6 +420,7 @@ def main():
             continue
 
         t_start = time.time()
+        (args.workspace / part_name).unlink(missing_ok=True)
         # Initialize fresh temporary DuckDB tables
         con.execute("DROP TABLE IF EXISTS current_obs")
         con.execute("DROP TABLE IF EXISTS current_dict")

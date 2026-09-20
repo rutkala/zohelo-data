@@ -17,6 +17,6 @@ echo "Log: ${LOG_FILE}"
 cd "${REPO_ROOT}"
 pkill -f "src/dbw_bronze_loader.py" 2>/dev/null || true
 
-setsid -f bash -c "PYTHONPATH=src PYTHONUNBUFFERED=1 '${REPO_ROOT}/.venv/bin/python' src/dbw_bronze_loader.py --workspace '${OUT_DIR}' --allow-codespace ${EXTRA_ARGS} > '${LOG_FILE}' 2>&1"
+setsid -f bash -c "PYTHONPATH=src PYTHONUNBUFFERED=1 '${REPO_ROOT}/.venv/bin/python' src/dbw_bronze_loader.py --workspace '${OUT_DIR}' --allow-codespace ${EXTRA_ARGS} >> '${LOG_FILE}' 2>&1"
 
 echo "DBW Bronze Loader background session initiated."
