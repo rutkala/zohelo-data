@@ -4,6 +4,26 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Autonomous 2-Week Multi-Source Roadmap, Stage Decoupling, and Bulk Ingestion Mandate — 20 September 2026
+
+**Autonomous execution authorized for full multi-source data platform expansion (GitHub Issues #130–#135):**
+- **Owner Architectural Directives Recorded:**
+  1. **Strict Stage Decoupling**: Ingestion (Landing), Bronze, Silver, Gold, and Semantic layers must remain isolated, independent, resumable pipelines with separate error recovery and checkpoints. They are not merged into a monolithic execution.
+  2. **Sequential Stage Progression**: For any given source, downstream processing (Bronze extraction) begins strictly after Landing native ingestion is 100% complete (catalogue exhaustion / all available partitions landed).
+  3. **WebUI / Bulk Distribution Priority**: Using WebUI or official bulk distribution facilities is mandatory for historical bulk data. Low-throughput, rate-limited REST APIs must not be used for bulk historical extraction when an official bulk facility exists (e.g. BDL WebUI, DBW bulk catalog, Eurostat Bulk Download Facility, World Bank DataBank bulk ZIP). REST APIs are reserved exclusively for recent delta updates.
+  4. **Full 2-Week Autonomy**: Authorized to execute the multi-source programme independently without intermediate reviews, tracking progress through the canonical delivery record.
+- **GitHub Issues Created & Linked:**
+  - [#130: [Roadmap] Autonomous Multi-Source Data Platform Execution Plan](https://github.com/rutkala/zohelo-data/issues/130)
+  - [#131: [GUS BDL] Complete WebUI Bulk Landing & Launch Decoupled Bronze Pipeline](https://github.com/rutkala/zohelo-data/issues/131)
+  - [#132: [GUS DBW] Complete Bronze Layer Observation Partitions & Build Conformed Silver Layer](https://github.com/rutkala/zohelo-data/issues/132)
+  - [#133: [World Bank WDI] Complete Bulk Archive Ingestion & Vectorized Bronze Pipeline](https://github.com/rutkala/zohelo-data/issues/133)
+  - [#134: [Eurostat] Bulk Download Facility Ingestion & Decoupled Bronze Pipeline](https://github.com/rutkala/zohelo-data/issues/134)
+  - [#135: [Orchestration] Multi-Source Sequential Stage Orchestrator & Production Validation](https://github.com/rutkala/zohelo-data/issues/135)
+- **Active Operational Status:**
+  - **GUS BDL Landing**: 10-IP WireGuard proxy cluster and 10 concurrent browser workers running actively (371 selection-complete + 722 retained legacy = 1,093 / 2,420 subgroups; 521 bulk native archives, 132.1 MB landed on Google Drive; 0 failures).
+  - **GUS DBW Bronze**: Full batch running in detached background session (`scripts/run_dbw_bronze.sh`). Phase A (`br_dbw_indicators.parquet`) and Phase B (`br_dbw_metadata.parquet`) 100% complete and uploaded. Phase C (Bulk Observations) active with 165+ / 1,550 indicators processed into partitioned Parquet on Google Drive.
+  - **dbt Bronze Integration**: `bronze_dbw` source and 4 Bronze models (`br_dbw_observations`, `br_dbw_indicators`, `br_dbw_metadata`, `br_dbw_dictionaries`) verified with `dbt parse` passing cleanly.
+
 ### Cross-source modeled-publication outage — 19 September 2026
 
 **Observed production state:** NBP run [35414737354](https://github.com/rutkala/zohelo-data/actions/runs/35414737354), WDI run [35443349867](https://github.com/rutkala/zohelo-data/actions/runs/35443349867), and repeated Eurostat runs including [35457678025](https://github.com/rutkala/zohelo-data/actions/runs/35457678025) all stopped before publication with `AmbiguousLayoutError`. WDI and Eurostat collection completed before their modeled jobs failed, so retained Landing progress is not lost; it is not evidence of a refreshed Gold/semantic release. NBP stopped at ingestion initialization and retained its last accepted release.

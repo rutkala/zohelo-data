@@ -1,0 +1,73 @@
+name: DBW Web bulk bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_indicators:
+        description: 'Maximum indicators to process in this run (empty for all)'
+        type: string
+        default: ''
+      concurrency:
+        description: 'Number of concurrent workers'
+        type: string
+        default: '3'
+      skip_bulk_zips:
+        description: 'Skip bulk zip packages (metadata and metryka only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-pipeline-gus_dbw_web
+  cancel-in-progress: false
+
+jobs:
+  ingest_dbw_web:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Confirm Drive credentials
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          test -n "$GOOGLE_OAUTH_CLIENT_ID"
+          test -n "$GOOGLE_OAUTH_CLIENT_SECRET"
+          test -n "$GOOGLE_OAUTH_REFRESH_TOKEN"
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Ingest DBW bulk datasets from Web UI
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          PYTHONPATH: src
+          PYTHONUNBUFFERED: '1'
+        run: |
+          args=(--workspace portal/test-results/dbw-web-bulk --concurrency "${{ inputs.concurrency || '3' }}" --summary dbw-summary.json)
+          if [ -n "${{ inputs.max_indicators }}" ]; then
+            args+=(--max-indicators "${{ inputs.max_indicators }}")
+          fi
+          if [ "${{ inputs.skip_bulk_zips }}" = "true" ]; then
+            args+=(--skip-bulk-zips)
+          fi
+          python src/dbw_web_extractor.py "${args[@]}"
+      - name: Upload extraction summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dbw-web-extraction-summary
+          path: dbw-summary.json
+          if-no-files-found: ignore

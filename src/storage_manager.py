@@ -3,6 +3,12 @@ import os
 import re
 import tempfile
 import unicodedata
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import unquote, urlsplit

@@ -19,3 +19,6 @@ campaign-summary.json
 *-summary.json
 data/
 scratch/
+*.conf
+.wireguard/
+.devcontainer/wireguard/

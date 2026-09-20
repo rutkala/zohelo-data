@@ -32,7 +32,7 @@ class WorkerFailure(RuntimeError):
         self.failure_class = failure_class
 
 
-def invoke_selection(item, node, workspace, timeout, session_path=None):
+def invoke_selection(item, node, workspace, timeout, session_path=None, proxy=None):
     request = {"subgroup_id": item["subgroup_id"], "url": item["url"],
                "selection_id": node["id"], "scope": node["scope"]}
     request_path = workspace / "selection-task.json"
@@ -41,8 +41,11 @@ def invoke_selection(item, node, workspace, timeout, session_path=None):
     result_path.unlink(missing_ok=True)
     # Do not pass Drive OAuth credentials or GitHub tokens to the browser process.
     names = ("PATH", "HOME", "TMPDIR", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH",
-             "GUS_BDL_WEB_EMAIL", "GUS_BDL_WEB_PASSWORD")
+             "GUS_BDL_WEB_EMAIL", "GUS_BDL_WEB_PASSWORD",
+             "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")
     env = {key: os.environ[key] for key in names if key in os.environ}
+    if proxy:
+        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = env["http_proxy"] = env["https_proxy"] = proxy
     env.update(BDL_WEB_TASK_PATH=str(request_path), BDL_BULK_OUT_DIR=str(workspace))
     # Each worker workspace has its own isolated session state to prevent ASP.NET session state collisions.
     env["BDL_SESSION_STATE_PATH"] = str(session_path if session_path is not None else (workspace / "bdl-session-state.json"))
@@ -386,7 +389,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         print(json.dumps({"status": "bdl_selection_progress", "subgroup_id": plan["subgroup_id"], **value}), flush=True)
         report()
 
-    def process_subgroup(item: dict[str, Any], worker_id: int, worker_ws: Path):
+    def process_subgroup(item: dict[str, Any], worker_id: int, worker_ws: Path, proxy: str | None = None):
         subgroup = item["subgroup_id"]
         worker_ws.mkdir(parents=True, exist_ok=True)
         _clean_ephemeral(worker_ws)
@@ -424,11 +427,11 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         if plan is None:
             _clean_ephemeral(worker_ws)
             whole_node = parts.task("download", dimensions={}, layout=None, territories=["all"])
-            print(json.dumps({"status": "bdl_web_whole_subgroup_attempt", "subgroup_id": subgroup}), flush=True)
+            print(json.dumps({"status": "bdl_web_whole_subgroup_attempt", "subgroup_id": subgroup, "worker_id": worker_id, "proxy": proxy}), flush=True)
             try:
                 rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
                 timeout = min(600, rem) if rem > 60 else 60
-                result = invoke_selection(item, whole_node, worker_ws, timeout)
+                result = invoke_selection(item, whole_node, worker_ws, timeout, proxy=proxy)
                 if result.get("status") == "download":
                     with ctx.lock:
                         part_store = DriveControl(storage, control, f"web-part-{subgroup}-whole.json")
@@ -512,7 +515,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             try:
                 rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
                 timeout = min(600, rem) if rem > 60 else 60
-                result = invoke_selection(item, node, worker_ws, timeout)
+                result = invoke_selection(item, node, worker_ws, timeout, proxy=proxy)
                 with ctx.lock:
                     process_result(plan, node, result)
             except WorkerFailure as exc:
@@ -560,8 +563,21 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             else:
                 state["pass_outcomes"][subgroup] = {"status": "partial", "files": summary_val["files"], "outstanding_selections": summary_val["outstanding_selections"], "updated_at_utc": now()}
 
+    # Load proxies from cluster.json if available
+    cluster_file = Path("/workspaces/zohelo-data/.wireguard/cluster.json")
+    cluster_proxies = []
+    if cluster_file.is_file():
+        try:
+            cdata = json.loads(cluster_file.read_text(encoding="utf-8"))
+            cluster_proxies = [f"http://127.0.0.1:{inst['http_port']}" for inst in cdata if inst.get("status") == "HEALTHY"]
+        except Exception:
+            pass
+    if cluster_proxies:
+        print(f"Loaded {len(cluster_proxies)} cluster proxies for BDL: {cluster_proxies}", flush=True)
+
     def worker_loop(worker_id: int):
         worker_ws = workspace if concurrency == 1 else (workspace / f"worker-{worker_id}")
+        worker_proxy = cluster_proxies[worker_id % len(cluster_proxies)] if cluster_proxies else None
         while not ctx.stop_event.is_set():
             if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
                 with ctx.lock:
@@ -574,7 +590,10 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 catalogue_task = next((t for t in state["discovery_pending"] if t["url"] not in discovery_attempted), None)
                 if catalogue_task:
                     discovery_attempted.add(catalogue_task["url"])
-                    env = {k: os.environ[k] for k in ("PATH", "HOME", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH") if k in os.environ}
+                    env = {k: os.environ[k] for k in ("PATH", "HOME", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH",
+                                                      "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy") if k in os.environ}
+                    if worker_proxy:
+                        env["HTTP_PROXY"] = env["HTTPS_PROXY"] = env["http_proxy"] = env["https_proxy"] = worker_proxy
                     env.update(BDL_CATALOGUE_TASK=json.dumps(catalogue_task), BDL_CATALOGUE_OUTPUT=str(workspace / "catalogue-task.json"))
                     try:
                         result = invoke("bdl-web-catalogue.mjs", env, 240, workspace / "catalogue-task.json")
@@ -610,7 +629,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 update_writer_heartbeat(lock_store, lock_data)
 
             try:
-                process_subgroup(item, worker_id, worker_ws)
+                process_subgroup(item, worker_id, worker_ws, proxy=worker_proxy)
             except Exception as exc:
                 with ctx.lock:
                     if ctx.fatal_error is None:
