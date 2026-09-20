@@ -1,0 +1,41 @@
+version: 2
+
+models:
+  - name: stg_dbw_indicators
+    description: "Silver conformed model of DBW indicators taxonomy"
+    columns:
+      - name: indicator_id
+        description: "Primary key identifier of DBW indicator"
+        data_tests:
+          - not_null
+
+  - name: stg_dbw_metadata
+    description: "Silver conformed model of DBW metadata and definitions"
+    columns:
+      - name: indicator_id
+        description: "Primary key identifier of DBW indicator"
+        data_tests:
+          - not_null
+
+  - name: stg_dbw_dictionaries
+    description: "Silver conformed model of DBW dimension and position dictionaries"
+
+  - name: stg_dbw_observations
+    description: "Silver conformed model of DBW indicator observations"
+    columns:
+      - name: indicator_id
+        data_tests:
+          - not_null
+
+  - name: dim_dbw_indicator
+    description: "Gold conformed dimension for DBW indicators"
+    columns:
+      - name: indicator_key
+        data_tests:
+          - not_null
+
+  - name: fact_dbw_observations
+    description: "Gold fact table of DBW multi-dimensional observations"
+
+  - name: mart_dbw_coverage
+    description: "Gold mart reporting summary coverage for DBW"
