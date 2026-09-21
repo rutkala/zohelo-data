@@ -7,13 +7,24 @@ from typing import Any
 
 
 def versioned_name(name: str, sha256_hex: str) -> str:
-    """Keep a logical name recognizable while making a changed revision immutable."""
+    """Keep a logical name recognizable within the 240-byte storage boundary."""
     path = Path(name)
     suffix = "".join(path.suffixes)
     stem = name[: -len(suffix)] if suffix else name
     marker = f"--sha256-{sha256_hex}"
-    max_stem = max(1, 240 - len(marker) - len(suffix))
-    return f"{stem[:max_stem]}{marker}{suffix}"
+    fixed_bytes = len((marker + suffix).encode("utf-8"))
+    max_stem_bytes = 240 - fixed_bytes
+    if max_stem_bytes < 1:
+        raise RuntimeError("DBW versioned filename has no room for a logical stem.")
+    stem_bytes = stem.encode("utf-8")
+    if len(stem_bytes) > max_stem_bytes:
+        stem = stem_bytes[:max_stem_bytes].decode("utf-8", errors="ignore")
+    if not stem:
+        raise RuntimeError("DBW versioned filename cannot retain a safe logical stem.")
+    versioned = f"{stem}{marker}{suffix}"
+    if len(versioned.encode("utf-8")) > 240:
+        raise RuntimeError("DBW versioned filename exceeds the storage limit.")
+    return versioned
 
 
 def indicator_scoped_bulk_name(indicator_id: int, source_name: str) -> str:

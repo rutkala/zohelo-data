@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from dbw_native_identity import versioned_name
 from dbw_web_extractor import (
     DbwWebExtractor,
     _atomic_write_bytes,
@@ -22,6 +23,17 @@ from dbw_web_extractor import (
 
 class TestDbwWebExtractor(unittest.TestCase):
     SNAPSHOT_ID = "123e4567-e89b-42d3-a456-426614174000"
+
+    def test_versioned_native_name_limits_multibyte_utf8_bytes(self):
+        digest = "a" * 64
+        original = f"indicator-7--{'ż' * 90}.zip"
+        self.assertLessEqual(len(original.encode("utf-8")), 240)
+
+        revised = versioned_name(original, digest)
+
+        self.assertLessEqual(len(revised.encode("utf-8")), 240)
+        self.assertTrue(revised.endswith(f"--sha256-{digest}.zip"))
+        self.assertTrue(revised.startswith("indicator-7--"))
 
     def test_production_context_guard(self):
         with patch.dict("os.environ", {"GITHUB_ACTIONS": "false", "ZOHELO_ALLOW_CODESPACE_EXECUTION": "false"}, clear=True):

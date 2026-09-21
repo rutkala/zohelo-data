@@ -90,6 +90,9 @@ provider observation and dictionary CSVs with `ignore_errors=false`; malformed r
 before any partition or complete-release marker can be accepted instead of being silently discarded.
 Provider ZIPs use indicator-scoped durable object names while retaining the provider filename in receipt
 lineage, so byte-identical names shared by two indicators cannot collapse into one cross-owned object.
+Changed-object names truncate the recognizable stem at a UTF-8 boundary against the final 240-byte
+name, leaving room for Bronze's local prefixes and preventing non-ASCII provider names from crossing
+storage or filesystem component limits.
 Pre-boundary unscoped receipts remain preserved but do not count as completed during resume or Bronze
 validation; the same native snapshot reprocesses those indicators, writes scoped objects and seals a
 new content-addressed completion marker only after the current receipt contract reconciles.
