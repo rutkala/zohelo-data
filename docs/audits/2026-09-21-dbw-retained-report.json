@@ -1,0 +1,272 @@
+{
+  "audited_at_utc": "2026-09-21T21:29:01.252427+00:00",
+  "cache_files_downloaded": 1315,
+  "cache_files_reused": 1788,
+  "diagnostic_scope": "retained_pre_release_bronze",
+  "earlier_reported_observation_rows": 820345903,
+  "expected_retained_indicator_inventory": 1550,
+  "format_version": 1,
+  "indicator_receipts": 1550,
+  "inventory_sha256": "15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e",
+  "limitations": [
+    "This is a diagnostic of retained Landing receipts and Bronze bytes, not a #136 release.",
+    "The 1,550-indicator expectation is dated retained inventory, not source completeness.",
+    "It does not prove current provider catalogue completeness or current provider coverage.",
+    "Legacy receipt membership does not prove native-to-Bronze value lineage.",
+    "It does not create a completion marker, publish data, or authorize downstream execution."
+  ],
+  "measured_observation_rows_match_earlier_report": false,
+  "measured_parquet_rows": {
+    "dictionaries": 8358612,
+    "metadata": 1531,
+    "observations": 879999727,
+    "taxonomy": 1550
+  },
+  "observation_partitions": 1550,
+  "receipt_reported_native_names": 14346,
+  "remote_inventory_stable_after_restore": true,
+  "remote_object_count": 3103,
+  "remote_total_bytes": 4803673234,
+  "required_download_bytes_at_start": 3724419162,
+  "run_id": "bc79f7e9-6af6-429f-b327-8a34c3b74d71",
+  "schemas": {
+    "dictionaries": [
+      {
+        "name": "indicator_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "column_name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "dictionary_name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "element_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "element_name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "processed_at_utc",
+        "type": "VARCHAR"
+      }
+    ],
+    "metadata": [
+      {
+        "name": "indicator_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "metric_name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "metric_name_en",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "description",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "frequency",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "measure_unit",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "data_source",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "legal_basis",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "last_update",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "processed_at_utc",
+        "type": "VARCHAR"
+      }
+    ],
+    "observations": [
+      {
+        "name": "indicator_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "przekroj_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_1",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_1",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_2",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_2",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_3",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_3",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_4",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_4",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_5",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_5",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_6",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_6",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_7",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_7",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_8",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_8",
+        "type": "BIGINT"
+      },
+      {
+        "name": "wymiar_9",
+        "type": "BIGINT"
+      },
+      {
+        "name": "pozycja_9",
+        "type": "BIGINT"
+      },
+      {
+        "name": "okres_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "sposob_prezentacji_miara_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "period_year",
+        "type": "INTEGER"
+      },
+      {
+        "name": "wartosc_raw",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "wartosc_numeric",
+        "type": "DOUBLE"
+      },
+      {
+        "name": "precyzja",
+        "type": "INTEGER"
+      },
+      {
+        "name": "brak_wartosci_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "tajnosci_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "flaga_id",
+        "type": "INTEGER"
+      },
+      {
+        "name": "raw_archive_file",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "source_row_number",
+        "type": "BIGINT"
+      },
+      {
+        "name": "processed_at_utc",
+        "type": "VARCHAR"
+      }
+    ],
+    "taxonomy": [
+      {
+        "name": "indicator_id",
+        "type": "BIGINT"
+      },
+      {
+        "name": "indicator_name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "indicator_name_en",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "thematic_area",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "domain",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "taxonomy_path",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "node_id",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "parent_id",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "processed_at_utc",
+        "type": "VARCHAR"
+      }
+    ]
+  },
+  "source_id": "gus_dbw",
+  "status": "retained_outputs_audited"
+}

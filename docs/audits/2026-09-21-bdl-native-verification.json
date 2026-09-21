@@ -1,0 +1,57 @@
+{
+  "campaign_launched_at_utc": "2026-09-21T21:30:27.070550+00:00",
+  "checks": {
+    "archive_parsed_or_unpacked": false,
+    "byte_length_matches_receipt_and_drive": true,
+    "completed_after_campaign_launch": true,
+    "download_within_2_mib": true,
+    "drive_writes_performed": false,
+    "durable_plan_node_matches_part_receipt": true,
+    "local_worker_receipt_matches_durable_part_receipt": true,
+    "md5_matches_receipt_and_drive": true,
+    "sha256_matches_receipt_and_drive": true
+  },
+  "completed_at_utc": "2026-09-21T21:33:05.685717Z",
+  "download_cap_bytes": 2097152,
+  "durable_part_receipt": {
+    "id": "1P1bBHrwUywOn5ZNpX-C8u8sBn46oC8nI",
+    "modified_time": "2026-09-21T21:33:14.424Z",
+    "name": "web-part-P4174-14ee2a59a50a153ac83125a00875c27122f0d58515a9744e17c9bdb0597f09a8.json",
+    "sha256": "79041e8b9bb0f2473a829a0850ccf85753526d6916852c4a4693746e3579843d",
+    "size": 1823,
+    "stable_during_read": true,
+    "version": "2"
+  },
+  "durable_plan": {
+    "id": "1KHkGtnWUfkGNkpRU-qiElRMmXKA-_V9F",
+    "modified_time": "2026-09-21T21:40:52.136Z",
+    "name": "web-parts-P4174-v1.json",
+    "node_status": "landed",
+    "sha256": "a431b6e5e955aa03aa290ceece556a93960984c2fcfe96fc15011292564b4af1",
+    "size": 628806,
+    "stable_during_read": true,
+    "version": "117"
+  },
+  "format_version": 1,
+  "native_bytes_retained_locally": false,
+  "native_object": {
+    "created_time": "2026-09-21T21:33:10.815Z",
+    "id": "1jtj_KS0gVRSZXGT2Ifnpo5eppC8RHaDW",
+    "md5": "8c2e89044a35edc1fb336b776ab7270e",
+    "mime_type": "application/zip",
+    "modified_time": "2026-09-21T21:33:10.815Z",
+    "name": "SAMO_4174_CREL_20260921233305.zip",
+    "sha256": "1820fb269e59df1675c7753a156845aad0c35ca70a661de9c2734cfd16faea4c",
+    "size": 55485,
+    "stable_during_download": true,
+    "version": "2"
+  },
+  "observed_at_utc": "2026-09-21T21:41:16.724948+00:00",
+  "read_only": true,
+  "runtime_commit": "5097e7eab3e6e328b3be74d6ee0de4fe837b710e",
+  "selection_id": "14ee2a59a50a153ac83125a00875c27122f0d58515a9744e17c9bdb0597f09a8",
+  "source_id": "gus_bdl",
+  "subgroup_id": "P4174",
+  "transport": "web_ui",
+  "verification_scope": "one_new_native_object_exact_bytes"
+}
