@@ -33,6 +33,7 @@ import uuid
 
 from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
 from dbw_native_identity import (
+    bulk_revision_name as _bulk_revision_name,
     indicator_scoped_bulk_name as _indicator_scoped_bulk_name,
     is_indicator_scoped_bulk_descriptor as _is_indicator_scoped_bulk_descriptor,
     versioned_name as _versioned_name,
@@ -331,7 +332,7 @@ def _upload_file(
                 "md5": md5_hex,
                 "reused": True,
             }
-        name = _versioned_name(logical_name, sha256_hex)
+        name = _bulk_revision_name(logical_name, sha256_hex)
         existing = _find_exact_file(storage, name, parent_id)
         if len(existing) > 1:
             raise RuntimeError(f"Ambiguous existing DBW revision object: {name}")

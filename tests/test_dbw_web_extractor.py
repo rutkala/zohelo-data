@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from dbw_native_identity import (
+    bulk_revision_name,
     is_indicator_scoped_bulk_descriptor,
     versioned_name,
 )
@@ -66,6 +67,17 @@ class TestDbwWebExtractor(unittest.TestCase):
             versioned_name(long_name, digest),
             versioned_name(adversarial_short_name, digest),
         )
+
+    def test_bulk_base_and_revision_names_use_disjoint_domains(self):
+        digest = "d" * 64
+        base_name = _indicator_scoped_bulk_name(7, "foo.zip")
+        revision_name = bulk_revision_name(base_name, digest)
+
+        self.assertTrue(base_name.startswith("base--logical-sha256-"))
+        self.assertTrue(revision_name.startswith("revision--logical-sha256-"))
+        self.assertNotEqual(base_name, revision_name)
+        self.assertLessEqual(len(base_name.encode("utf-8")), 240)
+        self.assertLessEqual(len(revision_name.encode("utf-8")), 240)
 
     def test_exact_base_descriptor_does_not_require_revision_name(self):
         source_name = f"x.{'a' * 170}.zip"

@@ -93,10 +93,12 @@ lineage, so byte-identical names shared by two indicators cannot collapse into o
 Changed-object names truncate the recognizable stem at a UTF-8 boundary against the final 240-byte
 name, leaving room for Bronze's local prefixes and preventing non-ASCII provider names from crossing
 storage or filesystem component limits. Every revision name is domain-separated with the full
-SHA-256 of both its original logical name and its content, preventing a shorter provider name from
-occupying the truncated namespace or distinct long names with identical revised bytes from collapsing
-to one object. Exact unchanged base descriptors validate without constructing a revision identity;
-legacy revision objects remain retained, while current receipts must satisfy the stronger identity.
+SHA-256 of both its original logical name and its content. Bulk base objects are also mapped into a
+separate `base--logical-sha256-...` namespace, while changed bytes use
+`revision--logical-sha256-...--content-sha256-...`; a provider filename therefore cannot occupy a
+generated revision identity, and distinct long names cannot collapse to one Drive object. Exact
+unchanged base descriptors validate without constructing a revision identity; legacy objects remain
+retained, while current receipts must satisfy the stronger identity.
 Pre-boundary unscoped receipts remain preserved but do not count as completed during resume or Bronze
 validation; the same native snapshot reprocesses those indicators, writes scoped objects and seals a
 new content-addressed completion marker only after the current receipt contract reconciles.

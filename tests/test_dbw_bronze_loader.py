@@ -14,6 +14,7 @@ import zipfile
 import duckdb
 import pandas as pd
 
+from dbw_native_identity import indicator_scoped_bulk_name
 from dbw_bronze_loader import (
     DBWBronzeLoader,
     DBWLandingIncompleteError,
@@ -271,8 +272,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
                     ),
                 }
                 if role == "bulk_zip" and not legacy_bulk_names:
-                    descriptor["name"] = (
-                        f"indicator-{indicator_id}--{descriptor['source_name']}"
+                    descriptor["name"] = indicator_scoped_bulk_name(
+                        indicator_id, descriptor["source_name"]
                     )
                 landed_objects.append(descriptor)
                 folder_files.append({
