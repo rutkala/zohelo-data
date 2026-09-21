@@ -82,6 +82,8 @@ For ad hoc dbt execution, set `ZOHELO_DATA_ROOT` to local fixtures and `ZOHELO_D
 
 The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use additional checks when relevant, and inspect `portal/playwright.config.ts` and browser prerequisites before running end-to-end tests.
 
+**Local crash recovery.** Preserve unpublished work and inspect live processes and Drive checkpoints before restarting a writer. `scripts/autonomous_wave0_supervisor.sh` is currently monitor-only; select the operational checkout with `--runtime-root`. It must not infer downstream publication authority from earlier completion summaries. See [recovery monitoring](docs/source-campaign-operations.md#local-crash-recovery-monitoring).
+
 **Keep routine validation local.**
 
 - Use mocks or fixtures for Drive interactions. Direct execution of `src/storage_manager.py` creates Drive folders; supported production ingestion/publication entrypoints write remote data. Retired transformation CLIs reject direct execution. The consolidated platform runner publishes a verified immutable release and changes only a current-release pointer; it retains legacy files and prior releases. These entrypoints are not smoke tests. The merged production path is documented in [NBP platform operations](docs/nbp-platform-operations.md); see [silver publication](docs/nbp-silver-publication.md) for the historical v1 baseline.

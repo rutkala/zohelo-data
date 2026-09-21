@@ -461,21 +461,6 @@ class TestDBWBronzeLoader(unittest.TestCase):
         loader_source = (repo_root / "src/dbw_bronze_loader.py").read_text(encoding="utf-8")
         self.assertIn('default=18000, help="Bound one resumable writer lease session"', loader_source)
 
-    def test_wave0_supervisor_restores_and_selects_dbw_release(self):
-        repo_root = Path(__file__).resolve().parents[1]
-        script = (repo_root / "scripts/autonomous_wave0_supervisor.sh").read_text(
-            encoding="utf-8"
-        )
-        restore = script.index("scripts/restore_dbw_bronze_release.py")
-        dbt_build = script.index('PYTHONPATH=src "$DBT_BIN" build', restore)
-        self.assertLess(restore, dbt_build)
-        self.assertIn('ZOHELO_DATA_ROOT="$DBW_DATA_ROOT"', script)
-        self.assertIn('ZOHELO_DBW_BRONZE_RELEASE_ID="$DBW_RELEASE_ID"', script)
-        self.assertIn('ZOHELO_DUCKDB_PATH="$DBW_DUCKDB_PATH"', script)
-        self.assertIn('DBW_RELEASE_DIR" != "$DBW_RELEASE_ID"', script)
-        self.assertIn("DBW_BRONZE_TRIGGERED_DOWNSTREAM=1", script[dbt_build:])
-        self.assertNotIn('grep -q "1550/1550"', script)
-
     def test_dbt_sources_require_explicit_snapshot_release(self):
         repo_root = Path(__file__).resolve().parents[1]
         sources = (repo_root / "models/bronze/sources.yml").read_text(encoding="utf-8")
