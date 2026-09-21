@@ -4,6 +4,66 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Local crash recovery resumed — 21 September 2026, 10:10 UTC
+
+The owner explicitly authorized local recovery and continuation of the AGY autonomous programme,
+with Wave 0 first and independent native Landing/downstream stages. The recovered AGY conversation
+`b04d2b40-34e2-4971-b9d3-fbe880f4a8af` contains the owner's 20 September agreements.
+AGY's final recorded command was at 04:41 UTC; later heartbeat attempts received model quota errors.
+The separate BDL supervisor continued logging until 08:25 UTC. No local ingestion, browser,
+proxy or supervisor survived the container restart. Current cgroup OOM counters are zero;
+this does not establish the previous container's crash cause.
+
+**Preserved:** the original working tree remains at `c7898d7`, with its unpublished changes intact.
+A local source-only backup with per-file SHA-256 covers 55 files, including the supplied handoff,
+at `.local/recovery-2026-09-21/`. It excludes credentials and datasets. Remote refs were fetched:
+`origin/main` is `ee2d944` (merged #136 and #137). Engineering uses the separate
+`recovery/2026-09-21-supervisor` worktree; the old DBW/GLEIF files were not copied over those repairs.
+
+**BDL recovery:** read-only Drive inspection verified the queue's stored checksum and stale writer
+lock (heartbeat `2026-09-21T08:25:17.840035Z`, former PID 595473). The queue retained 2,420
+candidates, 1,352 selection plans and ten interrupted in-flight subgroups. Public GitHub Actions
+API checks found no in-progress or queued runs before resume. All ten existing WireGuard proxy
+connections were restored and tested. One local BDL writer was launched as PID 13743, explicitly
+in `resume` mode, concurrency 10, with a 24-hour execution bound, using the preserved operational
+checkout. No reset, reload or replacement of successful native downloads was requested. At
+10:10 UTC the resumed local summary reported 1,037 selection-complete subgroups, 1,383 remaining,
+56 blocked selections and zero new files in this run so far; this is recovery progress, not
+full-source acceptance. Logs append to `portal/test-results/bdl-web-bulk/bdl_extractor.log`.
+The old supervisor has not been relaunched.
+
+**DBW continuation:** fresh Drive metadata inspection found the earlier checkpoint and existing
+Bronze folders, no `releases` namespace and no native completion marker in the Landing control
+folder. The reported 820,345,903-row Bronze result needs reconciliation with #136. The previous dbt attempt
+failed on missing local Parquet inputs. Preserve those bytes; reconcile provenance before any
+new complete-release claim or downstream execution. The owner clarified that completed or partial
+collection and downstream progress are retained work, not obsolete data: reconcile and reuse those
+outputs, rather than restarting ingestion merely because the checkpoint format changed.
+
+**Fresh retained-output inventory, 10:14 UTC:** Drive lists all 1,550 DBW Landing indicator
+checkpoints and all 1,550 Bronze observation partitions (4,737,200,817 bytes), plus the consolidated
+dictionary (65,499,189 bytes), taxonomy (84,403 bytes), and metadata (144,289 bytes). All listed
+files have MD5 and recorded SHA-256 metadata and no duplicate names in these folders. This is
+metadata inventory evidence, not a fresh byte hash or row recount. Reuse/verification of those
+outputs is the next DBW step; no repeat collection is justified by a checkpoint-version change.
+At 10:14 UTC, resumed BDL reports two newly landed native files (180,999 bytes), with 1,039
+selection-complete subgroups. Drive independently reports the current writer PID 13743 and
+fresh queue/heartbeat updates.
+
+**Active continuation:** BDL is a real detached local process, which a further container stop can
+still terminate. The first lighter internal implementation assignment returned no work and was stopped; the lead
+implemented the recovery monitor in the isolated worktree. Seven focused recovery tests pass;
+the full data check is running. Separate agents, explicitly requested by the owner, are auditing
+portal/Drive visibility and the unpublished files. No AGY overage or API billing was enabled.
+The lead owns integration, validation and the remaining Wave 0 programme. Supervisor changes
+are not yet merged or deployed at this checkpoint. Its monitor-only mode records actual process
+health and explicit downstream gates; automatic stage advancement remains unfinished work.
+
+**Other saved outputs:** a fresh metadata comparison of the 20 objects referenced by TERYT,
+PRG, GLEIF and Biała Lista local Landing/Bronze receipts matched presence, size and the
+checksums supplied in each receipt (1,759,197,323 bytes total; zero mismatches). This verifies
+retained object identity/metadata, not fresh full-content hashes, source completeness or model semantics.
+
 ### Local-devcontainer recovery and native publication review — 21 September 2026
 
 **Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
