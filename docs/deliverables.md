@@ -6,12 +6,17 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ### Local-devcontainer recovery and native publication review — 21 September 2026
 
-**Preserve the active local environment.** The owner's 05:17 UTC process inventory and
+**Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
 Drive's 05:16 UTC heartbeat identify the BDL worker as local PID `595473`, with the
 supervisor and ten proxy processes also present. These are dated observations, not a
 continuous health check. Large collection stays in that devcontainer. Do not duplicate
 the writer in Actions/Codespaces or pull, reset, clean, stash, switch branches, or restart
 the active working tree while it contains the running jobs and unpublished work.
+Later in this session the owner reported that AGY and the entire devcontainer crashed.
+Current process health is therefore unverified. On reopening, first preserve unpublished
+files and inspect fresh processes, logs and local/Drive checkpoints; do not blindly relaunch
+the old supervisor or treat historical PIDs as current. The owner is moving toward Codex CLI
+in that same local environment for continued work.
 
 **Reconciled status at the review checkpoint:** [BDL native collection](https://drive.google.com/file/d/18TUYzBpZg1Hn0qcoZT_iiO1PAq2-eyCj/view) was incomplete
 (849 landed plans / 2,420 candidates, with partial/failed plans and outstanding selections).
@@ -35,21 +40,30 @@ and parser/model defects. No observed defect alone proves existing Drive data is
 The local DBW memory/performance changes must be integrated selectively into current main;
 copying the older loader over #136 would remove verified release safeguards.
 
-**GLEIF native-transfer repair (code only):** the adapter now uses existing atomic bulk
-transport and immutable, remotely verified Drive storage. It pins one provider publication
-before fetching the three current CSV archives, caches each verified member for recovery,
-and distinguishes a complete current Golden Copy product from a subset and uncollected
-historical publications. It preserves existing raw objects and receipts, rejects incomplete
-transfers, requires explicit write authorization, and locks its local workspace. Operators
-must still keep one production writer across hosts. See [the operating boundary](source-campaign-operations.md#gleif-current-golden-copy-native-transfer).
+**GLEIF native-cache repair (code only):** [PR #137](https://github.com/rutkala/zohelo-data/pull/137)
+adds a local native downloader using the existing atomic bulk transport. It pins one provider
+publication before fetching the three current CSV archives, caches each verified member for
+recovery, rejects incomplete transfers and locks its workspace. Local completeness covers
+only the selected current product, not historical snapshots or durable platform availability.
+See [the operating boundary](source-campaign-operations.md#gleif-current-golden-copy-native-transfer).
 
-**Validation:** `bash scripts/check-data.sh` passed 616 tests using Python 3.12 and pinned
-dependencies. The final focused suite passed 15 tests after the last concurrency and
-provider-filename corrections; independent review found no remaining material issue.
+**Drive publication is blocked:** GitHub review identified a cross-host race in the proposed
+publisher: different workspaces could create duplicate hash-named objects. The publisher was
+removed from this increment; upload flags fail before any workspace or network work. A local
+lock or delayed Drive-list election cannot establish cross-host exclusion. Reopening publication
+requires a proven serializer acquired before any namespace mutation. A reviewed option is a
+root-bound, explicitly provisioned lock anchor with immutable claim/release records addressed
+by pre-generated Drive IDs, no automatic expiry, and recovery only after proving the previous
+writer stopped. This coordination must be implemented and verified before production rollout.
+
+**Validation:** the earlier candidate passed `bash scripts/check-data.sh` (616 tests) using
+Python 3.12 and pinned dependencies. The final local-only focused suite passed all 10 tests,
+and independent review found no remaining issue in the narrowed delivery. The [PR checks](https://github.com/rutkala/zohelo-data/pull/137/checks)
+on the final revision remain the integration gate.
 A bounded, read-only check parsed the provider's 139,840-byte publication response and
 pinned all three members of `2026-09-21 00:00:00`, including the real `YYYYMMDD-HHMM`
 filename convention. No native archive was downloaded and no Drive data was written by
-this repair session. The PR's final-head CI remains the integration gate. No GLEIF Bronze
+this repair session. No GLEIF Bronze
 or portal availability is claimed, and no local-devcontainer rollout has occurred.
 
 **Still open:** apply the verified native boundary to the other five supplied adapters;
