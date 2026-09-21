@@ -4,6 +4,21 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Retained DBW Bronze audit started — 21 September 2026
+
+A read-only audit of the dated retained DBW collection started from the isolated
+recovery worktree as local PID `58944`, run
+`1ef481a6-6a85-4851-9b60-59fde1c87fde`, with recovery state under
+`/workspaces/zohelo-data/.local/dbw-retained-audit`. Its pinned inventory contains
+3,103 objects: 1,550 legacy Landing receipts, 1,550 Bronze observation partitions
+and three fixed Bronze relations. This is an active, incomplete diagnostic; no
+row-count reconciliation, stable-inventory acceptance, #136 release, downstream
+authorization, or current provider coverage is claimed. The auditor performs
+Drive metadata reads and downloads only. Completion requires a matching
+`complete` `run-status.json` and `audit-report.json`, followed by review of the
+measured evidence and limitations in the
+[operating procedure](source-campaign-operations.md#read-only-audit-of-retained-dbw-bronze).
+
 ### Local-devcontainer recovery and native publication review — 21 September 2026
 
 **Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
