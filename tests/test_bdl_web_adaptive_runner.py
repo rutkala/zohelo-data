@@ -118,6 +118,9 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
         stack.enter_context(patch.object(bdl_bulk_plan, "_bulk_roots", return_value=("bulk", "control")))
         stack.enter_context(patch.object(bdl_bulk_plan, "_durable_status", return_value=(set(legacy or ()), set(legacy or ()))))
         stack.enter_context(patch.object(adaptive, "DriveControl", FakeDriveControl))
+        stack.enter_context(patch.object(
+            adaptive, "BDL_PROXY_CLUSTER_FILE", directory / "missing-proxy-cluster.json"
+        ))
         stack.enter_context(patch.object(adaptive, "invoke", return_value={"url": "", "complete": True, "records": [], "expected_count": 0, "pages": 1}))
         stack.enter_context(redirect_stdout(io.StringIO()))
 
@@ -585,6 +588,288 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
             self.assertEqual(6, result["new_files_this_run"])
             worker_dirs = {Path(p).name for p in invoked_workspaces}
             self.assertTrue({"worker-0", "worker-1", "worker-2"} <= worker_dirs)
+
+    def test_checkpoint_drift_in_worker_cleanup_stops_all_workers_before_lock_release(self):
+        """A cleanup save conflict is fatal and cannot be hidden as a normal worker exit."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            candidates = {"P1": make_candidate(1), "P2": make_candidate(2)}
+            self.setup_environment(workspace, candidates)
+            drift_seen = threading.Event()
+            second_worker_finished = threading.Event()
+            both_workers_started = threading.Barrier(2)
+
+            class DriftingQueueControl(FakeDriveControl):
+                max_in_flight = 0
+
+                def save(self, value):
+                    if self.name == "web-queue-v1.json":
+                        current = len(value.get("in_flight", []))
+                        type(self).max_in_flight = max(type(self).max_in_flight, current)
+                        if type(self).max_in_flight == 2 and current < 2:
+                            drift_seen.set()
+                            raise RuntimeError(
+                                "BDL Web checkpoint changed outside the serialized writer"
+                            )
+                    if self.name == "bdl-writer-lock.json" and value.get("status") == "released":
+                        if not second_worker_finished.is_set():
+                            raise AssertionError("writer lock released before workers stopped")
+                    super().save(value)
+
+            def fake_invoke(item, node, ws, timeout):
+                both_workers_started.wait(timeout=2)
+                if item["subgroup_id"] == "P2":
+                    if not drift_seen.wait(timeout=2):
+                        raise AssertionError("cleanup checkpoint drift was not reproduced")
+                    second_worker_finished.set()
+                return {
+                    "status": "download",
+                    "subgroup_id": item["subgroup_id"],
+                    "selection_id": node["id"],
+                }
+
+            def fake_persist(storage, session, landing_root, control, plan, node, result, ws, part_store):
+                raw = plan["subgroup_id"].encode()
+                receipt = {
+                    "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+                    "record_type": "native_partition_receipt", "subgroup_id": plan["subgroup_id"],
+                    "selection_id": node["id"], "selection": node["scope"],
+                    "landing_scope": "native_bytes_only", "content_validation": "not_performed",
+                    "archive_object": {"id": f"d-{plan['subgroup_id']}", "size": len(raw),
+                                       "sha256": sha256(raw).hexdigest(), "md5": "b" * 32},
+                    "completed_at_utc": queue.now(),
+                }
+                part_store.save(receipt)
+                return receipt
+
+            with patch.object(adaptive, "DriveControl", DriftingQueueControl), \
+                 patch.object(adaptive, "invoke_selection", side_effect=fake_invoke), \
+                 patch.object(adaptive, "persist_download", side_effect=fake_persist):
+                with self.assertRaisesRegex(
+                    adaptive.CampaignControlFailure, "Unable to publish BDL Web queue"
+                ):
+                    adaptive.run(workspace, concurrency=2)
+
+            self.assertTrue(drift_seen.is_set())
+            self.assertTrue(second_worker_finished.is_set())
+            remote_queue = json.loads(
+                FakeDriveControl.records["control/web-queue-v1.json"].decode("utf-8")
+            )
+            self.assertEqual(2, len(remote_queue["in_flight"]))
+            lock = json.loads(
+                FakeDriveControl.records["control/bdl-writer-lock.json"].decode("utf-8")
+            )
+            self.assertEqual("released", lock["status"])
+            summary = json.loads((workspace / "bootstrap-summary.json").read_text())
+            self.assertEqual("control_error", summary["run_stop_reason"])
+            self.assertEqual("interrupted", summary["status"])
+
+    def test_heartbeat_failure_waits_for_in_flight_worker_before_lock_release(self):
+        """A failed heartbeat stops scheduling and retains the lock until workers join."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            self.setup_environment(workspace, {"P1": make_candidate(1)})
+            heartbeat_failed = threading.Event()
+            worker_finished = threading.Event()
+
+            class FailingHeartbeatControl(FakeDriveControl):
+                active_lock_saves = 0
+
+                def save(self, value):
+                    if self.name == "bdl-writer-lock.json" and value.get("status") == "active":
+                        type(self).active_lock_saves += 1
+                        if type(self).active_lock_saves == 3:
+                            heartbeat_failed.set()
+                            raise RuntimeError("heartbeat publication failed")
+                    if self.name == "bdl-writer-lock.json" and value.get("status") == "released":
+                        if not worker_finished.is_set():
+                            raise AssertionError("writer lock released before in-flight worker stopped")
+                    super().save(value)
+
+            def fake_invoke(item, node, ws, timeout):
+                if not heartbeat_failed.wait(timeout=2):
+                    raise AssertionError("heartbeat failure was not observed")
+                worker_finished.set()
+                return {
+                    "status": "download",
+                    "subgroup_id": item["subgroup_id"],
+                    "selection_id": node["id"],
+                }
+
+            with patch.object(adaptive, "DriveControl", FailingHeartbeatControl), \
+                 patch.object(adaptive, "WRITER_HEARTBEAT_SECONDS", 0.01), \
+                 patch.object(adaptive, "invoke_selection", side_effect=fake_invoke):
+                with self.assertRaisesRegex(
+                    adaptive.CampaignControlFailure, "writer heartbeat"
+                ):
+                    adaptive.run(workspace)
+
+            self.assertTrue(heartbeat_failed.is_set())
+            self.assertTrue(worker_finished.is_set())
+            lock = json.loads(
+                FakeDriveControl.records["control/bdl-writer-lock.json"].decode("utf-8")
+            )
+            self.assertEqual("released", lock["status"])
+            summary = json.loads((workspace / "bootstrap-summary.json").read_text())
+            self.assertEqual("control_error", summary["run_stop_reason"])
+
+    def test_control_error_summary_never_claims_pass_or_load_complete(self):
+        """Uncertain in-memory state cannot be reported as durable completion."""
+        state = queue.new_state()
+        state["discovery_pending"] = []
+        state["discovery_completed"] = {"catalogue": {"row_count": 1}}
+        state["candidates"] = {"P1": make_candidate(1)}
+        state["pass_outcomes"] = {"P1": {"status": "landed"}}
+        state["selection_plans"] = {
+            "P1": {"summary": {"complete": True, "blocked_selections": 0}}
+        }
+
+        summary = adaptive.campaign_summary(
+            state, set(), files=1, transferred=10, reason="control_error"
+        )
+
+        self.assertEqual("interrupted", summary["status"])
+        self.assertFalse(summary["pass_complete"])
+        self.assertFalse(summary["load_complete"])
+        self.assertEqual(
+            "in_memory_last_observed_not_durable", summary["progress_counts_scope"]
+        )
+
+    def test_thread_start_failure_joins_started_worker_before_lock_release(self):
+        """Partial thread startup still stops and joins every worker that did start."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            self.setup_environment(
+                workspace, {"P1": make_candidate(1), "P2": make_candidate(2)}
+            )
+            second_start_failed = threading.Event()
+            first_worker_finished = threading.Event()
+
+            class ReleaseOrderControl(FakeDriveControl):
+                def save(self, value):
+                    if self.name == "bdl-writer-lock.json" and value.get("status") == "released":
+                        if not first_worker_finished.is_set():
+                            raise AssertionError("writer lock released before started worker joined")
+                    super().save(value)
+
+            def fake_invoke(item, node, ws, timeout):
+                if not second_start_failed.wait(timeout=2):
+                    raise AssertionError("second worker start did not fail")
+                first_worker_finished.set()
+                return {
+                    "status": "download",
+                    "subgroup_id": item["subgroup_id"],
+                    "selection_id": node["id"],
+                }
+
+            original_start = threading.Thread.start
+
+            def controlled_start(thread):
+                if thread.name == "bdl-worker-1":
+                    second_start_failed.set()
+                    raise RuntimeError("worker thread start failed")
+                return original_start(thread)
+
+            with patch.object(adaptive, "DriveControl", ReleaseOrderControl), \
+                 patch.object(adaptive, "invoke_selection", side_effect=fake_invoke), \
+                 patch.object(threading.Thread, "start", new=controlled_start):
+                with self.assertRaisesRegex(RuntimeError, "worker thread start failed"):
+                    adaptive.run(workspace, concurrency=2)
+
+            self.assertTrue(first_worker_finished.is_set())
+            lock = json.loads(
+                FakeDriveControl.records["control/bdl-writer-lock.json"].decode("utf-8")
+            )
+            self.assertEqual("released", lock["status"])
+
+    def test_lock_release_failure_records_control_error_and_raises(self):
+        """A release failure cannot leave a final summary claiming normal completion."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            self.setup_environment(workspace, {"P1": make_candidate(1)})
+
+            class FailingReleaseControl(FakeDriveControl):
+                def save(self, value):
+                    if self.name == "bdl-writer-lock.json" and value.get("status") == "released":
+                        raise RuntimeError("release publication failed")
+                    super().save(value)
+
+            def fake_persist(storage, session, landing_root, control, plan, node, result, ws, part_store):
+                raw = b"native"
+                receipt = {
+                    "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+                    "record_type": "native_partition_receipt", "subgroup_id": plan["subgroup_id"],
+                    "selection_id": node["id"], "selection": node["scope"],
+                    "landing_scope": "native_bytes_only", "content_validation": "not_performed",
+                    "archive_object": {"id": "d1", "size": len(raw),
+                                       "sha256": sha256(raw).hexdigest(), "md5": "b" * 32},
+                    "completed_at_utc": queue.now(),
+                }
+                part_store.save(receipt)
+                return receipt
+
+            with patch.object(adaptive, "DriveControl", FailingReleaseControl), \
+                 patch.object(adaptive, "invoke_selection", return_value={"status": "download"}), \
+                 patch.object(adaptive, "persist_download", side_effect=fake_persist):
+                with self.assertRaisesRegex(
+                    adaptive.CampaignControlFailure, "Unable to release the BDL writer lock"
+                ):
+                    adaptive.run(workspace)
+
+            summary = json.loads((workspace / "bootstrap-summary.json").read_text())
+            self.assertEqual("control_error", summary["run_stop_reason"])
+            self.assertEqual("interrupted", summary["status"])
+            self.assertFalse(summary["pass_complete"])
+            self.assertFalse(summary["load_complete"])
+
+    def test_queue_restore_failure_releases_acquired_writer_lock(self):
+        """Startup failure after lock acquisition still releases campaign ownership."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            self.setup_environment(workspace, {"P1": make_candidate(1)})
+
+            class FailingQueueLoadControl(FakeDriveControl):
+                def load(self):
+                    if self.name == "web-queue-v1.json":
+                        raise RuntimeError("queue restore failed")
+                    return super().load()
+
+            with patch.object(adaptive, "DriveControl", FailingQueueLoadControl):
+                with self.assertRaisesRegex(RuntimeError, "queue restore failed"):
+                    adaptive.run(workspace)
+
+            lock = json.loads(
+                FakeDriveControl.records["control/bdl-writer-lock.json"].decode("utf-8")
+            )
+            self.assertEqual("released", lock["status"])
+
+    def test_native_upload_failure_is_fatal_control_failure(self):
+        """Storage publication failure cannot fall back as if it were a UI selection error."""
+        with tempfile.TemporaryDirectory() as td:
+            workspace = Path(td)
+            archive = workspace / "download-P1.zip"
+            archive.write_bytes(b"native-archive")
+            node = parts.task("download", dimensions={}, layout=None, territories=["all"])
+            plan = parts.new_whole_plan("P1", make_candidate(1)["url"], root_task=node)
+            result = {
+                "archive": {
+                    "filename": "DANE_P1.zip",
+                    "local_filename": archive.name,
+                    "bytes": archive.stat().st_size,
+                    "sha256": sha256(archive.read_bytes()).hexdigest(),
+                }
+            }
+            storage = Mock()
+            storage.get_or_create_nested_folder.return_value = "landing-folder"
+
+            with patch("bdl_bulk_ingest._upload_file", side_effect=OSError("upload failed")):
+                with self.assertRaisesRegex(
+                    adaptive.CampaignControlFailure, "publish or verify the native partition receipt"
+                ):
+                    adaptive.persist_download(
+                        storage, "session", "landing", "control", plan, node,
+                        result, workspace, Mock()
+                    )
 
     def test_main_exit_codes(self):
         """main() returns 0 on complete load or graceful max_seconds interruption, and 1 on error."""

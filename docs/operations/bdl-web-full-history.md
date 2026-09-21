@@ -131,6 +131,7 @@ Operational invariants enforced by the runner:
 2. **Coverage Termination:** Default `max_seconds=None` prevents arbitrary time cutoffs. The pass terminates only on catalogue exhaustion and zero unvisited subgroups (`pass_complete` / `load_complete`), or explicitly bounded interruption (`interrupted`).
 3. **Fair Scheduling:** Unvisited subgroups are attempted fairly before repeated deep slicing of a single multi-partition subgroup.
 4. **Receipt Validation:** Drive partition objects are verified on restart; missing or tampered receipts are rejected and re-downloaded.
+5. **Control Failure:** A queue conflict or heartbeat publication failure interrupts the whole runner. It stops scheduling, lets bounded in-flight workers finish their current recovery boundary, joins them before releasing the writer lock, and refuses further queue writes once durable state is uncertain. The local summary reports `control_error`; its progress counts are explicitly non-durable and cannot claim pass or load completion.
 
 ## Delivered implementation and verified acceptance
 
