@@ -1,9 +1,9 @@
 """Native-only transfer of GLEIF's current three-member Golden Copy product.
 
 This adapter downloads the provider's small publication descriptor, pins its three
-CSV archive URLs and expected byte sizes, and transfers those bytes unchanged.  It
-does not unpack or inspect archive payloads.  A completed receipt proves only one
-current ``lei2``/``rr``/``repex`` product snapshot; it never claims provider history.
+CSV archive URLs and expected byte sizes, and transfers those bytes unchanged to
+disposable local storage.  It does not unpack or inspect archive payloads and
+does not publish to Drive.
 """
 from __future__ import annotations
 
@@ -27,16 +27,9 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from ingestion.bulk_transport import (  # noqa: E402
-    BulkDriveRawStore,
     BulkTransportError,
-    DriveIntegrityError,
     fetch_to_file,
 )
-from ingestion.source_campaign_store import (  # noqa: E402
-    CampaignStoreError,
-    DriveCampaignStore,
-)
-from storage_manager import StorageManager  # noqa: E402
 
 logger = logging.getLogger("gleif_bulk")
 
@@ -50,8 +43,8 @@ DOWNLOAD_TIMEOUT_SECONDS = 300
 MAX_MEMBER_BYTES = 2 * 1024 * 1024 * 1024
 CACHE_NAME = "gleif-native-cache.json"
 
-# Kept as a public compatibility constant.  Filenames are disposable local staging
-# names only; durable raw objects have immutable content-addressed names.
+# Kept as a public compatibility constant.  Filenames are disposable local
+# staging names only.
 GLEIF_DATASETS = [
     {
         "dataset_key": "lei2",
@@ -75,7 +68,7 @@ GLEIF_DATASETS = [
 
 
 class GleifBulkError(RuntimeError):
-    """GLEIF discovery, cache, transfer, or immutable publication failed."""
+    """GLEIF discovery, cache, or native local transfer failed."""
 
 
 def _hash_file(path: Path) -> tuple[str, str]:
@@ -111,7 +104,7 @@ def _selected_keys(datasets: list[str] | None) -> tuple[str, ...]:
     unknown = sorted(set(datasets) - set(PRODUCT_MEMBERS))
     if unknown:
         raise GleifBulkError("unknown GLEIF product member: " + ", ".join(unknown))
-    # Preserve authoritative product order in every receipt regardless of CLI order.
+    # Preserve authoritative product order in every result regardless of CLI order.
     return tuple(key for key in PRODUCT_MEMBERS if key in datasets)
 
 
@@ -339,10 +332,6 @@ def _verify_cached_discovery(path: Path, transport: Mapping[str, Any]) -> None:
         raise GleifBulkError("GLEIF cached discovery bytes do not match its verified cache")
 
 
-def _raw_matches_transport(raw: Mapping[str, Any], transport: Mapping[str, Any]) -> bool:
-    return all(raw.get(key) == transport.get(key) for key in ("sha256", "md5", "size_bytes"))
-
-
 @contextmanager
 def _workspace_lock(workspace: Path):
     """Serialize cache/target promotion for one local GLEIF workspace."""
@@ -430,35 +419,6 @@ def _download_member(workspace: Path, snapshot: Mapping[str, Any], member: dict[
         staged.unlink(missing_ok=True)
 
 
-def _completion_receipt(
-    snapshot: Mapping[str, Any], selected: tuple[str, ...], archives: list[dict[str, Any]],
-    discovery_native: Mapping[str, Any],
-) -> dict[str, Any]:
-    complete = selected == PRODUCT_MEMBERS
-    return {
-        "format_version": 1,
-        "kind": "gleif_current_golden_copy_native_transfer",
-        "source_id": SOURCE_ID,
-        "provider_snapshot": {
-            "discovery_url": snapshot["discovery_url"],
-            "provider_publish_date": snapshot["provider_publish_date"],
-            "evidence": "provider-advertised publish_date; no local date certainty inferred",
-            "discovery_transport": snapshot["discovery_transport"],
-            "discovery_native": discovery_native,
-        },
-        "product": {
-            "member_order": list(PRODUCT_MEMBERS),
-            "selected_members": list(selected),
-            "unselected_members": [key for key in PRODUCT_MEMBERS if key not in selected],
-            "completion_status": "complete_current_product" if complete else "incomplete_selected_subset",
-            "complete_current_product": complete,
-            "provider_history_verified": False,
-            "scope": "current three-member Golden Copy product only; historical Golden Copy snapshots are not verified",
-        },
-        "archives": archives,
-    }
-
-
 def _run_gleif_ingestion_locked(
     workspace: Path,
     selected: tuple[str, ...],
@@ -468,12 +428,7 @@ def _run_gleif_ingestion_locked(
     *,
     allow_production_write: bool = False,
 ) -> dict[str, Any]:
-    """Transfer selected native members and optionally store verified immutable evidence.
-
-    ``--skip-download`` is intentionally stricter than the legacy behavior: it
-    accepts only the cache written by this adapter after byte/hash verification.
-    ``GITHUB_ACTIONS`` alone never enables a write.
-    """
+    """Transfer selected native members to one locked local workspace."""
     cache_path = workspace / CACHE_NAME
 
     if skip_download:
@@ -529,76 +484,13 @@ def _run_gleif_ingestion_locked(
             # for verified reuse on the next run.
             _write_cache(cache_path, snapshot, cache_records)
 
-    write_requested = (allow_codespace or allow_production_write) and not skip_upload
-    if not write_requested:
-        return {
-            "status": "downloaded_locally",
-            "provider_publish_date": snapshot["provider_publish_date"],
-            "selected_members": list(selected),
-            "complete_current_product": selected == PRODUCT_MEMBERS,
-            "files": [item["target_path"].name for item in local_records],
-            "cache": str(cache_path),
-        }
-
-    storage = StorageManager(allow_interactive_auth=False)
-    # The adapter flag only authorizes entering its publication path.  The
-    # StorageManager remains the authority for the selected root and requires
-    # its documented environment opt-in outside Actions.
-    storage.authorize_writes()
-    raw_store = BulkDriveRawStore(storage, SOURCE_ID)
-    campaign_store = DriveCampaignStore(storage, SOURCE_ID)
-    discovery_native = raw_store.put_file(
-        _discovery_path(workspace, snapshot),
-        {
-            "source_id": SOURCE_ID,
-            "kind": "publication_discovery",
-            "transport": snapshot["discovery_transport"],
-        },
-    )
-    if not _raw_matches_transport(discovery_native, snapshot["discovery_transport"]):
-        raise DriveIntegrityError("GLEIF immutable discovery bytes differ from its transport descriptor")
-    archives: list[dict[str, Any]] = []
-    for item in local_records:
-        member = item["member"]
-        raw = raw_store.put_file(item["target_path"], {
-            "source_id": SOURCE_ID,
-            "dataset_key": member["dataset_key"],
-            "provider_publish_date": member["publish_date"],
-            "provider_expected_size_bytes": member["expected_size_bytes"],
-            "provider_url": member["url"],
-            "transport": item["transport"],
-        })
-        if not _raw_matches_transport(raw, item["transport"]):
-            raise DriveIntegrityError(
-                f"GLEIF {member['dataset_key']} immutable bytes differ from transport descriptor"
-            )
-        archives.append({
-            "dataset_key": member["dataset_key"],
-            "native": raw,
-            "provider_descriptor": member,
-            "transport": item["transport"],
-        })
-        # A per-object put verifies itself.  Reverify the entire candidate set
-        # before receipt creation, so no completion can be emitted for a mixed
-        # or later-corrupted remote set.
-    if raw_store.verify(discovery_native) != discovery_native:
-        raise DriveIntegrityError("GLEIF immutable discovery descriptor changed during verification")
-    for archive in archives:
-        verified = raw_store.verify(archive["native"])
-        if verified != archive["native"]:
-            raise DriveIntegrityError("GLEIF raw descriptor changed during verification")
-    receipt = _completion_receipt(snapshot, selected, archives, discovery_native)
-    receipt_descriptor = campaign_store.put_receipt(receipt)
-    if campaign_store.read_receipt(receipt_descriptor) != receipt:
-        raise CampaignStoreError("GLEIF completion receipt did not read back exactly")
-
     return {
-        "status": "published_native",
-        "receipt": receipt_descriptor,
-        "completion_status": receipt["product"]["completion_status"],
-        "complete_current_product": receipt["product"]["complete_current_product"],
+        "status": "downloaded_locally",
         "provider_publish_date": snapshot["provider_publish_date"],
-        "archives": archives,
+        "selected_members": list(selected),
+        "complete_current_product": selected == PRODUCT_MEMBERS,
+        "files": [item["target_path"].name for item in local_records],
+        "cache": str(cache_path),
     }
 
 
@@ -611,13 +503,18 @@ def run_gleif_ingestion(
     *,
     allow_production_write: bool = False,
 ) -> dict[str, Any]:
-    """Transfer selected native members and optionally store verified immutable evidence.
+    """Transfer selected native members to a locked local workspace.
 
     ``--skip-download`` is intentionally stricter than the legacy behavior: it
     accepts only the cache written by this adapter after byte/hash verification.
-    ``GITHUB_ACTIONS`` alone never enables a write.
+    Drive publication is intentionally disabled pending a verified cross-host
+    serializer.
     """
     selected = _selected_keys(datasets)  # Must fail before workspace/network I/O.
+    if (allow_codespace or allow_production_write) and not skip_upload:
+        raise GleifBulkError(
+            "Drive publication disabled until a verified cross-host serializer is provisioned"
+        )
     if not isinstance(workspace, Path):
         raise GleifBulkError("workspace must be a pathlib.Path")
     workspace.mkdir(parents=True, exist_ok=True)
@@ -632,8 +529,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="GLEIF Golden Copy native bulk transfer")
     parser.add_argument("--workspace", type=str, default="portal/test-results/gleif")
     parser.add_argument("--datasets", nargs="*", default=None, help="Members: lei2 rr repex")
-    parser.add_argument("--allow-codespace", action="store_true", help="Legacy explicit write opt-in")
-    parser.add_argument("--allow-production-write", action="store_true", help="Explicit write opt-in")
+    parser.add_argument("--allow-codespace", action="store_true", help="Disabled legacy upload flag; fails closed")
+    parser.add_argument("--allow-production-write", action="store_true", help="Disabled upload flag; fails closed")
     parser.add_argument("--skip-download", action="store_true", help="Require verified native cache")
     parser.add_argument("--skip-upload", action="store_true")
     args = parser.parse_args()
