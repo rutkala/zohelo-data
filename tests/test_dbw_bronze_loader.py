@@ -188,6 +188,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
             "files": [{
                 "id": "remote", "name": "br_dbw_indicators.parquet",
                 "size": str(len(raw)), "md5Checksum": hashlib.md5(raw).hexdigest(),
+                "sha256Checksum": hashlib.sha256(raw).hexdigest(),
                 "appProperties": {"sha256": hashlib.sha256(raw).hexdigest()},
             }]
         }
@@ -203,10 +204,14 @@ class TestDBWBronzeLoader(unittest.TestCase):
         valid = {
             "size": "1001",
             "md5Checksum": "a" * 32,
+            "sha256Checksum": "b" * 64,
             "appProperties": {"sha256": "b" * 64},
         }
         self.assertTrue(_has_integrity_metadata(valid, min_size=1000))
         self.assertFalse(_has_integrity_metadata({**valid, "md5Checksum": ""}, min_size=1000))
+        self.assertFalse(
+            _has_integrity_metadata({**valid, "sha256Checksum": "c" * 64}, min_size=1000)
+        )
         self.assertFalse(_has_integrity_metadata(None, min_size=1000))
 
     def _release_receipt_fixture(self, *, corrupt_native_size: bool = False):

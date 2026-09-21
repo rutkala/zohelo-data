@@ -82,6 +82,8 @@ restore boundary and dbt guard bind both partition names and the SHA-256 of ever
 and dictionary partition, plus the taxonomy, metadata and consolidated dictionary files read by dbt.
 The dbt external sources use only those sealed filenames; additional Parquet files are not readable
 through the DBW source contract.
+Reused Bronze partitions count toward completion only when Drive's server-computed SHA-256 still
+matches the upload SHA recorded in object properties; changed bytes fail before the marker is sealed.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

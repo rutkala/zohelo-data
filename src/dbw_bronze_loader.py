@@ -102,6 +102,7 @@ def _has_integrity_metadata(item: dict[str, Any] | None, *, min_size: int = 0) -
         size > min_size
         and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", "")) is not None
         and re.fullmatch(r"[0-9a-f]{64}", props.get("sha256", "")) is not None
+        and item.get("sha256Checksum") == props.get("sha256")
     )
 
 
@@ -185,7 +186,8 @@ def _upload_file_to_drive(
     query = f"name='{_escape_query(name)}' and '{_escape_query(parent_id)}' in parents and trashed=false"
     with DRIVE_LOCK:
         existing = storage.drive_service.files().list(
-            q=query, spaces="drive", fields="files(id,name,size,md5Checksum,appProperties)"
+            q=query, spaces="drive",
+            fields="files(id,name,size,md5Checksum,sha256Checksum,appProperties)",
         ).execute().get("files", [])
 
     if len(existing) > 1:
@@ -195,6 +197,7 @@ def _upload_file_to_drive(
         props = item.get("appProperties") or {}
         if (
             props.get("sha256") == sha256_hex
+            and item.get("sha256Checksum") == sha256_hex
             and item.get("md5Checksum") == md5_hex
             and int(item.get("size", -1)) == local_path.stat().st_size
         ):
@@ -208,13 +211,15 @@ def _upload_file_to_drive(
     body = {"name": name, "parents": [parent_id], "appProperties": {"sha256": sha256_hex}}
     with DRIVE_LOCK:
         created = storage.drive_service.files().create(
-            body=body, media_body=media, fields="id,name,size,md5Checksum,appProperties"
+            body=body, media_body=media,
+            fields="id,name,size,md5Checksum,sha256Checksum,appProperties",
         ).execute(num_retries=4)
     if (
         not created
         or created.get("name") != name
         or int(created.get("size", -1)) != local_path.stat().st_size
         or created.get("md5Checksum") != md5_hex
+        or created.get("sha256Checksum") != sha256_hex
         or (created.get("appProperties") or {}).get("sha256") != sha256_hex
     ):
         raise RuntimeError(f"DBW Bronze upload did not verify: {name}")
@@ -265,7 +270,7 @@ def _restore_verified_drive_file(
         files = storage.drive_service.files().list(
             q=query,
             spaces="drive",
-            fields="files(id,name,size,md5Checksum,appProperties,trashed)",
+            fields="files(id,name,size,md5Checksum,sha256Checksum,appProperties,trashed)",
         ).execute(num_retries=4).get("files", [])
     matches = [item for item in files if item.get("name") == name and item.get("trashed") is not True]
     if not matches:
@@ -274,7 +279,11 @@ def _restore_verified_drive_file(
         raise RuntimeError(f"Ambiguous existing DBW Bronze object: {name}")
     item = matches[0]
     expected_sha = (item.get("appProperties") or {}).get("sha256")
-    if not isinstance(expected_sha, str) or len(expected_sha) != 64:
+    if (
+        not isinstance(expected_sha, str)
+        or len(expected_sha) != 64
+        or item.get("sha256Checksum") != expected_sha
+    ):
         raise RuntimeError(f"Existing DBW Bronze object has no verified SHA-256: {name}")
     with DRIVE_LOCK:
         raw = storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
@@ -1190,7 +1199,7 @@ def main():
             while True:
                 resp = sm.drive_service.files().list(
                     q=query_obs,
-                    fields="nextPageToken, files(id, name, size,md5Checksum,appProperties)",
+                    fields="nextPageToken, files(id, name, size,md5Checksum,sha256Checksum,appProperties)",
                     pageSize=1000,
                     pageToken=page_token
                 ).execute()
@@ -1208,7 +1217,7 @@ def main():
             with DRIVE_LOCK:
                 response = sm.drive_service.files().list(
                     q=query_dict,
-                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    fields="nextPageToken,files(id,name,size,md5Checksum,sha256Checksum,appProperties)",
                     pageSize=1000,
                     pageToken=page_token,
                 ).execute(num_retries=4)
@@ -1506,7 +1515,7 @@ def main():
             with DRIVE_LOCK:
                 response = sm.drive_service.files().list(
                     q=query_dict,
-                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    fields="nextPageToken,files(id,name,size,md5Checksum,sha256Checksum,appProperties)",
                     pageSize=1000,
                     pageToken=token,
                 ).execute(num_retries=4)
@@ -1570,7 +1579,7 @@ def main():
             with DRIVE_LOCK:
                 response = sm.drive_service.files().list(
                     q=query_obs,
-                    fields="nextPageToken,files(id,name,size,md5Checksum,appProperties)",
+                    fields="nextPageToken,files(id,name,size,md5Checksum,sha256Checksum,appProperties)",
                     pageSize=1000,
                     pageToken=token,
                 ).execute(num_retries=4)
@@ -1587,9 +1596,7 @@ def main():
         verified_part_names = {
             item["name"] for item in part_items
             if re.fullmatch(r"part_\d+\.parquet", item.get("name", ""))
-            and int(item.get("size", 0)) > 1000
-            and re.fullmatch(r"[0-9a-f]{32}", item.get("md5Checksum", ""))
-            and re.fullmatch(r"[0-9a-f]{64}", (item.get("appProperties") or {}).get("sha256", ""))
+            and _has_integrity_metadata(item, min_size=1000)
         }
         expected_part_names = {f"part_{indicator_id}.parquet" for indicator_id in targets}
         if verified_part_names != expected_part_names:
