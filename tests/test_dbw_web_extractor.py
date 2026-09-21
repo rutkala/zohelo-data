@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from dbw_web_extractor import (
     DbwWebExtractor,
+    _atomic_write_bytes,
     _discover_bulk_filenames,
     _hash_bytes,
     _hash_file,
@@ -424,6 +425,59 @@ class TestDbwWebExtractor(unittest.TestCase):
         self.assertEqual(release.call_count, 3)
         self.assertEqual(extractor.native_snapshot_lease_claims, set())
         self.assertIsNone(extractor.native_snapshot_lease_claim)
+
+    def test_snapshot_lease_renewal_reelects_after_old_claim_retires(self):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_lease_owner = "owner"
+        extractor.native_snapshot_lease_claim = "old"
+        extractor.native_snapshot_lease_claims = {"old"}
+        events = []
+        with patch.object(
+            extractor, "_create_native_snapshot_lease_claim", return_value="new"
+        ), patch.object(
+            extractor,
+            "_verify_native_snapshot_lease",
+            side_effect=lambda owner: events.append(f"verify:{owner}"),
+        ), patch.object(
+            extractor,
+            "_release_native_snapshot_claim",
+            side_effect=lambda claim: events.append(f"release:{claim}"),
+        ):
+            self.assertEqual(extractor.renew_native_snapshot_lease(), "new")
+        self.assertEqual(
+            events, ["verify:owner", "release:old", "verify:owner"]
+        )
+
+    def test_snapshot_lease_renewal_abandons_successor_that_loses_handoff(self):
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_lease_owner = "owner"
+        extractor.native_snapshot_lease_claim = "old"
+        extractor.native_snapshot_lease_claims = {"old"}
+        with patch.object(
+            extractor, "_create_native_snapshot_lease_claim", return_value="new"
+        ), patch.object(
+            extractor,
+            "_verify_native_snapshot_lease",
+            side_effect=[None, RuntimeError("contender won")],
+        ), patch.object(extractor, "_release_native_snapshot_claim") as release:
+            with self.assertRaisesRegex(RuntimeError, "contender won"):
+                extractor.renew_native_snapshot_lease()
+        self.assertEqual([call.args[0] for call in release.call_args_list], ["old", "new"])
+        self.assertEqual(extractor.native_snapshot_lease_claims, set())
+        self.assertIsNone(extractor.native_snapshot_lease_claim)
+        self.assertIsNone(extractor.native_snapshot_lease_owner)
+
+    @patch("dbw_web_extractor.os.replace", side_effect=OSError("disk full"))
+    def test_atomic_zip_cache_write_preserves_prior_file_on_failure(self, _replace):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "provider.zip"
+            path.write_bytes(b"prior-complete")
+            with self.assertRaisesRegex(OSError, "disk full"):
+                _atomic_write_bytes(path, b"new-provider-bytes")
+            self.assertEqual(path.read_bytes(), b"prior-complete")
+            self.assertEqual(list(path.parent.glob(".*.tmp")), [])
 
     def test_bulk_zip_cache_is_namespaced_by_native_snapshot(self):
         source = (Path(__file__).resolve().parents[1] / "src/dbw_web_extractor.py").read_text(

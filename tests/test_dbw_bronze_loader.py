@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 import zipfile
 
 import duckdb
@@ -147,7 +147,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
              patch.object(loader, "_release_writer_claim") as release:
             self.assertEqual(loader.renew_writer_lease(), "new")
         create.assert_called_once_with("owner")
-        verify.assert_called_once_with("owner")
+        self.assertEqual(verify.call_args_list, [call("owner")] * 2)
         release.assert_called_once_with("old")
         self.assertEqual(loader.writer_lease_claim, "new")
         self.assertEqual(loader.writer_lease_claims, {"new"})
@@ -169,6 +169,25 @@ class TestDBWBronzeLoader(unittest.TestCase):
             self.assertEqual(loader.writer_lease_claims, {"old", "new"})
             loader.release_writer_lease()
         self.assertEqual(release.call_count, 3)
+        self.assertEqual(loader.writer_lease_claims, set())
+        self.assertIsNone(loader.writer_lease_claim)
+        self.assertIsNone(loader.writer_lease_owner)
+
+    def test_bronze_lease_renewal_abandons_successor_that_loses_handoff(self):
+        loader = object.__new__(DBWBronzeLoader)
+        loader.writer_lease_owner = "owner"
+        loader.writer_lease_claim = "old"
+        loader.writer_lease_claims = {"old"}
+        with patch.object(
+            loader, "_create_writer_lease_claim", return_value="new"
+        ), patch.object(
+            loader,
+            "_verify_writer_lease",
+            side_effect=[None, RuntimeError("contender won")],
+        ), patch.object(loader, "_release_writer_claim") as release:
+            with self.assertRaisesRegex(RuntimeError, "contender won"):
+                loader.renew_writer_lease()
+        self.assertEqual([call.args[0] for call in release.call_args_list], ["old", "new"])
         self.assertEqual(loader.writer_lease_claims, set())
         self.assertIsNone(loader.writer_lease_claim)
         self.assertIsNone(loader.writer_lease_owner)

@@ -546,6 +546,18 @@ class DBWBronzeLoader:
         self.writer_lease_claim = new_claim
         self._release_writer_claim(old_claim)
         self.writer_lease_claims.discard(old_claim)
+        try:
+            self._verify_writer_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_writer_claim(new_claim)
+                self.writer_lease_claims.discard(new_claim)
+            except Exception:
+                pass
+            if new_claim not in self.writer_lease_claims:
+                self.writer_lease_claim = None
+                self.writer_lease_owner = None
+            raise
         return new_claim
 
     def _release_writer_claim(self, claim_id: str) -> None:

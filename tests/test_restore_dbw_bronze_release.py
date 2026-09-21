@@ -1,8 +1,11 @@
 """Tests for the DBW Bronze consumer restore contract."""
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts/restore_dbw_bronze_release.py"
@@ -13,6 +16,45 @@ SPEC.loader.exec_module(MODULE)
 
 
 class RestoreDbwBronzeReleaseTests(unittest.TestCase):
+    def test_verified_download_streams_chunks_without_buffering_partition(self):
+        raw = b"verified-partition-bytes"
+        digest = hashlib.sha256(raw).hexdigest()
+        item = {
+            "id": "partition",
+            "name": "part_7.parquet",
+            "size": str(len(raw)),
+            "md5Checksum": hashlib.md5(raw).hexdigest(),
+            "sha256Checksum": digest,
+            "appProperties": {"sha256": digest},
+        }
+        storage = MagicMock()
+        request = object()
+        storage.drive_service.files.return_value.get_media.return_value = request
+
+        class FakeDownloader:
+            calls = 0
+
+            def __init__(self, handle, supplied_request, *, chunksize):
+                self.handle = handle
+                self.request = supplied_request
+                self.chunksize = chunksize
+                self.offset = 0
+
+            def next_chunk(self, *, num_retries):
+                type(self).calls += 1
+                end = min(self.offset + 5, len(raw))
+                self.handle.write(raw[self.offset:end])
+                self.offset = end
+                return None, self.offset == len(raw)
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            MODULE, "MediaIoBaseDownload", FakeDownloader
+        ):
+            path = Path(tmp) / "part_7.parquet"
+            self.assertIsNone(MODULE._download_verified(storage, item, path))
+            self.assertEqual(path.read_bytes(), raw)
+        self.assertGreater(FakeDownloader.calls, 1)
+
     def test_completion_requires_both_complete_partition_sets(self):
         release_id = "b" * 64
         marker = {
@@ -43,7 +85,10 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('storage.resolve_zone("bronze", create=False)', source)
         self.assertIn("get_media", source)
-        self.assertIn("hashlib.sha256(raw)", source)
+        self.assertIn("MediaIoBaseDownload", source)
+        self.assertIn("DOWNLOAD_CHUNK_BYTES", source)
+        self.assertNotIn("get_media(fileId=item[\"id\"]).execute", source)
+        self.assertNotIn("hashlib.sha256(path.read_bytes())", source)
         self.assertIn('os.replace(staging, target)', source)
         self.assertIn('"02_bronze" / "gus_dbw" / "releases"', source)
         self.assertIn("len(observations) != completed", source)

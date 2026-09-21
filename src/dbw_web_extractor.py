@@ -104,6 +104,20 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Replace a local cache entry only after all downloaded bytes are durable."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4()}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _membership_sha256(objects: list[dict[str, Any]]) -> str:
     canonical = sorted(
         (
@@ -545,6 +559,18 @@ class DbwWebExtractor:
         self.native_snapshot_lease_claim = new_claim
         self._release_native_snapshot_claim(old_claim)
         self.native_snapshot_lease_claims.discard(old_claim)
+        try:
+            self._verify_native_snapshot_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_native_snapshot_claim(new_claim)
+                self.native_snapshot_lease_claims.discard(new_claim)
+            except Exception:
+                pass
+            if new_claim not in self.native_snapshot_lease_claims:
+                self.native_snapshot_lease_claim = None
+                self.native_snapshot_lease_owner = None
+            raise
         return new_claim
 
     def _release_native_snapshot_claim(self, claim_id: str) -> None:
@@ -942,10 +968,11 @@ class DbwWebExtractor:
                     snapshot_workspace = self.workspace / "snapshots" / self.native_snapshot_id
                     snapshot_workspace.mkdir(parents=True, exist_ok=True)
                     local_zip = snapshot_workspace / f"worker_{ind_id}_{filename}"
-                    # Download if not present locally
-                    if not local_zip.exists() or local_zip.stat().st_size == 0:
-                        zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
-                        local_zip.write_bytes(zip_data)
+                    # Remote receipts provide cross-run resumability. Always refresh
+                    # this disposable cache atomically so a killed prior write cannot
+                    # be mistaken for a complete provider response.
+                    zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
+                    _atomic_write_bytes(local_zip, zip_data)
 
                     # Upload to Drive
                     zip_res = _upload_file(

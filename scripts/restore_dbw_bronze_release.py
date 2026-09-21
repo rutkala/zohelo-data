@@ -13,11 +13,15 @@ import sys
 import uuid
 from typing import Any
 
+from googleapiclient.http import MediaIoBaseDownload
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from storage_manager import StorageManager
+
+DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 def _escape(value: str) -> str:
@@ -48,7 +52,10 @@ def _list_files(storage: StorageManager, parent_id: str) -> list[dict[str, Any]]
             "q": query,
             "spaces": "drive",
             "pageSize": 1000,
-            "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+            "fields": (
+                "nextPageToken,files("
+                "id,name,size,md5Checksum,sha256Checksum,appProperties,trashed)"
+            ),
         }
         if token:
             kwargs["pageToken"] = token
@@ -66,7 +73,23 @@ def _unique(files: list[dict[str, Any]], name: str) -> dict[str, Any]:
     return matches[0]
 
 
-def _download_verified(storage: StorageManager, item: dict[str, Any], path: Path) -> bytes:
+def _hash_path(path: Path) -> tuple[str, str]:
+    sha = hashlib.sha256()
+    md5 = hashlib.md5()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(DOWNLOAD_CHUNK_BYTES), b""):
+            sha.update(chunk)
+            md5.update(chunk)
+    return sha.hexdigest(), md5.hexdigest()
+
+
+def _download_verified(
+    storage: StorageManager,
+    item: dict[str, Any],
+    path: Path,
+    *,
+    return_bytes: bool = False,
+) -> bytes | None:
     props = item.get("appProperties") or {}
     expected_sha = props.get("sha256", "")
     expected_md5 = item.get("md5Checksum", "")
@@ -78,18 +101,32 @@ def _download_verified(storage: StorageManager, item: dict[str, Any], path: Path
         re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None
         or re.fullmatch(r"[0-9a-f]{32}", expected_md5) is None
         or expected_size <= 0
+        or item.get("sha256Checksum") != expected_sha
     ):
         raise RuntimeError(f"Drive object lacks integrity metadata: {item.get('name')!r}.")
-    raw = storage.drive_service.files().get_media(fileId=item["id"]).execute(num_retries=4)
-    if (
-        len(raw) != expected_size
-        or hashlib.sha256(raw).hexdigest() != expected_sha
-        or hashlib.md5(raw).hexdigest() != expected_md5
-    ):
-        raise RuntimeError(f"Drive object failed byte verification: {item.get('name')!r}.")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(raw)
-    return raw
+    request = storage.drive_service.files().get_media(fileId=item["id"])
+    try:
+        with path.open("wb") as handle:
+            downloader = MediaIoBaseDownload(
+                handle, request, chunksize=DOWNLOAD_CHUNK_BYTES
+            )
+            complete = False
+            while not complete:
+                _, complete = downloader.next_chunk(num_retries=4)
+        actual_sha, actual_md5 = _hash_path(path)
+        if (
+            path.stat().st_size != expected_size
+            or actual_sha != expected_sha
+            or actual_md5 != expected_md5
+        ):
+            raise RuntimeError(
+                f"Drive object failed byte verification: {item.get('name')!r}."
+            )
+        return path.read_bytes() if return_bytes else None
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def _completion(raw: bytes, release_id: str) -> dict[str, Any]:
@@ -129,7 +166,7 @@ def _tree_sha256(root: Path) -> str:
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
         digest.update(path.relative_to(root).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
+        digest.update(bytes.fromhex(_hash_path(path)[0]))
     return digest.hexdigest()
 
 
@@ -166,8 +203,15 @@ def restore_dbw_release(
 
     marker_name = f"bronze-complete-v1-{release_id}.json"
     marker_item = _unique(inventories["_control"], marker_name)
-    marker_raw = _download_verified(storage, marker_item, data_root / ".dbw-marker-check")
+    marker_raw = _download_verified(
+        storage,
+        marker_item,
+        data_root / ".dbw-marker-check",
+        return_bytes=True,
+    )
     (data_root / ".dbw-marker-check").unlink(missing_ok=True)
+    if marker_raw is None:
+        raise RuntimeError("DBW Bronze completion marker download returned no bytes.")
     marker = _completion(marker_raw, release_id)
     completed = marker["completed_indicators"]
 

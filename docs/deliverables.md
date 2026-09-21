@@ -93,6 +93,12 @@ lineage, so byte-identical names shared by two indicators cannot collapse into o
 Pre-boundary unscoped receipts remain preserved but do not count as completed during resume or Bronze
 validation; the same native snapshot reprocesses those indicators, writes scoped objects and seals a
 new content-addressed completion marker only after the current receipt contract reconciles.
+Lease renewal in both Landing and Bronze now re-runs the durable election after the old claim is
+tombstoned; a contender exposed by the handoff makes the successor self-tombstone instead of allowing
+two writers. Disposable ZIP cache files are re-downloaded and atomically replaced, so a nonempty
+prefix left by interruption is never reused. The Bronze restore path streams Drive objects to staging
+in bounded chunks and verifies size, Drive SHA-256, local SHA-256 and MD5 before atomic publication,
+keeping large indicator partitions independent of process RAM.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
