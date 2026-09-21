@@ -68,6 +68,59 @@ const opendataOrgColumns = [
   name,
   type: name.startsWith("geo_") ? "DOUBLE" : "VARCHAR",
 }));
+const opendataLocationColumns = [
+  "record_id",
+  "data_source",
+  "bq_dataset",
+  "name_full",
+  "record_type",
+  "addr_line1",
+  "addr_city",
+  "addr_state",
+  "addr_postal_code",
+  "addr_country",
+  "geo_latitude",
+  "geo_longitude",
+  "placekey",
+  "bq_id",
+].map((name) => ({
+  name,
+  type: name.startsWith("geo_") ? "DOUBLE" : "VARCHAR",
+}));
+const opendataPeopleColumns = [
+  "record_id",
+  "data_source",
+  "bq_dataset",
+  "name_full",
+  "name_first",
+  "name_last",
+  "record_type",
+  "addr_country",
+  "group_assn_id_number",
+  "group_assn_id_type",
+  "rel_pointer_domain",
+  "rel_pointer_key",
+  "rel_pointer_role",
+  "linkedin",
+].map((name) => ({ name, type: "VARCHAR" }));
+
+const bronzeContracts = {
+  opendata_org_bronze: {
+    tableName: "br_opendata_organizations",
+    fileName: "br_opendata_organizations_bq_organization_000000000000.parquet",
+    columns: opendataOrgColumns,
+  },
+  opendata_org_locations_bronze: {
+    tableName: "br_opendata_locations",
+    fileName: "br_opendata_locations_bq_location_000000000000.parquet",
+    columns: opendataLocationColumns,
+  },
+  opendata_org_people_bronze: {
+    tableName: "br_opendata_people",
+    fileName: "br_opendata_people_bq_people_000000000000.parquet",
+    columns: opendataPeopleColumns,
+  },
+} as const;
 
 async function sourceFixture(sourceId = "world_bank_wdi") {
   const snapshotId = "123e4567-e89b-42d3-a456-426614174000";
@@ -153,7 +206,8 @@ async function bulkFixture(sourceId = "eurostat_bulk") {
   return { manifest, manifestBytes, pointer, pointerBytes: bytes(pointer) };
 }
 
-async function bronzeFixture(sourceId = "opendata_org_bronze") {
+async function bronzeFixture(sourceId: keyof typeof bronzeContracts = "opendata_org_bronze") {
+  const contract = bronzeContracts[sourceId];
   const snapshotId = "523e4567-e89b-42d3-a456-426614174000";
   const manifest = {
     format_version: 1,
@@ -164,18 +218,18 @@ async function bronzeFixture(sourceId = "opendata_org_bronze") {
     code_sha: "c".repeat(40),
     status: "validated",
     layer: "02_bronze",
-    table_name: "br_opendata_organizations",
+    table_name: contract.tableName,
     row_count: 867322,
     coverage_status: "incomplete",
     files: [
       {
         id: "opendata-bronze-file-0",
-        name: "br_opendata_organizations_bq_organization_000000000000.parquet",
+        name: contract.fileName,
         size: 9672157,
         sha256: "d".repeat(64),
       },
     ],
-    columns: opendataOrgColumns,
+    columns: contract.columns,
     accepted_file_count: 1,
     published_file_count: 1,
     pending_publication_count: 0,
@@ -389,41 +443,141 @@ describe("source-scoped Landing catalog", () => {
     expect(result.issues[0].message).toMatch(/pointer SHA-256/);
   });
 
-  it("resolves a validated bronze campaign snapshot for opendata_org_bronze", async () => {
-    const fixture = await bronzeFixture();
+  it.each(Object.keys(bronzeContracts) as Array<keyof typeof bronzeContracts>)(
+    "resolves the validated %s schema",
+    async (sourceId) => {
+      const fixture = await bronzeFixture(sourceId);
+      vi.mocked(findFoldersByName).mockImplementation(async (name) => {
+        if (name === "zohelo-data") return [{ id: "root-id", name }];
+        if (name === "06_control") return [{ id: "control-id", name }];
+        if (name === "source_campaigns") return [{ id: "campaigns-id", name }];
+        if (name === sourceId) return [{ id: "bronze-id", name }];
+        return [];
+      });
+      vi.mocked(findNamedFilesInFolder).mockResolvedValue([
+        {
+          id: "bronze-pointer-id",
+          name: "current-landing.json",
+          size: fixture.pointerBytes.byteLength,
+        },
+      ]);
+      vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+        id: fixture.pointer.manifest_file_id,
+        name: fixture.pointer.manifest_file_name,
+        size: fixture.manifestBytes.byteLength,
+      });
+      vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) =>
+        id === "bronze-pointer-id" ? fixture.pointerBytes : fixture.manifestBytes
+      );
+
+      const result = await resolveLandingCatalog("token", createDriveDownloadBudget());
+
+      expect(result.snapshots).toHaveLength(1);
+      expect(result.snapshots[0].manifest).toMatchObject({
+        source_id: sourceId,
+        layer: "02_bronze",
+        table_name: bronzeContracts[sourceId].tableName,
+        row_count: 867322,
+      });
+      expect(result.snapshots[0].manifest.files[0].layer).toBe("02_bronze");
+      expect(result.issues).toEqual([]);
+    }
+  );
+
+  it("rejects a Bronze manifest that borrows another source's schema", async () => {
+    const fixture = await bronzeFixture("opendata_org_locations_bronze");
+    const invalidManifestBytes = bytes({ ...fixture.manifest, columns: opendataOrgColumns });
+    const invalidPointer = {
+      ...fixture.pointer,
+      manifest_sha256: await sha256Hex(invalidManifestBytes),
+      manifest_size_bytes: invalidManifestBytes.byteLength,
+    };
+    const invalidPointerBytes = bytes(invalidPointer);
     vi.mocked(findFoldersByName).mockImplementation(async (name) => {
       if (name === "zohelo-data") return [{ id: "root-id", name }];
       if (name === "06_control") return [{ id: "control-id", name }];
       if (name === "source_campaigns") return [{ id: "campaigns-id", name }];
-      if (name === "opendata_org_bronze") return [{ id: "bronze-id", name }];
+      if (name === "opendata_org_locations_bronze") return [{ id: "bronze-id", name }];
       return [];
     });
     vi.mocked(findNamedFilesInFolder).mockResolvedValue([
       {
         id: "bronze-pointer-id",
         name: "current-landing.json",
-        size: fixture.pointerBytes.byteLength,
+        size: invalidPointerBytes.byteLength,
       },
     ]);
     vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
       id: fixture.pointer.manifest_file_id,
       name: fixture.pointer.manifest_file_name,
-      size: fixture.manifestBytes.byteLength,
+      size: invalidManifestBytes.byteLength,
     });
     vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) =>
-      id === "bronze-pointer-id" ? fixture.pointerBytes : fixture.manifestBytes
+      id === "bronze-pointer-id" ? invalidPointerBytes : invalidManifestBytes
     );
 
     const result = await resolveLandingCatalog("token", createDriveDownloadBudget());
 
-    expect(result.snapshots).toHaveLength(1);
-    expect(result.snapshots[0].manifest).toMatchObject({
-      source_id: "opendata_org_bronze",
-      layer: "02_bronze",
-      table_name: "br_opendata_organizations",
-      row_count: 867322,
+    expect(result.snapshots).toEqual([]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        source_id: "opendata_org_locations_bronze",
+        message: "Landing manifest has invalid published columns.",
+      }),
+    ]);
+  });
+
+  it.each([
+    {
+      label: "uses an unsafe column type",
+      columns: opendataLocationColumns.map((column) =>
+        column.name === "geo_latitude" ? { ...column, type: "VARCHAR" } : column
+      ),
+    },
+    {
+      label: "omits a required column",
+      columns: opendataLocationColumns.slice(0, -1),
+    },
+  ])("rejects a Bronze manifest that $label", async ({ columns: invalidColumns }) => {
+    const fixture = await bronzeFixture("opendata_org_locations_bronze");
+    const invalidManifestBytes = bytes({ ...fixture.manifest, columns: invalidColumns });
+    const invalidPointer = {
+      ...fixture.pointer,
+      manifest_sha256: await sha256Hex(invalidManifestBytes),
+      manifest_size_bytes: invalidManifestBytes.byteLength,
+    };
+    const invalidPointerBytes = bytes(invalidPointer);
+    vi.mocked(findFoldersByName).mockImplementation(async (name) => {
+      if (name === "zohelo-data") return [{ id: "root-id", name }];
+      if (name === "06_control") return [{ id: "control-id", name }];
+      if (name === "source_campaigns") return [{ id: "campaigns-id", name }];
+      if (name === "opendata_org_locations_bronze") return [{ id: "bronze-id", name }];
+      return [];
     });
-    expect(result.snapshots[0].manifest.files[0].layer).toBe("02_bronze");
-    expect(result.issues).toEqual([]);
+    vi.mocked(findNamedFilesInFolder).mockResolvedValue([
+      {
+        id: "bronze-pointer-id",
+        name: "current-landing.json",
+        size: invalidPointerBytes.byteLength,
+      },
+    ]);
+    vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+      id: fixture.pointer.manifest_file_id,
+      name: fixture.pointer.manifest_file_name,
+      size: invalidManifestBytes.byteLength,
+    });
+    vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) =>
+      id === "bronze-pointer-id" ? invalidPointerBytes : invalidManifestBytes
+    );
+
+    const result = await resolveLandingCatalog("token", createDriveDownloadBudget());
+
+    expect(result.snapshots).toEqual([]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        source_id: "opendata_org_locations_bronze",
+        message: "Landing manifest has invalid published columns.",
+      }),
+    ]);
   });
 });
