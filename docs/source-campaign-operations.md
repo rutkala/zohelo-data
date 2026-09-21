@@ -312,3 +312,32 @@ current archive, six members and a modeled-value coverage ratio of exactly 1.0. 
 campaign summary and modeled release remain separate: completion here means the complete current
 official WDI CSV archive reached Gold and its coverage semantics, while the independent WDI API
 reconciliation queue and other World Bank products remain open.
+
+## GLEIF current Golden Copy native transfer
+
+`src/ingestion/sources/gleif_bulk.py` is a local native downloader for the
+current three-member Golden Copy product: `lei2`, `rr`, and `repex`. It stores
+the bounded publication discovery response locally, pins one provider-advertised
+`publish_date` and its dated CSV ZIP URLs and expected byte sizes, then streams
+each archive unchanged. It does not unpack or parse archive payloads.
+
+Run a local transfer with an explicit disposable workspace:
+
+```bash
+python src/ingestion/sources/gleif_bulk.py --workspace /secure/disposable/gleif
+```
+
+The workspace keeps files below a hash of the provider publish-date and writes
+an atomic `gleif-native-cache.json` after each verified member. It holds a
+fail-fast Linux file lock for the whole transfer. A later run re-hashes matching
+pinned bytes before reuse; `--skip-download` is offline reuse only and fails
+unless every requested member and the discovery response match its cache. Do not
+use old root-level archive files as a cache.
+
+Drive publication is disabled in this adapter until a verified cross-host
+serializer is provisioned. `--allow-production-write` and legacy
+`--allow-codespace` fail before workspace creation or source requests, unless
+`--skip-upload` is also supplied for compatibility with local callers. This
+local download establishes neither Drive Landing publication nor a completion
+receipt, historical Golden Copy coverage, or downstream Bronze/Silver/Gold
+availability.

@@ -4,6 +4,75 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Local-devcontainer recovery and native publication review — 21 September 2026
+
+**Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
+Drive's 05:16 UTC heartbeat identify the BDL worker as local PID `595473`, with the
+supervisor and ten proxy processes also present. These are dated observations, not a
+continuous health check. Large collection stays in that devcontainer. Do not duplicate
+the writer in Actions/Codespaces or pull, reset, clean, stash, switch branches, or restart
+the active working tree while it contains the running jobs and unpublished work.
+Later in this session the owner reported that AGY and the entire devcontainer crashed.
+Current process health is therefore unverified. On reopening, first preserve unpublished
+files and inspect fresh processes, logs and local/Drive checkpoints; do not blindly relaunch
+the old supervisor or treat historical PIDs as current. The owner is moving toward Codex CLI
+in that same local environment for continued work.
+
+**Reconciled status at the review checkpoint:** [BDL native collection](https://drive.google.com/file/d/18TUYzBpZg1Hn0qcoZT_iiO1PAq2-eyCj/view) was incomplete
+(849 landed plans / 2,420 candidates, with partial/failed plans and outstanding selections).
+The queue last modified at 08:25 UTC advanced to 1,036 landed, 255 partial and 56 failed
+plans, still against 2,420 candidates. This establishes later collection progress, not
+continuous worker health or full BDL completion.
+Eurostat full bulk coverage was 6,267 / 21,238 distributions (29.5084%); its published
+modeled contract still covered three datasets ([latest accepted run](https://github.com/rutkala/zohelo-data/actions/runs/35561187440)).
+The [current WDI archive product](https://github.com/rutkala/zohelo-data/actions/runs/35549893680)
+reconciled all 9,015,914 values. [DBW's legacy checkpoint](https://drive.google.com/file/d/1XxOWlXaiML8WPkkCfmVd0N0dMrKpoLYr/view) reported 1,550 / 1,550 indicators and
+820,345,903 rows, but that was not an independently recounted, snapshot-bound release under
+the new #136 contract. Preserve those existing outputs and reconcile provenance before
+deciding what needs recollection. Earlier dated "active" or "100%" statements below must
+not be interpreted as newer acceptance evidence.
+
+**Unpublished work was preserved and reviewed:** the owner's source-only archive contained
+54 files, reconstructed separately over local base `c7898d7`. It includes TERYT, PRG,
+GLEIF, MF VAT, IMGW and GIOŚ adapters/loaders/models. Review reproduced delete-before-upload
+data-loss windows, accepted truncated transfers, incomplete inventories marked complete,
+and parser/model defects. No observed defect alone proves existing Drive data is corrupt.
+The local DBW memory/performance changes must be integrated selectively into current main;
+copying the older loader over #136 would remove verified release safeguards.
+
+**GLEIF native-cache repair (code only):** [PR #137](https://github.com/rutkala/zohelo-data/pull/137)
+adds a local native downloader using the existing atomic bulk transport. It pins one provider
+publication before fetching the three current CSV archives, caches each verified member for
+recovery, rejects incomplete transfers and locks its workspace. Local completeness covers
+only the selected current product, not historical snapshots or durable platform availability.
+See [the operating boundary](source-campaign-operations.md#gleif-current-golden-copy-native-transfer).
+
+**Drive publication is blocked:** GitHub review identified a cross-host race in the proposed
+publisher: different workspaces could create duplicate hash-named objects. The publisher was
+removed from this increment; upload flags fail before any workspace or network work. A local
+lock or delayed Drive-list election cannot establish cross-host exclusion. Reopening publication
+requires a proven serializer acquired before any namespace mutation. A reviewed option is a
+root-bound, explicitly provisioned lock anchor with immutable claim/release records addressed
+by pre-generated Drive IDs, no automatic expiry, and recovery only after proving the previous
+writer stopped. This coordination must be implemented and verified before production rollout.
+
+**Validation:** the earlier candidate passed `bash scripts/check-data.sh` (616 tests) using
+Python 3.12 and pinned dependencies. The final local-only focused suite passed all 10 tests,
+and independent review found no remaining issue in the narrowed delivery. The [PR checks](https://github.com/rutkala/zohelo-data/pull/137/checks)
+on the final revision remain the integration gate.
+A bounded, read-only check parsed the provider's 139,840-byte publication response and
+pinned all three members of `2026-09-21 00:00:00`, including the real `YYYYMMDD-HHMM`
+filename convention. No native archive was downloaded and no Drive data was written by
+this repair session. No GLEIF Bronze
+or portal availability is claimed, and no local-devcontainer rollout has occurred.
+
+**Still open:** apply the verified native boundary to the other five supplied adapters;
+repair the supplied Bronze acceptance/parsers and dbt grain/meaning defects; integrate DBW
+performance changes; finish the committed BDL Bronze pipeline and retryable supervisor handoff;
+then publish verified source releases and extend portal discovery. New Drive folders alone
+do not satisfy the portal's release contracts. The reviewed portal source matched the deployed
+17 September build, so rebuilding the same portal would not expose these sources.
+
 ### Fresh production acceptance and fail-closed GUS stage boundary — 20 September 2026
 
 **Accepted current releases:** no GitHub Actions writer was active or pending at the 18:09 UTC
