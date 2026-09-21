@@ -185,6 +185,12 @@ def _content_inventory_sha256(items: list[dict[str, Any]]) -> str:
     return hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
 
 
+def _discard_incomplete_staging(staging: Path) -> None:
+    """Remove a UUID staging tree that no later restore attempt can resume."""
+    if staging.exists():
+        shutil.rmtree(staging)
+
+
 def restore_dbw_release(
     storage: StorageManager, release_id: str, data_root: Path
 ) -> dict[str, Any]:
@@ -259,6 +265,7 @@ def restore_dbw_release(
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.parent / f".restore-{release_id}-{uuid.uuid4()}"
     staging.mkdir(parents=False)
+    preserve_completed_staging = False
     try:
         for item in observations:
             _download_verified(storage, item, staging / "observations" / item["name"])
@@ -276,6 +283,7 @@ def restore_dbw_release(
 
         if target.exists():
             if _tree_sha256(target) != _tree_sha256(staging):
+                preserve_completed_staging = True
                 raise RuntimeError(
                     f"Existing local DBW release differs; verified staging was preserved at {staging}."
                 )
@@ -283,8 +291,8 @@ def restore_dbw_release(
         else:
             os.replace(staging, target)
     except Exception:
-        if staging.exists() and not any(staging.iterdir()):
-            staging.rmdir()
+        if not preserve_completed_staging:
+            _discard_incomplete_staging(staging)
         raise
     return {
         "status": "restored_complete_native_snapshot",

@@ -16,6 +16,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class RestoreDbwBronzeReleaseTests(unittest.TestCase):
+    def test_failed_restore_discards_nonresumable_staging_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / ".restore-release-attempt"
+            (staging / "observations").mkdir(parents=True)
+            (staging / "observations/part_7.parquet").write_bytes(b"partial")
+            MODULE._discard_incomplete_staging(staging)
+            self.assertFalse(staging.exists())
+
     def test_verified_download_streams_chunks_without_buffering_partition(self):
         raw = b"verified-partition-bytes"
         digest = hashlib.sha256(raw).hexdigest()
@@ -89,6 +97,8 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
         self.assertIn("DOWNLOAD_CHUNK_BYTES", source)
         self.assertNotIn("get_media(fileId=item[\"id\"]).execute", source)
         self.assertNotIn("hashlib.sha256(path.read_bytes())", source)
+        self.assertIn("preserve_completed_staging = True", source)
+        self.assertIn("_discard_incomplete_staging(staging)", source)
         self.assertIn('os.replace(staging, target)', source)
         self.assertIn('"02_bronze" / "gus_dbw" / "releases"', source)
         self.assertIn("len(observations) != completed", source)
