@@ -100,7 +100,8 @@ prefix left by interruption is never reused. The Bronze restore path streams Dri
 in bounded chunks and verifies size, Drive SHA-256, local SHA-256 and MD5 before atomic publication,
 keeping large indicator partitions independent of process RAM.
 Failed restores remove their nonresumable UUID staging trees; only a fully verified completed tree is
-retained when it intentionally exposes a mismatch with an existing local release.
+retained when it intentionally exposes a mismatch with an existing local release. A mismatched
+release-scoped taxonomy cache is recovered from checksum-verified Drive bytes and replaced atomically.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

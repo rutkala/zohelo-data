@@ -89,6 +89,20 @@ def _strict_csv_scan(path: str | Path) -> str:
     )
 
 
+def _atomic_local_write(path: Path, content: bytes) -> None:
+    """Replace disposable local bytes only after a complete durable write."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4()}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _hash_file(path: Path) -> tuple[str, str]:
     d_sha = hashlib.sha256()
     d_md5 = hashlib.md5()
@@ -916,7 +930,9 @@ class DBWBronzeLoader:
             raw = local_tree.read_bytes()
             if hashlib.sha256(raw).hexdigest() == self.catalogue_sha256:
                 return json.loads(raw.decode("utf-8"))
-            raise DBWLandingIncompleteError("Local DBW taxonomy does not match the bound catalogue release.")
+            logger.warning(
+                "Discarding mismatched local DBW taxonomy cache in favor of verified Drive bytes."
+            )
 
         query = f"'{_escape_query(self.landing_taxonomy)}' in parents and trashed=false"
         files: list[dict[str, Any]] = []
@@ -926,7 +942,10 @@ class DBWBronzeLoader:
                 "q": query,
                 "spaces": "drive",
                 "pageSize": 1000,
-                "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+                "fields": (
+                    "nextPageToken,files("
+                    "id,name,size,md5Checksum,sha256Checksum,appProperties,trashed)"
+                ),
             }
             if token:
                 args["pageToken"] = token
@@ -939,6 +958,7 @@ class DBWBronzeLoader:
         matches = [
             item for item in files
             if (item.get("appProperties") or {}).get("sha256") == self.catalogue_sha256
+            and item.get("sha256Checksum") == self.catalogue_sha256
             and (item.get("appProperties") or {}).get("kind") == "taxonomy"
         ]
         if len(matches) != 1:
@@ -954,8 +974,9 @@ class DBWBronzeLoader:
             or len(content) != int(item.get("size", -1))
         ):
             raise DBWLandingIncompleteError("Bound DBW taxonomy bytes failed verification.")
-        local_tree.write_bytes(content)
-        return json.loads(content.decode("utf-8"))
+        tree = json.loads(content.decode("utf-8"))
+        _atomic_local_write(local_tree, content)
+        return tree
 
     def build_taxonomy_table(self) -> Path:
         """Parse indicators tree into br_dbw_indicators Parquet table."""

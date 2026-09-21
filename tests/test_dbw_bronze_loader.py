@@ -383,6 +383,33 @@ class TestDBWBronzeLoader(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("ignore_errors=true", source)
 
+    def test_corrupt_local_taxonomy_is_replaced_from_verified_drive(self):
+        raw = json.dumps([{"id": "area", "type": "AREA", "name": "Area"}]).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        loader = object.__new__(DBWBronzeLoader)
+        loader.workspace = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(loader.workspace))
+        local_tree = loader.workspace / "indicators_tree.json"
+        local_tree.write_bytes(b"truncated")
+        loader.catalogue_sha256 = digest
+        loader.release_id = digest
+        loader.landing_taxonomy = "taxonomy"
+        loader.storage = MagicMock()
+        loader.storage.drive_service.files.return_value.list.return_value.execute.return_value = {
+            "files": [{
+                "id": "tree",
+                "name": "indicators_tree.json",
+                "size": str(len(raw)),
+                "md5Checksum": hashlib.md5(raw).hexdigest(),
+                "sha256Checksum": digest,
+                "appProperties": {"sha256": digest, "kind": "taxonomy"},
+            }]
+        }
+        loader.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
+
+        self.assertEqual(loader.load_taxonomy_tree(), json.loads(raw))
+        self.assertEqual(local_tree.read_bytes(), raw)
+
     def test_metadata_indicator_must_match_receipt_owner(self):
         raw = b"id_zmienna;nazwa;\n7;Wrong indicator;\n"
         loader = object.__new__(DBWBronzeLoader)
