@@ -162,6 +162,14 @@ def _versioned_name(name: str, sha256_hex: str) -> str:
     return f"{stem[:max_stem]}{marker}{suffix}"
 
 
+def _indicator_scoped_bulk_name(indicator_id: int, source_name: str) -> str:
+    """Give each indicator exclusive durable ownership of its provider ZIP."""
+    name = f"indicator-{indicator_id}--{source_name}"
+    if len(name.encode("utf-8")) > 240:
+        raise RuntimeError("DBW indicator-scoped bulk filename exceeds the storage limit.")
+    return name
+
+
 def _discover_bulk_filenames(aggregate_bytes: bytes) -> list[str]:
     """Parse the documented DBW aggregate table without treating error shapes as empty data."""
     try:
@@ -945,7 +953,7 @@ class DbwWebExtractor:
                     zip_res = _upload_file(
                         self.storage,
                         local_zip,
-                        name=filename,
+                        name=_indicator_scoped_bulk_name(ind_id, filename),
                         parent_id=self.bulk_dir,
                         kind="bulk_zip",
                         mime_type="application/zip",

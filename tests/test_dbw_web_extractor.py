@@ -11,6 +11,7 @@ from dbw_web_extractor import (
     _discover_bulk_filenames,
     _hash_bytes,
     _hash_file,
+    _indicator_scoped_bulk_name,
     _membership_sha256,
     _require_production_context,
     _snapshot_sha256,
@@ -387,6 +388,68 @@ class TestDbwWebExtractor(unittest.TestCase):
             'self.workspace / "snapshots" / self.native_snapshot_id', source
         )
         self.assertNotIn('self.workspace / f"worker_{ind_id}_{filename}"', source)
+
+    @patch("dbw_web_extractor._upload_file")
+    @patch("dbw_web_extractor._upload_bytes")
+    @patch("dbw_web_extractor._http_get")
+    def test_shared_provider_zip_name_is_namespaced_by_indicator(
+        self, mock_get, mock_upload_bytes, mock_upload_file
+    ):
+        aggregate = json.dumps({
+            "data": {"table": {"rows": [[{
+                "files": [{"filename": "shared.zip"}]
+            }]]}}
+        }).encode()
+        mock_get.side_effect = [
+            aggregate, b"metryka-7", b"zip-bytes",
+            aggregate, b"metryka-8", b"zip-bytes",
+        ]
+
+        def upload_bytes_result(_storage, data, **kwargs):
+            sha, md5 = _hash_bytes(data)
+            return {
+                "id": f"id-{kwargs['name']}", "name": kwargs["name"],
+                "size": len(data), "sha256": sha, "md5": md5, "reused": False,
+            }
+
+        def upload_file_result(_storage, path, **kwargs):
+            data = Path(path).read_bytes()
+            sha, md5 = _hash_bytes(data)
+            return {
+                "id": f"id-{kwargs['name']}", "name": kwargs["name"],
+                "size": len(data), "sha256": sha, "md5": md5, "reused": False,
+            }
+
+        mock_upload_bytes.side_effect = upload_bytes_result
+        mock_upload_file.side_effect = upload_file_result
+        extractor = object.__new__(DbwWebExtractor)
+        extractor.storage = MagicMock()
+        extractor.proxy = None
+        extractor.metadata_dir = "metadata"
+        extractor.bulk_dir = "bulk"
+        extractor.checkpoints_dir = "checkpoints"
+        extractor.catalogue_sha256 = "a" * 64
+        extractor.native_snapshot_id = self.SNAPSHOT_ID
+        with tempfile.TemporaryDirectory() as tmp:
+            extractor.workspace = Path(tmp)
+            results = [
+                extractor.process_indicator({"id": indicator_id, "name": "Test"})
+                for indicator_id in (7, 8)
+            ]
+
+        bulk_objects = [
+            next(item for item in result["landed_objects"] if item["role"] == "bulk_zip")
+            for result in results
+        ]
+        self.assertEqual(
+            [item["name"] for item in bulk_objects],
+            [
+                _indicator_scoped_bulk_name(7, "shared.zip"),
+                _indicator_scoped_bulk_name(8, "shared.zip"),
+            ],
+        )
+        self.assertEqual([item["source_name"] for item in bulk_objects], ["shared.zip"] * 2)
+        self.assertNotEqual(bulk_objects[0]["id"], bulk_objects[1]["id"])
 
     @patch("dbw_web_extractor.time.monotonic", return_value=10.0)
     def test_catalogue_verification_deadline_stops_before_drive_reads(self, _clock):

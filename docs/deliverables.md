@@ -88,6 +88,8 @@ Landing now rejects a second completed receipt for the same indicator even when 
 matches, keeping the sealed snapshot consumable by Bronze's unique-receipt contract. Bronze parses
 provider observation and dictionary CSVs with `ignore_errors=false`; malformed rows fail the indicator
 before any partition or complete-release marker can be accepted instead of being silently discarded.
+Provider ZIPs use indicator-scoped durable object names while retaining the provider filename in receipt
+lineage, so byte-identical names shared by two indicators cannot collapse into one cross-owned object.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
