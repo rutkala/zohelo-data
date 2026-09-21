@@ -35,9 +35,12 @@ class TestDbwWebExtractor(unittest.TestCase):
         revised = versioned_name(original, digest)
 
         self.assertLessEqual(len(revised.encode("utf-8")), 240)
-        self.assertTrue(revised.endswith(f"--sha256-{digest}.zip"))
+        logical_digest = __import__("hashlib").sha256(
+            original.encode("utf-8")
+        ).hexdigest()
+        self.assertTrue(revised.endswith(f"--content-sha256-{digest}.zip"))
         self.assertTrue(revised.startswith("indicator-7--"))
-        self.assertIn("--name-", revised)
+        self.assertIn(f"--logical-sha256-{logical_digest}", revised)
 
     def test_truncated_revisions_preserve_logical_name_identity(self):
         digest = "b" * 64
@@ -50,6 +53,19 @@ class TestDbwWebExtractor(unittest.TestCase):
         self.assertNotEqual(first_revision, second_revision)
         self.assertLessEqual(len(first_revision.encode("utf-8")), 240)
         self.assertLessEqual(len(second_revision.encode("utf-8")), 240)
+
+    def test_revision_names_are_domain_separated_for_every_logical_name(self):
+        digest = "c" * 64
+        long_name = f"{'p' * 180}.zip"
+        long_digest = __import__("hashlib").sha256(
+            long_name.encode("utf-8")
+        ).hexdigest()
+        adversarial_short_name = f"p--logical-sha256-{long_digest}.zip"
+
+        self.assertNotEqual(
+            versioned_name(long_name, digest),
+            versioned_name(adversarial_short_name, digest),
+        )
 
     def test_exact_base_descriptor_does_not_require_revision_name(self):
         source_name = f"x.{'a' * 170}.zip"
@@ -630,9 +646,10 @@ class TestDbwWebExtractor(unittest.TestCase):
               "md5Checksum": "old", "appProperties": {"sha256": "old"}}],
             [],
         ]
+        expected_name = versioned_name("indicators_tree.json", sha)
         storage = MagicMock()
         storage.drive_service.files.return_value.create.return_value.execute.return_value = {
-            "id": "new", "name": f"indicators_tree--sha256-{sha}.json",
+            "id": "new", "name": expected_name,
             "size": str(len(data)), "md5Checksum": md5,
             "appProperties": {"sha256": sha},
         }
@@ -640,7 +657,7 @@ class TestDbwWebExtractor(unittest.TestCase):
             storage, data, name="indicators_tree.json", parent_id="taxonomy",
             kind="taxonomy", mime_type="application/json",
         )
-        self.assertEqual(result["name"], f"indicators_tree--sha256-{sha}.json")
+        self.assertEqual(result["name"], expected_name)
         storage.drive_service.files.return_value.create.assert_called_once()
 
     @patch("dbw_web_extractor._upload_bytes")

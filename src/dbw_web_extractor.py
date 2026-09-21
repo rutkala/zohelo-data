@@ -797,7 +797,9 @@ class DbwWebExtractor:
                 name = f.get("name", "")
                 match = re.fullmatch(
                     rf"completed-v3-{re.escape(native_snapshot_id)}-(\d+)"
-                    r"(?:--sha256-[0-9a-f]{64})?\.json",
+                    r"(?:(?:--sha256-[0-9a-f]{64})|"
+                    r"(?:--logical-sha256-[0-9a-f]{64}"
+                    r"--content-sha256-[0-9a-f]{64}))?\.json",
                     name,
                 )
                 props = f.get("appProperties") or {}
