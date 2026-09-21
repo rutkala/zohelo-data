@@ -4,6 +4,81 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Second devcontainer recovery — 21 September 2026, 21:03 UTC
+
+The owner requested reconstruction of today's work and autonomous continuation, with
+BDL native ingestion first. No ingestion, browser, proxy, audit or monitor process survived
+this rebuild. The current container's OOM counters are zero; the prior crash cause remains
+unestablished. The original dirty checkout stays at `c7898d7`; 61 source/configuration/doc
+files and the tracked diff were preserved under `.local/recovery-2026-09-21/rebuilt-2047/`,
+with per-file SHA-256. Old worktree indices contain no additional staged changes; their
+committed recovery branches remain preserved. The unpushed Telegram branch and draft
+portal inventory PR #142 remain separate unfinished work.
+
+**GitHub reconciled:** current main is `50e0465`, containing today's merged PRs #136–#141.
+PR #142 (`f6785e4`) is an unmerged draft; it exposes file inventory, not new queryable data.
+No active or queued BDL Action was present in the recovery check. Eurostat continues in
+its own provider workflow; local recovery has not dispatched another source workflow.
+
+**BDL durable evidence, 20:57 UTC:** a fresh read selected the existing production root
+and verified queue size, MD5, SHA-256 and stable metadata. The queue SHA-256 is
+`328d142e2387dfac6a55ce1f36697930101dcd4085bf5c9267b78bc7fe5e9e69`, matching the saved
+11:10 checkpoint. It records **1,085 selection-complete / 2,420 candidates**, 257 partial
+and 56 failed pass outcomes, ten interrupted in-flight subgroups, and 2,313 native files /
+620,877,414 bytes in plan summaries. These file/byte totals are checkpoint reports, not a
+fresh full-native-object audit. The last in-memory summary claimed 1,086 completed
+selections; that extra selection is not established by the durable queue. Independent
+part receipts remain available for reconciliation. The writer lock is released at
+11:14:37 UTC. Worker logs show queue-drift errors escaping thread cleanup before release;
+the initiating drift's cause is unresolved. BDL has not yet been resumed at this checkpoint.
+
+**Recovery runtime:** the inherited `.venv` points to Python 3.11 while its packages are
+for 3.12. A separate pinned Python 3.12 environment at `.local/runtime-python312` passes
+`pip check`; the inherited environment remains preserved. Chromium launches after
+restoring its browser files/system dependencies. Three existing WireGuard configurations
+connect successfully through verified wireproxy 1.1.3. A real browser egress comparison
+confirms that the installed browser honors the workers' proxy environment: direct traffic
+uses a different route, while environment-only and explicit proxy options both use the
+configured proxy. BDL returns HTTP 200 through that route. No browser proxy code change
+is needed. The ordinary read-only Google diagnostic selects the retained
+OAuth credentials and verifies root visibility; it performs no upload. Git push access
+was verified with `--dry-run` through the existing VS Code credential helper.
+
+**Active continuation:** the merged read-only DBW retained-output audit restarted at
+20:59 UTC as PID 33551, run `bc79f7e9-6af6-429f-b327-8a34c3b74d71`, from an exact
+`50e0465` code snapshot. It reverified/reused all 1,788 earlier cached objects and is
+restoring the remaining objects from the 3,103-object inventory. Its state/log remain
+under `.local/dbw-retained-audit/`; completion and any row reconciliation require the
+matching final audit report and run status. No DBW publication or downstream build ran.
+The single engineering task is BDL worker/control failure handling on isolated branch
+`recovery/2026-09-21-resume-bdl`. Repair `26aeb15` passed 21 focused runner tests
+and independent read-only review; the preceding broader BDL run passed 71 tests. The full
+credential-free data suite is running. Merge and one native-only resumed writer remain
+pending those checks. AGY and Copilot CLI are unavailable; a lighter internal implementation
+owner and independent read-only reviewers are being used.
+
+**Latest remote acceptance checked during this recovery:** NBP run
+[35553328276](https://github.com/rutkala/zohelo-data/actions/runs/35553328276) succeeded
+with release `f9b183cd-c81c-4b0c-8f57-d7468697a42f`, checked through 20 September.
+WDI run [35639397373](https://github.com/rutkala/zohelo-data/actions/runs/35639397373)
+succeeded without changing release `9c796ba2-1e7d-48dc-8c68-8bd60c76454a`.
+Eurostat run [35650755363](https://github.com/rutkala/zohelo-data/actions/runs/35650755363)
+succeeded with release `c96da055-8bb7-4866-abf5-06709fb1a3f3`; its current-distribution
+snapshot reports 6,574 / 21,238 (30.95395%), while modeled coverage refers only to the
+three-dataset contract. Full official catalogue coverage remains incomplete. No Actions
+job was active or queued at the follow-up check. The live portal still identifies
+`5864b8e` from #139; #142's two portal Check Runs passed, but that draft is not deployed.
+
+**Unpublished source work:** TERYT, PRG, MF VAT, GLEIF, IMGW and GIOŚ adapters, Bronze
+loaders, dbt models and tests are preserved but not accepted as production releases.
+Several contain delete-before-upload paths and incomplete transfer/coverage checks.
+The old local DBW optimization must be ported without replacing PR #136's snapshot,
+byte-integrity, completion and immutable-publication guards; the old GLEIF adapter must
+not replace the hardened local-only implementation from #137. Model grain/dependency
+issues remain (including GLEIF parent joins and weather revisions). These source changes,
+56 blocked BDL selections, portal inventory/query publication and the native-only rollout
+remain unfinished; green code checks are not full-source coverage.
+
 ### Recovery monitor merged — 21 September 2026, 10:54 UTC
 
 PR #138 merged as `139c1efa75f1074e23641132bcdd0aad9d908d9c` after full data-platform
