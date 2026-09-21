@@ -191,6 +191,29 @@ def _discard_incomplete_staging(staging: Path) -> None:
         shutil.rmtree(staging)
 
 
+def _publish_verified_tree(staging: Path, target: Path) -> None:
+    """Publish verified Drive bytes and replace any disposable mismatched cache."""
+    previous = target.parent / f".replaced-{target.name}"
+    if target.exists() and _tree_sha256(target) == _tree_sha256(staging):
+        shutil.rmtree(staging)
+        if previous.exists():
+            shutil.rmtree(previous)
+        return
+
+    if target.exists():
+        if previous.exists():
+            shutil.rmtree(previous)
+        os.replace(target, previous)
+    try:
+        os.replace(staging, target)
+    except BaseException:
+        if not target.exists() and previous.exists():
+            os.replace(previous, target)
+        raise
+    if previous.exists():
+        shutil.rmtree(previous)
+
+
 def restore_dbw_release(
     storage: StorageManager, release_id: str, data_root: Path
 ) -> dict[str, Any]:
@@ -265,7 +288,6 @@ def restore_dbw_release(
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = target.parent / f".restore-{release_id}-{uuid.uuid4()}"
     staging.mkdir(parents=False)
-    preserve_completed_staging = False
     try:
         for item in observations:
             _download_verified(storage, item, staging / "observations" / item["name"])
@@ -280,19 +302,9 @@ def restore_dbw_release(
             _download_verified(storage, fixed_items[marker_field], staging / folder / name)
         (staging / "_control").mkdir(parents=True, exist_ok=True)
         (staging / "_control" / marker_name).write_bytes(marker_raw)
-
-        if target.exists():
-            if _tree_sha256(target) != _tree_sha256(staging):
-                preserve_completed_staging = True
-                raise RuntimeError(
-                    f"Existing local DBW release differs; verified staging was preserved at {staging}."
-                )
-            shutil.rmtree(staging)
-        else:
-            os.replace(staging, target)
+        _publish_verified_tree(staging, target)
     except Exception:
-        if not preserve_completed_staging:
-            _discard_incomplete_staging(staging)
+        _discard_incomplete_staging(staging)
         raise
     return {
         "status": "restored_complete_native_snapshot",

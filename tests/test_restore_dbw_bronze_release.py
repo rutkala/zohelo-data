@@ -24,6 +24,25 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
             MODULE._discard_incomplete_staging(staging)
             self.assertFalse(staging.exists())
 
+    def test_verified_tree_replaces_mismatched_disposable_cache(self):
+        release_id = "b" * 64
+        with tempfile.TemporaryDirectory() as tmp:
+            releases = Path(tmp)
+            target = releases / release_id
+            staging = releases / f".restore-{release_id}-attempt"
+            target.mkdir()
+            staging.mkdir()
+            (target / "part.parquet").write_bytes(b"corrupt-local-cache")
+            (staging / "part.parquet").write_bytes(b"verified-drive-bytes")
+
+            MODULE._publish_verified_tree(staging, target)
+
+            self.assertEqual(
+                (target / "part.parquet").read_bytes(), b"verified-drive-bytes"
+            )
+            self.assertFalse(staging.exists())
+            self.assertFalse((releases / f".replaced-{release_id}").exists())
+
     def test_verified_download_streams_chunks_without_buffering_partition(self):
         raw = b"verified-partition-bytes"
         digest = hashlib.sha256(raw).hexdigest()
@@ -97,9 +116,10 @@ class RestoreDbwBronzeReleaseTests(unittest.TestCase):
         self.assertIn("DOWNLOAD_CHUNK_BYTES", source)
         self.assertNotIn("get_media(fileId=item[\"id\"]).execute", source)
         self.assertNotIn("hashlib.sha256(path.read_bytes())", source)
-        self.assertIn("preserve_completed_staging = True", source)
+        self.assertIn("_publish_verified_tree(staging, target)", source)
         self.assertIn("_discard_incomplete_staging(staging)", source)
         self.assertIn('os.replace(staging, target)', source)
+        self.assertNotIn("preserve_completed_staging", source)
         self.assertIn('"02_bronze" / "gus_dbw" / "releases"', source)
         self.assertIn("len(observations) != completed", source)
         self.assertIn("len(dictionary_parts) != completed", source)

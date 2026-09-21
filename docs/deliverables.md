@@ -99,9 +99,11 @@ two writers. Disposable ZIP cache files are re-downloaded and atomically replace
 prefix left by interruption is never reused. The Bronze restore path streams Drive objects to staging
 in bounded chunks and verifies size, Drive SHA-256, local SHA-256 and MD5 before atomic publication,
 keeping large indicator partitions independent of process RAM.
-Failed restores remove their nonresumable UUID staging trees; only a fully verified completed tree is
-retained when it intentionally exposes a mismatch with an existing local release. A mismatched
-release-scoped taxonomy cache is recovered from checksum-verified Drive bytes and replaced atomically.
+Failed restores remove their nonresumable UUID staging trees. Once a complete downloaded tree
+is verified, it replaces any mismatched disposable local release cache through a rollback-capable
+rename and removes the displaced cache, preventing supervisor retries from accumulating full release
+copies. A mismatched release-scoped taxonomy cache is likewise recovered from checksum-verified
+Drive bytes and replaced atomically.
 The DBW Silver and Gold indicator models now preserve the Bronze taxonomy contract
 (`thematic_area`, `domain_name`, `taxonomy_path`, `node_id`, and `parent_id`) without
 inventing numeric hierarchy IDs; the acceptance fixture builds the complete DBW
