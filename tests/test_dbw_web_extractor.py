@@ -233,11 +233,31 @@ class TestDbwWebExtractor(unittest.TestCase):
             return MagicMock(execute=MagicMock(return_value={"files": result}))
 
         extractor.storage.drive_service.files.return_value.list.side_effect = list_response
-        extractor.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
+        media = extractor.storage.drive_service.files.return_value.get_media
+        media.return_value.execute.return_value = raw
         self.assertEqual(
             extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID),
             {14: membership},
         )
+
+        duplicate = {**checkpoint, "id": "receipt-retry"}
+
+        def duplicate_list_response(**kwargs):
+            query = kwargs["q"]
+            if "'metadata' in parents" in query:
+                result = metadata
+            elif "'bulk' in parents" in query:
+                result = bulk
+            else:
+                result = [checkpoint, duplicate]
+            return MagicMock(execute=MagicMock(return_value={"files": result}))
+
+        extractor.storage.drive_service.files.return_value.list.side_effect = (
+            duplicate_list_response
+        )
+        extractor.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
+        with self.assertRaisesRegex(RuntimeError, "Duplicate DBW completed receipts"):
+            extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID)
 
     @patch("dbw_web_extractor._upload_bytes")
     @patch("dbw_web_extractor.uuid.uuid4")

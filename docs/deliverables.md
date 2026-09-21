@@ -84,6 +84,10 @@ The dbt external sources use only those sealed filenames; additional Parquet fil
 through the DBW source contract.
 Reused Bronze partitions count toward completion only when Drive's server-computed SHA-256 still
 matches the upload SHA recorded in object properties; changed bytes fail before the marker is sealed.
+Landing now rejects a second completed receipt for the same indicator even when its native membership
+matches, keeping the sealed snapshot consumable by Bronze's unique-receipt contract. Bronze parses
+provider observation and dictionary CSVs with `ignore_errors=false`; malformed rows fail the indicator
+before any partition or complete-release marker can be accepted instead of being silently discarded.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

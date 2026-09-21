@@ -854,9 +854,9 @@ class DbwWebExtractor:
                     ):
                         raise RuntimeError("DBW completed receipt membership does not reconcile.")
                     prior = completed.get(indicator_id)
-                    if prior is not None and prior != membership:
+                    if prior is not None:
                         raise RuntimeError(
-                            "Conflicting DBW native memberships exist within one snapshot."
+                            "Duplicate DBW completed receipts exist within one snapshot."
                         )
                     completed[indicator_id] = membership
             token = response.get("nextPageToken")

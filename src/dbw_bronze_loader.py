@@ -79,6 +79,15 @@ def _escape_query(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
+def _strict_csv_scan(path: str | Path) -> str:
+    """Return a fail-closed DuckDB scan for one provider CSV."""
+    escaped = str(path).replace("'", "''")
+    return (
+        f"read_csv('{escaped}', delim=';', header=true, all_varchar=true, "
+        "ignore_errors=false)"
+    )
+
+
 def _hash_file(path: Path) -> tuple[str, str]:
     d_sha = hashlib.sha256()
     d_md5 = hashlib.md5()
@@ -1398,7 +1407,7 @@ def main():
                                         '{fname}' as raw_archive_file,
                                         TRY_CAST(rowNumber AS BIGINT),
                                         '{loader.processed_at_utc}'
-                                    FROM read_csv('{csv_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
+                                    FROM {_strict_csv_scan(csv_path)}
                                 """)
                                 os.remove(csv_path)
 
@@ -1417,7 +1426,7 @@ def main():
                                         TRY_CAST(id_elementu AS BIGINT),
                                         TRIM(opis),
                                         '{loader.processed_at_utc}'
-                                    FROM read_csv('{dict_path}', delim=';', header=true, all_varchar=true, ignore_errors=true)
+                                    FROM {_strict_csv_scan(dict_path)}
                                     WHERE id_elementu IS NOT NULL
                                 """)
                                 os.remove(dict_path)

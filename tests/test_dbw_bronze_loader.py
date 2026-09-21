@@ -21,6 +21,7 @@ from dbw_bronze_loader import (
     _has_integrity_metadata,
     _membership_sha256,
     _snapshot_sha256,
+    _strict_csv_scan,
     _upload_file_to_drive,
     _verify_native_bytes,
     validate_landing_completion,
@@ -338,6 +339,23 @@ class TestDBWBronzeLoader(unittest.TestCase):
         _verify_native_bytes(raw, descriptor)
         with self.assertRaisesRegex(DBWLandingIncompleteError, "byte verification"):
             _verify_native_bytes(raw + b" changed", descriptor)
+
+    def test_provider_csv_scan_fails_closed_on_malformed_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "malformed.csv"
+            path.write_text(
+                "a;b\n1;2\n3;4\n5;6;unexpected\n8;9\n",
+                encoding="utf-8",
+            )
+            con = duckdb.connect()
+            with self.assertRaises(duckdb.InvalidInputException):
+                con.execute(f"SELECT * FROM {_strict_csv_scan(path)}").fetchall()
+            con.close()
+
+        source = (
+            Path(__file__).resolve().parents[1] / "src" / "dbw_bronze_loader.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("ignore_errors=true", source)
 
     def test_metadata_indicator_must_match_receipt_owner(self):
         raw = b"id_zmienna;nazwa;\n7;Wrong indicator;\n"
