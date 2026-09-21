@@ -315,40 +315,29 @@ reconciliation queue and other World Bank products remain open.
 
 ## GLEIF current Golden Copy native transfer
 
-`src/ingestion/sources/gleif_bulk.py` transfers the current three-member Golden
-Copy product only: `lei2`, `rr`, and `repex`. It first stores the bounded GLEIF
-publication discovery response locally, pins the one provider-advertised
-`publish_date` and its three dated CSV ZIP URLs and expected byte sizes, then
-streams each archive unchanged. It does not unpack or parse archive payloads.
+`src/ingestion/sources/gleif_bulk.py` is a local native downloader for the
+current three-member Golden Copy product: `lei2`, `rr`, and `repex`. It stores
+the bounded publication discovery response locally, pins one provider-advertised
+`publish_date` and its dated CSV ZIP URLs and expected byte sizes, then streams
+each archive unchanged. It does not unpack or parse archive payloads.
 
-A normal run remains local and performs no Drive writes, including in GitHub
-Actions. The workspace keeps files below a hash of the provider publish-date and
-writes an atomic `gleif-native-cache.json` after each verified member. It holds a
-fail-fast Linux file lock for the entire transfer; wait for its owner instead of
-starting another writer. The lock protects one workspace only, so operators must
-keep one GLEIF production writer across workspaces and hosts. A later run
-re-hashes a matching pinned file before reuse; `--skip-download` is offline reuse
-only and fails unless every requested member and the discovery response match
-that cache. Do not use old root-level archive files as a cache.
-
-A Drive publication requires both the adapter flag and the existing storage
-manager authorization for the selected root. Outside Actions, set the documented
-storage guard explicitly; the adapter never sets it itself:
+Run a local transfer with an explicit disposable workspace:
 
 ```bash
-ZOHELO_ALLOW_PRODUCTION_WRITES=true \
-python src/ingestion/sources/gleif_bulk.py \
-  --allow-production-write --workspace /secure/disposable/gleif
+python src/ingestion/sources/gleif_bulk.py --workspace /secure/disposable/gleif
 ```
 
-`--allow-codespace` remains a legacy alias for the adapter's explicit write
-flag. It does not bypass the StorageManager guard.
+The workspace keeps files below a hash of the provider publish-date and writes
+an atomic `gleif-native-cache.json` after each verified member. It holds a
+fail-fast Linux file lock for the whole transfer. A later run re-hashes matching
+pinned bytes before reuse; `--skip-download` is offline reuse only and fails
+unless every requested member and the discovery response match its cache. Do not
+use old root-level archive files as a cache.
 
-This command is a production mutation and must run only through the reviewed,
-serialized operator path. It writes immutable content-addressed native objects
-and an immutable receipt after every native object, including the discovery
-response, has been streamed and verified from Drive. It never deletes or
-overwrites prior raw objects or receipts. A selected subset receives
-`incomplete_selected_subset`; only all three members can receive
-`complete_current_product`. That completion still does not establish GLEIF
-historical-snapshot coverage or downstream Bronze/Silver/Gold availability.
+Drive publication is disabled in this adapter until a verified cross-host
+serializer is provisioned. `--allow-production-write` and legacy
+`--allow-codespace` fail before workspace creation or source requests, unless
+`--skip-upload` is also supplied for compatibility with local callers. This
+local download establishes neither Drive Landing publication nor a completion
+receipt, historical Golden Copy coverage, or downstream Bronze/Silver/Gold
+availability.
