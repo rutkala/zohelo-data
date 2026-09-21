@@ -19,6 +19,13 @@ Drive metadata reads and downloads only. Completion requires a matching
 measured evidence and limitations in the
 [operating procedure](source-campaign-operations.md#read-only-audit-of-retained-dbw-bronze).
 
+The owner confirmed that ingestion, backend and layer work should continue, with
+an immediate owner-facing priority of making all newly retained data visible in
+the portal. Sparse current releases and portal counts describe the published
+subset, not total retained source coverage. The portal recovery therefore starts
+with a read-only Drive inventory and must continue to verified browse and query
+exposure; an inventory or counts-only view does not complete the owner outcome.
+
 ### Local-devcontainer recovery and native publication review — 21 September 2026
 
 **Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
