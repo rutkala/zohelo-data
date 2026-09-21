@@ -19,6 +19,28 @@ immediate priority is all new data visible and usable in the portal while backen
 The inventory UI is undergoing review; verified browse/query access remains the required next
 outcome. The OpenData schema fix from #139 remains the currently deployed portal change.
 
+### Retained DBW Bronze audit started — 21 September 2026
+
+The read-only audit runs from the isolated recovery worktree as local PID `58944`, run
+`1ef481a6-6a85-4851-9b60-59fde1c87fde`, with recovery state under
+`/workspaces/zohelo-data/.local/dbw-retained-audit`. Its pinned inventory contains 3,103
+objects: 1,550 legacy Landing receipts, 1,550 Bronze observation partitions and three fixed
+Bronze relations. This remains an incomplete diagnostic; no row-count reconciliation,
+stable-inventory acceptance, #136 release, downstream authorization or current provider
+coverage is claimed. Completion requires matching `complete` `run-status.json` and
+`audit-report.json`, followed by review under the
+[operating procedure](source-campaign-operations.md#read-only-audit-of-retained-dbw-bronze).
+
+**Proposed next increment:** after the audit and portal inventory work complete, extend the
+existing source-campaign immutable-manifest and `current-landing.json` pointer infrastructure
+with an explicit `gus_dbw_retained_bronze` snapshot. It would expose the dated observations,
+taxonomy, metadata and dictionaries in `02_bronze`, marked incomplete and with
+native-to-Bronze lineage unresolved. All 1,550 indicators must be discoverable, while queries
+load only selected bounded partitions rather than the 4.7 GB observation collection. The
+65 MB consolidated dictionary and every observation partition over the existing 8 MiB object
+limit require verified fragments. This is an accepted design direction for a later increment,
+not implemented publication, a completion marker, or a full-current-source claim.
+
 The latest WDI run 35570717063 succeeded and published release
 `0b9cc607-441c-47ac-b2dc-ccd5c42433b1`. Its reported current-archive coverage is 9,015,914
 modeled values, 1,498 indicators and 264 geographies, with observation dates 1960–2025

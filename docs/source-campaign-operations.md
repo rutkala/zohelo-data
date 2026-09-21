@@ -315,6 +315,52 @@ campaign summary and modeled release remain separate: completion here means the 
 official WDI CSV archive reached Gold and its coverage semantics, while the independent WDI API
 reconciliation queue and other World Bank products remain open.
 
+## Read-only audit of retained DBW Bronze
+
+The pre-#136 DBW collection contains a dated retained inventory of 1,550 legacy
+Landing receipts, 1,550 Bronze observation partitions and three fixed Bronze
+relations: 3,103 objects in total. Audit those existing bytes from an isolated
+local directory; do not use this diagnostic to recollect, publish, or create a
+DBW completion marker.
+
+Select the intended existing Drive root explicitly. Prefer its immutable ID:
+
+```bash
+ZOHELO_DRIVE_ROOT_ID=<existing-root-id> \
+  .venv/bin/python scripts/audit_retained_dbw_bronze.py \
+  --output-dir /secure/disposable/dbw-retained-audit
+```
+
+`ZOHELO_DRIVE_ROOT_NAME` is also supported when an ID is unavailable. Confirm
+the effective root before starting. Do not set `ZOHELO_ALLOW_PRODUCTION_WRITES`:
+the auditor resolves existing Landing and Bronze folders with `create=False`,
+performs metadata reads and downloads only, and never calls a Drive mutation.
+
+The output directory is persistent local recovery state. `audit.lock` rejects a
+second process using the same directory. `descriptor-inventory.json` pins the
+remote objects and integrity metadata, `progress.json` records each locally
+verified object, and `verified-cache/` contains the exact retained bytes. A
+restart with the same output directory re-hashes every candidate cache file and
+reuses only exact size, SHA-256 and MD5 matches. Incomplete transfers remain
+temporary and do not replace a previously verified cache file. The preflight
+also requires enough free space for missing bytes plus its reserve.
+
+Treat `run-status.json` as the status of the current attempt. Its `run_id` and
+status distinguish `running`, `failed`, `interrupted`, and `complete` attempts.
+An older `audit-report.json` may remain after a later failure; accept a report
+only when its `run_id` matches a `complete` `run-status.json`. On failure, inspect
+that status and `progress.json`, correct the local disk, access, or integrity
+problem, then rerun the same command to resume from verified cache. Do not delete
+retained Drive objects or trigger provider collection in response to an audit
+failure.
+
+Even a complete report is diagnostic evidence for this dated retained
+collection. The 1,550 receipts do not establish current provider catalogue
+coverage or prove native-to-Bronze value lineage. The report does not satisfy
+the #136 release contract, authorize Silver/Gold, or publish data. Its measured
+Parquet footer counts and final remote-inventory recheck must be assessed before
+any separate release recovery decision.
+
 ## GLEIF current Golden Copy native transfer
 
 `src/ingestion/sources/gleif_bulk.py` is a local native downloader for the
