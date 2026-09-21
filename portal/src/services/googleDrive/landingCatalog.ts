@@ -82,6 +82,46 @@ const OPENDATA_ORGANIZATION_COLUMNS = [
   ["rel_anchor_key", "VARCHAR"],
 ] as const;
 
+const OPENDATA_LOCATION_COLUMNS = [
+  ["record_id", "VARCHAR"],
+  ["data_source", "VARCHAR"],
+  ["bq_dataset", "VARCHAR"],
+  ["name_full", "VARCHAR"],
+  ["record_type", "VARCHAR"],
+  ["addr_line1", "VARCHAR"],
+  ["addr_city", "VARCHAR"],
+  ["addr_state", "VARCHAR"],
+  ["addr_postal_code", "VARCHAR"],
+  ["addr_country", "VARCHAR"],
+  ["geo_latitude", "DOUBLE"],
+  ["geo_longitude", "DOUBLE"],
+  ["placekey", "VARCHAR"],
+  ["bq_id", "VARCHAR"],
+] as const;
+
+const OPENDATA_PEOPLE_COLUMNS = [
+  ["record_id", "VARCHAR"],
+  ["data_source", "VARCHAR"],
+  ["bq_dataset", "VARCHAR"],
+  ["name_full", "VARCHAR"],
+  ["name_first", "VARCHAR"],
+  ["name_last", "VARCHAR"],
+  ["record_type", "VARCHAR"],
+  ["addr_country", "VARCHAR"],
+  ["group_assn_id_number", "VARCHAR"],
+  ["group_assn_id_type", "VARCHAR"],
+  ["rel_pointer_domain", "VARCHAR"],
+  ["rel_pointer_key", "VARCHAR"],
+  ["rel_pointer_role", "VARCHAR"],
+  ["linkedin", "VARCHAR"],
+] as const;
+
+const bronzeColumnsForSource = (sourceId: BronzeCampaignSourceId) => {
+  if (sourceId === "opendata_org_locations_bronze") return OPENDATA_LOCATION_COLUMNS;
+  if (sourceId === "opendata_org_people_bronze") return OPENDATA_PEOPLE_COLUMNS;
+  return OPENDATA_ORGANIZATION_COLUMNS;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODE_SHA_RE = /^[0-9a-f]{40}$/;
@@ -360,7 +400,7 @@ function parseManifest(
     throw new Error("Landing snapshot does not have passing tests.");
   }
   const expectedColumns = bronze
-    ? OPENDATA_ORGANIZATION_COLUMNS
+    ? bronzeColumnsForSource(pointer.source_id as BronzeCampaignSourceId)
     : bulk
       ? BULK_INDEX_COLUMNS
       : LANDING_COLUMNS;
