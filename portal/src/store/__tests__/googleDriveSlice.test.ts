@@ -12,6 +12,7 @@ import {
   listSubfolders,
   resolveLandingCatalog,
   resolveReleaseCatalog,
+  resolveSourceInventory,
   GoogleDriveAuthError,
   type LandingSnapshotResolution,
 } from "@/services/googleDrive";
@@ -30,6 +31,7 @@ vi.mock("@/services/googleDrive", async (original) => ({
   listSubfolders: vi.fn(),
   resolveLandingCatalog: vi.fn(),
   resolveReleaseCatalog: vi.fn(),
+  resolveSourceInventory: vi.fn(),
 }));
 
 const target = '"02_bronze"."rates"';
@@ -102,6 +104,7 @@ beforeEach(() => {
     issues: [],
     fingerprint: "none",
   });
+  vi.mocked(resolveSourceInventory).mockResolvedValue({ entries: [], drive_api_pages: 0 });
 });
 
 describe("Drive selection state", () => {
@@ -344,6 +347,94 @@ describe("immutable release selection", () => {
         ?.children.map((table) => table.name)
     ).toEqual(["world_bank_wdi_responses"]);
     expect(store.getState().lakehouseStatusMessage).toContain("1 Landing source snapshot");
+  });
+
+  it("publishes the query catalogue before the independent file inventory finishes", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    let finishInventory!: (value: { entries: []; drive_api_pages: number }) => void;
+    vi.mocked(resolveSourceInventory).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishInventory = resolve;
+      })
+    );
+
+    const refresh = store.getState().refreshLakehouseCatalog();
+    await vi.waitFor(() =>
+      expect(store.getState().lakehouseRelease).toMatchObject({
+        kind: "release",
+        manifest: { release_id: "release-1" },
+      })
+    );
+    expect(store.getState().lakehouseSourceInventory).toBeNull();
+    expect(store.getState().isLakehouseLoading).toBe(false);
+    await expect(
+      store.getState().selectLakehouseDataset("03_silver", "nbp_gold_prices")
+    ).resolves.toBe('"02_bronze"."rates"');
+
+    finishInventory({ entries: [], drive_api_pages: 4 });
+    await refresh;
+    expect(store.getState().lakehouseSourceInventory).toEqual({
+      entries: [],
+      drive_api_pages: 4,
+    });
+  });
+
+  it("does not let an older inventory refresh overwrite a newer one", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
+    let finishFirst!: (value: { entries: []; drive_api_pages: number }) => void;
+    let finishSecond!: (value: { entries: []; drive_api_pages: number }) => void;
+    vi.mocked(resolveSourceInventory)
+      .mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)))
+      .mockReturnValueOnce(new Promise((resolve) => (finishSecond = resolve)));
+
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().refreshLakehouseCatalog();
+    finishSecond({ entries: [], drive_api_pages: 2 });
+    await vi.waitFor(() =>
+      expect(store.getState().lakehouseSourceInventory?.drive_api_pages).toBe(2)
+    );
+    finishFirst({ entries: [], drive_api_pages: 1 });
+    await Promise.resolve();
+
+    expect(store.getState().lakehouseSourceInventory?.drive_api_pages).toBe(2);
+  });
+
+  it("ignores an authorization failure from a superseded inventory refresh", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
+    let rejectFirst!: (reason: unknown) => void;
+    vi.mocked(resolveSourceInventory)
+      .mockReturnValueOnce(new Promise((_resolve, reject) => (rejectFirst = reject)))
+      .mockResolvedValueOnce({ entries: [], drive_api_pages: 2 });
+
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().refreshLakehouseCatalog();
+    rejectFirst(new GoogleDriveAuthError("stale token failure"));
+    await Promise.resolve();
+
+    expect(store.getState().googleAuth).toMatchObject({
+      token: "fixture-token",
+      isAuthenticated: true,
+    });
+    expect(store.getState().lakehouseSourceInventory?.drive_api_pages).toBe(2);
+  });
+
+  it("clears inventory loading when a newer catalogue refresh fails", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog)
+      .mockResolvedValueOnce(release("release-1"))
+      .mockRejectedValueOnce(new Error("catalogue unavailable"));
+    vi.mocked(resolveSourceInventory).mockReturnValueOnce(new Promise(() => undefined));
+
+    await store.getState().refreshLakehouseCatalog();
+    expect(store.getState().isSourceInventoryLoading).toBe(true);
+    await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(
+      "catalogue unavailable"
+    );
+
+    expect(store.getState().isSourceInventoryLoading).toBe(false);
   });
 
   it("invalidates only a changed Landing view on refresh and retains the NBP pin", async () => {

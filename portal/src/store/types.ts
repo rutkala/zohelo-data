@@ -11,6 +11,7 @@ import type { Dashboard } from "@/services/dashboard/types";
 import type {
   GoogleDriveAuthState,
   LandingCatalogResolution,
+  SourceInventoryResolution,
   LakehouseLayer,
   ReleaseCatalogResolution,
 } from "@/services/googleDrive/types";
@@ -632,6 +633,9 @@ export interface GoogleDriveSlice {
   lakehouseRelease: ReleaseCatalogResolution | null;
   /** Independently pinned source Landing snapshots and source-specific metadata errors. */
   lakehouseLanding: LandingCatalogResolution | null;
+  /** Read-only physical file inventory; it never creates queryable relations. */
+  lakehouseSourceInventory: SourceInventoryResolution | null;
+  isSourceInventoryLoading: boolean;
   isLakehouseLoading: boolean;
   lakehouseStatusMessage: string;
   activeLakehouseDataset: string | null;
