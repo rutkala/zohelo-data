@@ -4,6 +4,36 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Recovery follow-up — 21 September 2026, 10:44 UTC
+
+**Portal deployed:** PR #139 merged as `5864b8e28b4da5692ab2225fe78c84827c4c3b89`.
+It fixes OpenData locations/people manifests being checked against the organizations schema.
+Portal CI run 35589353396 passed and deployment 35589767596 succeeded; the live
+`https://data.zohelo.com/portal-build.json` reports that exact commit. An authenticated owner-session
+refresh has not been exercised. Local focused tests passed 11/11; the full local suite had 709 passes
+and one unrelated signaling timeout, reproduced in isolation. No Drive payloads were changed.
+
+**Recovery monitor:** ten focused tests pass and data-platform CI run 35588961828 passed for
+`b722b81`. The full local data check remains running. The reviewed monitor is deployed locally
+as PID 32792 using a copy under `.local/wave0-supervisor/`; PR #138 is still awaiting integration.
+This is monitoring only, not automatic downstream advancement. BDL PID 13743 remains running;
+at 10:42 UTC its checkpoint reported 1,065 selection-complete subgroups and 1,355 remaining.
+
+**Eurostat:** run 35588640780 stopped after three distribution requests failed the approved-host
+redirect guard; downstream publication was skipped. Its subsequent current/ Landing restore
+checks passed. A bounded HEAD diagnostic of the official MIGR_ASYAPPCTZM TSV endpoint from
+this devcontainer returned HTTP 307 to `https://sorry.ec.europa.eu/`. This is evidence of the current
+local response, not proof of every redirect seen by the Actions runner. Do not allow a maintenance
+page into native data merely by widening the host list. Retained cumulative receipts report 7,817
+accepted distributions / 24,131,199,910 bytes; current catalogue coverage remains incomplete.
+
+**Next work:** verify retained DBW Bronze bytes and schemas with resumable, read-only restoration;
+add bounded portal Drive-file visibility distinct from validated query releases; investigate Eurostat
+availability before retrying. The owner requested day/week/next-week planning: prioritize Wave 0
+through this week, then integrate feasible later sources while continuing unfinished Wave 0 work.
+These are delivery priorities, not promised full-source completion dates. Original dirty work remains
+preserved and will be integrated selectively without replacing #136/#137 safeguards.
+
 ### Local crash recovery resumed — 21 September 2026, 10:10 UTC
 
 The owner explicitly authorized local recovery and continuation of the AGY autonomous programme,
