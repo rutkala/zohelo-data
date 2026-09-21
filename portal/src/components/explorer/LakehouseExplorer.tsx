@@ -35,6 +35,8 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
   const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
   const lakehouseLanding = useDuckStore((s) => s.lakehouseLanding);
+  const sourceInventory = useDuckStore((s) => s.lakehouseSourceInventory);
+  const isSourceInventoryLoading = useDuckStore((s) => s.isSourceInventoryLoading);
   const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
   const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
@@ -54,6 +56,18 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
 
   const [manualToken, setManualToken] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let value = bytes / 1024;
+    let unit = units[0];
+    for (let index = 1; value >= 1024 && index < units.length; index += 1) {
+      value /= 1024;
+      unit = units[index];
+    }
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+  };
   const baseUrl = import.meta.env.BASE_URL === "./" ? "/" : (import.meta.env.BASE_URL ?? "/");
   const privacyUrl = `${baseUrl.replace(/\/$/, "")}/privacy.html`;
   const sourceAccessGuideUrl =
@@ -256,8 +270,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
                 title={`${rel.manifest.release_id} / ${rel.manifest.release_scope} / ${rel.manifest.status}`}
               >
-                {rel.manifest.release_id} / {rel.manifest.release_scope} /{" "}
-                {rel.manifest.status}
+                {rel.manifest.release_id} / {rel.manifest.release_scope} / {rel.manifest.status}
               </Badge>
             ))}
           {lakehouseRelease?.kind === "legacy" && (
@@ -308,6 +321,68 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
 
       {/* Lakehouse Medallion Layers Tree */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 text-xs">
+        {sourceInventory && (
+          <div className="mb-1 rounded border border-border/60 text-[11px]">
+            <button
+              type="button"
+              className="flex w-full items-center gap-1 px-2 py-1 text-left font-medium hover:bg-muted/70"
+              onClick={() => setInventoryOpen((open) => !open)}
+              aria-expanded={inventoryOpen}
+            >
+              {inventoryOpen ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              Files on Drive
+              {isSourceInventoryLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+              <span className="ml-auto text-muted-foreground">
+                {sourceInventory.entries.length}
+              </span>
+            </button>
+            {inventoryOpen && (
+              <div className="space-y-1 border-t px-2 py-1">
+                <div className="text-muted-foreground">
+                  Retained physical files. Query access requires an explicit published data
+                  contract.
+                </div>
+                {sourceInventory.error && (
+                  <div className="text-destructive">{sourceInventory.error}</div>
+                )}
+                {sourceInventory.entries.map((entry) => (
+                  <div key={entry.source_id} className="rounded border border-border/60 px-2 py-1">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-medium">{entry.label}</span>
+                      <span className="text-muted-foreground">{entry.state}</span>
+                    </div>
+                    {entry.error ? (
+                      <div className="text-destructive">{entry.error}</div>
+                    ) : (
+                      <>
+                        {entry.message && (
+                          <div className="text-muted-foreground">{entry.message}</div>
+                        )}
+                        {entry.stages.map((stage) => (
+                          <div key={stage.stage} className="text-muted-foreground">
+                            {stage.stage}: {stage.file_count.toLocaleString()} files ·{" "}
+                            {formatBytes(stage.byte_count)}
+                            {stage.latest_modified_time
+                              ? ` · latest ${new Date(stage.latest_modified_time).toLocaleString()}`
+                              : ""}
+                            {stage.selection_total_count !== undefined
+                              ? ` · ${stage.selection_complete_count}/${stage.selection_total_count} catalogued subgroups complete`
+                              : ""}
+                            {stage.basis === "mutable_checkpoint" ? " · checkpoint reported" : ""}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {lakehouseCatalog.map((layer) => (
           <div key={layer.name} className="select-none">
             {/* Layer Row */}

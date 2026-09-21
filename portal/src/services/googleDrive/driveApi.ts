@@ -52,16 +52,25 @@ export interface DriveFileMetadata {
   name: string;
   mimeType?: string;
   size?: number;
+  modifiedTime?: string;
+  version?: string;
+  md5Checksum?: string;
+  sha256Checksum?: string;
 }
 
-const listFilesForQuery = async (query: string, token: string): Promise<DriveFileMetadata[]> => {
+const listFilesForQuery = async (
+  query: string,
+  token: string,
+  onPage?: () => void
+): Promise<DriveFileMetadata[]> => {
   const files: DriveFileMetadata[] = [];
   let pageToken: string | null = null;
   do {
     let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
       query
-    )}&fields=files(id,name,mimeType,size),nextPageToken&pageSize=200`;
+    )}&fields=files(id,name,mimeType,size,modifiedTime,version,md5Checksum,sha256Checksum),nextPageToken&pageSize=1000`;
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    onPage?.();
     const response = await driveRequest(url, token);
     const payload = await response.json();
     for (const item of payload.files || []) {
@@ -70,6 +79,10 @@ const listFilesForQuery = async (query: string, token: string): Promise<DriveFil
         name: item.name,
         mimeType: item.mimeType,
         size: item.size === undefined ? undefined : Number(item.size),
+        modifiedTime: item.modifiedTime,
+        version: item.version,
+        md5Checksum: item.md5Checksum,
+        sha256Checksum: item.sha256Checksum,
       });
     }
     pageToken = payload.nextPageToken || null;
@@ -80,7 +93,8 @@ const listFilesForQuery = async (query: string, token: string): Promise<DriveFil
 export const findFoldersByName = async (
   name: string,
   parentId = "root",
-  token: string
+  token: string,
+  onPage?: () => void
 ): Promise<Array<{ id: string; name: string }>> => {
   if (name.includes("'"))
     throw new Error("Folder names containing single quotes are not supported.");
@@ -90,7 +104,7 @@ export const findFoldersByName = async (
     `'${parentId}' in parents`,
     "trashed=false",
   ].join(" and ");
-  return (await listFilesForQuery(query, token)).map(({ id, name: folderName }) => ({
+  return (await listFilesForQuery(query, token, onPage)).map(({ id, name: folderName }) => ({
     id,
     name: folderName,
   }));
@@ -99,11 +113,12 @@ export const findFoldersByName = async (
 export const findNamedFilesInFolder = async (
   name: string,
   parentId: string,
-  token: string
+  token: string,
+  onPage?: () => void
 ): Promise<DriveFileMetadata[]> => {
   if (name.includes("'")) throw new Error("File names containing single quotes are not supported.");
   const query = [`name='${name}'`, `'${parentId}' in parents`, "trashed=false"].join(" and ");
-  return listFilesForQuery(query, token);
+  return listFilesForQuery(query, token, onPage);
 };
 
 /** Metadata by immutable ID; no folder listing is used for release manifests. */
@@ -113,7 +128,7 @@ export const findNamedFilesInFolderById = async (
 ): Promise<DriveFileMetadata | null> => {
   const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
     fileId
-  )}?fields=id,name,mimeType,size`;
+  )}?fields=id,name,mimeType,size,modifiedTime,version,md5Checksum,sha256Checksum`;
   try {
     const response = await driveRequest(url, token);
     const item = await response.json();
@@ -123,12 +138,49 @@ export const findNamedFilesInFolderById = async (
       name: item.name,
       mimeType: item.mimeType,
       size: item.size === undefined ? undefined : Number(item.size),
+      modifiedTime: item.modifiedTime,
+      version: item.version,
+      md5Checksum: item.md5Checksum,
+      sha256Checksum: item.sha256Checksum,
     };
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("Google Drive API error (404)"))
       return null;
     throw error;
   }
+};
+
+export const listFolderChildrenMetadata = async (
+  folderId: string,
+  token: string,
+  onPage?: () => void
+): Promise<DriveFileMetadata[]> => {
+  const files: DriveFileMetadata[] = [];
+  let pageToken: string | null = null;
+  do {
+    const query = `'${folderId}' in parents and trashed=false`;
+    let url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(
+      query
+    )}&fields=files(id,name,mimeType,size,modifiedTime,version,md5Checksum,sha256Checksum),nextPageToken&pageSize=1000`;
+    if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+    onPage?.();
+    const response = await driveRequest(url, token);
+    const payload = await response.json();
+    for (const item of payload.files || []) {
+      files.push({
+        id: item.id,
+        name: item.name,
+        mimeType: item.mimeType,
+        size: item.size === undefined ? undefined : Number(item.size),
+        modifiedTime: item.modifiedTime,
+        version: item.version,
+        md5Checksum: item.md5Checksum,
+        sha256Checksum: item.sha256Checksum,
+      });
+    }
+    pageToken = payload.nextPageToken || null;
+  } while (pageToken);
+  return files;
 };
 
 export const findFolderIdByName = async (

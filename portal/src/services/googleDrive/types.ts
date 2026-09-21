@@ -249,6 +249,35 @@ export interface LandingCatalogResolution {
   fingerprint: string;
 }
 
+export type SourceInventoryId =
+  "gus_bdl_web" | "gus_dbw" | "gus_teryt" | "gugik_prg" | "gleif" | "mf_biala_lista" | "imgw_pib";
+
+export interface SourceInventoryStage {
+  stage: "Landing" | "Bronze";
+  basis: "observed_drive_metadata" | "mutable_checkpoint";
+  file_count: number;
+  byte_count: number;
+  latest_modified_time: string | null;
+  selection_complete_count?: number;
+  selection_total_count?: number;
+}
+
+export interface SourceInventoryEntry {
+  source_id: SourceInventoryId;
+  label: string;
+  state: "retained" | "in_progress" | "updating" | "absent" | "error";
+  fetched_at: string;
+  stages: SourceInventoryStage[];
+  message?: string;
+  error?: string;
+}
+
+export interface SourceInventoryResolution {
+  entries: SourceInventoryEntry[];
+  drive_api_pages: number;
+  error?: string;
+}
+
 /** The relation details shared by NBP releases and independent Landing snapshots. */
 export interface PublishedDataset {
   dataset_id: string;

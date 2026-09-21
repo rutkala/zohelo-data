@@ -17,6 +17,7 @@ import {
   resolvePublishedTableReferences,
   resolveLayerFolderId,
   resolveReleaseCatalog,
+  resolveSourceInventory,
   isGoogleDriveAuthError,
   setStoredToken,
   type LakehouseLayer,
@@ -30,8 +31,7 @@ import type { DuckStoreState, GoogleDriveSlice } from "../types";
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : "Unknown error");
 const releaseMessage = (release: Extract<ReleaseCatalogResolution, { kind: "release" }>) => {
-  const rels =
-    release.releases && release.releases.length > 0 ? release.releases : [release];
+  const rels = release.releases && release.releases.length > 0 ? release.releases : [release];
   return rels
     .map(
       (r) =>
@@ -43,7 +43,10 @@ const releaseFingerprint = (release: ReleaseCatalogResolution | null) => {
   if (!release) return null;
   if (release.kind === "legacy") return "legacy";
   if (release.releases && release.releases.length > 0) {
-    return release.releases.map((r) => r.fingerprint).sort().join(";");
+    return release.releases
+      .map((r) => r.fingerprint)
+      .sort()
+      .join(";");
   }
   return release.fingerprint;
 };
@@ -188,6 +191,7 @@ export const createGoogleDriveSlice: StateCreator<
   [],
   GoogleDriveSlice
 > = (set, get) => {
+  let refreshGeneration = 0;
   let busy = false;
   // DuckDB views survive disconnect; record their release per engine, not globally.
   const loadedReleaseFingerprints = new WeakMap<object, string>();
@@ -580,6 +584,8 @@ export const createGoogleDriveSlice: StateCreator<
     lakehouseCatalog: createDefaultLakehouseTree(),
     lakehouseRelease: null,
     lakehouseLanding: null,
+    lakehouseSourceInventory: null,
+    isSourceInventoryLoading: false,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
     activeLakehouseDataset: null,
@@ -637,6 +643,8 @@ export const createGoogleDriveSlice: StateCreator<
         lakehouseCatalog: createDefaultLakehouseTree(),
         lakehouseRelease: null,
         lakehouseLanding: null,
+        lakehouseSourceInventory: null,
+        isSourceInventoryLoading: false,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
         isLakehouseLoading: false,
@@ -653,6 +661,7 @@ export const createGoogleDriveSlice: StateCreator<
         return;
       }
       busy = true;
+      const activeGeneration = ++refreshGeneration;
       set({
         isLakehouseLoading: true,
         lakehouseStatusMessage: "Resolving the Google Drive release...",
@@ -700,9 +709,7 @@ export const createGoogleDriveSlice: StateCreator<
                       : sourceId.endsWith("_bulk")
                         ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
                         : `${sourceId}_responses`);
-              await local.connection.query(
-                `DROP VIEW IF EXISTS "${targetLayer}"."${tableName}";`
-              );
+              await local.connection.query(`DROP VIEW IF EXISTS "${targetLayer}"."${tableName}";`);
               loadedLanding.delete(sourceId);
               if (
                 get().activeLakehouseLayer === targetLayer &&
@@ -722,24 +729,50 @@ export const createGoogleDriveSlice: StateCreator<
             lakehouseLanding: landing,
             lakehouseStatusMessage: `${releaseMessage(release)} ${landingStatus(landing)}. Select a dataset to query.`,
           });
-          return;
+        } else {
+          const tree: LakehouseLayer[] = [];
+          for (const layer of get().lakehouseCatalog) {
+            tree.push(
+              layer.expanded
+                ? await loadLayer(layer, activeToken)
+                : { ...layer, id: null, loaded: false, children: [] }
+            );
+          }
+          if (get().googleAuth.token !== activeToken) return;
+          set({
+            lakehouseCatalog: mergeLandingIntoTree(tree, landing),
+            lakehouseRelease: release,
+            lakehouseLanding: landing,
+            lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
+          });
         }
-        const tree: LakehouseLayer[] = [];
-        for (const layer of get().lakehouseCatalog) {
-          tree.push(
-            layer.expanded
-              ? await loadLayer(layer, activeToken)
-              : { ...layer, id: null, loaded: false, children: [] }
-          );
-        }
-        if (get().googleAuth.token !== activeToken) return;
-        set({
-          lakehouseCatalog: mergeLandingIntoTree(tree, landing),
-          lakehouseRelease: release,
-          lakehouseLanding: landing,
-          lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
-        });
+        const inventoryIsCurrent = () =>
+          activeGeneration === refreshGeneration &&
+          get().googleAuth.token === activeToken &&
+          get().currentSession === activeSession;
+        set({ isSourceInventoryLoading: true });
+        void resolveSourceInventory(activeToken, inventoryIsCurrent)
+          .then((sourceInventory) => {
+            if (inventoryIsCurrent()) set({ lakehouseSourceInventory: sourceInventory });
+          })
+          .catch((error) => {
+            if (!inventoryIsCurrent()) return;
+            const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+            if (!authFailure) {
+              set({
+                lakehouseSourceInventory: {
+                  entries: [],
+                  drive_api_pages: 0,
+                  error: messageOf(error),
+                },
+              });
+            }
+          })
+          .finally(() => {
+            if (inventoryIsCurrent()) set({ isSourceInventoryLoading: false });
+          });
       } catch (error) {
+        if (activeGeneration === refreshGeneration) set({ isSourceInventoryLoading: false });
         const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
         if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure
@@ -751,7 +784,7 @@ export const createGoogleDriveSlice: StateCreator<
         throw error;
       } finally {
         busy = false;
-        set({ isLakehouseLoading: false });
+        if (activeGeneration === refreshGeneration) set({ isLakehouseLoading: false });
       }
     },
 
