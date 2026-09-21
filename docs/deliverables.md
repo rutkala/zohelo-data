@@ -4,6 +4,88 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Recovery deployed and retained DBW audit completed — 21 September 2026, 21:42 UTC
+
+**BDL repair merged and resumed:** [PR #143](https://github.com/rutkala/zohelo-data/pull/143)
+merged as `5097e7eab3e6e328b3be74d6ee0de4fe837b710e` after the complete credential-free
+[data-platform CI](https://github.com/rutkala/zohelo-data/actions/runs/35656215024) passed.
+The focused runner suite passed 21 tests and independent review found no blocker. The
+separate local full suite remains running; no local-suite completion is claimed. The repair
+propagates worker/control failures, maintains serialized heartbeats, joins workers before
+lock release, and denies completion after uncertain writes. The initiating historical
+queue drift remains unexplained; the Drive writer record is still an application-level lock.
+
+At 21:30:27 UTC, one native-only resume coordinator started as PID `79463`, using an
+unchanged detached checkout of that merged commit under `.local/runtime-code/5097e7eab3e6e328b3be74d6ee0de4fe837b710e`,
+the isolated Python 3.12 environment, a fresh `.local/bdl-recovery-2026-09-21` workspace,
+and three existing proxy-backed workers. The command uses `--mode resume --allow-codespace
+--concurrency 3`, without a campaign time cutoff or successor schedule. Existing native
+files and the interrupted workspace remain preserved. A fresh pre-start read confirmed
+that the queue had not changed and the old writer lock was released; no BDL Action was
+active. Eurostat's independent workflow was active and was not changed.
+
+A stable 21:32 UTC Drive read verified the new writer PID, active heartbeat and only the
+three resumed in-flight subgroups (`P4150`, `P4174`, `P4216`). Queue SHA-256 was
+`03d6182c15da232eddde3225fb4a2a36d0e99d5e70d56a09ee3b4341b0ad5467`; it still reported
+1,085 / 2,420 selection-complete subgroups, 2,313 native files / 620,877,414 bytes, and
+56 blocked selections. A further stable read at 21:35 UTC reports **2,317 files / 621,125,077 bytes**
+(queue SHA-256 `53eb18fe98e7dd03648030be2aa7ad28e4212b0e2d0e6cbb379a774b5b24cca2`),
+establishing four newly checkpointed native files / 247,663 bytes in this resumed run.
+The 21:35:08 heartbeat still belongs to PID `79463`; full selection coverage is unchanged. The reviewed
+monitor runs separately as PID `79464` under `.local/wave0-supervisor-recovery-2130`,
+reports actual process/checkpoint state and never launches downstream work. A container
+stop can interrupt both processes; resumability does not establish immunity to idle
+suspension. Runtime receipt/logs are under `.local/recovery-2026-09-21/rebuilt-2047` and
+the new campaign workspace. At 21:41 UTC an independent read-only check retrieved one
+new P4174 ZIP (55,485 bytes): its durable plan, part receipt, length, MD5 and SHA-256 all
+matched stable Drive metadata and the downloaded original bytes. Nothing was parsed or
+unpacked. The [native verification receipt](audits/2026-09-21-bdl-native-verification.json)
+provides the exact object identity and evidence scope.
+
+**DBW retained audit completed at 21:29 UTC:** run
+`bc79f7e9-6af6-429f-b327-8a34c3b74d71` verified all **3,103 objects / 4,803,673,234 bytes**,
+reused 1,788 cached files and restored 1,315. Inventory SHA-256 is
+`15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e`; the remote inventory
+was unchanged after restoration. The dated 1,550 Landing receipts reconcile to 1,550
+observation partitions. Verified Parquet footers report **879,999,727 observation rows**,
+8,358,612 dictionary rows, 1,531 metadata rows and 1,550 taxonomy rows. The earlier
+820,345,903 observation claim is superseded by this measurement (difference 59,653,824).
+The [retained audit evidence](audits/2026-09-21-dbw-retained-report.json), SHA-256
+`29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac`, records schemas and
+limits. This is not a #136 release, current provider-catalogue coverage, native-to-Bronze
+value lineage or a publication/completion marker. No DBW downstream writer was started.
+
+**Portal inventory merged and deployed:** [PR #142](https://github.com/rutkala/zohelo-data/pull/142)
+merged as `5e5f42a5c291eb8f33761f5d2f767c2fd37bad49` after both full portal CI variants
+passed in [35593113336](https://github.com/rutkala/zohelo-data/actions/runs/35593113336)
+and recovery review found no blocker. This includes lint, build/type checking, unit tests
+and browser regressions. [Deployment 35657788866](https://github.com/rutkala/zohelo-data/actions/runs/35657788866)
+succeeded. A fresh 21:35:36 UTC read of `https://data.zohelo.com/portal-build.json`
+identifies the exact merged commit. The feature exposes bounded physical inventory separately from the existing
+published query catalogue; it does not make retained DBW/BDL/native files queryable.
+The earlier live resolver measured 71 Drive requests; the 120-page cap bounds each scan.
+A disposable authenticated browser session against the live site then rendered all seven
+source inventory entries at 21:38 UTC, including 2,322 checkpoint-reported BDL native
+files and 1,553 DBW Bronze files. The complete catalogue-plus-inventory refresh made
+151 read-only Drive requests and attempted no Drive writes. See the
+[live browser receipt](audits/2026-09-21-portal-inventory-live.json); a screenshot remains
+under the local recovery evidence directory. This exercises the deployed UI with the
+existing owner OAuth access token; it does not claim a new interactive Google sign-in test.
+
+**Remaining authorized work:** continue this finite BDL pass, then review terminal failed
+selections without removing retry caps or claiming full-source completion. The next portal
+data increment is the previously accepted dated DBW retained-Bronze snapshot with bounded
+query fragments and explicit unresolved lineage; this audit is its evidence prerequisite,
+not that implementation. BDL Bronze publication safety, unpublished source adapters, and
+the remaining native-only migration stay unfinished. Original dirty source work and the
+unpushed Telegram branch remain preserved. Both merged feature branches were deleted on
+origin and refs pruned; the BDL test worktree is retained while its local suite runs. A
+one-shot cleanup observer (PID `90204`) waits for that existing test process, records its
+result, and removes only the unchanged merged test checkout after success. On failure or
+identity drift it preserves the checkout for review. Its receipt is
+`.local/recovery-2026-09-21/rebuilt-2047/local-validation-cleanup.json`. This does not
+start another test run, ingestion job, engineering task or recurring schedule.
+
 ### Second devcontainer recovery — 21 September 2026, 21:03 UTC
 
 The owner requested reconstruction of today's work and autonomous continuation, with
