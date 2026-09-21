@@ -69,6 +69,21 @@ class FakeDriveControl:
 
 
 class BdlWebAdaptiveRunnerTests(unittest.TestCase):
+    def test_worker_proxy_is_forwarded_without_changing_default_call_shape(self):
+        item = {"subgroup_id": "P1", "url": "https://example.test"}
+        node = {"id": "node", "scope": {"kind": "download"}}
+        workspace = Path("/tmp/work")
+        with patch.object(adaptive, "invoke_selection", return_value={"status": "download"}) as invoke:
+            adaptive.invoke_selection_for_worker(item, node, workspace, 60)
+            invoke.assert_called_once_with(item, node, workspace, 60)
+        with patch.object(adaptive, "invoke_selection", return_value={"status": "download"}) as invoke:
+            adaptive.invoke_selection_for_worker(
+                item, node, workspace, 60, proxy="http://127.0.0.1:8081"
+            )
+            invoke.assert_called_once_with(
+                item, node, workspace, 60, proxy="http://127.0.0.1:8081"
+            )
+
     def setUp(self):
         FakeDriveControl.records = {}
 
@@ -588,4 +603,3 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

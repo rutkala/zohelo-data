@@ -4,6 +4,137 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Fresh production acceptance and fail-closed GUS stage boundary — 20 September 2026
+
+**Accepted current releases:** no GitHub Actions writer was active or pending at the 18:09 UTC
+inspection. NBP [run 35483182223](https://github.com/rutkala/zohelo-data/actions/runs/35483182223)
+published and freshly restored release `33fc1114-c8d3-48f6-b0e6-d7626b28f67a`: all four
+Tables A/B/C/gold sources are coverage-complete through 19 September, the latest observations
+are 18 September (Table B: 16 September), and Gold contains 427,028 FX rows plus 3,459 gold rows.
+WDI [run 35511129843](https://github.com/rutkala/zohelo-data/actions/runs/35511129843)
+published and freshly restored release `47933158-569a-44f5-a474-44594c5d501e`: the current
+six-member official archive still reconciles all 9,015,914 modeled values at ratio 1.0. The
+later scheduled [run 35529367207](https://github.com/rutkala/zohelo-data/actions/runs/35529367207)
+also succeeded and freshly restored release `6900c12a-b63c-448b-8d30-d124e6b46535`; the archive
+SHA-256 remains `2ab1d0d250ebe986ac8a9f7163f6e177fbe4cfb2750f822b18578d902aeb134f` and modeled
+coverage remains 9,015,914 / 9,015,914. That run advanced the separate API reconciliation to
+3,922 accepted responses with 1,202 tasks pending and no pending publication backlog. It remains
+incomplete and is not needed to claim
+the current bulk archive product complete and is not being confused with every World Bank product.
+
+Eurostat [run 35528999652](https://github.com/rutkala/zohelo-data/actions/runs/35528999652)
+published and freshly restored modeled release `526be40b-e070-483e-adb3-833186671e80`. Its complete
+reviewed progressive contract remains three datasets / 81 country-series with admitted dataset
+and series coverage ratios of 1.0 and latest observation date 31 August 2026. Full-distribution
+Landing advanced to 6,089 / 21,238 validated current distributions (28.6703%), 7,477 accepted
+versions, 22,833,356,544 raw bytes, 18,102 pending tasks and zero failed pending tasks. Earlier
+[run 35491496570](https://github.com/rutkala/zohelo-data/actions/runs/35491496570) stopped after two
+transient bulk transport failures; subsequent scheduled runs recovered them and have remained green.
+Full Eurostat catalogue modeling is still not Done.
+
+**Unreviewed GUS changes were not accepted as completion:** direct main commits `dc6e7bb` and
+`9f54ec7` introduced DBW Web/Bronze and BDL proxy/runner changes without pull-request validation.
+Review found that the
+Bronze path could start on the currently available subset, delete a retained pilot object, replace
+an existing stable-name object before a replacement was proven, and let a metadata-only DBW run
+create the same completion-shaped checkpoint used by bulk collection. The BDL proxy call also broke
+five established adaptive-runner regressions. The repair now preserves every prior object, makes
+Landing folder resolution read-only, admits only v3 full-bulk indicator receipts, publishes a
+checksum-bound catalogue completion record only when every discovered indicator reconciles, and
+requires that record before DBW Bronze starts. Metadata-only runs remain explicitly incomplete;
+provider revisions are retained under content-addressed native names and every indicator receipt is
+bound to one durable native-refresh snapshot plus the exact catalogue hash and each native object's
+Drive ID, byte size, MD5 and SHA-256. An incomplete refresh resumes the same remote snapshot; after
+completion, the next run opens a new snapshot and re-fetches every indicator, so unchanged taxonomy
+cannot make revised aggregate, metryka or ZIP payloads look current.
+Bronze verifies the downloaded bytes again before parsing, rejects sampled or indicator-selected
+publication into the complete release, and writes into a separate
+`02_bronze/gus_dbw/releases/<native_snapshot_sha256>/` namespace, so the earlier partial files cannot be
+silently reused by a complete-catalogue run; verified taxonomy and metadata outputs can be restored
+on a fresh runner without depending on disposable local files. A full receipt additionally requires
+the documented aggregate discovery envelope, at least one unique safe ZIP filename, and exact
+reconciliation of that discovered inventory to the identity-bound landed ZIP descriptors. Bronze
+persists one checksum-bearing dictionary partition per indicator (including an empty-schema
+partition when the source has no dictionary rows) for fresh-runner consolidation and publishes its
+release completion record only after both partition sets reconcile every indicator. The disabled-by-default
+dbt source no longer reads the retained unversioned pilot folders: an operator must select the
+verified snapshot explicitly with `ZOHELO_DBW_BRONZE_RELEASE_ID`, and all four source relations then
+resolve only under `02_bronze/gus_dbw/releases/<native_snapshot_sha256>/`. Before dbt runs,
+`python scripts/restore_dbw_bronze_release.py --release-id <native_snapshot_sha256>` restores the
+marker, exact observation/dictionary partition sets, taxonomy, metadata and consolidated dictionary
+from Drive into that local path, verifying size, MD5 and SHA-256 before an atomic directory rename.
+Native snapshot selection is protected across Actions and explicitly authorized hosts by a durable,
+source-wide expiring Drive lease with immutable acquisition/release records; losing election claims are
+tombstoned immediately, the lease is elected in the already-existing control root before any Landing
+folder or taxonomy mutation, and every exceptional exit releases through `finally`. Local ZIP resume
+files are isolated by native snapshot identity. Landing renews the same elected owner before its
+bounded whole-catalogue receipt sweep; Actions schedules indicators for at most 12,600 seconds and
+stops verification at five hours inside a six-hour job, leaving shutdown time for the release tombstone.
+The Bronze writer has the same cross-host protection before it creates
+or writes release paths, with both stages retaining a one-hour end-of-run lease margin, exceeding
+twice the measured 1,410-second largest-indicator transfer. Bronze publishes an immutable successor
+claim for the same elected owner before whole-release reconciliation, giving finalization a fresh
+six-hour window without opening a second-writer gap; both claims remain tracked until their individual
+release tombstones succeed, including a retry from the session `finally`. Resumed Landing receipts are re-read and reconciled to their exact native
+Drive objects before they count as complete. Bronze derives ZIP and metryka ownership from those
+receipts (never provider filenames or untrusted CSV identity alone), while its completion marker,
+restore boundary and dbt guard bind both partition names and the SHA-256 of every local observation
+and dictionary partition, plus the taxonomy, metadata and consolidated dictionary files read by dbt.
+The dbt external sources use only those sealed filenames; additional Parquet files are not readable
+through the DBW source contract.
+Reused Bronze partitions count toward completion only when Drive's server-computed SHA-256 still
+matches the upload SHA recorded in object properties; changed bytes fail before the marker is sealed.
+Landing now rejects a second completed receipt for the same indicator even when its native membership
+matches, keeping the sealed snapshot consumable by Bronze's unique-receipt contract. Bronze parses
+provider observation and dictionary CSVs with `ignore_errors=false`; malformed rows fail the indicator
+before any partition or complete-release marker can be accepted instead of being silently discarded.
+Provider ZIPs use indicator-scoped durable object names while retaining the provider filename in receipt
+lineage, so byte-identical names shared by two indicators cannot collapse into one cross-owned object.
+Changed-object names truncate the recognizable stem at a UTF-8 boundary against the final 240-byte
+name, leaving room for Bronze's local prefixes and preventing non-ASCII provider names from crossing
+storage or filesystem component limits. Every revision name is domain-separated with the full
+SHA-256 of both its original logical name and its content. Bulk base objects are also mapped into a
+separate `base--logical-sha256-...` namespace, while changed bytes use
+`revision--logical-sha256-...--content-sha256-...`; a provider filename therefore cannot occupy a
+generated revision identity, and distinct long names cannot collapse to one Drive object. Exact
+unchanged base descriptors validate without constructing a revision identity; legacy objects remain
+retained, while current receipts must satisfy the stronger identity.
+Pre-boundary unscoped receipts remain preserved but do not count as completed during resume or Bronze
+validation; the same native snapshot reprocesses those indicators, writes scoped objects and seals a
+new content-addressed completion marker only after the current receipt contract reconciles.
+Lease renewal in both Landing and Bronze now re-runs the durable election after the old claim is
+tombstoned; a contender exposed by the handoff makes the successor self-tombstone instead of allowing
+two writers. Disposable ZIP cache files are re-downloaded and atomically replaced, so a nonempty
+prefix left by interruption is never reused. The Bronze restore path streams Drive objects to staging
+in bounded chunks and verifies size, Drive SHA-256, local SHA-256 and MD5 before atomic publication,
+keeping large indicator partitions independent of process RAM.
+Failed restores remove their nonresumable UUID staging trees. Once a complete downloaded tree
+is verified, it replaces any mismatched disposable local release cache through a rollback-capable
+rename and removes the displaced cache, preventing supervisor retries from accumulating full release
+copies. A mismatched release-scoped taxonomy cache is likewise recovered from checksum-verified
+Drive bytes and replaced atomically.
+The DBW Silver and Gold indicator models now preserve the Bronze taxonomy contract
+(`thematic_area`, `domain_name`, `taxonomy_path`, `node_id`, and `parent_id`) without
+inventing numeric hierarchy IDs; the acceptance fixture builds the complete DBW
+Bronze-to-Silver-to-Gold lineage, not only its Bronze boundary. The local supervisor now
+derives the exact completed release from its release-bound marker, restores and verifies that
+authoritative Drive snapshot into a dedicated data root, and exports the matching release ID and
+DuckDB path before dbt; a failed restore or model build remains retryable rather than being marked
+triggered. This is model-contract and orchestration evidence, not a claim that the still-incomplete
+production source has been published.
+Launchers
+refuse to kill or duplicate an already running local writer (including the later BDL-only
+launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
+DBW provider concurrency lane; and proxy-free BDL execution keeps its prior call contract while
+configured workers still receive their assigned proxy.
+
+The separately reported Codespace BDL/DBW jobs were not duplicated or interrupted during this
+review. Their last recorded partial counts (BDL 1,093 / 2,420 subgroups; DBW Bronze 165+ / 1,550
+indicators) remain progress, not accepted full Landing or modeled delivery. In particular, existing
+partial DBW Bronze files remain retained but cannot authorize Silver/Gold. The next DBW Bronze run
+must wait for the new full-catalogue completion record; its immutable native-snapshot release boundary
+is now enforced in code.
+
 ### Autonomous 2-Week Multi-Source Roadmap, Stage Decoupling, and Bulk Ingestion Mandate — 20 September 2026
 
 **Autonomous execution authorized for full multi-source data platform expansion (GitHub Issues #130–#135):**

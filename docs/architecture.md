@@ -45,7 +45,7 @@ flowchart TD
 
 Medallion describes progressively refined data quality; it does not require Spark or a particular storage product. Landing and Archive are additional lifecycle boundaries. [Medallion reference](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion).
 
-Published physical files belong to immutable release folders under `releases/<source>/<uuid>/`, where `<source>` is one of `nbp`, `bdl`, or `wdi`. Each source contains its own `current-release.json` pointer directly in its source release folder. Ingestion state is unified under `06_control/` (`06_control/nbp` and `06_control/source_campaigns`). Medallion navigation is maintained via Drive shortcuts and `navigation-index.json` under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`). See [the Google Drive structure guide](drive-structure.md) for the complete physical layout, release pointers, and operational runbook.
+Published physical files belong to immutable release folders under `releases/<source>/<uuid>/`, where the current modeled sources are `nbp`, `bdl`, `wdi`, and `eurostat`. Each source contains its own `current-release.json` pointer directly in its source release folder. Ingestion state is unified under `06_control/` (`06_control/nbp` and `06_control/source_campaigns`). Medallion navigation is maintained via Drive shortcuts and `navigation-index.json` under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`). See [the Google Drive structure guide](drive-structure.md) for the complete physical layout, release pointers, and operational runbook.
 
 ## Publication and recovery
 

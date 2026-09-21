@@ -1,4 +1,5 @@
 {{ config(materialized='table', alias='dbw_dictionaries', enabled=var('enable_gus_dbw', false)) }}
+{{ assert_dbw_bronze_release() }}
 
 select
     indicator_id,

@@ -23,14 +23,52 @@ while true; do
     else
         if [ "$DBW_BRONZE_TRIGGERED_DOWNSTREAM" -eq 0 ]; then
             # Verify if bronze loader completed successfully
-            if grep -q "1550/1550" "$LOG_DIR/dbw-bronze/bronze_loader.log" 2>/dev/null || grep -q "Bronze transformation complete" "$LOG_DIR/dbw-bronze/bronze_loader.log" 2>/dev/null; then
-                echo "[$TIMESTAMP] DBW Bronze reached 100% completion! Launching DBW Silver and Gold dbt models..." >> "$SUPERVISOR_LOG"
-                DBW_BRONZE_TRIGGERED_DOWNSTREAM=1
-                
-                # Execute DBW Silver & Gold dbt models
-                PYTHONPATH=src dbt build --profiles-dir . --select +stg_dbw_observations +stg_dbw_indicators +stg_dbw_metadata +stg_dbw_dictionaries +dim_dbw_indicator +fact_dbw_observations +mart_dbw_coverage --vars '{"enable_gus_dbw": true}' >> "$LOG_DIR/dbw_silver_gold_dbt.log" 2>&1 || {
-                    echo "[$TIMESTAMP] DBW dbt build failed. Check $LOG_DIR/dbw_silver_gold_dbt.log" >> "$SUPERVISOR_LOG"
-                }
+            if grep -q "GUS DBW Bronze transformation completed successfully" "$LOG_DIR/dbw-bronze/bronze_loader.log" 2>/dev/null; then
+                DBW_COMPLETION_MARKER="$(
+                    find "$LOG_DIR/dbw-bronze" -mindepth 2 -maxdepth 2 -type f \
+                        -name 'bronze-complete-v1-*.json' -printf '%T@ %p\n' 2>/dev/null \
+                        | sort -nr | head -n 1 | cut -d' ' -f2-
+                )"
+                DBW_RELEASE_ID=""
+                DBW_RELEASE_DIR=""
+                if [ -n "$DBW_COMPLETION_MARKER" ]; then
+                    DBW_RELEASE_ID="$(basename "$DBW_COMPLETION_MARKER")"
+                    DBW_RELEASE_ID="${DBW_RELEASE_ID#bronze-complete-v1-}"
+                    DBW_RELEASE_ID="${DBW_RELEASE_ID%.json}"
+                    DBW_RELEASE_DIR="$(basename "$(dirname "$DBW_COMPLETION_MARKER")")"
+                fi
+                if [[ ! "$DBW_RELEASE_ID" =~ ^[0-9a-f]{64}$ || "$DBW_RELEASE_DIR" != "$DBW_RELEASE_ID" ]]; then
+                    echo "[$TIMESTAMP] DBW Bronze completion log has no matching release-bound marker; downstream models remain blocked." >> "$SUPERVISOR_LOG"
+                else
+                    PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
+                    [ -x "$PYTHON_BIN" ] || PYTHON_BIN="$(command -v python3 || true)"
+                    DBT_BIN="$REPO_ROOT/.venv/bin/dbt"
+                    [ -x "$DBT_BIN" ] || DBT_BIN="$(command -v dbt || true)"
+                    DBW_DATA_ROOT="$LOG_DIR/dbw-dbt-data"
+                    DBW_DUCKDB_PATH="$LOG_DIR/dbw-${DBW_RELEASE_ID}.duckdb"
+                    mkdir -p "$DBW_DATA_ROOT"
+
+                    if [ -z "$PYTHON_BIN" ] || [ -z "$DBT_BIN" ]; then
+                        echo "[$TIMESTAMP] Python or dbt executable is unavailable; DBW downstream models remain pending." >> "$SUPERVISOR_LOG"
+                    elif ! PYTHONPATH=src "$PYTHON_BIN" scripts/restore_dbw_bronze_release.py \
+                        --release-id "$DBW_RELEASE_ID" --data-root "$DBW_DATA_ROOT" \
+                        >> "$LOG_DIR/dbw_silver_gold_dbt.log" 2>&1; then
+                        echo "[$TIMESTAMP] Verified DBW release restore failed; downstream models remain pending. Check $LOG_DIR/dbw_silver_gold_dbt.log" >> "$SUPERVISOR_LOG"
+                    elif ZOHELO_DATA_ROOT="$DBW_DATA_ROOT" \
+                        ZOHELO_DBW_BRONZE_RELEASE_ID="$DBW_RELEASE_ID" \
+                        ZOHELO_DUCKDB_PATH="$DBW_DUCKDB_PATH" \
+                        PYTHONPATH=src "$DBT_BIN" build --profiles-dir . \
+                        --select +stg_dbw_observations +stg_dbw_indicators \
+                        +stg_dbw_metadata +stg_dbw_dictionaries +dim_dbw_indicator \
+                        +fact_dbw_observations +mart_dbw_coverage \
+                        --vars '{"enable_gus_dbw": true}' \
+                        >> "$LOG_DIR/dbw_silver_gold_dbt.log" 2>&1; then
+                        DBW_BRONZE_TRIGGERED_DOWNSTREAM=1
+                        echo "[$TIMESTAMP] DBW release $DBW_RELEASE_ID restored and modeled through Gold." >> "$SUPERVISOR_LOG"
+                    else
+                        echo "[$TIMESTAMP] DBW dbt build failed; downstream models remain pending. Check $LOG_DIR/dbw_silver_gold_dbt.log" >> "$SUPERVISOR_LOG"
+                    fi
+                fi
             fi
         fi
     fi

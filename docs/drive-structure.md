@@ -46,7 +46,7 @@ zohelo-data/ (Drive root: 1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf)
 
 ## 2. Source Release Architecture
 
-Each source (`nbp`, `bdl`, `wdi`) maintains an identical direct structure under `releases/<source>/`:
+Each current modeled source (`nbp`, `bdl`, `wdi`, `eurostat`) maintains an identical direct structure under `releases/<source>/`:
 - **Pointer:** `releases/<source>/current-release.json` identifies the current immutable release and its manifest. The migration preserves existing pointer bytes; readers support both legacy format 1 and current format 2. Current-format pointers declare `format_version: 2`, `release_id: "<uuid>"`, and `manifest_file_id: "<id>"`.
 - **Release Directory:** `releases/<source>/<uuid>/` contains:
   - `release.json`: Complete release manifest declaring datasets, schemas, logical medallion layer, row counts, and Parquet file checksums.

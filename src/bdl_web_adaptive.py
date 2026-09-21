@@ -75,6 +75,13 @@ def invoke_selection(item, node, workspace, timeout, session_path=None, proxy=No
     return result
 
 
+def invoke_selection_for_worker(item, node, workspace, timeout, proxy=None):
+    """Keep the established no-proxy call contract while routing configured workers."""
+    if proxy is None:
+        return invoke_selection(item, node, workspace, timeout)
+    return invoke_selection(item, node, workspace, timeout, proxy=proxy)
+
+
 def check_stored_receipt(storage, plan, node, receipt):
     """Receipt bytes were already verified by DriveControl; verify its native object."""
     probe = json.loads(json.dumps(plan))
@@ -431,7 +438,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             try:
                 rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
                 timeout = min(600, rem) if rem > 60 else 60
-                result = invoke_selection(item, whole_node, worker_ws, timeout, proxy=proxy)
+                result = invoke_selection_for_worker(item, whole_node, worker_ws, timeout, proxy=proxy)
                 if result.get("status") == "download":
                     with ctx.lock:
                         part_store = DriveControl(storage, control, f"web-part-{subgroup}-whole.json")
@@ -515,7 +522,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             try:
                 rem = int(max_seconds - (time.monotonic() - start) - 60) if max_seconds is not None else 600
                 timeout = min(600, rem) if rem > 60 else 60
-                result = invoke_selection(item, node, worker_ws, timeout, proxy=proxy)
+                result = invoke_selection_for_worker(item, node, worker_ws, timeout, proxy=proxy)
                 with ctx.lock:
                     process_result(plan, node, result)
             except WorkerFailure as exc:

@@ -1,10 +1,13 @@
 import io
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 import zipfile
 
 import duckdb
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from bdl_bronze_loader import process_bdl_zip_to_parquet
 

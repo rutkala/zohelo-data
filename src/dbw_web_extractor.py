@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import md5, sha256
 import json
 import os
@@ -29,8 +29,15 @@ from typing import Any
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
+from dbw_native_identity import (
+    bulk_revision_name as _bulk_revision_name,
+    indicator_scoped_bulk_name as _indicator_scoped_bulk_name,
+    is_indicator_scoped_bulk_descriptor as _is_indicator_scoped_bulk_descriptor,
+    versioned_name as _versioned_name,
+)
 from storage_manager import StorageManager
 
 DBW_WEB_BASE = "https://dbw.stat.gov.pl"
@@ -42,6 +49,15 @@ HVD_DOWNLOAD_URL = f"{DBW_WEB_BASE}/HVD"
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 _CHUNK_BYTES = 8 * 1024 * 1024
+COMPLETION_PREFIX = "landing-complete-v2"
+SNAPSHOT_PREFIX = "native-snapshot-v1"
+SNAPSHOT_LEASE_PREFIX = "native-snapshot-lease-v1"
+SNAPSHOT_LEASE_RELEASE_PREFIX = "native-snapshot-lease-release-v1"
+SNAPSHOT_LEASE_SECONDS = 6 * 60 * 60
+SNAPSHOT_LEASE_SAFETY_SECONDS = 60 * 60
+SNAPSHOT_LEASE_SETTLE_SECONDS = 2
+DEFAULT_EXTRACTION_SECONDS = 3 * 60 * 60 + 30 * 60
+FINALIZATION_DEADLINE_SECONDS = 5 * 60 * 60
 
 
 def _require_production_context(allow_codespace: bool = False) -> None:
@@ -89,6 +105,45 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Replace a local cache entry only after all downloaded bytes are durable."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4()}.tmp")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _membership_sha256(objects: list[dict[str, Any]]) -> str:
+    canonical = sorted(
+        (
+            item["role"], item["source_name"], item["id"], item["name"],
+            item["size"], item["sha256"], item["md5"],
+        )
+        for item in objects
+    )
+    return sha256(
+        json.dumps(canonical, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _snapshot_sha256(native_snapshot_id: str, memberships: dict[int, str]) -> str:
+    canonical = {
+        "native_snapshot_id": native_snapshot_id,
+        "memberships": sorted(
+            (indicator_id, digest) for indicator_id, digest in memberships.items()
+        ),
+    }
+    return sha256(
+        json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 DRIVE_LOCK = threading.Lock()
 
 
@@ -117,6 +172,50 @@ def _find_exact_file(storage: StorageManager, name: str, parent_id: str) -> list
     return [item for item in result if item.get("name") == name and item.get("trashed") is not True]
 
 
+def _discover_bulk_filenames(aggregate_bytes: bytes) -> list[str]:
+    """Parse the documented DBW aggregate table without treating error shapes as empty data."""
+    try:
+        document = json.loads(aggregate_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("DBW aggregate discovery is not valid UTF-8 JSON.") from exc
+    if not isinstance(document, dict):
+        raise RuntimeError("DBW aggregate discovery root is not an object.")
+    if document.get("success") is False or document.get("error"):
+        raise RuntimeError("DBW aggregate discovery returned an error envelope.")
+    data = document.get("data")
+    table = data.get("table") if isinstance(data, dict) else None
+    rows = table.get("rows") if isinstance(table, dict) else None
+    if not isinstance(rows, list):
+        raise RuntimeError("DBW aggregate discovery has no recognized data.table.rows envelope.")
+
+    filenames: list[str] = []
+    for row in rows:
+        if not isinstance(row, list):
+            raise RuntimeError("DBW aggregate discovery contains an invalid table row.")
+        for cell in row:
+            if not isinstance(cell, dict) or "files" not in cell:
+                continue
+            files = cell["files"]
+            if not isinstance(files, list):
+                raise RuntimeError("DBW aggregate discovery contains an invalid files cell.")
+            for file_info in files:
+                filename = file_info.get("filename") if isinstance(file_info, dict) else None
+                if (
+                    not isinstance(filename, str)
+                    or not filename
+                    or not filename.endswith(".zip")
+                    or Path(filename).name != filename
+                    or "\\" in filename
+                ):
+                    raise RuntimeError("DBW aggregate discovery contains an invalid ZIP filename.")
+                filenames.append(filename)
+    if not filenames:
+        raise RuntimeError("DBW aggregate discovery returned no bulk ZIP files.")
+    if len(filenames) != len(set(filenames)):
+        raise RuntimeError("DBW aggregate discovery returned duplicate bulk ZIP filenames.")
+    return filenames
+
+
 def _upload_bytes(
     storage: StorageManager,
     data: bytes,
@@ -125,9 +224,11 @@ def _upload_bytes(
     parent_id: str,
     kind: str,
     mime_type: str = "application/octet-stream",
+    extra_properties: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     sha256_hex, md5_hex = _hash_bytes(data)
-    existing = _find_exact_file(storage, name, parent_id)
+    logical_name = name
+    existing = _find_exact_file(storage, logical_name, parent_id)
     if len(existing) > 1:
         raise RuntimeError(f"Ambiguous existing DBW bulk object: {name}")
     if existing:
@@ -140,21 +241,40 @@ def _upload_bytes(
         ):
             return {
                 "id": item["id"],
-                "name": name,
+                "name": logical_name,
                 "size": len(data),
                 "sha256": sha256_hex,
                 "md5": md5_hex,
                 "reused": True,
             }
+        name = _versioned_name(logical_name, sha256_hex)
+        existing = _find_exact_file(storage, name, parent_id)
+        if len(existing) > 1:
+            raise RuntimeError(f"Ambiguous existing DBW revision object: {name}")
+        if existing:
+            item = existing[0]
+            props = item.get("appProperties") or {}
+            if (
+                props.get("sha256") == sha256_hex
+                and item.get("md5Checksum") == md5_hex
+                and int(item.get("size", -1)) == len(data)
+            ):
+                return {
+                    "id": item["id"], "name": name, "size": len(data),
+                    "sha256": sha256_hex, "md5": md5_hex, "reused": True,
+                }
+            raise RuntimeError(f"Existing DBW revision object failed verification: {name}")
+    properties = {
+        "sha256": sha256_hex,
+        "kind": kind,
+        "source_id": "gus_dbw",
+        "transport": "web_bulk",
+    }
+    properties.update(extra_properties or {})
     metadata = {
         "name": name,
         "parents": [parent_id],
-        "appProperties": {
-            "sha256": sha256_hex,
-            "kind": kind,
-            "source_id": "gus_dbw",
-            "transport": "web_bulk",
-        },
+        "appProperties": properties,
     }
     media = MediaInMemoryUpload(data, mimetype=mime_type, resumable=False)
     with DRIVE_LOCK:
@@ -163,7 +283,13 @@ def _upload_bytes(
             .create(body=metadata, media_body=media, fields="id,name,size,md5Checksum,appProperties")
             .execute(num_retries=4)
         )
-    if not response or response.get("name") != name or int(response.get("size", -1)) != len(data):
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != len(data)
+        or response.get("md5Checksum") != md5_hex
+        or (response.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
         raise RuntimeError(f"DBW Drive bytes upload did not verify: {name}")
     return {
         "id": response["id"],
@@ -186,7 +312,8 @@ def _upload_file(
 ) -> dict[str, Any]:
     sha256_hex, md5_hex = _hash_file(local_path)
     file_size = local_path.stat().st_size
-    existing = _find_exact_file(storage, name, parent_id)
+    logical_name = name
+    existing = _find_exact_file(storage, logical_name, parent_id)
     if len(existing) > 1:
         raise RuntimeError(f"Ambiguous existing DBW bulk object: {name}")
     if existing:
@@ -199,12 +326,29 @@ def _upload_file(
         ):
             return {
                 "id": item["id"],
-                "name": name,
+                "name": logical_name,
                 "size": file_size,
                 "sha256": sha256_hex,
                 "md5": md5_hex,
                 "reused": True,
             }
+        name = _bulk_revision_name(logical_name, sha256_hex)
+        existing = _find_exact_file(storage, name, parent_id)
+        if len(existing) > 1:
+            raise RuntimeError(f"Ambiguous existing DBW revision object: {name}")
+        if existing:
+            item = existing[0]
+            props = item.get("appProperties") or {}
+            if (
+                props.get("sha256") == sha256_hex
+                and item.get("md5Checksum") == md5_hex
+                and int(item.get("size", -1)) == file_size
+            ):
+                return {
+                    "id": item["id"], "name": name, "size": file_size,
+                    "sha256": sha256_hex, "md5": md5_hex, "reused": True,
+                }
+            raise RuntimeError(f"Existing DBW revision object failed verification: {name}")
     metadata = {
         "name": name,
         "parents": [parent_id],
@@ -223,7 +367,13 @@ def _upload_file(
         response = None
         while response is None:
             _, response = request.next_chunk(num_retries=4)
-    if not response or response.get("name") != name or int(response.get("size", -1)) != file_size:
+    if (
+        not response
+        or response.get("name") != name
+        or int(response.get("size", -1)) != file_size
+        or response.get("md5Checksum") != md5_hex
+        or (response.get("appProperties") or {}).get("sha256") != sha256_hex
+    ):
         raise RuntimeError(f"DBW Drive file upload did not verify: {name}")
     return {
         "id": response["id"],
@@ -250,26 +400,292 @@ class DbwWebExtractor:
         self.storage = storage
         self.allow_codespace = allow_codespace
         self.proxy = proxy
+        self.catalogue_sha256: str | None = None
+        self.native_snapshot_id: str | None = None
+        self.native_snapshot_lease_claim: str | None = None
+        self.native_snapshot_lease_owner: str | None = None
+        self.native_snapshot_lease_claims: set[str] = set()
         _require_production_context(allow_codespace)
 
         self.session = storage.begin_write_session()
         self.landing_root = storage.resolve_zone("landing", create=False)
         self.control_root = storage.resolve_zone("control", create=False)
 
-        # Build folder hierarchy according to ADR 0009 & DBW contract
-        self.dbw_landing = storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.landing_root, write_session=self.session)
-        self.native_root = storage.get_or_create_nested_folder(["native"], root_id=self.dbw_landing, write_session=self.session)
-        self.taxonomy_dir = storage.get_or_create_nested_folder(["taxonomy"], root_id=self.native_root, write_session=self.session)
-        self.metadata_dir = storage.get_or_create_nested_folder(["metadata"], root_id=self.native_root, write_session=self.session)
-        self.bulk_dir = storage.get_or_create_nested_folder(["bulk"], root_id=self.native_root, write_session=self.session)
-        self.hvd_dir = storage.get_or_create_nested_folder(["hvd"], root_id=self.native_root, write_session=self.session)
+    def prepare_write_paths(self) -> None:
+        """Create Landing paths only after winning the source-wide control-root lease."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW Landing write paths require the durable writer lease.")
+        self.dbw_landing = self.storage.get_or_create_nested_folder(["gus_dbw"], root_id=self.landing_root, write_session=self.session)
+        self.native_root = self.storage.get_or_create_nested_folder(["native"], root_id=self.dbw_landing, write_session=self.session)
+        self.taxonomy_dir = self.storage.get_or_create_nested_folder(["taxonomy"], root_id=self.native_root, write_session=self.session)
+        self.metadata_dir = self.storage.get_or_create_nested_folder(["metadata"], root_id=self.native_root, write_session=self.session)
+        self.bulk_dir = self.storage.get_or_create_nested_folder(["bulk"], root_id=self.native_root, write_session=self.session)
+        self.hvd_dir = self.storage.get_or_create_nested_folder(["hvd"], root_id=self.native_root, write_session=self.session)
 
-        self.control_landing = storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_landing, write_session=self.session)
-        self.checkpoints_dir = storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
-        self.campaign_control = storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
+        self.control_landing = self.storage.get_or_create_nested_folder(["_control"], root_id=self.dbw_landing, write_session=self.session)
+        self.checkpoints_dir = self.storage.get_or_create_nested_folder(["checkpoints"], root_id=self.control_landing, write_session=self.session)
+        self.campaign_control = self.storage.get_or_create_nested_folder(["source_campaigns", "gus_dbw"], root_id=self.control_root, write_session=self.session)
 
-    def fetch_indicators_tree(self) -> list[dict[str, Any]]:
-        """Fetch the full indicator tree from DBW Web UI and land original JSON bytes."""
+    def _list_control(self, parent_id: str) -> list[dict[str, Any]]:
+        query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
+        files: list[dict[str, Any]] = []
+        token = None
+        while True:
+            args: dict[str, Any] = {
+                "q": query,
+                "spaces": "drive",
+                "pageSize": 1000,
+                "fields": "nextPageToken,files(id,name,appProperties,createdTime,trashed)",
+            }
+            if token:
+                args["pageToken"] = token
+            with DRIVE_LOCK:
+                response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
+            files.extend(response.get("files", []))
+            token = response.get("nextPageToken")
+            if not token:
+                return files
+
+    def _list_landing_control(self) -> list[dict[str, Any]]:
+        return self._list_control(self.control_landing)
+
+    def _create_native_snapshot_lease_claim(self, owner_id: str, catalogue_sha256: str) -> str:
+        claim_id = str(uuid.uuid4())
+        acquired_at = datetime.now(timezone.utc)
+        expires_at = acquired_at + timedelta(seconds=SNAPSHOT_LEASE_SECONDS)
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_lease",
+            "source_id": "gus_dbw",
+            "catalogue_sha256": catalogue_sha256,
+            "owner_id": owner_id,
+            "claim_id": claim_id,
+            "acquired_at_utc": acquired_at.isoformat(),
+            "expires_at_utc": expires_at.isoformat(),
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_LEASE_PREFIX}-{catalogue_sha256}-{claim_id}.json",
+            parent_id=self.control_root,
+            kind="snapshot_lease",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_lease",
+                "catalogue_sha256": catalogue_sha256,
+                "owner_id": owner_id,
+                "claim_id": claim_id,
+                "expires_at_utc": expires_at.isoformat(),
+            },
+        )
+        return claim_id
+
+    def acquire_native_snapshot_lease(self, catalogue_sha256: str) -> str:
+        """Elect one durable Drive-backed snapshot writer across all hosts."""
+        owner_id = str(uuid.uuid4())
+        claim_id = self._create_native_snapshot_lease_claim(owner_id, catalogue_sha256)
+        self.native_snapshot_lease_owner = owner_id
+        self.native_snapshot_lease_claim = claim_id
+        self.native_snapshot_lease_claims.add(claim_id)
+        try:
+            self._verify_native_snapshot_lease(owner_id)
+        except BaseException:
+            try:
+                self.release_native_snapshot_lease()
+            except Exception:
+                pass
+            raise
+        return claim_id
+
+    def _verify_native_snapshot_lease(self, owner_id: str) -> None:
+        """Verify one source-wide claim; callers tombstone it on every failure."""
+        time.sleep(SNAPSHOT_LEASE_SETTLE_SECONDS)
+        files = self._list_control(self.control_root)
+        released = {
+            (item.get("appProperties") or {}).get("released_claim_id")
+            for item in files
+            if (item.get("appProperties") or {}).get("record_type")
+            == "gus_dbw_native_snapshot_lease_release"
+        }
+        now = datetime.now(timezone.utc)
+        active_by_owner: dict[str, datetime] = {}
+        for item in files:
+            props = item.get("appProperties") or {}
+            candidate = props.get("claim_id")
+            candidate_owner = props.get("owner_id") or candidate
+            if (
+                props.get("record_type") != "gus_dbw_native_snapshot_lease"
+                or not isinstance(candidate, str)
+                or not isinstance(candidate_owner, str)
+                or candidate in released
+            ):
+                continue
+            try:
+                expiry = datetime.fromisoformat(props.get("expires_at_utc", ""))
+                created = datetime.fromisoformat(item.get("createdTime", "").replace("Z", "+00:00"))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if expiry.tzinfo is not None and created.tzinfo is not None and expiry > now:
+                prior = active_by_owner.get(candidate_owner)
+                if prior is None or created < prior:
+                    active_by_owner[candidate_owner] = created
+        if not active_by_owner or min(
+            (created, candidate_owner)
+            for candidate_owner, created in active_by_owner.items()
+        )[1] != owner_id:
+            raise RuntimeError(
+                "Another DBW writer holds the durable native-snapshot lease; retry after it releases or expires."
+            )
+
+    def renew_native_snapshot_lease(self) -> str:
+        """Give the elected owner a fresh lease window before catalogue finalization."""
+        owner_id = self.native_snapshot_lease_owner
+        old_claim = self.native_snapshot_lease_claim
+        if not owner_id or not old_claim or not self.catalogue_sha256:
+            raise RuntimeError("Cannot renew an unheld DBW native-snapshot lease.")
+        new_claim = self._create_native_snapshot_lease_claim(owner_id, self.catalogue_sha256)
+        self.native_snapshot_lease_claims.add(new_claim)
+        try:
+            self._verify_native_snapshot_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_native_snapshot_claim(new_claim)
+                self.native_snapshot_lease_claims.discard(new_claim)
+            except Exception:
+                pass
+            raise
+        self.native_snapshot_lease_claim = new_claim
+        self._release_native_snapshot_claim(old_claim)
+        self.native_snapshot_lease_claims.discard(old_claim)
+        try:
+            self._verify_native_snapshot_lease(owner_id)
+        except BaseException:
+            try:
+                self._release_native_snapshot_claim(new_claim)
+                self.native_snapshot_lease_claims.discard(new_claim)
+            except Exception:
+                pass
+            if new_claim not in self.native_snapshot_lease_claims:
+                self.native_snapshot_lease_claim = None
+                self.native_snapshot_lease_owner = None
+            raise
+        return new_claim
+
+    def _release_native_snapshot_claim(self, claim_id: str) -> None:
+        """Publish one immutable source-wide release tombstone."""
+
+        released_at = datetime.now(timezone.utc).isoformat()
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_lease_release",
+            "source_id": "gus_dbw",
+            "released_claim_id": claim_id,
+            "released_at_utc": released_at,
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_LEASE_RELEASE_PREFIX}-{claim_id}.json",
+            parent_id=self.control_root,
+            kind="snapshot_lease_release",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_lease_release",
+                "released_claim_id": claim_id,
+            },
+        )
+
+    def release_native_snapshot_lease(self) -> None:
+        """Close every live writer claim; source data is untouched."""
+        if not self.native_snapshot_lease_claims:
+            return
+        failures: list[tuple[str, Exception]] = []
+        for claim_id in sorted(self.native_snapshot_lease_claims):
+            try:
+                self._release_native_snapshot_claim(claim_id)
+            except Exception as exc:
+                failures.append((claim_id, exc))
+            else:
+                self.native_snapshot_lease_claims.discard(claim_id)
+        if failures:
+            if self.native_snapshot_lease_claim not in self.native_snapshot_lease_claims:
+                self.native_snapshot_lease_claim = next(
+                    iter(self.native_snapshot_lease_claims), None
+                )
+            raise RuntimeError(
+                "Failed to release every durable DBW native-snapshot claim: "
+                + ", ".join(claim_id for claim_id, _ in failures)
+            ) from failures[0][1]
+        self.native_snapshot_lease_claim = None
+        self.native_snapshot_lease_owner = None
+
+    def start_or_resume_native_snapshot(self, catalogue_sha256: str) -> str:
+        """Resume one durable full refresh, or start the next after completion."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW native snapshot selection requires the durable writer lease.")
+        files = self._list_landing_control()
+
+        completed_snapshot_ids = {
+            (item.get("appProperties") or {}).get("native_snapshot_id")
+            for item in files
+            if (item.get("appProperties") or {}).get("completion_schema") == "2"
+        }
+        open_snapshots = []
+        for item in files:
+            props = item.get("appProperties") or {}
+            snapshot_id = props.get("native_snapshot_id")
+            if (
+                props.get("record_type") == "gus_dbw_native_snapshot_start"
+                and props.get("catalogue_sha256") == catalogue_sha256
+                and isinstance(snapshot_id, str)
+                and snapshot_id not in completed_snapshot_ids
+            ):
+                open_snapshots.append(item)
+        if len(open_snapshots) > 1:
+            raise RuntimeError(
+                "Multiple open DBW native snapshots exist for the current catalogue."
+            )
+        if open_snapshots:
+            snapshot_id = (open_snapshots[0].get("appProperties") or {})["native_snapshot_id"]
+            self.native_snapshot_id = snapshot_id
+            return snapshot_id
+
+        snapshot_id = str(uuid.uuid4())
+        document = {
+            "schema_version": 1,
+            "record_type": "gus_dbw_native_snapshot_start",
+            "source_id": "gus_dbw",
+            "catalogue_sha256": catalogue_sha256,
+            "native_snapshot_id": snapshot_id,
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        }
+        raw = json.dumps(
+            document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{SNAPSHOT_PREFIX}-{catalogue_sha256}-{snapshot_id}.json",
+            parent_id=self.control_landing,
+            kind="snapshot_start",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_native_snapshot_start",
+                "catalogue_sha256": catalogue_sha256,
+                "native_snapshot_id": snapshot_id,
+            },
+        )
+        self.native_snapshot_id = snapshot_id
+        return snapshot_id
+
+    def fetch_indicators_tree(self, *, land: bool = False) -> list[dict[str, Any]]:
+        """Fetch the full indicator tree, optionally deferring its first Drive mutation."""
         print("Fetching DBW indicators tree from Web UI...")
         tree_bytes = _http_get(TREE_URL, timeout=30, proxy=self.proxy)
         tree_json = json.loads(tree_bytes.decode("utf-8"))
@@ -278,7 +694,14 @@ class DbwWebExtractor:
         local_tree = self.workspace / "indicators_tree.json"
         local_tree.write_bytes(tree_bytes)
 
-        # Land to Drive native/taxonomy/
+        if land:
+            self.land_indicators_tree(tree_bytes)
+        return tree_json
+
+    def land_indicators_tree(self, tree_bytes: bytes) -> None:
+        """Land already-fetched taxonomy bytes after the durable writer election."""
+        if not self.native_snapshot_lease_claim:
+            raise RuntimeError("DBW taxonomy publication requires the durable writer lease.")
         res = _upload_bytes(
             self.storage,
             tree_bytes,
@@ -288,7 +711,6 @@ class DbwWebExtractor:
             mime_type="application/json",
         )
         print(f"Landed indicators_tree.json ({len(tree_bytes)} bytes, reused={res['reused']})")
-        return tree_json
 
     @staticmethod
     def extract_indicators(tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -316,16 +738,57 @@ class DbwWebExtractor:
         walk(tree)
         return [indicators[k] for k in sorted(indicators)]
 
-    def load_completed_checkpoints(self) -> set[int]:
-        """Scan Drive checkpoints to identify already completed indicators."""
+    def load_completed_checkpoints(
+        self,
+        catalogue_sha256: str,
+        native_snapshot_id: str,
+        *,
+        deadline_monotonic: float | None = None,
+    ) -> dict[int, str]:
+        """Revalidate full-bulk receipts and their exact native objects before resume."""
+        def require_time() -> None:
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                raise RuntimeError(
+                    "DBW catalogue verification reached its bounded finalization deadline; "
+                    "resume before publishing completion."
+                )
+
+        def list_objects(parent_id: str) -> dict[str, dict[str, Any]]:
+            folder_query = f"'{_escape_query(parent_id)}' in parents and trashed=false"
+            objects: dict[str, dict[str, Any]] = {}
+            page_token = None
+            while True:
+                require_time()
+                kwargs: dict[str, Any] = {
+                    "q": folder_query,
+                    "spaces": "drive",
+                    "pageSize": 1000,
+                    "fields": "nextPageToken,files(id,name,size,md5Checksum,appProperties,trashed)",
+                }
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                with DRIVE_LOCK:
+                    page = self.storage.drive_service.files().list(**kwargs).execute(num_retries=4)
+                for item in page.get("files", []):
+                    object_id = item.get("id")
+                    if not isinstance(object_id, str) or not object_id or object_id in objects:
+                        raise RuntimeError("DBW native object inventory has an invalid identity.")
+                    objects[object_id] = item
+                page_token = page.get("nextPageToken")
+                if not page_token:
+                    return objects
+
+        metadata_objects = list_objects(self.metadata_dir)
+        bulk_objects = list_objects(self.bulk_dir)
         query = f"'{_escape_query(self.checkpoints_dir)}' in parents and trashed=false"
-        completed = set()
+        completed: dict[int, str] = {}
         token = None
         while True:
+            require_time()
             args: dict[str, Any] = {
                 "q": query,
                 "spaces": "drive",
-                "fields": "nextPageToken, files(id,name)",
+                "fields": "nextPageToken, files(id,name,size,md5Checksum,appProperties,trashed)",
             }
             if token:
                 args["pageToken"] = token
@@ -333,9 +796,104 @@ class DbwWebExtractor:
                 response = self.storage.drive_service.files().list(**args).execute(num_retries=4)
             for f in response.get("files", []):
                 name = f.get("name", "")
-                base = name.removesuffix(".json")
-                if base.isdigit():
-                    completed.add(int(base))
+                match = re.fullmatch(
+                    rf"completed-v3-{re.escape(native_snapshot_id)}-(\d+)"
+                    r"(?:(?:--sha256-[0-9a-f]{64})|"
+                    r"(?:--logical-sha256-[0-9a-f]{64}"
+                    r"--content-sha256-[0-9a-f]{64}))?\.json",
+                    name,
+                )
+                props = f.get("appProperties") or {}
+                membership = props.get("native_membership_sha256")
+                if (
+                    match
+                    and props.get("checkpoint_schema") == "3"
+                    and props.get("checkpoint_status") == "completed"
+                    and props.get("bulk_complete") == "true"
+                    and props.get("metadata_complete") == "true"
+                    and props.get("catalogue_sha256") == catalogue_sha256
+                    and props.get("native_snapshot_id") == native_snapshot_id
+                    and isinstance(membership, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", membership)
+                ):
+                    indicator_id = int(match.group(1))
+                    require_time()
+                    with DRIVE_LOCK:
+                        raw = self.storage.drive_service.files().get_media(
+                            fileId=f["id"]
+                        ).execute(num_retries=4)
+                    if (
+                        len(raw) != int(f.get("size", -1))
+                        or md5(raw).hexdigest() != f.get("md5Checksum")
+                        or sha256(raw).hexdigest() != props.get("sha256")
+                    ):
+                        raise RuntimeError("DBW completed receipt failed byte verification.")
+                    try:
+                        receipt = json.loads(raw.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                        raise RuntimeError("DBW completed receipt is not valid JSON.") from exc
+                    descriptors = receipt.get("landed_objects")
+                    if (
+                        receipt.get("schema_version") != 3
+                        or receipt.get("record_type") != "gus_dbw_indicator_completion"
+                        or receipt.get("indicator_id") != indicator_id
+                        or receipt.get("status") != "completed"
+                        or receipt.get("bulk_complete") is not True
+                        or receipt.get("metadata_complete") is not True
+                        or receipt.get("catalogue_sha256") != catalogue_sha256
+                        or receipt.get("native_snapshot_id") != native_snapshot_id
+                        or not isinstance(descriptors, list)
+                    ):
+                        raise RuntimeError("DBW completed receipt content does not match its identity.")
+                    if any(
+                        isinstance(descriptor, dict)
+                        and descriptor.get("role") == "bulk_zip"
+                        and not _is_indicator_scoped_bulk_descriptor(
+                            indicator_id, descriptor
+                        )
+                        for descriptor in descriptors
+                    ):
+                        # A retained pre-boundary receipt is deliberately incomplete.
+                        # Reprocessing creates indicator-owned objects and a new receipt.
+                        continue
+                    roles: list[str] = []
+                    source_names: list[str] = []
+                    for descriptor in descriptors:
+                        if not isinstance(descriptor, dict):
+                            raise RuntimeError("DBW completed receipt has an invalid descriptor.")
+                        role = descriptor.get("role")
+                        object_id = descriptor.get("id")
+                        actual = (bulk_objects if role == "bulk_zip" else metadata_objects).get(object_id)
+                        if (
+                            role not in {"aggregates", "metryka", "bulk_zip"}
+                            or actual is None
+                            or actual.get("name") != descriptor.get("name")
+                            or int(actual.get("size", -1)) != descriptor.get("size")
+                            or actual.get("md5Checksum") != descriptor.get("md5")
+                            or (actual.get("appProperties") or {}).get("sha256")
+                            != descriptor.get("sha256")
+                        ):
+                            raise RuntimeError(
+                                "DBW completed receipt no longer matches its native object inventory."
+                            )
+                        roles.append(role)
+                        if role == "bulk_zip":
+                            source_names.append(descriptor.get("source_name"))
+                    if (
+                        roles.count("aggregates") != 1
+                        or roles.count("metryka") != 1
+                        or not source_names
+                        or sorted(source_names) != sorted(receipt.get("expected_bulk_files", []))
+                        or _membership_sha256(descriptors) != membership
+                        or receipt.get("native_membership_sha256") != membership
+                    ):
+                        raise RuntimeError("DBW completed receipt membership does not reconcile.")
+                    prior = completed.get(indicator_id)
+                    if prior is not None:
+                        raise RuntimeError(
+                            "Duplicate DBW completed receipts exist within one snapshot."
+                        )
+                    completed[indicator_id] = membership
             token = response.get("nextPageToken")
             if not token:
                 break
@@ -347,14 +905,31 @@ class DbwWebExtractor:
         skip_bulk_zips: bool = False,
     ) -> dict[str, Any]:
         """Process one indicator: metadata, metryka, and bulk zip packages."""
+        if not self.catalogue_sha256:
+            raise RuntimeError("DBW indicator processing requires a bound catalogue SHA-256.")
+        if not self.native_snapshot_id:
+            raise RuntimeError("DBW indicator processing requires a bound native snapshot.")
         ind_id = indicator["id"]
         result = {
             "indicator_id": ind_id,
             "name": indicator["name"],
             "files_landed": [],
+            "landed_objects": [],
             "new_bytes": 0,
             "status": "pending",
         }
+
+        def retain_object(upload: dict[str, Any], role: str, source_name: str) -> None:
+            result["files_landed"].append(upload["name"])
+            result["landed_objects"].append({
+                "id": upload["id"],
+                "name": upload["name"],
+                "size": upload["size"],
+                "sha256": upload["sha256"],
+                "md5": upload["md5"],
+                "role": role,
+                "source_name": source_name,
+            })
 
         # 1. Fetch and land aggregates metadata (PL)
         agg_url = f"{AGGREGATES_URL}?id={ind_id}&czy_pl=true"
@@ -367,91 +942,172 @@ class DbwWebExtractor:
             kind="metadata",
             mime_type="application/json",
         )
-        result["files_landed"].append(agg_res["name"])
+        retain_object(agg_res, "aggregates", f"aggregates_{ind_id}_pl.json")
         if not agg_res["reused"]:
             result["new_bytes"] += agg_res["size"]
 
         # 2. Fetch and land Metryka CSV
         met_url = f"{METRYKA_URL}?id_zmienne={ind_id}"
-        try:
-            met_bytes = _http_get(met_url, timeout=20, proxy=self.proxy)
-            met_res = _upload_bytes(
-                self.storage,
-                met_bytes,
-                name=f"metryka_{ind_id}.csv",
-                parent_id=self.metadata_dir,
-                kind="metadata",
-                mime_type="text/csv",
-            )
-            result["files_landed"].append(met_res["name"])
-            if not met_res["reused"]:
-                result["new_bytes"] += met_res["size"]
-        except Exception as exc:
-            print(f"Warning: Metryka CSV for indicator {ind_id} failed: {exc}")
+        met_bytes = _http_get(met_url, timeout=20, proxy=self.proxy)
+        met_res = _upload_bytes(
+            self.storage,
+            met_bytes,
+            name=f"metryka_{ind_id}.csv",
+            parent_id=self.metadata_dir,
+            kind="metadata",
+            mime_type="text/csv",
+        )
+        retain_object(met_res, "metryka", f"metryka_{ind_id}.csv")
+        if not met_res["reused"]:
+            result["new_bytes"] += met_res["size"]
 
         # 3. Parse bulk zip filenames from aggregates response
+        expected_bulk_files: list[str] = []
         if not skip_bulk_zips:
             try:
-                agg_data = json.loads(agg_bytes.decode("utf-8"))
-                rows = agg_data.get("data", {}).get("table", {}).get("rows", [])
-                for row in rows:
-                    files_cell = next((c for c in row if isinstance(c, dict) and "files" in c), None)
-                    if not files_cell:
-                        continue
-                    for file_info in files_cell.get("files", []):
-                        filename = file_info.get("filename")
-                        if not filename or not filename.endswith(".zip"):
-                            continue
-                        zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
-                        local_zip = self.workspace / f"worker_{ind_id}_{filename}"
-                        # Download if not present locally
-                        if not local_zip.exists() or local_zip.stat().st_size == 0:
-                            zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
-                            local_zip.write_bytes(zip_data)
+                expected_bulk_files = _discover_bulk_filenames(agg_bytes)
+                for filename in expected_bulk_files:
+                    zip_url = f"{BULK_DOWNLOAD_URL}/{filename}"
+                    snapshot_workspace = self.workspace / "snapshots" / self.native_snapshot_id
+                    snapshot_workspace.mkdir(parents=True, exist_ok=True)
+                    local_zip = snapshot_workspace / f"worker_{ind_id}_{filename}"
+                    # Remote receipts provide cross-run resumability. Always refresh
+                    # this disposable cache atomically so a killed prior write cannot
+                    # be mistaken for a complete provider response.
+                    zip_data = _http_get(zip_url, timeout=120, proxy=self.proxy)
+                    _atomic_write_bytes(local_zip, zip_data)
 
-                        # Upload to Drive
-                        zip_res = _upload_file(
-                            self.storage,
-                            local_zip,
-                            name=filename,
-                            parent_id=self.bulk_dir,
-                            kind="bulk_zip",
-                            mime_type="application/zip",
-                        )
-                        result["files_landed"].append(zip_res["name"])
-                        if not zip_res["reused"]:
-                            result["new_bytes"] += zip_res["size"]
-                        # Clean up temporary local file after verified Drive upload
-                        local_zip.unlink(missing_ok=True)
+                    # Upload to Drive
+                    zip_res = _upload_file(
+                        self.storage,
+                        local_zip,
+                        name=_indicator_scoped_bulk_name(ind_id, filename),
+                        parent_id=self.bulk_dir,
+                        kind="bulk_zip",
+                        mime_type="application/zip",
+                    )
+                    retain_object(zip_res, "bulk_zip", filename)
+                    if not zip_res["reused"]:
+                        result["new_bytes"] += zip_res["size"]
+                    # Clean up temporary local file after verified Drive upload
+                    local_zip.unlink(missing_ok=True)
+                landed_bulk_files = [
+                    item["source_name"]
+                    for item in result["landed_objects"]
+                    if item["role"] == "bulk_zip"
+                ]
+                if sorted(landed_bulk_files) != sorted(expected_bulk_files):
+                    raise RuntimeError(
+                        f"DBW bulk discovery did not reconcile landed files for indicator {ind_id}."
+                    )
             except Exception as exc:
                 print(f"Warning: Bulk zip download for indicator {ind_id} encountered an error: {exc}")
                 raise
 
-        # 4. Record and upload checkpoint for this indicator
-        result["status"] = "completed"
+        # 4. Record either a full-bulk completion receipt or an explicit partial receipt.
+        result["status"] = "metadata_only" if skip_bulk_zips else "completed"
+        membership_sha256 = _membership_sha256(result["landed_objects"])
         checkpoint_data = {
+            "schema_version": 3,
+            "record_type": "gus_dbw_indicator_completion",
             "indicator_id": ind_id,
             "name": indicator["name"],
-            "status": "completed",
+            "status": result["status"],
+            "bulk_complete": not skip_bulk_zips,
+            "metadata_complete": True,
+            "catalogue_sha256": self.catalogue_sha256,
+            "native_snapshot_id": self.native_snapshot_id,
+            "native_membership_sha256": membership_sha256,
+            "expected_bulk_files": sorted(set(expected_bulk_files)),
             "files_landed": result["files_landed"],
+            "landed_objects": result["landed_objects"],
             "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         cp_bytes = json.dumps(checkpoint_data, ensure_ascii=False, indent=2).encode("utf-8")
+        checkpoint_name = (
+            f"partial-v3-{self.native_snapshot_id}-{ind_id}.json"
+            if skip_bulk_zips
+            else f"completed-v3-{self.native_snapshot_id}-{ind_id}.json"
+        )
         _upload_bytes(
             self.storage,
             cp_bytes,
-            name=f"{ind_id}.json",
+            name=checkpoint_name,
             parent_id=self.checkpoints_dir,
             kind="checkpoint",
             mime_type="application/json",
+            extra_properties={
+                "checkpoint_schema": "3",
+                "checkpoint_status": result["status"],
+                "bulk_complete": str(not skip_bulk_zips).lower(),
+                "metadata_complete": "true",
+                "indicator_id": str(ind_id),
+                "catalogue_sha256": self.catalogue_sha256,
+                "native_snapshot_id": self.native_snapshot_id,
+                "native_membership_sha256": membership_sha256,
+            },
         )
         return result
+
+    def publish_catalogue_completion(
+        self,
+        *,
+        catalogue_indicators: int,
+        completed_indicators: int,
+        catalogue_sha256: str,
+        native_snapshot_id: str,
+        native_snapshot_sha256: str,
+    ) -> dict[str, Any]:
+        """Publish the deterministic marker that alone unlocks the Bronze stage."""
+        document = {
+            "schema_version": 2,
+            "record_type": "gus_dbw_landing_completion",
+            "source_id": "gus_dbw",
+            "status": "complete_current_catalogue",
+            "landing_scope": "native_bytes_only",
+            "catalogue_indicators": catalogue_indicators,
+            "completed_indicators": completed_indicators,
+            "pending_indicators": catalogue_indicators - completed_indicators,
+            "failed_indicators": 0,
+            "bulk_complete": True,
+            "metadata_complete": True,
+            "catalogue_sha256": catalogue_sha256,
+            "native_snapshot_id": native_snapshot_id,
+            "native_snapshot_sha256": native_snapshot_sha256,
+        }
+        if catalogue_indicators <= 0 or completed_indicators != catalogue_indicators:
+            raise RuntimeError("Cannot publish DBW completion before catalogue exhaustion.")
+        if re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            native_snapshot_id,
+        ) is None or re.fullmatch(r"[0-9a-f]{64}", native_snapshot_sha256) is None:
+            raise RuntimeError("Cannot publish DBW completion without a valid native snapshot identity.")
+        raw = json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return _upload_bytes(
+            self.storage,
+            raw,
+            name=f"{COMPLETION_PREFIX}-{native_snapshot_sha256}.json",
+            parent_id=self.control_landing,
+            kind="completion",
+            mime_type="application/json",
+            extra_properties={
+                "record_type": "gus_dbw_landing_completion",
+                "completion_schema": "2",
+                "completion_status": "complete_current_catalogue",
+                "catalogue_sha256": catalogue_sha256,
+                "native_snapshot_id": native_snapshot_id,
+                "native_snapshot_sha256": native_snapshot_sha256,
+            },
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description="GUS DBW Web bulk extractor")
     parser.add_argument("--workspace", default="portal/test-results/dbw-web-bulk", help="Local workspace directory")
-    parser.add_argument("--max-seconds", type=int, default=18600, help="Maximum execution seconds")
+    parser.add_argument(
+        "--max-seconds", type=int, default=DEFAULT_EXTRACTION_SECONDS,
+        help="Maximum indicator-scheduling seconds before bounded finalization",
+    )
     parser.add_argument("--concurrency", type=int, default=1, help="Concurrent workers")
     parser.add_argument("--proxies", type=str, default=None, help="Comma-separated list of proxy URLs (e.g. http://127.0.0.1:8081)")
     parser.add_argument("--max-indicators", type=int, default=None, help="Limit number of indicators to extract")
@@ -460,8 +1116,14 @@ def main():
     parser.add_argument("--allow-codespace", action="store_true", help="Allow running outside main GitHub Actions")
     parser.add_argument("--summary", type=str, default=None, help="Path to write execution summary JSON")
     args = parser.parse_args()
+    if args.max_seconds > SNAPSHOT_LEASE_SECONDS - SNAPSHOT_LEASE_SAFETY_SECONDS:
+        parser.error(
+            f"--max-seconds must not exceed {SNAPSHOT_LEASE_SECONDS - SNAPSHOT_LEASE_SAFETY_SECONDS}; "
+            "the remaining measured transfer margin keeps the lease valid through the last indicator"
+        )
 
     start_time = time.time()
+    finalization_deadline = time.monotonic() + FINALIZATION_DEADLINE_SECONDS
     workspace = Path(args.workspace).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
 
@@ -497,8 +1159,10 @@ def main():
         proxy=primary_proxy,
     )
 
-    tree = extractor.fetch_indicators_tree()
+    tree = extractor.fetch_indicators_tree(land=False)
+    catalogue_sha256, _ = _hash_file(workspace / "indicators_tree.json")
     all_indicators = extractor.extract_indicators(tree)
+    catalogue_indicator_ids = {item["id"] for item in all_indicators}
     print(f"Discovered {len(all_indicators)} total indicators across all DBW thematic areas.")
 
     # Filter indicators if specific IDs requested
@@ -507,112 +1171,173 @@ def main():
         all_indicators = [ind for ind in all_indicators if ind["id"] in wanted_ids]
         print(f"Filtered to {len(all_indicators)} specified indicators: {wanted_ids}")
 
-    completed_ids = extractor.load_completed_checkpoints()
-    print(f"Found {len(completed_ids)} already completed indicators on Drive.")
-
-    pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
-    if args.max_indicators:
-        pending_indicators = pending_indicators[:args.max_indicators]
-    print(f"Scheduled {len(pending_indicators)} indicators for extraction in this run.")
-
-    summary = {
-        "source_id": "gus_dbw",
-        "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "total_indicators_known": len(all_indicators),
-        "previously_completed": len(completed_ids),
-        "scheduled_this_run": len(pending_indicators),
-        "completed_this_run": 0,
-        "failed_this_run": 0,
-        "new_files": 0,
-        "new_bytes": 0,
-        "status": "running",
-    }
-
-    errors = []
-    num_workers = max(1, args.concurrency)
-    worker_extractors = []
-    for w in range(num_workers):
-        p = proxies[w % len(proxies)] if proxies else None
-        worker_extractors.append(
-            DbwWebExtractor(
-                workspace=workspace,
-                storage=storage,
-                allow_codespace=args.allow_codespace,
-                proxy=p,
-            )
+    extractor.catalogue_sha256 = catalogue_sha256
+    extractor.acquire_native_snapshot_lease(catalogue_sha256)
+    try:
+        extractor.prepare_write_paths()
+        extractor.land_indicators_tree((workspace / "indicators_tree.json").read_bytes())
+        native_snapshot_id = extractor.start_or_resume_native_snapshot(catalogue_sha256)
+        completed_memberships = extractor.load_completed_checkpoints(
+            catalogue_sha256,
+            native_snapshot_id,
+            deadline_monotonic=finalization_deadline,
         )
+        completed_ids = set(completed_memberships)
+        print(f"Native refresh snapshot: {native_snapshot_id}")
+        print(f"Found {len(completed_ids)} already completed indicators on Drive.")
 
-    lock = threading.Lock()
-    stop_event = threading.Event()
-    consecutive_errors = 0
+        pending_indicators = [ind for ind in all_indicators if ind["id"] not in completed_ids]
+        if args.max_indicators:
+            pending_indicators = pending_indicators[:args.max_indicators]
+        print(f"Scheduled {len(pending_indicators)} indicators for extraction in this run.")
 
-    def process_item(item_and_index):
-        nonlocal consecutive_errors
-        idx, ind = item_and_index
-        if stop_event.is_set():
-            return
-        elapsed = time.time() - start_time
-        if elapsed > args.max_seconds:
-            with lock:
-                if not stop_event.is_set():
-                    print(f"Time budget reached ({elapsed:.1f}s > {args.max_seconds}s). Stopping run.")
-                    stop_event.set()
-            return
+        summary = {
+            "source_id": "gus_dbw",
+            "started_at_utc": datetime.now(timezone.utc).isoformat(),
+            "total_indicators_known": len(catalogue_indicator_ids),
+            "previously_completed": len(completed_ids),
+            "scheduled_this_run": len(pending_indicators),
+            "completed_this_run": 0,
+            "failed_this_run": 0,
+            "new_files": 0,
+            "new_bytes": 0,
+            "status": "running",
+        }
 
-        worker_id = idx % num_workers
-        ext = worker_extractors[worker_id]
-        try:
-            res = ext.process_indicator(ind, skip_bulk_zips=args.skip_bulk_zips)
-            with lock:
-                summary["completed_this_run"] += 1
-                summary["new_files"] += len(res["files_landed"])
-                summary["new_bytes"] += res["new_bytes"]
-                consecutive_errors = 0
-                proxy_label = f" [Proxy: {proxies[worker_id % len(proxies)]}]" if proxies else ""
-                print(
-                    f"[{summary['completed_this_run']}/{len(pending_indicators)}] (Worker {worker_id}{proxy_label}) "
-                    f"Indicator {ind['id']} ({ind['name'][:30]}): "
-                    f"{len(res['files_landed'])} files landed, {res['new_bytes']:,} new bytes."
+        errors = []
+        num_workers = max(1, args.concurrency)
+        worker_extractors = []
+        for w in range(num_workers):
+            p = proxies[w % len(proxies)] if proxies else None
+            worker_extractors.append(
+                DbwWebExtractor(
+                    workspace=workspace,
+                    storage=storage,
+                    allow_codespace=args.allow_codespace,
+                    proxy=p,
                 )
-        except Exception as exc:
-            with lock:
-                summary["failed_this_run"] += 1
-                consecutive_errors += 1
-                errors.append({"indicator_id": ind["id"], "error": str(exc)})
-                print(f"Error processing indicator {ind['id']} (Worker {worker_id}): {exc}", file=sys.stderr)
-                if consecutive_errors >= 10:
-                    print(f"Encountered {consecutive_errors} consecutive failures. Pausing run.")
-                    stop_event.set()
+            )
+            for attr in (
+                "dbw_landing", "native_root", "taxonomy_dir", "metadata_dir",
+                "bulk_dir", "hvd_dir", "control_landing", "checkpoints_dir",
+                "campaign_control",
+            ):
+                setattr(worker_extractors[-1], attr, getattr(extractor, attr))
+            worker_extractors[-1].catalogue_sha256 = catalogue_sha256
+            worker_extractors[-1].native_snapshot_id = native_snapshot_id
 
-    if num_workers > 1 and len(pending_indicators) > 1:
-        print(f"Launching {num_workers} concurrent DBW extraction workers...")
-        with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            futures = [pool.submit(process_item, (i, ind)) for i, ind in enumerate(pending_indicators)]
-            for f in as_completed(futures):
+        lock = threading.Lock()
+        stop_event = threading.Event()
+        consecutive_errors = 0
+
+        def process_item(item_and_index):
+            nonlocal consecutive_errors
+            idx, ind = item_and_index
+            if stop_event.is_set():
+                return
+            elapsed = time.time() - start_time
+            if elapsed > args.max_seconds:
+                with lock:
+                    if not stop_event.is_set():
+                        print(f"Time budget reached ({elapsed:.1f}s > {args.max_seconds}s). Stopping run.")
+                        stop_event.set()
+                return
+
+            worker_id = idx % num_workers
+            ext = worker_extractors[worker_id]
+            try:
+                res = ext.process_indicator(ind, skip_bulk_zips=args.skip_bulk_zips)
+                with lock:
+                    if res["status"] == "completed":
+                        summary["completed_this_run"] += 1
+                    summary["new_files"] += len(res["files_landed"])
+                    summary["new_bytes"] += res["new_bytes"]
+                    consecutive_errors = 0
+                    proxy_label = f" [Proxy: {proxies[worker_id % len(proxies)]}]" if proxies else ""
+                    print(
+                        f"[{summary['completed_this_run']}/{len(pending_indicators)}] (Worker {worker_id}{proxy_label}) "
+                        f"Indicator {ind['id']} ({ind['name'][:30]}): "
+                        f"{len(res['files_landed'])} files landed, {res['new_bytes']:,} new bytes."
+                    )
+            except Exception as exc:
+                with lock:
+                    summary["failed_this_run"] += 1
+                    consecutive_errors += 1
+                    errors.append({"indicator_id": ind["id"], "error": str(exc)})
+                    print(f"Error processing indicator {ind['id']} (Worker {worker_id}): {exc}", file=sys.stderr)
+                    if consecutive_errors >= 10:
+                        print(f"Encountered {consecutive_errors} consecutive failures. Pausing run.")
+                        stop_event.set()
+
+        if num_workers > 1 and len(pending_indicators) > 1:
+            print(f"Launching {num_workers} concurrent DBW extraction workers...")
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                futures = [pool.submit(process_item, (i, ind)) for i, ind in enumerate(pending_indicators)]
+                for f in as_completed(futures):
+                    if stop_event.is_set():
+                        break
+        else:
+            for i, ind in enumerate(pending_indicators):
                 if stop_event.is_set():
                     break
-    else:
-        for i, ind in enumerate(pending_indicators):
-            if stop_event.is_set():
-                break
-            process_item((i, ind))
+                process_item((i, ind))
 
-    summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
-    summary["elapsed_seconds"] = round(time.time() - start_time, 2)
-    summary["errors"] = errors
-    summary["status"] = "completed" if summary["completed_this_run"] == len(pending_indicators) else "incomplete"
+        extractor.renew_native_snapshot_lease()
+        verified_memberships = extractor.load_completed_checkpoints(
+            catalogue_sha256,
+            native_snapshot_id,
+            deadline_monotonic=finalization_deadline,
+        )
+        if time.monotonic() >= finalization_deadline:
+            raise RuntimeError(
+                "DBW final receipt verification finished after its publication deadline; "
+                "resume before publishing completion."
+            )
+        verified_completed_ids = set(verified_memberships)
+        catalogue_ids = catalogue_indicator_ids
+        catalogue_complete = (
+            not args.skip_bulk_zips
+            and not errors
+            and bool(catalogue_ids)
+            and catalogue_ids == verified_completed_ids
+        )
+        if catalogue_complete:
+            native_snapshot_sha256 = _snapshot_sha256(
+                native_snapshot_id, verified_memberships
+            )
+            extractor.publish_catalogue_completion(
+                catalogue_indicators=len(catalogue_ids),
+                completed_indicators=len(catalogue_ids),
+                catalogue_sha256=catalogue_sha256,
+                native_snapshot_id=native_snapshot_id,
+                native_snapshot_sha256=native_snapshot_sha256,
+            )
 
-    print("\n--- DBW Extraction Summary ---")
-    print(f"Indicators completed this run: {summary['completed_this_run']}")
-    print(f"New files landed: {summary['new_files']}")
-    print(f"New bytes landed: {summary['new_bytes']:,}")
-    print(f"Errors encountered: {summary['failed_this_run']}")
-    print(f"Elapsed time: {summary['elapsed_seconds']}s")
+        summary["completed_at_utc"] = datetime.now(timezone.utc).isoformat()
+        summary["elapsed_seconds"] = round(time.time() - start_time, 2)
+        summary["errors"] = errors
+        summary["catalogue_complete"] = catalogue_complete
+        summary["native_snapshot_id"] = native_snapshot_id
+        summary["native_snapshot_sha256"] = (
+            _snapshot_sha256(native_snapshot_id, verified_memberships)
+            if catalogue_complete else None
+        )
+        summary["verified_completed_total"] = len(catalogue_ids & verified_completed_ids)
+        summary["status"] = "complete_current_catalogue" if catalogue_complete else "incomplete"
 
-    # Write summary
-    summary_path = Path(args.summary) if args.summary else workspace / "dbw-extraction-summary.json"
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"Summary written to {summary_path}")
+        print("\n--- DBW Extraction Summary ---")
+        print(f"Indicators completed this run: {summary['completed_this_run']}")
+        print(f"New files landed: {summary['new_files']}")
+        print(f"New bytes landed: {summary['new_bytes']:,}")
+        print(f"Errors encountered: {summary['failed_this_run']}")
+        print(f"Elapsed time: {summary['elapsed_seconds']}s")
+
+        # Write summary
+        summary_path = Path(args.summary) if args.summary else workspace / "dbw-extraction-summary.json"
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"Summary written to {summary_path}")
+    finally:
+        extractor.release_native_snapshot_lease()
 
 
 if __name__ == "__main__":
