@@ -341,3 +341,36 @@ serializer is provisioned. `--allow-production-write` and legacy
 local download establishes neither Drive Landing publication nor a completion
 receipt, historical Golden Copy coverage, or downstream Bronze/Silver/Gold
 availability.
+
+
+## Local crash recovery monitoring
+
+Preserve the operational checkout and its unpublished files before integrating newer main.
+Inspect current processes and authoritative Drive checkpoints before resuming one writer per
+source. A stopped container terminates detached processes too. Do not use an old PID as a kill
+target, reset a queue, or recollect data just because a checkpoint format changed.
+
+The recovery supervisor observes local process identities and saved summaries without launching
+production work. Until BDL Bronze replacement safety and DBW retained-output reconciliation are
+accepted, automatic downstream transitions are deliberately blocked. A summary reporting
+completion is retained evidence, not permission to publish a new release.
+
+Run once from the reviewed code checkout, selecting the operational checkout explicitly:
+
+```bash
+ZOHELO_SUPERVISOR_PYTHON=/path/to/operational-checkout/.venv/bin/python \
+  bash scripts/autonomous_wave0_supervisor.sh \
+  --runtime-root /path/to/operational-checkout --once
+```
+
+Omit `--once` to monitor every 60 seconds. `--interval` controls that period. The default
+status file is `<runtime-root>/.local/wave0-supervisor/status.json`; `--state-dir` can select
+another local directory. The lock always lives under `<runtime-root>/.local/wave0-supervisor/`, even when status
+output is redirected. A held local file lock rejects a second monitor of that runtime with exit code 2. It does not serialize
+cross-host data writers. Status is replaced atomically and distinguishes live processes,
+reported checkpoint progress, unreadable/missing checkpoints, duplicate processes and blocked
+stage transitions. It contains no credentials and is not a portal data-release contract.
+
+This monitor is an interim recovery control, not completed autonomous orchestration. It does
+not restart ingestion after a crash, verify Drive bytes, or declare full source acceptance.
+The active delivery record identifies the actual running writer and remaining repairs.

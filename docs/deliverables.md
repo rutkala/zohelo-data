@@ -4,6 +4,96 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Recovery follow-up — 21 September 2026, 10:44 UTC
+
+**Portal deployed:** PR #139 merged as `5864b8e28b4da5692ab2225fe78c84827c4c3b89`.
+It fixes OpenData locations/people manifests being checked against the organizations schema.
+Portal CI run 35589353396 passed and deployment 35589767596 succeeded; the live
+`https://data.zohelo.com/portal-build.json` reports that exact commit. An authenticated owner-session
+refresh has not been exercised. Local focused tests passed 11/11; the full local suite had 709 passes
+and one unrelated signaling timeout, reproduced in isolation. No Drive payloads were changed.
+
+**Recovery monitor:** ten focused tests pass and data-platform CI run 35588961828 passed for
+`b722b81`. The full local data check remains running. The reviewed monitor is deployed locally
+as PID 32792 using a copy under `.local/wave0-supervisor/`; PR #138 is still awaiting integration.
+This is monitoring only, not automatic downstream advancement. BDL PID 13743 remains running;
+at 10:42 UTC its checkpoint reported 1,065 selection-complete subgroups and 1,355 remaining.
+
+**Eurostat:** run 35588640780 stopped after three distribution requests failed the approved-host
+redirect guard; downstream publication was skipped. Its subsequent current/ Landing restore
+checks passed. A bounded HEAD diagnostic of the official MIGR_ASYAPPCTZM TSV endpoint from
+this devcontainer returned HTTP 307 to `https://sorry.ec.europa.eu/`. This is evidence of the current
+local response, not proof of every redirect seen by the Actions runner. Do not allow a maintenance
+page into native data merely by widening the host list. Retained cumulative receipts report 7,817
+accepted distributions / 24,131,199,910 bytes; current catalogue coverage remains incomplete.
+
+**Next work:** verify retained DBW Bronze bytes and schemas with resumable, read-only restoration;
+add bounded portal Drive-file visibility distinct from validated query releases; investigate Eurostat
+availability before retrying. The owner requested day/week/next-week planning: prioritize Wave 0
+through this week, then integrate feasible later sources while continuing unfinished Wave 0 work.
+These are delivery priorities, not promised full-source completion dates. Original dirty work remains
+preserved and will be integrated selectively without replacing #136/#137 safeguards.
+
+### Local crash recovery resumed — 21 September 2026, 10:10 UTC
+
+The owner explicitly authorized local recovery and continuation of the AGY autonomous programme,
+with Wave 0 first and independent native Landing/downstream stages. The recovered AGY conversation
+`b04d2b40-34e2-4971-b9d3-fbe880f4a8af` contains the owner's 20 September agreements.
+AGY's final recorded command was at 04:41 UTC; later heartbeat attempts received model quota errors.
+The separate BDL supervisor continued logging until 08:25 UTC. No local ingestion, browser,
+proxy or supervisor survived the container restart. Current cgroup OOM counters are zero;
+this does not establish the previous container's crash cause.
+
+**Preserved:** the original working tree remains at `c7898d7`, with its unpublished changes intact.
+A local source-only backup with per-file SHA-256 covers 55 files, including the supplied handoff,
+at `.local/recovery-2026-09-21/`. It excludes credentials and datasets. Remote refs were fetched:
+`origin/main` is `ee2d944` (merged #136 and #137). Engineering uses the separate
+`recovery/2026-09-21-supervisor` worktree; the old DBW/GLEIF files were not copied over those repairs.
+
+**BDL recovery:** read-only Drive inspection verified the queue's stored checksum and stale writer
+lock (heartbeat `2026-09-21T08:25:17.840035Z`, former PID 595473). The queue retained 2,420
+candidates, 1,352 selection plans and ten interrupted in-flight subgroups. Public GitHub Actions
+API checks found no in-progress or queued runs before resume. All ten existing WireGuard proxy
+connections were restored and tested. One local BDL writer was launched as PID 13743, explicitly
+in `resume` mode, concurrency 10, with a 24-hour execution bound, using the preserved operational
+checkout. No reset, reload or replacement of successful native downloads was requested. At
+10:10 UTC the resumed local summary reported 1,037 selection-complete subgroups, 1,383 remaining,
+56 blocked selections and zero new files in this run so far; this is recovery progress, not
+full-source acceptance. Logs append to `portal/test-results/bdl-web-bulk/bdl_extractor.log`.
+The old supervisor has not been relaunched.
+
+**DBW continuation:** fresh Drive metadata inspection found the earlier checkpoint and existing
+Bronze folders, no `releases` namespace and no native completion marker in the Landing control
+folder. The reported 820,345,903-row Bronze result needs reconciliation with #136. The previous dbt attempt
+failed on missing local Parquet inputs. Preserve those bytes; reconcile provenance before any
+new complete-release claim or downstream execution. The owner clarified that completed or partial
+collection and downstream progress are retained work, not obsolete data: reconcile and reuse those
+outputs, rather than restarting ingestion merely because the checkpoint format changed.
+
+**Fresh retained-output inventory, 10:14 UTC:** Drive lists all 1,550 DBW Landing indicator
+checkpoints and all 1,550 Bronze observation partitions (4,737,200,817 bytes), plus the consolidated
+dictionary (65,499,189 bytes), taxonomy (84,403 bytes), and metadata (144,289 bytes). All listed
+files have MD5 and recorded SHA-256 metadata and no duplicate names in these folders. This is
+metadata inventory evidence, not a fresh byte hash or row recount. Reuse/verification of those
+outputs is the next DBW step; no repeat collection is justified by a checkpoint-version change.
+At 10:14 UTC, resumed BDL reports two newly landed native files (180,999 bytes), with 1,039
+selection-complete subgroups. Drive independently reports the current writer PID 13743 and
+fresh queue/heartbeat updates.
+
+**Active continuation:** BDL is a real detached local process, which a further container stop can
+still terminate. The first lighter internal implementation assignment returned no work and was stopped; the lead
+implemented the recovery monitor in the isolated worktree. Seven focused recovery tests pass;
+the full data check is running. Separate agents, explicitly requested by the owner, are auditing
+portal/Drive visibility and the unpublished files. No AGY overage or API billing was enabled.
+The lead owns integration, validation and the remaining Wave 0 programme. Supervisor changes
+are not yet merged or deployed at this checkpoint. Its monitor-only mode records actual process
+health and explicit downstream gates; automatic stage advancement remains unfinished work.
+
+**Other saved outputs:** a fresh metadata comparison of the 20 objects referenced by TERYT,
+PRG, GLEIF and Biała Lista local Landing/Bronze receipts matched presence, size and the
+checksums supplied in each receipt (1,759,197,323 bytes total; zero mismatches). This verifies
+retained object identity/metadata, not fresh full-content hashes, source completeness or model semantics.
+
 ### Local-devcontainer recovery and native publication review — 21 September 2026
 
 **Preserve the local environment and recover from the reported crash.** The owner's 05:17 UTC process inventory and
