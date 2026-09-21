@@ -53,18 +53,20 @@ budgets were not documented provider quotas and no longer halt their bulk backfi
 Seven days of attempt history is retained. BDL's documented anonymous/registered
 multi-window quota enforcement remains unchanged.
 
-The `Source ingestion campaigns` workflow collects exact public WDI, GUS BDL and Eurostat
-responses into Drive Landing and publishes verified response tables for portal preview and SQL.
-Each source has its own Landing snapshot; the NBP release pointer remains separate. GUS BDL
-then continues through its own modeled release step after Landing verification, while WDI and
-Eurostat remain Landing and full-distribution raw publication flows.
-See the canonical [delivery record](deliverables.md) for live evidence and
-[implementation plan](source-expansion-plan.md) for the remaining programme.
+The separate `World Bank WDI data pipeline` and `Eurostat data pipeline` workflows
+collect public responses and official distributions, then run their modeled-release jobs.
+Their Landing snapshots and modeled releases remain distinct from NBP. The BDL Web
+historical bootstrap is a separate, manually dispatched workflow; do not dispatch it while
+a local BDL writer is active. Inspect the canonical [delivery record](deliverables.md) for
+current retained-data and publication evidence.
 
 ## Run and pause
 
-The schedule is `7,37 * * * *` UTC: a recovery/catch-up trigger every thirty minutes, independent
-of NBP's daily schedule. Each source retains its requested API batch count (default three)
+The current workflow schedules are UTC: Eurostat at minute 12 each hour
+(`source-eurostat.yml`), WDI at minute 25 every six hours (`source-world-bank.yml`),
+and NBP daily at 02:00 (`daily-ingestion.yml`). These replace the earlier combined
+thirty-minute source-campaign schedule. BDL and DBW Web bootstrap workflows are manual.
+The WDI/Eurostat API stages retain their requested batch count (default three)
 and a 900-second aggregate between-operation API budget. A batch remains bounded to twelve
 source requests and 240 seconds between attempts. Normal WDI/Eurostat jobs run one API batch,
 verify the provider ledger, then start the full-distribution session (up to 24 requests and
@@ -79,26 +81,26 @@ capacity, no-due-work and source failures stop collection without spinning or re
 provider history.
 
 The schedule is a wake-up frequency, not a promise that each complete provider job finishes
-within thirty minutes. Each provider has one active writer and, under the default GitHub
+within its scheduling interval. Each provider has one active writer and, under the default GitHub
 concurrency queue, one pending job; a newer scheduled job can replace that pending job without
 cancelling the active writer. See [GitHub concurrency behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 Thus a cancelled superseded run, a failed request, a quota wait and a completed backfill are
 different outcomes. Inspect the provider job and its accepted/published checkpoints.
 
-From Actions, run the workflow on `main`, choose all or one source, choose the batch count
+From Actions, select the WDI or Eurostat workflow on `main`, choose the batch count
 (default three), and optionally pause history. `publish_only` exposes already-collected accepted
 responses without making source API requests.
 The history input also pauses reconciliation and the full-distribution backfill.
 Recent API and discovery tasks remain eligible.
 Set a source's `enabled: false` in `config/source-campaigns.yaml` through a checked PR to pause it
-persistently. Disabling the workflow stops all new campaigns and retains existing evidence.
+persistently. Disabling a provider workflow stops its new scheduled campaigns and retains existing evidence.
 
 A reviewed merge containing `[run-source-campaigns]` runs the changed campaign workflow once.
 Ordinary code pushes do not opt into production writes. Drive writes require the explicit CLI
 flag and the serialized `main` Actions runtime; do not launch another production writer outside
-that route. The preparation job checks account headroom and creates shared source paths before
-provider jobs execute independently. Existing configured OAuth secrets are used without consent
-prompts or logging secret values.
+that route. Each provider workflow uses the existing configured OAuth secrets without consent
+prompts or logging secret values. Modeled publication also uses the shared
+`zohelo-production-data` concurrency group.
 
 For a selected provider the job calls:
 

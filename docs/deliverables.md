@@ -4,6 +4,29 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Recovery monitor merged — 21 September 2026, 10:54 UTC
+
+PR #138 merged as `139c1efa75f1074e23641132bcdd0aad9d908d9c` after full data-platform
+CI run 35590372695 passed for its final head. The reviewed monitor is running locally;
+it observes processes and reports downstream gates, and does not advance stages automatically.
+The independent full local data suite remains active, so no local-suite completion is claimed.
+The remote feature branch was deleted and tracking refs pruned. Its local worktree is retained
+until the running local checks finish; cleanup must not disrupt those processes.
+
+The retained DBW audit is active under PR #140, with a pinned 3,103-object inventory and
+per-object byte verification. No complete audit or DBW publication is claimed yet. The owner's
+immediate priority is all new data visible and usable in the portal while backend work continues.
+The inventory UI is undergoing review; verified browse/query access remains the required next
+outcome. The OpenData schema fix from #139 remains the currently deployed portal change.
+
+The latest WDI run 35570717063 succeeded and published release
+`0b9cc607-441c-47ac-b2dc-ccd5c42433b1`. Its reported current-archive coverage is 9,015,914
+modeled values, 1,498 indicators and 264 geographies, with observation dates 1960–2025
+and a modeled/source value ratio of 1.0. This covers the current WDI CSV archive;
+the separate API reconciliation campaign remains incomplete. NBP's daily run
+35553328276 also succeeded. These are inspected Actions results, separate from the ongoing
+local recovery checks and from full-provider coverage claims.
+
 ### Recovery follow-up — 21 September 2026, 10:44 UTC
 
 **Portal deployed:** PR #139 merged as `5864b8e28b4da5692ab2225fe78c84827c4c3b89`.
