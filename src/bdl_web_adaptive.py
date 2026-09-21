@@ -24,12 +24,18 @@ import threading
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+WRITER_HEARTBEAT_SECONDS = 60
+BDL_PROXY_CLUSTER_FILE = Path("/workspaces/zohelo-data/.wireguard/cluster.json")
 
 
 class WorkerFailure(RuntimeError):
     def __init__(self, message, failure_class):
         super().__init__(message)
         self.failure_class = failure_class
+
+
+class CampaignControlFailure(RuntimeError):
+    """A durable campaign-control read or write can no longer be trusted."""
 
 
 def invoke_selection(item, node, workspace, timeout, session_path=None, proxy=None):
@@ -106,22 +112,27 @@ def persist_download(storage, session, landing_root, control, plan, node, result
     if (not archive.is_file() or archive.stat().st_size != descriptor.get("bytes")
             or _hash_file(archive, "sha256") != descriptor.get("sha256")):
         raise RuntimeError("Native Web transfer identity did not verify")
-    folder = storage.get_or_create_nested_folder(
-        ["gus_bdl", "web_bulk", plan["subgroup_id"], descriptor["sha256"]],
-        root_id=landing_root, write_session=session)
-    obj = _upload_file(storage, archive, name=name, parent_id=folder,
-                       sha256_hex=descriptor["sha256"], md5_hex=_hash_file(archive, "md5"), kind="source_native")
-    obj = {key: value for key, value in obj.items() if key != "reused"}
-    receipt = {"format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
-               "record_type": "native_partition_receipt", "subgroup_id": plan["subgroup_id"],
-               "selection_id": node["id"], "selection": node["scope"],
-               "dimension_inventory_sha256": parts.digest(plan["dimension_inventory"]),
-               "landing_scope": "native_bytes_only", "content_validation": "not_performed",
-               "archive_object": obj, "completed_at_utc": now()}
-    receipt["manifest_object"] = _upload_manifest(storage, receipt, parent_id=control)
-    # This is a PART receipt. Never call the old subgroup completion-marker writer here.
-    part_store.save(receipt)
-    check_stored_receipt(storage, plan, node, receipt)
+    try:
+        folder = storage.get_or_create_nested_folder(
+            ["gus_bdl", "web_bulk", plan["subgroup_id"], descriptor["sha256"]],
+            root_id=landing_root, write_session=session)
+        obj = _upload_file(storage, archive, name=name, parent_id=folder,
+                           sha256_hex=descriptor["sha256"], md5_hex=_hash_file(archive, "md5"), kind="source_native")
+        obj = {key: value for key, value in obj.items() if key != "reused"}
+        receipt = {"format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
+                   "record_type": "native_partition_receipt", "subgroup_id": plan["subgroup_id"],
+                   "selection_id": node["id"], "selection": node["scope"],
+                   "dimension_inventory_sha256": parts.digest(plan["dimension_inventory"]),
+                   "landing_scope": "native_bytes_only", "content_validation": "not_performed",
+                   "archive_object": obj, "completed_at_utc": now()}
+        receipt["manifest_object"] = _upload_manifest(storage, receipt, parent_id=control)
+        # This is a PART receipt. Never call the old subgroup completion-marker writer here.
+        part_store.save(receipt)
+        check_stored_receipt(storage, plan, node, receipt)
+    except Exception as exc:
+        raise CampaignControlFailure(
+            "Unable to publish or verify the native partition receipt; campaign control is uncertain"
+        ) from exc
     return receipt
 
 
@@ -226,21 +237,15 @@ def acquire_writer_lock(storage, control, host_kind: str) -> tuple[DriveControl,
 
 def update_writer_heartbeat(lock_store, lock_data):
     if lock_store and lock_data:
-        try:
-            lock_data["heartbeat_utc"] = now()
-            lock_store.save(lock_data)
-        except Exception:
-            pass
+        lock_data["heartbeat_utc"] = now()
+        lock_store.save(lock_data)
 
 
 def release_writer_lock(lock_store, lock_data):
     if lock_store and lock_data:
-        try:
-            lock_data["status"] = "released"
-            lock_data["released_at_utc"] = now()
-            lock_store.save(lock_data)
-        except Exception:
-            pass
+        lock_data["status"] = "released"
+        lock_data["released_at_utc"] = now()
+        lock_store.save(lock_data)
 
 
 def campaign_summary(state, legacy, files, transferred, reason, mode="resume"):
@@ -261,7 +266,12 @@ def campaign_summary(state, legacy, files, transferred, reason, mode="resume"):
 
     load_complete = pass_complete and (known <= complete) and not has_failures
 
-    if reason in {"operator_stop", "interrupted", "runtime_budget_reached"}:
+    if reason == "control_error":
+        # State held in memory may be newer than, or conflict with, the durable queue.
+        pass_complete = False
+        load_complete = False
+        status = "interrupted"
+    elif reason in {"operator_stop", "interrupted", "runtime_budget_reached"}:
         status = "interrupted"
     elif load_complete:
         status = "load_complete"
@@ -293,6 +303,10 @@ def campaign_summary(state, legacy, files, transferred, reason, mode="resume"):
         "new_bytes_this_run": transferred,
         "blocked_selections": sum(v.get("summary", {}).get("blocked_selections", 0) for v in records.values()),
         "run_stop_reason": reason,
+        "progress_counts_scope": (
+            "in_memory_last_observed_not_durable"
+            if reason == "control_error" else "durable_checkpoint_plus_current_run"
+        ),
         "recurring_schedule": False,
     }
 
@@ -307,6 +321,7 @@ class RunContext:
         self.transferred = 0
         self.consecutive_failures = 0
         self.reason = "running"
+        self.control_state_uncertain = False
 
 
 def select_next_candidate(state: dict[str, Any], legacy: set[str]) -> dict[str, Any] | None:
@@ -341,31 +356,95 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
     host_kind =  authorize_production_runner(storage, allow_codespace=allow_codespace)
     lock_store, lock_data = acquire_writer_lock(storage, control, host_kind)
 
-    store = DriveControl(storage, control, "web-queue-v1.json")
-    if mode == "reload":
-        existing_state = store.load() or {}
-        state = new_state(seed)
-        if not seed and existing_state.get("candidates"):
-            state["candidates"] = deepcopy(existing_state["candidates"])
-            state["discovery_pending"] = deepcopy(existing_state.get("discovery_pending", []))
-            state["discovery_completed"] = deepcopy(existing_state.get("discovery_completed", {}))
-            state["catalogue_errors"] = deepcopy(existing_state.get("catalogue_errors", {}))
-        state["pass_id"] = f"pass-{int(time.time())}"
-        state["pass_started_at_utc"] = now()
-        state["pass_outcomes"] = {}
-        state["in_flight"] = []
-    else:
-        state = store.load() or new_state(seed)
-        state.setdefault("pass_id", "pass-initial")
-        state.setdefault("pass_outcomes", {})
-        state["in_flight"] = []
-    state.setdefault("selection_plans", {})
-    state.setdefault("failures", {})
+    try:
+        store = DriveControl(storage, control, "web-queue-v1.json")
+        if mode == "reload":
+            existing_state = store.load() or {}
+            state = new_state(seed)
+            if not seed and existing_state.get("candidates"):
+                state["candidates"] = deepcopy(existing_state["candidates"])
+                state["discovery_pending"] = deepcopy(existing_state.get("discovery_pending", []))
+                state["discovery_completed"] = deepcopy(existing_state.get("discovery_completed", {}))
+                state["catalogue_errors"] = deepcopy(existing_state.get("catalogue_errors", {}))
+            state["pass_id"] = f"pass-{int(time.time())}"
+            state["pass_started_at_utc"] = now()
+            state["pass_outcomes"] = {}
+            state["in_flight"] = []
+        else:
+            state = store.load() or new_state(seed)
+            state.setdefault("pass_id", "pass-initial")
+            state.setdefault("pass_outcomes", {})
+            state["in_flight"] = []
+        state.setdefault("selection_plans", {})
+        state.setdefault("failures", {})
 
-    legacy, _ = _durable_status(storage, bulk, control)
+        legacy, _ = _durable_status(storage, bulk, control)
+    except BaseException as startup_error:
+        try:
+            release_writer_lock(lock_store, lock_data)
+        except Exception as release_error:
+            startup_error.add_note(
+                f"Additionally failed to release the BDL writer lock: {type(release_error).__name__}"
+            )
+        raise
+
     start = time.monotonic()
     ctx = RunContext()
     discovery_attempted = set()
+
+    def mark_fatal_locked(exc: BaseException, *, control_uncertain: bool = False):
+        """Record the first fatal error while the caller owns ``ctx.lock``."""
+        if ctx.fatal_error is None:
+            ctx.fatal_error = exc
+        if control_uncertain:
+            ctx.control_state_uncertain = True
+            ctx.reason = "control_error"
+        elif ctx.reason == "running":
+            ctx.reason = "interrupted"
+        ctx.stop_event.set()
+        ctx.condition.notify_all()
+
+    def require_control_available():
+        if ctx.control_state_uncertain:
+            raise CampaignControlFailure(
+                "BDL campaign control is uncertain; refusing another checkpoint write"
+            )
+
+    def save_control(control_store, value, description):
+        require_control_available()
+        try:
+            control_store.save(value)
+        except Exception as exc:
+            raise CampaignControlFailure(
+                f"Unable to publish {description}; BDL campaign stopped with uncertain control state"
+            ) from exc
+
+    def open_control(name, description):
+        require_control_available()
+        try:
+            return DriveControl(storage, control, name)
+        except Exception as exc:
+            raise CampaignControlFailure(
+                f"Unable to open {description}; BDL campaign stopped"
+            ) from exc
+
+    def load_control(control_store, description):
+        require_control_available()
+        try:
+            return control_store.load()
+        except Exception as exc:
+            raise CampaignControlFailure(
+                f"Unable to restore {description}; BDL campaign stopped"
+            ) from exc
+
+    def heartbeat():
+        require_control_available()
+        try:
+            update_writer_heartbeat(lock_store, lock_data)
+        except Exception as exc:
+            raise CampaignControlFailure(
+                "Unable to publish the BDL writer heartbeat; campaign ownership is uncertain"
+            ) from exc
 
     def report():
         value = campaign_summary(state, legacy, ctx.files, ctx.transferred, ctx.reason, mode=mode)
@@ -388,11 +467,11 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
     def save_plan(plan_store, plan):
         value = parts.summary(plan)
-        plan_store.save(plan)
+        save_control(plan_store, plan, f"selection plan {plan['subgroup_id']}")
         state["selection_plans"][plan["subgroup_id"]] = {
             "id": plan_store.file_id, "sha256": sha256(plan_store.observed).hexdigest(), "summary": value
         }
-        store.save(state)
+        save_control(store, state, "BDL Web queue")
         print(json.dumps({"status": "bdl_selection_progress", "subgroup_id": plan["subgroup_id"], **value}), flush=True)
         report()
 
@@ -402,8 +481,10 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         _clean_ephemeral(worker_ws)
 
         with ctx.lock:
-            plan_store = DriveControl(storage, control, f"web-parts-{subgroup}-v1.json")
-            existing_plan = plan_store.load()
+            plan_store = open_control(
+                f"web-parts-{subgroup}-v1.json", f"selection plan {subgroup}"
+            )
+            existing_plan = load_control(plan_store, f"selection plan {subgroup}")
 
         if mode == "resume" and existing_plan and parts.summary(existing_plan)["complete"]:
             try:
@@ -419,6 +500,8 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     save_plan(plan_store, existing_plan)
                     ctx.consecutive_failures = 0
                 return
+            except CampaignControlFailure:
+                raise
             except Exception:
                 existing_plan = None
 
@@ -441,7 +524,11 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 result = invoke_selection_for_worker(item, whole_node, worker_ws, timeout, proxy=proxy)
                 if result.get("status") == "download":
                     with ctx.lock:
-                        part_store = DriveControl(storage, control, f"web-part-{subgroup}-whole.json")
+                        require_control_available()
+                        part_store = open_control(
+                            f"web-part-{subgroup}-whole.json",
+                            f"whole-subgroup receipt {subgroup}",
+                        )
                         whole_plan = parts.new_whole_plan(subgroup, item["url"], root_task=whole_node)
                         receipt = persist_download(storage, session, landing_root, control, whole_plan, whole_node, result, worker_ws, part_store)
                         parts.accept_download(whole_plan, whole_plan["nodes"][whole_plan["root"]], receipt)
@@ -452,15 +539,14 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         state["pass_outcomes"][subgroup] = {"status": "landed", "files": 1, "bytes": receipt["archive_object"]["size"], "completed_at_utc": now()}
                         state["failures"].pop(subgroup, None)
                     return
+            except CampaignControlFailure:
+                raise
             except WorkerFailure as exc:
                 if exc.failure_class in {"authentication_or_site", "rate_limit", "storage_error"}:
                     with ctx.lock:
                         state["failures"][subgroup] = {"last_attempt_utc": now(), "error": str(exc), "failure_class": exc.failure_class}
                         state["pass_outcomes"][subgroup] = {"status": "failed", "error": str(exc)}
-                        ctx.reason = "interrupted"
-                        ctx.fatal_error = exc
-                        ctx.stop_event.set()
-                        ctx.condition.notify_all()
+                        mark_fatal_locked(exc)
                     raise
                 with ctx.lock:
                     plan = parts.new_plan(subgroup, item["url"])
@@ -504,14 +590,23 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             part_store = None
             if node["scope"]["kind"] == "download":
                 with ctx.lock:
-                    part_store = DriveControl(storage, control, f"web-part-{subgroup}-{node['id']}.json")
-                    retained = part_store.load() if mode == "resume" else None
+                    require_control_available()
+                    part_store = open_control(
+                        f"web-part-{subgroup}-{node['id']}.json",
+                        f"partition receipt {subgroup}/{node['id']}",
+                    )
+                    retained = (
+                        load_control(part_store, f"partition receipt {subgroup}/{node['id']}")
+                        if mode == "resume" else None
+                    )
                     if retained:
                         try:
                             check_stored_receipt(storage, plan, node, retained)
                             parts.accept_download(plan, node, retained)
                             save_plan(plan_store, plan)
                             continue
+                        except CampaignControlFailure:
+                            raise
                         except Exception:
                             retained = None
 
@@ -524,6 +619,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 timeout = min(600, rem) if rem > 60 else 60
                 result = invoke_selection_for_worker(item, node, worker_ws, timeout, proxy=proxy)
                 with ctx.lock:
+                    require_control_available()
                     process_result(plan, node, result)
             except WorkerFailure as exc:
                 with ctx.lock:
@@ -537,10 +633,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     with ctx.lock:
                         ctx.consecutive_failures += 1
                         if ctx.consecutive_failures >= 100:
-                            ctx.reason = "interrupted"
-                            ctx.fatal_error = exc
-                            ctx.stop_event.set()
-                            ctx.condition.notify_all()
+                            mark_fatal_locked(exc)
                             raise
                     break
                 if disposition == "retry":
@@ -549,6 +642,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
             if node["scope"]["kind"] == "download":
                 with ctx.lock:
+                    require_control_available()
                     receipt = persist_download(storage, session, landing_root, control, plan, node, result, worker_ws, part_store)
                     parts.accept_download(plan, node, receipt)
                     ctx.consecutive_failures = 0
@@ -572,7 +666,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 state["pass_outcomes"][subgroup] = {"status": "partial", "files": summary_val["files"], "outstanding_selections": summary_val["outstanding_selections"], "updated_at_utc": now()}
 
     # Load proxies from cluster.json if available
-    cluster_file = Path("/workspaces/zohelo-data/.wireguard/cluster.json")
+    cluster_file = BDL_PROXY_CLUSTER_FILE
     cluster_proxies = []
     if cluster_file.is_file():
         try:
@@ -581,9 +675,9 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         except Exception:
             pass
     if cluster_proxies:
-        print(f"Loaded {len(cluster_proxies)} cluster proxies for BDL: {cluster_proxies}", flush=True)
+        print(f"Loaded {len(cluster_proxies)} cluster proxies for BDL", flush=True)
 
-    def worker_loop(worker_id: int):
+    def worker_body(worker_id: int):
         worker_ws = workspace if concurrency == 1 else (workspace / f"worker-{worker_id}")
         worker_proxy = cluster_proxies[worker_id % len(cluster_proxies)] if cluster_proxies else None
         while not ctx.stop_event.is_set():
@@ -610,8 +704,8 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                         state.update(discovered)
                     except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired) as exc:
                         state["catalogue_errors"][catalogue_task["url"]] = str(exc)[:1200]
-                    store.save(state)
-                    update_writer_heartbeat(lock_store, lock_data)
+                    save_control(store, state, "BDL Web queue")
+                    heartbeat()
                     continue
 
                 item = select_next_candidate(state, legacy)
@@ -633,11 +727,14 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
                 subgroup = item["subgroup_id"]
                 state["in_flight"].append(subgroup)
-                store.save(state)
-                update_writer_heartbeat(lock_store, lock_data)
+                save_control(store, state, "BDL Web queue")
+                heartbeat()
 
             try:
                 process_subgroup(item, worker_id, worker_ws, proxy=worker_proxy)
+            except CampaignControlFailure as exc:
+                with ctx.lock:
+                    mark_fatal_locked(exc, control_uncertain=True)
             except Exception as exc:
                 with ctx.lock:
                     state.setdefault("failures", {})[subgroup] = {
@@ -651,48 +748,121 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     }
                     ctx.consecutive_failures += 1
                     if ctx.consecutive_failures >= 50:
-                        if ctx.fatal_error is None:
-                            ctx.fatal_error = exc
-                        ctx.stop_event.set()
+                        mark_fatal_locked(exc)
             finally:
                 with ctx.lock:
                     if subgroup in state.get("in_flight", []):
                         state["in_flight"].remove(subgroup)
-                    store.save(state)
-                    update_writer_heartbeat(lock_store, lock_data)
+                    if not ctx.control_state_uncertain:
+                        save_control(store, state, "BDL Web queue")
+                        heartbeat()
                     ctx.condition.notify_all()
 
+    def worker_loop(worker_id: int):
+        try:
+            worker_body(worker_id)
+        except BaseException as exc:
+            with ctx.lock:
+                mark_fatal_locked(
+                    exc,
+                    control_uncertain=isinstance(exc, CampaignControlFailure),
+                )
+
+    heartbeat_stop = threading.Event()
+
+    def heartbeat_loop():
+        while not heartbeat_stop.wait(WRITER_HEARTBEAT_SECONDS):
+            try:
+                with ctx.lock:
+                    heartbeat()
+            except BaseException as exc:
+                with ctx.lock:
+                    mark_fatal_locked(exc, control_uncertain=True)
+                return
+
+    primary_error = None
+    heartbeat_thread = None
+    threads = []
     try:
-        store.save(state)
+        save_control(store, state, "BDL Web queue")
         report()
 
-        threads = []
+        heartbeat_thread = threading.Thread(
+            target=heartbeat_loop, name="bdl-writer-heartbeat", daemon=False
+        )
+        heartbeat_thread.start()
+
         for i in range(concurrency):
             t = threading.Thread(target=worker_loop, args=(i,), name=f"bdl-worker-{i}")
-            threads.append(t)
             t.start()
+            threads.append(t)
 
         try:
             while any(t.is_alive() for t in threads):
                 for t in threads:
                     t.join(timeout=0.5)
         except (KeyboardInterrupt, SystemExit):
-            ctx.reason = "interrupted"
-            ctx.stop_event.set()
             with ctx.lock:
+                ctx.reason = "interrupted"
+                ctx.stop_event.set()
                 ctx.condition.notify_all()
             for t in threads:
-                t.join(timeout=5.0)
+                t.join()
+
+        for t in threads:
+            t.join()
+
+        heartbeat_stop.set()
+        heartbeat_thread.join()
 
         if ctx.fatal_error is not None:
             raise ctx.fatal_error
 
         return report()
+    except BaseException as exc:
+        primary_error = exc
+        with ctx.lock:
+            mark_fatal_locked(
+                exc,
+                control_uncertain=isinstance(exc, CampaignControlFailure),
+            )
+        raise
     finally:
+        with ctx.lock:
+            ctx.stop_event.set()
+            ctx.condition.notify_all()
+        for thread in threads:
+            thread.join()
+        heartbeat_stop.set()
+        if heartbeat_thread is not None and heartbeat_thread.ident is not None:
+            heartbeat_thread.join()
+        release_failure = None
+        release_cause = None
         if lock_store and lock_data:
-            release_writer_lock(lock_store, lock_data)
+            try:
+                release_writer_lock(lock_store, lock_data)
+            except Exception as release_error:
+                release_cause = release_error
+                release_failure = CampaignControlFailure(
+                    "Unable to release the BDL writer lock; campaign ownership is uncertain"
+                )
+                with ctx.lock:
+                    mark_fatal_locked(release_failure, control_uncertain=True)
+                if primary_error is not None:
+                    primary_error.add_note(
+                        f"Additionally failed to release the BDL writer lock: {type(release_error).__name__}"
+                    )
         if "state" in locals() and "legacy" in locals():
-            report()
+            try:
+                report()
+            except Exception as report_error:
+                if primary_error is None and release_failure is None:
+                    raise
+                (primary_error or release_failure).add_note(
+                    f"Additionally failed to write the local BDL summary: {type(report_error).__name__}"
+                )
+        if release_failure is not None and primary_error is None:
+            raise release_failure from release_cause
 
 
 def main():
