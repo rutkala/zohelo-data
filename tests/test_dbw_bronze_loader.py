@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -543,7 +544,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
             })
             result = subprocess.run(
                 [
-                    str(repo_root / ".venv/bin/dbt"), "build", "--profiles-dir", str(repo_root),
+                    shutil.which("dbt") or str(repo_root / ".venv/bin/dbt"),
+                    "build", "--profiles-dir", str(repo_root),
                     "--project-dir", str(repo_root), "--select", "br_dbw_observations",
                     "br_dbw_indicators", "br_dbw_metadata", "br_dbw_dictionaries",
                     "--vars", '{"enable_gus_dbw": true}',
