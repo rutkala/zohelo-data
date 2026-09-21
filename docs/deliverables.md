@@ -102,6 +102,11 @@ keeping large indicator partitions independent of process RAM.
 Failed restores remove their nonresumable UUID staging trees; only a fully verified completed tree is
 retained when it intentionally exposes a mismatch with an existing local release. A mismatched
 release-scoped taxonomy cache is recovered from checksum-verified Drive bytes and replaced atomically.
+The DBW Silver and Gold indicator models now preserve the Bronze taxonomy contract
+(`thematic_area`, `domain_name`, `taxonomy_path`, `node_id`, and `parent_id`) without
+inventing numeric hierarchy IDs; the acceptance fixture builds the complete DBW
+Bronze-to-Silver-to-Gold lineage, not only its Bronze boundary. This is model-contract evidence,
+not a claim that the still-incomplete production source has been published.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

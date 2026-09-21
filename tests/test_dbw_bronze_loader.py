@@ -486,9 +486,26 @@ class TestDBWBronzeLoader(unittest.TestCase):
         indicators = (repo_root / "models/bronze/br_dbw_indicators.sql").read_text(
             encoding="utf-8"
         )
-        for column in ("thematic_area", "domain", "taxonomy_path", "node_id", "parent_id"):
+        silver_indicators = (
+            repo_root / "models/silver/stg_dbw_indicators.sql"
+        ).read_text(encoding="utf-8")
+        gold_indicators = (
+            repo_root / "models/gold/dim_dbw_indicator.sql"
+        ).read_text(encoding="utf-8")
+        for column in ("thematic_area", "domain_name", "taxonomy_path", "node_id", "parent_id"):
             self.assertIn(column, indicators)
-        self.assertNotIn("domain_id", indicators)
+            self.assertIn(column, silver_indicators)
+            self.assertIn(column, gold_indicators)
+        for obsolete in (
+            "domain_id",
+            "domain_name_en",
+            "area_id",
+            "area_name",
+            "area_name_en",
+        ):
+            self.assertNotIn(obsolete, indicators)
+            self.assertNotIn(obsolete, silver_indicators)
+            self.assertNotIn(obsolete, gold_indicators)
 
     def test_selected_complete_snapshot_is_consumable_by_dbw_dbt_models(self):
         repo_root = Path(__file__).resolve().parents[1]
@@ -592,8 +609,13 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 [
                     shutil.which("dbt") or str(repo_root / ".venv/bin/dbt"),
                     "build", "--profiles-dir", str(repo_root),
-                    "--project-dir", str(repo_root), "--select", "br_dbw_observations",
-                    "br_dbw_indicators", "br_dbw_metadata", "br_dbw_dictionaries",
+                    "--project-dir", str(repo_root), "--select",
+                    "br_dbw_observations", "br_dbw_indicators",
+                    "br_dbw_metadata", "br_dbw_dictionaries",
+                    "stg_dbw_observations", "stg_dbw_indicators",
+                    "stg_dbw_metadata", "stg_dbw_dictionaries",
+                    "fact_dbw_observations", "dim_dbw_indicator",
+                    "mart_dbw_coverage",
                     "--vars", '{"enable_gus_dbw": true}',
                 ],
                 env=env,
