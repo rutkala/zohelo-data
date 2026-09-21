@@ -32,6 +32,11 @@ import urllib.request
 import uuid
 
 from googleapiclient.http import MediaFileUpload, MediaInMemoryUpload
+from dbw_native_identity import (
+    indicator_scoped_bulk_name as _indicator_scoped_bulk_name,
+    is_indicator_scoped_bulk_descriptor as _is_indicator_scoped_bulk_descriptor,
+    versioned_name as _versioned_name,
+)
 from storage_manager import StorageManager
 
 DBW_WEB_BASE = "https://dbw.stat.gov.pl"
@@ -150,24 +155,6 @@ def _find_exact_file(storage: StorageManager, name: str, parent_id: str) -> list
         if not token:
             break
     return [item for item in result if item.get("name") == name and item.get("trashed") is not True]
-
-
-def _versioned_name(name: str, sha256_hex: str) -> str:
-    """Keep a provider/logical name recognizable while making revisions immutable."""
-    path = Path(name)
-    suffix = "".join(path.suffixes)
-    stem = name[: -len(suffix)] if suffix else name
-    marker = f"--sha256-{sha256_hex}"
-    max_stem = max(1, 240 - len(marker) - len(suffix))
-    return f"{stem[:max_stem]}{marker}{suffix}"
-
-
-def _indicator_scoped_bulk_name(indicator_id: int, source_name: str) -> str:
-    """Give each indicator exclusive durable ownership of its provider ZIP."""
-    name = f"indicator-{indicator_id}--{source_name}"
-    if len(name.encode("utf-8")) > 240:
-        raise RuntimeError("DBW indicator-scoped bulk filename exceeds the storage limit.")
-    return name
 
 
 def _discover_bulk_filenames(aggregate_bytes: bytes) -> list[str]:
@@ -829,6 +816,17 @@ class DbwWebExtractor:
                         or not isinstance(descriptors, list)
                     ):
                         raise RuntimeError("DBW completed receipt content does not match its identity.")
+                    if any(
+                        isinstance(descriptor, dict)
+                        and descriptor.get("role") == "bulk_zip"
+                        and not _is_indicator_scoped_bulk_descriptor(
+                            indicator_id, descriptor
+                        )
+                        for descriptor in descriptors
+                    ):
+                        # A retained pre-boundary receipt is deliberately incomplete.
+                        # Reprocessing creates indicator-owned objects and a new receipt.
+                        continue
                     roles: list[str] = []
                     source_names: list[str] = []
                     for descriptor in descriptors:

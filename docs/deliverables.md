@@ -90,6 +90,9 @@ provider observation and dictionary CSVs with `ignore_errors=false`; malformed r
 before any partition or complete-release marker can be accepted instead of being silently discarded.
 Provider ZIPs use indicator-scoped durable object names while retaining the provider filename in receipt
 lineage, so byte-identical names shared by two indicators cannot collapse into one cross-owned object.
+Pre-boundary unscoped receipts remain preserved but do not count as completed during resume or Bronze
+validation; the same native snapshot reprocesses those indicators, writes scoped objects and seals a
+new content-addressed completion marker only after the current receipt contract reconciles.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing

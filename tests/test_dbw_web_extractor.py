@@ -188,9 +188,11 @@ class TestDbwWebExtractor(unittest.TestCase):
                 "sha256": "b" * 64, "md5": "c" * 32,
                 "role": role, "source_name": source_name,
             }
+            if role == "bulk_zip":
+                descriptor["name"] = _indicator_scoped_bulk_name(14, source_name)
             descriptors.append(descriptor)
             target.append({
-                "id": object_id, "name": name, "size": "10",
+                "id": object_id, "name": descriptor["name"], "size": "10",
                 "md5Checksum": "c" * 32,
                 "appProperties": {"sha256": "b" * 64},
             })
@@ -259,6 +261,49 @@ class TestDbwWebExtractor(unittest.TestCase):
         extractor.storage.drive_service.files.return_value.get_media.return_value.execute.return_value = raw
         with self.assertRaisesRegex(RuntimeError, "Duplicate DBW completed receipts"):
             extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID)
+
+        legacy_receipt = json.loads(json.dumps(receipt))
+        legacy_bulk = next(
+            item for item in legacy_receipt["landed_objects"]
+            if item["role"] == "bulk_zip"
+        )
+        legacy_bulk["name"] = legacy_bulk["source_name"]
+        legacy_receipt["files_landed"] = [
+            item["name"] for item in legacy_receipt["landed_objects"]
+        ]
+        legacy_membership = _membership_sha256(legacy_receipt["landed_objects"])
+        legacy_receipt["native_membership_sha256"] = legacy_membership
+        legacy_raw = json.dumps(legacy_receipt).encode()
+        legacy_sha, legacy_md5 = _hash_bytes(legacy_raw)
+        legacy_checkpoint = {
+            **checkpoint,
+            "size": str(len(legacy_raw)),
+            "md5Checksum": legacy_md5,
+            "appProperties": {
+                **checkpoint["appProperties"],
+                "sha256": legacy_sha,
+                "native_membership_sha256": legacy_membership,
+            },
+        }
+        legacy_bulk_object = {**bulk[0], "name": legacy_bulk["name"]}
+
+        def legacy_list_response(**kwargs):
+            query = kwargs["q"]
+            if "'metadata' in parents" in query:
+                result = metadata
+            elif "'bulk' in parents" in query:
+                result = [legacy_bulk_object]
+            else:
+                result = [legacy_checkpoint]
+            return MagicMock(execute=MagicMock(return_value={"files": result}))
+
+        extractor.storage.drive_service.files.return_value.list.side_effect = (
+            legacy_list_response
+        )
+        media.return_value.execute.return_value = legacy_raw
+        self.assertEqual(
+            extractor.load_completed_checkpoints("a" * 64, self.SNAPSHOT_ID), {}
+        )
 
     @patch("dbw_web_extractor._upload_bytes")
     @patch("dbw_web_extractor.uuid.uuid4")

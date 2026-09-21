@@ -215,7 +215,9 @@ class TestDBWBronzeLoader(unittest.TestCase):
         )
         self.assertFalse(_has_integrity_metadata(None, min_size=1000))
 
-    def _release_receipt_fixture(self, *, corrupt_native_size: bool = False):
+    def _release_receipt_fixture(
+        self, *, corrupt_native_size: bool = False, legacy_bulk_names: bool = False
+    ):
         loader = object.__new__(DBWBronzeLoader)
         loader.landing_checkpoints = "checkpoints"
         loader.landing_metadata = "metadata"
@@ -248,10 +250,14 @@ class TestDBWBronzeLoader(unittest.TestCase):
                         else f"{indicator_id}_history.zip"
                     ),
                 }
+                if role == "bulk_zip" and not legacy_bulk_names:
+                    descriptor["name"] = (
+                        f"indicator-{indicator_id}--{descriptor['source_name']}"
+                    )
                 landed_objects.append(descriptor)
                 folder_files.append({
                     "id": descriptor["id"],
-                    "name": name,
+                    "name": descriptor["name"],
                     "size": str(
                         len(raw_native) + (1 if corrupt_native_size and role == "bulk_zip" and indicator_id == 8 else 0)
                     ),
@@ -383,6 +389,13 @@ class TestDBWBronzeLoader(unittest.TestCase):
     def test_release_receipt_rejects_native_identity_mismatch(self):
         loader, completion = self._release_receipt_fixture(corrupt_native_size=True)
         with self.assertRaisesRegex(DBWLandingIncompleteError, "receipt/native object mismatch"):
+            loader.load_release_receipts(completion)
+
+    def test_legacy_unscoped_bulk_receipts_require_reprocessing(self):
+        loader, completion = self._release_receipt_fixture(legacy_bulk_names=True)
+        with self.assertRaisesRegex(
+            DBWLandingIncompleteError, "do not reconcile the completion marker"
+        ):
             loader.load_release_receipts(completion)
 
     def test_local_launchers_verify_background_lock_acquisition(self):

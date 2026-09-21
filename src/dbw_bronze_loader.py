@@ -37,6 +37,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from storage_manager import StorageManager
+from dbw_native_identity import is_indicator_scoped_bulk_descriptor
 
 logger = logging.getLogger("dbw_bronze_loader")
 logging.basicConfig(
@@ -759,6 +760,8 @@ class DBWBronzeLoader:
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise DBWLandingIncompleteError("DBW indicator receipt is not valid JSON.") from exc
             indicator_id = receipt.get("indicator_id")
+            landed_names = receipt.get("files_landed", [])
+            landed_objects = receipt.get("landed_objects")
             if (
                 receipt.get("schema_version") != 3
                 or receipt.get("record_type") != "gus_dbw_indicator_completion"
@@ -768,12 +771,23 @@ class DBWBronzeLoader:
                 or receipt.get("bulk_complete") is not True
                 or receipt.get("metadata_complete") is not True
                 or not isinstance(indicator_id, int)
-                or indicator_id in indicator_ids
+                or not isinstance(landed_objects, list)
             ):
                 raise DBWLandingIncompleteError("DBW indicator receipts do not form a unique complete catalogue.")
+            if any(
+                isinstance(descriptor, dict)
+                and descriptor.get("role") == "bulk_zip"
+                and not is_indicator_scoped_bulk_descriptor(indicator_id, descriptor)
+                for descriptor in landed_objects
+            ):
+                # Ignore retained legacy receipts. Landing must replace them with
+                # indicator-owned identities before its new marker can reconcile.
+                continue
+            if indicator_id in indicator_ids:
+                raise DBWLandingIncompleteError(
+                    "DBW indicator receipts do not form a unique complete catalogue."
+                )
             indicator_ids.add(indicator_id)
-            landed_names = receipt.get("files_landed", [])
-            landed_objects = receipt.get("landed_objects")
             if not isinstance(landed_names, list) or not isinstance(landed_objects, list):
                 raise DBWLandingIncompleteError(
                     "DBW indicator receipt has no verifiable native object membership."
