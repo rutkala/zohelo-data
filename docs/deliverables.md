@@ -105,8 +105,12 @@ release-scoped taxonomy cache is recovered from checksum-verified Drive bytes an
 The DBW Silver and Gold indicator models now preserve the Bronze taxonomy contract
 (`thematic_area`, `domain_name`, `taxonomy_path`, `node_id`, and `parent_id`) without
 inventing numeric hierarchy IDs; the acceptance fixture builds the complete DBW
-Bronze-to-Silver-to-Gold lineage, not only its Bronze boundary. This is model-contract evidence,
-not a claim that the still-incomplete production source has been published.
+Bronze-to-Silver-to-Gold lineage, not only its Bronze boundary. The local supervisor now
+derives the exact completed release from its release-bound marker, restores and verifies that
+authoritative Drive snapshot into a dedicated data root, and exports the matching release ID and
+DuckDB path before dbt; a failed restore or model build remains retryable rather than being marked
+triggered. This is model-contract and orchestration evidence, not a claim that the still-incomplete
+production source has been published.
 Launchers
 refuse to kill or duplicate an already running local writer (including the later BDL-only
 launcher) and now fail visibly when a background process loses the advisory-lock race; DBW Web shares the existing
