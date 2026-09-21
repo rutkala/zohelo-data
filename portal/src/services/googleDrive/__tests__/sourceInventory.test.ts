@@ -130,6 +130,9 @@ describe("Files on Drive inventory", () => {
   });
 
   it("retries once when a BDL checkpoint changes and accepts the next stable read", async () => {
+    vi.mocked(fetchDriveFileBuffer).mockResolvedValueOnce(
+      encoder.encode("bytes from the newer checkpoint")
+    );
     vi.mocked(findNamedFilesInFolderById).mockResolvedValueOnce({
       id: "checkpoint-id",
       name: "web-queue-v1.json",
@@ -148,6 +151,19 @@ describe("Files on Drive inventory", () => {
       stages: [{ file_count: 3, byte_count: 100 }],
     });
     expect(fetchDriveFileBuffer).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects bytes that disagree with stable BDL metadata", async () => {
+    vi.mocked(fetchDriveFileBuffer).mockResolvedValue(encoder.encode("corrupt"));
+
+    const result = await resolveSourceInventory("token");
+
+    expect(result.entries[0]).toMatchObject({
+      source_id: "gus_bdl_web",
+      state: "error",
+      error: "BDL Web checkpoint bytes do not match stable Drive metadata.",
+    });
+    expect(fetchDriveFileBuffer).toHaveBeenCalledTimes(1);
   });
 
   it("reports an actively changing BDL checkpoint without accepting totals", async () => {

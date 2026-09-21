@@ -255,10 +255,7 @@ export async function resolveSourceInventory(
         if (!identity) throw new Error("BDL Web checkpoint lacks stable Drive identity metadata.");
       }
       reserveRequest();
-      const candidateBytes = await fetchDriveFileBuffer(before.id, token, before.size);
-      if ((await sha256Hex(candidateBytes)) !== before.sha256Checksum) {
-        throw new Error("BDL Web checkpoint bytes do not match Drive SHA-256.");
-      }
+      const candidateBytes = await fetchDriveFileBuffer(before.id, token, MAX_BDL_CHECKPOINT_BYTES);
       reserveRequest();
       const candidateAfter = await findNamedFilesInFolderById(before.id, token);
       if (
@@ -269,6 +266,12 @@ export async function resolveSourceInventory(
         before.md5Checksum === candidateAfter.md5Checksum &&
         before.modifiedTime === candidateAfter.modifiedTime
       ) {
+        if (
+          candidateBytes.byteLength !== before.size ||
+          (await sha256Hex(candidateBytes)) !== before.sha256Checksum
+        ) {
+          throw new Error("BDL Web checkpoint bytes do not match stable Drive metadata.");
+        }
         bytes = candidateBytes;
         after = candidateAfter;
         break;
