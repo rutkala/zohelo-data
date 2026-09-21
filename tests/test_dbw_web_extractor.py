@@ -6,7 +6,10 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from dbw_native_identity import versioned_name
+from dbw_native_identity import (
+    is_indicator_scoped_bulk_descriptor,
+    versioned_name,
+)
 from dbw_web_extractor import (
     DbwWebExtractor,
     _atomic_write_bytes,
@@ -34,6 +37,31 @@ class TestDbwWebExtractor(unittest.TestCase):
         self.assertLessEqual(len(revised.encode("utf-8")), 240)
         self.assertTrue(revised.endswith(f"--sha256-{digest}.zip"))
         self.assertTrue(revised.startswith("indicator-7--"))
+        self.assertIn("--name-", revised)
+
+    def test_truncated_revisions_preserve_logical_name_identity(self):
+        digest = "b" * 64
+        first = f"indicator-7--{'a' * 175}x.zip"
+        second = f"indicator-7--{'a' * 175}y.zip"
+
+        first_revision = versioned_name(first, digest)
+        second_revision = versioned_name(second, digest)
+
+        self.assertNotEqual(first_revision, second_revision)
+        self.assertLessEqual(len(first_revision.encode("utf-8")), 240)
+        self.assertLessEqual(len(second_revision.encode("utf-8")), 240)
+
+    def test_exact_base_descriptor_does_not_require_revision_name(self):
+        source_name = f"x.{'a' * 170}.zip"
+        base_name = _indicator_scoped_bulk_name(7, source_name)
+        descriptor = {
+            "role": "bulk_zip",
+            "source_name": source_name,
+            "name": base_name,
+            "sha256": "c" * 64,
+        }
+
+        self.assertTrue(is_indicator_scoped_bulk_descriptor(7, descriptor))
 
     def test_production_context_guard(self):
         with patch.dict("os.environ", {"GITHUB_ACTIONS": "false", "ZOHELO_ALLOW_CODESPACE_EXECUTION": "false"}, clear=True):

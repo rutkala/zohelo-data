@@ -1,6 +1,7 @@
 """Shared immutable native-object identity rules for the DBW stage boundary."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -9,11 +10,19 @@ from typing import Any
 def versioned_name(name: str, sha256_hex: str) -> str:
     """Keep a logical name recognizable within the 240-byte storage boundary."""
     path = Path(name)
-    suffix = "".join(path.suffixes)
+    full_suffix = "".join(path.suffixes)
+    content_marker = f"--sha256-{sha256_hex}"
+    suffix = full_suffix
+    if 240 - len((content_marker + suffix).encode("utf-8")) < 1:
+        suffix = path.suffix
     stem = name[: -len(suffix)] if suffix else name
-    marker = f"--sha256-{sha256_hex}"
-    fixed_bytes = len((marker + suffix).encode("utf-8"))
-    max_stem_bytes = 240 - fixed_bytes
+    marker = content_marker
+    max_stem_bytes = 240 - len((marker + suffix).encode("utf-8"))
+    truncated = suffix != full_suffix or len(stem.encode("utf-8")) > max_stem_bytes
+    if truncated:
+        logical_digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:16]
+        marker = f"--name-{logical_digest}{content_marker}"
+        max_stem_bytes = 240 - len((marker + suffix).encode("utf-8"))
     if max_stem_bytes < 1:
         raise RuntimeError("DBW versioned filename has no room for a logical stem.")
     stem_bytes = stem.encode("utf-8")
@@ -61,4 +70,9 @@ def is_indicator_scoped_bulk_descriptor(
         base_name = indicator_scoped_bulk_name(indicator_id, source_name)
     except RuntimeError:
         return False
-    return object_name in {base_name, versioned_name(base_name, digest)}
+    if object_name == base_name:
+        return True
+    try:
+        return object_name == versioned_name(base_name, digest)
+    except RuntimeError:
+        return False
