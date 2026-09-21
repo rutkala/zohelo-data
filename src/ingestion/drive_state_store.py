@@ -21,6 +21,7 @@ class DriveStateStore(DriveReleaseStore):
         self._replaceable_pointer_names = {"current-ingestion-state.json"}
         if allow_landing_pointer is True:
             self._replaceable_pointer_names.add("current-landing.json")
+            self._replaceable_pointer_names.add("publication-owner.json")
         elif allow_landing_pointer is not False:
             raise ValueError("allow_landing_pointer must be a boolean")
 

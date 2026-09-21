@@ -57,6 +57,28 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const [manualToken, setManualToken] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [dbwIndicatorSearch, setDbwIndicatorSearch] = useState("");
+  const hasRetainedDbw = lakehouseLanding?.snapshots.some(
+    ({ manifest }) => manifest.kind === "retained_bronze_snapshot"
+  );
+  const retainedDbw = lakehouseLanding?.snapshots.find(
+    ({ manifest }) => manifest.kind === "retained_bronze_snapshot"
+  );
+  const dbwIndicators = retainedDbw?.manifest.kind === "retained_bronze_snapshot"
+    ? retainedDbw.manifest.indicators
+    : [];
+  const dbwSearchTerm = dbwIndicatorSearch.trim().toLocaleLowerCase();
+  const matchingDbwIndicators = dbwSearchTerm
+    ? dbwIndicators.filter((indicator) =>
+        `${indicator.indicator_id} ${indicator.indicator_name} ${indicator.indicator_name_en} ${indicator.taxonomy_path}`
+          .toLocaleLowerCase().includes(dbwSearchTerm)
+      ).sort((left, right) => {
+        const exact = Number(dbwSearchTerm);
+        if (Number.isInteger(exact) && left.indicator_id === exact) return -1;
+        if (Number.isInteger(exact) && right.indicator_id === exact) return 1;
+        return left.indicator_id - right.indicator_id;
+      })
+    : [];
   const formatBytes = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`;
     const units = ["KiB", "MiB", "GiB", "TiB"];
@@ -310,12 +332,67 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
         </div>
       )}
 
-      {(lakehouseLanding?.snapshots.length ?? 0) > 0 && (
+      {lakehouseLanding?.snapshots.some(({ manifest }) => manifest.kind === "landing_snapshot") && (
         <div className="px-3 py-1 text-[11px] text-muted-foreground border-b">
           Response tables contain one accepted source response per row. Inspect{" "}
           <code className="font-mono text-[10px]">payload_utf8</code> for the original source JSON
           or text. Distribution tables list downloaded archives, their versions, sizes and Drive
           file IDs.
+        </div>
+      )}
+
+      {hasRetainedDbw && (
+        <div className="space-y-1 border-b px-3 py-2 text-[11px]">
+          <div className="font-medium">Dated retained DBW Bronze snapshot</div>
+          <div className="text-muted-foreground">
+            Search the audited Polish or English taxonomy, then select one published indicator
+            or an explicit part. Pending indicators remain visible while publication advances.
+          </div>
+          <Input
+            value={dbwIndicatorSearch}
+            onChange={(event) => setDbwIndicatorSearch(event.target.value)}
+            placeholder="Search DBW indicator name or ID"
+            className="h-7 text-xs"
+          />
+          <div className="text-muted-foreground">
+            {dbwSearchTerm
+              ? `${matchingDbwIndicators.length.toLocaleString()} of ${dbwIndicators.length.toLocaleString()} indicators match; showing the first 50.`
+              : `${dbwIndicators.length.toLocaleString()} indicators indexed. Enter a name or ID to choose one.`}
+          </div>
+          {dbwSearchTerm && (
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              {matchingDbwIndicators.slice(0, 50).map((indicator) => {
+                const base = `br_dbw_observations__indicator_${indicator.indicator_id}`;
+                const total = indicator.parts.reduce((sum, part) => sum + (part.size ?? 0), 0);
+                const large = total > 64 * 1024 * 1024;
+                return (
+                  <div key={indicator.indicator_id} className="rounded border px-2 py-1">
+                    <div className="font-medium">
+                      {indicator.indicator_id} · {indicator.indicator_name_en || indicator.indicator_name}
+                    </div>
+                    <div className="text-muted-foreground">{indicator.taxonomy_path}</div>
+                    {indicator.status === "pending" ? (
+                      <div className="text-amber-600">Pending query-fragment publication</div>
+                    ) : large ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {indicator.parts.map((part, index) => (
+                          <Button key={part.id} size="sm" variant="outline" className="h-6 px-2 text-[10px]"
+                            onClick={() => handleSelectDataset("02_bronze", `${base}__part_${index + 1}`)}>
+                            Part {index + 1}/{indicator.parts.length} · {formatBytes(part.size ?? 0)}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : (
+                      <Button size="sm" variant="outline" className="mt-1 h-6 px-2 text-[10px]"
+                        onClick={() => handleSelectDataset("02_bronze", base)}>
+                        Load selected indicator · {formatBytes(total)}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -401,7 +478,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               <span className="truncate">{layer.name}</span>
               {layer.children.length > 0 && (
                 <span className="ml-auto text-[10px] text-muted-foreground font-mono">
-                  {layer.children.length}
+                  {layer.children.filter((table) => !table.name.startsWith("br_dbw_observations__indicator_")).length}
                 </span>
               )}
             </div>
@@ -414,7 +491,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     {layer.loaded ? "No datasets found" : "Click to expand & load…"}
                   </div>
                 ) : (
-                  layer.children.map((table) => {
+                  layer.children
+                    .filter((table) => {
+                      return !table.name.startsWith("br_dbw_observations__indicator_");
+                    })
+                    .map((table) => {
                     const isActive =
                       table.name === activeLakehouseDataset && layer.name === activeLakehouseLayer;
                     const relation = qualifyTable(undefined, layer.name, table.name);
@@ -452,8 +533,8 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                             onClick={() => handleSelectDataset(layer.name, table.name)}
                           >
                             <TableIcon className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                            <span className="truncate font-mono text-[11px]" title={table.name}>
-                              {table.name}
+                            <span className="truncate text-[11px]" title={`${table.label ?? table.name} · SQL: ${table.name}`}>
+                              {table.label ?? table.name}
                             </span>
                           </div>
 

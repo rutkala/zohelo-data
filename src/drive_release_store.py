@@ -56,6 +56,27 @@ class DriveReleaseStore:
             raise ValueError("Drive did not return binary release contents")
         return data
 
+    def list_metadata(self, parent_id):
+        result, token = [], None
+        while True:
+            page = self.files.list(
+                q=f"'{self._quote(parent_id)}' in parents and trashed=false", spaces="drive",
+                pageSize=1000, pageToken=token,
+                fields="nextPageToken,files(id,name,size,sha256Checksum,mimeType,parents,trashed)",
+            ).execute(num_retries=DRIVE_REPEATABLE_REQUEST_RETRIES)
+            for item in page.get("files", []):
+                if item.get("parents") != [parent_id] or item.get("mimeType") == "application/vnd.google-apps.folder":
+                    continue
+                try:
+                    size = int(item.get("size", -1))
+                except (TypeError, ValueError):
+                    size = -1
+                result.append({"id": item.get("id"), "name": item.get("name"), "size": size,
+                    "sha256": item.get("sha256Checksum"), "trashed": item.get("trashed"),
+                    "kind": item.get("mimeType")})
+            token = page.get("nextPageToken")
+            if not token: return result
+
     def mkdir(self, name, parent_id):
         write_session = self._authorize_parent(parent_id)
         if write_session is None:

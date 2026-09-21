@@ -42,6 +42,7 @@ _STATE_OBJECT_RE = re.compile(
 )
 _POINTER_NAME = "current-ingestion-state.json"
 _LANDING_POINTER_NAME = "current-landing.json"
+_PUBLICATION_OWNER_NAME = "publication-owner.json"
 _LANDING_OBJECT_RE = re.compile(
     r"^(?:fragment|manifest)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{4}-[0-9a-f]{12}\.(?:parquet|json)$"
@@ -97,6 +98,8 @@ class _ObjectStore(Protocol):
 
     def mkdir(self, name: str, parent_id: str) -> str: ...
 
+    def list_metadata(self, parent_id: str) -> list[dict[str, Any]]: ...
+
 
 @dataclass(frozen=True)
 class _PointerObservation:
@@ -136,6 +139,7 @@ class _CampaignStore:
         self._verified_state_objects: dict[str, dict[str, Any]] = {}
         self._entry_orders: dict[str, dict[str, int]] = {}
         self._materialized_state: dict[str, Any] | None = None
+        self._publication_owner: str | None = None
 
     def load(self) -> dict[str, Any] | None:
         """Load and verify the current immutable state snapshot, if it exists."""
@@ -1008,6 +1012,7 @@ class _CampaignStore:
         self, name: str, data: bytes, *, maximum_bytes: int = MAX_LANDING_FILE_BYTES
     ) -> dict[str, Any]:
         """Create and verify one immutable publication object in the source namespace."""
+        self.guard_publication_owner()
         _require_landing_object_name(name)
         if not isinstance(data, bytes) or not data:
             raise CampaignStoreError("Landing publication object must contain bytes")
@@ -1063,8 +1068,32 @@ class _CampaignStore:
             raise CampaignStoreError("Landing publication object does not match its descriptor")
         return raw
 
+    def verify_landing_objects_metadata(self, descriptors: list[dict[str, Any]]) -> None:
+        """Verify one complete immutable descriptor set with one paginated listing."""
+        expected: dict[str, tuple[str, int, str]] = {}
+        for descriptor in descriptors:
+            name = _require_landing_object_name(descriptor.get("name"))
+            object_id = _require_object_id(descriptor.get("id"), "Landing publication object id")
+            size = _bounded_size(descriptor.get("size"), MAX_LANDING_FILE_BYTES, "Landing publication object")
+            digest = _require_sha256(descriptor.get("sha256"), "Landing publication object SHA-256")
+            if object_id in expected:
+                raise CampaignStoreError("Landing publication descriptor reuses an object ID")
+            expected[object_id] = (name, size, digest)
+        observed = self._store.list_metadata(self._landing_root())
+        relevant = [item for item in observed if item.get("id") in expected or item.get("name") in {v[0] for v in expected.values()}]
+        by_id = {item.get("id"): item for item in relevant}
+        if (len(relevant) != len(expected) or len(by_id) != len(relevant) or
+            len({item.get("name") for item in relevant}) != len(relevant)):
+            raise CampaignStoreError("Landing publication metadata is missing or duplicated")
+        for object_id, (name, size, digest) in expected.items():
+            item = by_id[object_id]
+            if (item.get("name") != name or item.get("size") != size or item.get("sha256") != digest or
+                item.get("trashed") is not False or item.get("kind") != "application/octet-stream"):
+                raise CampaignStoreError("Landing publication object metadata changed")
+
     def promote_landing_pointer(self, pointer: dict[str, Any]) -> None:
         """Promote a fully written immutable snapshot with drift and readback checks."""
+        self.guard_publication_owner()
         pointer_raw = _json_object_bytes(pointer, "Landing snapshot pointer")
         if len(pointer_raw) > MAX_POINTER_BYTES:
             raise CampaignCapacityError("Landing snapshot pointer exceeds its safety limit")
@@ -1079,6 +1108,69 @@ class _CampaignStore:
         promoted = self._promote_landing_pointer(expected, pointer_raw)
         self._expected_landing_pointer = promoted
         self._landing_pointer_observed = True
+
+    def acquire_publication_owner(self, owner: str) -> None:
+        """Acquire the source-wide, non-expiring publication owner record."""
+        owner = _require_object_id(owner, "publication owner")
+        raw = _json_object_bytes({"format_version": 1, "source_id": self.source_id,
+            "owner": owner, "status": "held"}, "publication owner")
+        found = self._find(_PUBLICATION_OWNER_NAME, self._control_root_id)
+        if len(found) > 1:
+            raise CampaignStoreError("publication owner record is ambiguous")
+        if not found:
+            owner_id = self._create_verified(_PUBLICATION_OWNER_NAME, raw, self._control_root_id, "publication owner")
+        else:
+            owner_id = found[0]
+            current = _decode_object(self._read(owner_id, "publication owner"), "publication owner")
+            if (set(current) not in ({"format_version", "source_id", "owner", "status"},
+                                    {"format_version", "source_id", "owner", "status", "recovered_by"}) or
+                current.get("format_version") != 1 or current.get("source_id") != self.source_id or
+                current.get("status") != "released"):
+                raise CampaignStoreError("another source publication writer owns this source")
+            self._store.replace(owner_id, raw)
+        found = self._find(_PUBLICATION_OWNER_NAME, self._control_root_id)
+        if len(found) != 1 or found[0] != owner_id or self._read(owner_id, "publication owner") != raw:
+            raise CampaignStoreError("publication owner acquisition was not uniquely readable")
+        self._publication_owner = owner
+
+    def guard_publication_owner(self) -> None:
+        if self._publication_owner is None:
+            return
+        found = self._find(_PUBLICATION_OWNER_NAME, self._control_root_id)
+        if len(found) != 1:
+            raise CampaignStoreError("publication owner record changed or became ambiguous")
+        value = _decode_object(self._read(found[0], "publication owner"), "publication owner")
+        if value != {"format_version": 1, "source_id": self.source_id,
+                     "owner": self._publication_owner, "status": "held"}:
+            raise CampaignStoreError("source publication ownership was lost")
+
+    def release_publication_owner(self) -> None:
+        if self._publication_owner is None:
+            return
+        self.guard_publication_owner()
+        found = self._find(_PUBLICATION_OWNER_NAME, self._control_root_id)
+        raw = _json_object_bytes({"format_version": 1, "source_id": self.source_id,
+            "owner": self._publication_owner, "status": "released"}, "publication owner")
+        self._store.replace(found[0], raw)
+        if self._read(found[0], "publication owner") != raw:
+            raise CampaignStoreError("publication owner release was not readable")
+        self._publication_owner = None
+
+    def recover_publication_owner(self, expected_owner: str, recovery_identity: str) -> None:
+        """Explicitly release one observed stale owner; never infer staleness by time."""
+        expected_owner = _require_object_id(expected_owner, "expected publication owner")
+        recovery_identity = _require_object_id(recovery_identity, "publication owner recovery identity")
+        found = self._find(_PUBLICATION_OWNER_NAME, self._control_root_id)
+        if len(found) != 1:
+            raise CampaignStoreError("publication owner record is missing or ambiguous")
+        value = _decode_object(self._read(found[0], "publication owner"), "publication owner")
+        if value != {"format_version": 1, "source_id": self.source_id,
+                     "owner": expected_owner, "status": "held"}:
+            raise CampaignStoreError("stale publication owner does not match the explicit recovery target")
+        raw = _json_object_bytes({**value, "status": "released", "recovered_by": recovery_identity}, "publication owner")
+        self._store.replace(found[0], raw)
+        if self._read(found[0], "publication owner") != raw:
+            raise CampaignStoreError("stale publication owner recovery was not readable")
 
     def _states_root(self) -> str:
         return self._one_folder("states", self._control_root_id)
@@ -1424,6 +1516,17 @@ class _LocalObjectStore:
         candidate = parent / name
         return [self._id(candidate)] if candidate.exists() or candidate.is_symlink() else []
 
+    def list_metadata(self, parent_id: str) -> list[dict[str, Any]]:
+        parent = self._path(parent_id)
+        result = []
+        for path in parent.iterdir():
+            if path.is_file() and not path.is_symlink():
+                raw = path.read_bytes()
+                result.append({"id": self._id(path), "name": path.name, "size": len(raw),
+                    "sha256": sha256(raw).hexdigest(), "trashed": False,
+                    "kind": "application/octet-stream" if path.suffix == ".parquet" else "application/json"})
+        return result
+
     def create(self, name: str, data: bytes, parent_id: str) -> str:
         _require_segment(name)
         if not isinstance(data, bytes) or not data:
@@ -1450,7 +1553,7 @@ class _LocalObjectStore:
 
     def replace(self, file_id: str, data: bytes) -> None:
         path = self._path(file_id)
-        pointer_names = {_POINTER_NAME, _LANDING_POINTER_NAME}
+        pointer_names = {_POINTER_NAME, _LANDING_POINTER_NAME, _PUBLICATION_OWNER_NAME}
         expected_parent = self.root / "06_control" / "source_campaigns" / path.parent.name
         if (
             path.parent != expected_parent
