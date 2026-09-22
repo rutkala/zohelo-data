@@ -4,13 +4,41 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Owner two-track delivery priority and local continuation — 22 September 2026
+
+The owner requires both autonomous backend delivery across the approved source programme
+and usable new data in `data.zohelo.com`. Routine engineering does not need owner supervision.
+Portal SQL access is an acceptance requirement, not satisfied by physical inventory alone.
+Preserve stage isolation and native-only Landing; expose each verified existing layer with
+its actual scope and remaining blockers, without relabelling retained Bronze as native Landing.
+Immediate engineering priority is finishing existing PR #145, followed by other retained
+source query contracts while source ingestion/modeling remains an open programme.
+
+At 07:54 UTC, a fresh, stable read of BDL's durable queue verified 2,385 reported native
+files / 626,046,982 bytes, 1,087 selection-complete / 2,420 known subgroups and 56 blocked
+selections. The writer record is released and no local worker is running; the monitor is
+monitor-only. The last worker stopped after a Drive folder-create timeout, so further
+reconciliation precedes any resume. This is retained native-transfer evidence, not full
+coverage or Bronze availability. No BDL restart or downstream launch is claimed here.
+
+The live portal still reports inventory-only commit `5e5f42a`. PR #145 remains unpublished.
+Inherited uncommitted query work was preserved before continuation in
+`.local/chat-delivery-2026-09-22/inherited-dbw-work.patch`. Review repairs now enforce exact
+reviewed audit hashes before production mutation, verify taxonomy bytes before using them,
+and apply the observation-selection guard to parsed SQL references instead of raw text.
+ADR 0010 adds server-serialized ownership before Drive namespace mutation; real local-Git
+race tests exercise this boundary. Ten focused Python tests and 38 focused portal tests pass.
+Full current-revision checks are running. No merge, Drive publication or live SQL acceptance
+is claimed until the corresponding subsequent receipt is recorded.
+
 ### Recovery deployed and retained DBW audit completed — 21 September 2026, 21:42 UTC
 
 **BDL repair merged and resumed:** [PR #143](https://github.com/rutkala/zohelo-data/pull/143)
 merged as `5097e7eab3e6e328b3be74d6ee0de4fe837b710e` after the complete credential-free
 [data-platform CI](https://github.com/rutkala/zohelo-data/actions/runs/35656215024) passed.
-The focused runner suite passed 21 tests and independent review found no blocker. The
-separate local full suite remains running; no local-suite completion is claimed. The repair
+The focused runner suite passed 21 tests and independent review found no blocker. The old local
+full suite was later interrupted after its environment mismatch was diagnosed; the exact failed
+fixture passed with the corrected runtime, and the complete CI run above is green. The repair
 propagates worker/control failures, maintains serialized heartbeats, joins workers before
 lock release, and denies completion after uncertain writes. The initiating historical
 queue drift remains unexplained; the Drive writer record is still an application-level lock.
@@ -55,6 +83,22 @@ The [retained audit evidence](audits/2026-09-21-dbw-retained-report.json), SHA-2
 limits. This is not a #136 release, current provider-catalogue coverage, native-to-Bronze
 value lineage or a publication/completion marker. No DBW downstream writer was started.
 
+**Recovery follow-up through 22:34 UTC:** the retained-DBW publisher passed an actual-audit local-store
+run without Drive writes. Two increments advanced from 8 to 16 published indicators in 184.21
+seconds; all 30 fixed-relation fragments and the first eight observation descriptors were reused
+exactly on resume. The 8,358,612-row dictionary benchmark produced 28 fragments, each below 8 MiB,
+with bidirectional `EXCEPT ALL` value/multiplicity proof. This establishes local publication and
+resume behavior, not a Drive publication or deployed portal query. At 22:14 UTC, the active BDL
+writer's fresh checkpoint reported 2,366 native files / 624,618,034 bytes, 1,087 of 2,420 complete subgroups,
+three in flight and 56 blocked; its heartbeat was current. A separate read-only audit also verified
+seven retained TERYT/PRG Parquet files / 130,767,618 bytes with stable checksums and schemas; their
+publication remains follow-on work.
+
+At 22:30:08 UTC the BDL coordinator stopped with `CampaignControlFailure` after a timed-out Drive
+partition-receipt save (`TimeoutError`). Container OOM counters remain zero. Its in-memory report of
+66 new files / 4,644,107 bytes is not durable coverage evidence. The queue, writer record and part
+receipts require fresh reconciliation before another resume; no BDL writer is currently claimed.
+
 **Portal inventory merged and deployed:** [PR #142](https://github.com/rutkala/zohelo-data/pull/142)
 merged as `5e5f42a5c291eb8f33761f5d2f767c2fd37bad49` after both full portal CI variants
 passed in [35593113336](https://github.com/rutkala/zohelo-data/actions/runs/35593113336)
@@ -72,19 +116,24 @@ files and 1,553 DBW Bronze files. The complete catalogue-plus-inventory refresh 
 under the local recovery evidence directory. This exercises the deployed UI with the
 existing owner OAuth access token; it does not claim a new interactive Google sign-in test.
 
+**Active retained-DBW query work:** the audited dated Bronze snapshot now has an implementation
+for value-preserving fragments, per-object content-addressed resume, bounded typed row-stream
+verification, a strict four-dataset manifest, and an indicator/part selector in the portal. Local
+fixtures and review are in progress; the largest retained indicator still requires actual-data
+acceptance of the bounded stream proof before production continuation. No Drive
+publication, merge, deployment or authenticated browser query is claimed yet; native-to-Bronze
+lineage and current source completeness remain explicitly unresolved.
+
 **Remaining authorized work:** continue this finite BDL pass, then review terminal failed
-selections without removing retry caps or claiming full-source completion. The next portal
-data increment is the previously accepted dated DBW retained-Bronze snapshot with bounded
-query fragments and explicit unresolved lineage; this audit is its evidence prerequisite,
-not that implementation. BDL Bronze publication safety, unpublished source adapters, and
+selections without removing retry caps or claiming full-source completion. BDL Bronze publication safety, unpublished source adapters, and
 the remaining native-only migration stay unfinished. Original dirty source work and the
 unpushed Telegram branch remain preserved. Both merged feature branches were deleted on
-origin and refs pruned; the BDL test worktree is retained while its local suite runs. A
-one-shot cleanup observer (PID `90204`) waits for that existing test process, records its
-result, and removes only the unchanged merged test checkout after success. On failure or
-identity drift it preserves the checkout for review. Its receipt is
-`.local/recovery-2026-09-21/rebuilt-2047/local-validation-cleanup.json`. This does not
-start another test run, ingestion job, engineering task or recurring schedule.
+origin and refs pruned. The old local full suite was deliberately interrupted at 21:50 UTC after
+its failure was traced to the stale root `.venv/bin/dbt` launcher (Python 3.11 with Python 3.12
+packages). CI run 35656215024 passed, and the exact DBW fixture passed in 21.210 seconds with the
+correct `/tmp` Python 3.12 runtime first in `PATH`. The clean merged test worktree and branch were
+removed; the cleanup observer exited and its receipt remains at
+`.local/recovery-2026-09-21/rebuilt-2047/local-validation-cleanup.json`.
 
 ### Second devcontainer recovery — 21 September 2026, 21:03 UTC
 

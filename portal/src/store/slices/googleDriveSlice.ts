@@ -51,14 +51,47 @@ const releaseFingerprint = (release: ReleaseCatalogResolution | null) => {
   return release.fingerprint;
 };
 
-const landingDatasets = (landing: LandingCatalogResolution | null): PublishedDataset[] =>
-  (landing?.snapshots ?? []).map(({ manifest }) => ({
-    dataset_id: manifest.table_name,
-    layer: manifest.layer,
-    table_name: manifest.table_name,
-    columns: manifest.columns,
-    files: manifest.files,
-  }));
+export const landingDatasets = (landing: LandingCatalogResolution | null): PublishedDataset[] =>
+  (landing?.snapshots ?? []).flatMap(({ manifest }) => {
+    if (manifest.kind !== "retained_bronze_snapshot") return [{
+      dataset_id: manifest.table_name, layer: manifest.layer, table_name: manifest.table_name,
+      columns: manifest.columns, files: manifest.files,
+    }];
+    const fixed = manifest.datasets.filter((dataset) => dataset.dataset_id !== "observations");
+    const observationRoot = manifest.datasets.find((dataset) => dataset.dataset_id === "observations");
+    const observations = manifest.indicators.flatMap((indicator): PublishedDataset[] => {
+      const base = `br_dbw_observations__indicator_${indicator.indicator_id}`;
+      const label = `${indicator.indicator_id} · ${indicator.indicator_name_en || indicator.indicator_name}`;
+      if (indicator.status === "pending") return [{ dataset_id: base, layer: "02_bronze", table_name: base,
+        columns: manifest.observation_schema, files: [], label: `${label} · pending`, availability: "pending" }];
+      const total = indicator.parts.reduce((sum, part) => sum + (part.size ?? 0), 0);
+      if (total <= 64 * 1024 * 1024) return [{ dataset_id: base, layer: "02_bronze", table_name: base,
+        columns: manifest.observation_schema,
+        files: indicator.parts.map((part) => ({ ...part, tableName: base })), label, availability: "published" }];
+      return indicator.parts.map((part, index) => {
+        const tableName = `${base}__part_${index + 1}`;
+        return { dataset_id: tableName, layer: "02_bronze", table_name: tableName,
+          columns: manifest.observation_schema, files: [{ ...part, tableName }],
+          label: `${label} · part ${index + 1}/${indicator.parts.length}`, availability: "published" };
+      });
+    });
+    return [
+      ...(observationRoot ? [{ ...observationRoot, label: "DBW observations · choose an indicator" }] : []),
+      ...fixed,
+      ...observations,
+    ];
+  });
+
+const snapshotForTable = (
+  landing: LandingCatalogResolution | null,
+  layerName: string,
+  tableName: string
+) => landing?.snapshots.find((snapshot) =>
+  snapshot.manifest.kind === "retained_bronze_snapshot"
+    ? layerName === "02_bronze" && landingDatasets({ snapshots: [snapshot], issues: [], fingerprint: snapshot.fingerprint })
+        .some((dataset) => dataset.table_name === tableName)
+    : snapshot.manifest.layer === layerName && snapshot.manifest.table_name === tableName
+);
 
 const publishedDatasets = (
   release: ReleaseCatalogResolution | null,
@@ -149,6 +182,8 @@ function treeFromPublished(
           expanded: false,
           loaded: true,
           children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
+          label: dataset.label,
+          availability: dataset.availability,
         })),
     };
   });
@@ -170,6 +205,8 @@ function mergeLandingIntoTree(
         expanded: false,
         loaded: true,
         children: dataset.files.map((file) => ({ ...file, tableName: dataset.table_name })),
+        label: dataset.label,
+        availability: dataset.availability,
       }));
     if (matching.length === 0) return layer;
     return {
@@ -213,9 +250,8 @@ export const createGoogleDriveSlice: StateCreator<
     release: ReleaseCatalogResolution | null,
     landing: LandingCatalogResolution | null
   ) => {
-    if (layerName === "01_landing") {
-      const snapshot = landing?.snapshots.find(({ manifest }) => manifest.table_name === tableName);
-      if (!snapshot) return;
+    const snapshot = snapshotForTable(landing, layerName, tableName);
+    if (snapshot) {
       let fingerprints = loadedLandingFingerprints.get(db);
       if (!fingerprints) {
         fingerprints = new Map();
@@ -263,6 +299,12 @@ export const createGoogleDriveSlice: StateCreator<
       lakehouseStatusMessage: `Loading '${label}' from Google Drive...`,
     });
     try {
+      if (tableName === "br_dbw_observations") {
+        throw new Error("Search and choose a dated retained DBW indicator or explicit part before loading observations.");
+      }
+      if (table?.availability === "pending") {
+        throw new Error("This dated retained DBW indicator is discoverable but its query fragments are still pending publication.");
+      }
       if (!table) throw new Error(`Dataset '${tableName}' was not found in the catalog.`);
       let queryTarget: string;
       if (fileId !== undefined) {
@@ -483,6 +525,20 @@ export const createGoogleDriveSlice: StateCreator<
         throw new Error("Google Drive session changed before SQL dependencies could be resolved.");
       }
       if (referenced.length === 0) return;
+      if (referenced.some((table) =>
+        table.layerName === "02_bronze" && table.datasetName === "br_dbw_observations"
+      )) {
+        throw new Error(
+          "Choose a dated retained DBW indicator (or one of its explicit parts) before querying observations; the full retained collection is not loaded into the browser."
+        );
+      }
+      if (referenced.some((table) =>
+        table.datasetName.startsWith("br_dbw_observations__indicator_") && table.files.length === 0
+      )) {
+        throw new Error(
+          "The selected dated retained DBW indicator is still pending fragment publication. Choose a published indicator or part."
+        );
+      }
       const loadedFingerprint = loadedReleaseFingerprints.get(local.db);
       const selectedReleaseFingerprint = releaseFingerprint(source);
       if (
@@ -698,8 +754,28 @@ export const createGoogleDriveSlice: StateCreator<
               const targetLayer =
                 selected?.manifest.layer ??
                 (sourceId.endsWith("_bronze") ? "02_bronze" : "01_landing");
+              if (sourceId === "gus_dbw_retained_bronze") {
+                const relations = await local.connection.query(
+                  "SELECT table_name FROM information_schema.tables WHERE table_schema = '02_bronze'"
+                );
+                const dropped = new Set<string>();
+                for (const row of relations.toArray()) {
+                  const name = String(row.table_name);
+                  if (name.startsWith("br_dbw_observations__indicator_") ||
+                      ["br_dbw_dictionaries", "br_dbw_metadata", "br_dbw_indicators"].includes(name)) {
+                    await local.connection.query(`DROP VIEW IF EXISTS "02_bronze"."${name.replace(/"/g, '""')}";`);
+                    dropped.add(name);
+                  }
+                }
+                loadedLanding.delete(sourceId);
+                if (get().activeLakehouseLayer === "02_bronze" &&
+                    get().activeLakehouseDataset && dropped.has(get().activeLakehouseDataset!)) {
+                  set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
+                }
+                continue;
+              }
               const tableName =
-                selected?.manifest.table_name ??
+                (selected && selected.manifest.kind !== "retained_bronze_snapshot" ? selected.manifest.table_name : undefined) ??
                 (sourceId === "opendata_org_bronze"
                   ? "br_opendata_organizations"
                   : sourceId === "opendata_org_locations_bronze"

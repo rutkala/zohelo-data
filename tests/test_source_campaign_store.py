@@ -319,6 +319,13 @@ class DriveCampaignStoreTests(unittest.TestCase):
         )
         opted_in.replace("pointer", b"{}")
         files.update.assert_called_once()
+        files.update.reset_mock()
+
+        files.get.return_value.execute.return_value = {
+            **common, "name": "publication-owner.json"
+        }
+        opted_in.replace("pointer", b'{"status":"released"}')
+        files.update.assert_called_once()
 
     def test_selected_root_paths_and_nbp_pointer_are_isolated(self):
         objects = MemoryDriveObjects()

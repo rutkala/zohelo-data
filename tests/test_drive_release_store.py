@@ -39,6 +39,24 @@ class DriveReleaseStoreTests(unittest.TestCase):
         self.files.delete.assert_not_called()
         self.files.update.assert_not_called()
 
+    def test_metadata_listing_is_paginated_and_retains_sha256(self):
+        self.files.list.return_value.execute.side_effect = [
+            {"nextPageToken": "next", "files": [{"id": "one", "name": "fragment-a.parquet",
+                "size": "7", "sha256Checksum": "a" * 64, "mimeType": "application/octet-stream",
+                "parents": ["landing"], "trashed": False}]},
+            {"files": [{"id": "two", "name": "fragment-b.parquet", "size": "9",
+                "sha256Checksum": "b" * 64, "mimeType": "application/octet-stream",
+                "parents": ["landing"], "trashed": False}]},
+        ]
+        self.assertEqual(self.store.list_metadata("landing"), [
+            {"id": "one", "name": "fragment-a.parquet", "size": 7, "sha256": "a" * 64,
+             "trashed": False, "kind": "application/octet-stream"},
+            {"id": "two", "name": "fragment-b.parquet", "size": 9, "sha256": "b" * 64,
+             "trashed": False, "kind": "application/octet-stream"},
+        ])
+        self.assertEqual(self.files.list.call_count, 2)
+        self.assertEqual(self.files.list.call_args_list[1].kwargs["pageToken"], "next")
+
     def test_bronze_zone_uses_selected_storage_root(self):
         self.storage.resolve_zone.return_value = "configured-bronze"
         self.assertEqual(_get_zone_id(self.storage, "02_bronze"), "configured-bronze")

@@ -329,6 +329,26 @@ describe("immutable release selection", () => {
       fingerprint: `world_bank_wdi:${snapshotId}`,
     }) as unknown as DuckStoreState["lakehouseLanding"] & {};
 
+  const retainedDbwLanding = (snapshotId: string) =>
+    ({
+      snapshots: [{
+        fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
+        pointer: { snapshot_id: snapshotId },
+        manifest: {
+          kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
+          snapshot_id: snapshotId, layer: "02_bronze", table_name: "br_dbw_observations",
+          columns: [{ name: "indicator_id", type: "BIGINT" }], files: [], row_count: 1,
+          observation_schema: [{ name: "indicator_id", type: "BIGINT" }],
+          datasets: [{ dataset_id: "observations", layer: "02_bronze",
+            table_name: "br_dbw_observations", columns: [{ name: "indicator_id", type: "BIGINT" }], files: [] }],
+          indicators: [{ indicator_id: 1, indicator_name: "Wskaźnik", indicator_name_en: "Indicator",
+            thematic_area: "Area", domain: "Domain", taxonomy_path: "Area > Domain", status: "published",
+            row_count: 1, parts: [{ id: `${snapshotId}-part`, name: "fragment.parquet", size: 10,
+              sha256: "c".repeat(64), tableName: "br_dbw_observations__indicator_1", layer: "02_bronze" }] }],
+        },
+      }], issues: [], fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
+    }) as unknown as DuckStoreState["lakehouseLanding"] & {};
+
   it("merges an independently pinned Landing table without changing the NBP manifest", async () => {
     const store = makeStore();
     vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
@@ -464,6 +484,33 @@ describe("immutable release selection", () => {
     });
     expect(store.getState().activeLakehouseDataset).toBeNull();
     expect(loadTableIntoDuckDB).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates a changed retained DBW view and clears its badge while preserving NBP", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-1"));
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().selectLakehouseDataset("02_bronze", "br_dbw_observations__indicator_1");
+    const connection = (store.getState().currentSession as unknown as {
+      local: { connection: { query: ReturnType<typeof vi.fn> } };
+    }).local.connection;
+    connection.query.mockClear();
+    connection.query.mockImplementation(async (sql: string) => ({
+      toArray: () => sql.startsWith("SELECT table_name")
+        ? [{ table_name: "br_dbw_observations__indicator_1" }, { table_name: "rates" }]
+        : [],
+    }));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-2"));
+
+    await store.getState().refreshLakehouseCatalog();
+
+    expect(connection.query).toHaveBeenCalledWith(
+      'DROP VIEW IF EXISTS "02_bronze"."br_dbw_observations__indicator_1";'
+    );
+    expect(connection.query).not.toHaveBeenCalledWith('DROP VIEW IF EXISTS "02_bronze"."rates";');
+    expect(store.getState().activeLakehouseDataset).toBeNull();
+    expect(store.getState().lakehouseRelease).toMatchObject({ kind: "release", manifest: { release_id: "release-1" } });
   });
 
   it("pins the loaded release and refuses an explicit refresh to a different release", async () => {
@@ -973,6 +1020,38 @@ describe("lazy published-query loading", () => {
     expect(store.getState().activeLakehouseDataset).toBe("previous");
     expect(store.getState().activeLakehouseLayer).toBe("03_silver");
   });
+  it.each([
+    "SELECT 'br_dbw_observations' AS label",
+    "-- br_dbw_observations\nSELECT 1",
+    "SELECT * FROM main.br_dbw_observations",
+  ])("does not reject non-published DBW text or relations: %s", async (sql) => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({ currentSession: {
+      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+    } } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
+    await expect(store.getState().preparePublishedTablesForQuery(sql)).resolves.toBeUndefined();
+    expect(resolvePublishedTableReferences).toHaveBeenCalled();
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+  });
+
+  it("blocks only the parsed aggregate published DBW relation before downloading", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({ currentSession: {
+      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+    } } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      { datasetName: "br_dbw_observations", layerName: "02_bronze", files: [] },
+    ]);
+    await expect(store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "02_bronze"."br_dbw_observations"'
+    )).rejects.toThrow("Choose a dated retained DBW indicator");
+    expect(resolvePublishedTableReferences).toHaveBeenCalled();
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+  });
+
   it("keeps existing local relations and reloads a release relation after it is dropped", async () => {
     const store = makeStore();
     configurePinnedGoldRelease(store);

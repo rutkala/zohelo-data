@@ -21,6 +21,8 @@ export interface LakehouseTable {
   expanded: boolean;
   loaded: boolean;
   children: LakehouseFile[];
+  label?: string;
+  availability?: "published" | "pending";
 }
 
 export interface LakehouseLayer {
@@ -150,7 +152,10 @@ export type ReleaseManifest =
 export type LandingResponseSourceId = "world_bank_wdi" | "gus_bdl" | "eurostat";
 export type BulkLandingSourceId = "world_bank_wdi_bulk" | "eurostat_bulk" | "opendata_org_bulk";
 export type BronzeCampaignSourceId =
-  "opendata_org_bronze" | "opendata_org_locations_bronze" | "opendata_org_people_bronze";
+  | "opendata_org_bronze"
+  | "opendata_org_locations_bronze"
+  | "opendata_org_people_bronze"
+  | "gus_dbw_retained_bronze";
 export type LandingSourceId =
   LandingResponseSourceId | BulkLandingSourceId | BronzeCampaignSourceId;
 
@@ -229,8 +234,52 @@ export interface BronzeCampaignManifest {
   tests: { passed: true };
 }
 
+export interface RetainedBronzeIndicator {
+  indicator_id: number;
+  indicator_name: string;
+  indicator_name_en: string;
+  thematic_area: string;
+  domain: string;
+  taxonomy_path: string;
+  status: "pending" | "published";
+  row_count: number;
+  parts: LakehouseFile[];
+}
+
+export interface RetainedBronzeManifest {
+  format_version: 1;
+  kind: "retained_bronze_snapshot";
+  source_id: "gus_dbw_retained_bronze";
+  snapshot_id: string;
+  created_at_utc: string;
+  code_sha: string;
+  status: "validated";
+  layer: "02_bronze";
+  coverage_status: "incomplete_retained_inventory";
+  lineage_status: "unresolved_native_to_bronze";
+  inventory_sha256: string;
+  audit_report_sha256: string;
+  audit_run_id: string;
+  indicator_count: number;
+  published_indicator_count: number;
+  pending_indicator_count: number;
+  datasets: PublishedDataset[];
+  /** Parsed compatibility fields for the deliberately unselected aggregate. */
+  table_name: "br_dbw_observations";
+  columns: Array<{ name: string; type: string }>;
+  files: LakehouseFile[];
+  row_count: number;
+  observation_schema: Array<{ name: string; type: string }>;
+  indicator_index: { id: string; name: string; size: number; sha256: string };
+  indicators: RetainedBronzeIndicator[];
+  tests: { passed: true; rows_and_schemas_preserved: true };
+}
+
 export type LandingSnapshotManifest =
-  LandingResponseSnapshotManifest | BulkDistributionIndexManifest | BronzeCampaignManifest;
+  | LandingResponseSnapshotManifest
+  | BulkDistributionIndexManifest
+  | BronzeCampaignManifest
+  | RetainedBronzeManifest;
 
 export interface LandingSnapshotResolution {
   pointer: LandingSnapshotPointer;
@@ -285,6 +334,9 @@ export interface PublishedDataset {
   table_name: string;
   columns: Array<{ name: string; type: string }>;
   files: LakehouseFile[];
+  row_count?: number;
+  label?: string;
+  availability?: "published" | "pending";
 }
 
 export interface BusinessCatalogueSource {

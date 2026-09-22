@@ -139,3 +139,16 @@ all fourteen dataset contracts and their bounded file descriptors, and merges th
 and lineage into the existing Lakehouse experience. Browser queries retain the shared 512 MiB
 session budget; partitioning avoids a single oversized transfer but does not make the browser an
 unlimited archive reader.
+
+The dated retained DBW audit has a separate progressive Bronze publication contract under
+`06_control/source_campaigns/gus_dbw_retained_bronze`. Its strict manifest contains four datasets
+and a bounded taxonomy-derived indicator index. Observation queries select one indicator, or one
+explicit part for selections above 64 MiB. Snapshot identity is the audited retained inventory and
+audit report; native-to-Bronze lineage remains unresolved. This snapshot is independent of NBP
+release identity and the native dbt business catalogue.
+
+The retained DBW publisher alone additionally uses a non-expiring operational Git-ref
+claim acquired atomically before Drive namespace mutation. Explicit expected-SHA leases
+protect acquisition/release, and the reviewed audit hashes are enforced before either
+Git/Drive owner is acquired. See [ADR 0010](decisions/0010-retained-dbw-publication-ownership.md).
+Other source writers retain their own documented coordination boundaries.

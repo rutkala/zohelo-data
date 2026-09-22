@@ -18,6 +18,7 @@ import type {
   LandingSnapshotResolution,
   LandingSourceId,
   LakehouseFile,
+  RetainedBronzeIndicator,
 } from "./types";
 
 export const LANDING_SOURCE_IDS = [
@@ -30,6 +31,7 @@ export const LANDING_SOURCE_IDS = [
   "opendata_org_bronze",
   "opendata_org_locations_bronze",
   "opendata_org_people_bronze",
+  "gus_dbw_retained_bronze",
 ] as const;
 
 const LANDING_COLUMNS = [
@@ -116,6 +118,27 @@ const OPENDATA_PEOPLE_COLUMNS = [
   ["linkedin", "VARCHAR"],
 ] as const;
 
+const DBW_OBSERVATION_COLUMNS = [
+  ["indicator_id", "BIGINT"], ["przekroj_id", "BIGINT"],
+  ...Array.from({ length: 9 }, (_, i) => [[`wymiar_${i + 1}`, "BIGINT"], [`pozycja_${i + 1}`, "BIGINT"]]).flat(),
+  ["okres_id", "INTEGER"], ["sposob_prezentacji_miara_id", "INTEGER"],
+  ["period_year", "INTEGER"], ["wartosc_raw", "VARCHAR"], ["wartosc_numeric", "DOUBLE"],
+  ["precyzja", "INTEGER"], ["brak_wartosci_id", "INTEGER"], ["tajnosci_id", "INTEGER"],
+  ["flaga_id", "INTEGER"], ["raw_archive_file", "VARCHAR"], ["source_row_number", "BIGINT"],
+  ["processed_at_utc", "VARCHAR"],
+] as const;
+const DBW_DATASET_COLUMNS: Record<string, readonly (readonly string[])[]> = {
+  observations: DBW_OBSERVATION_COLUMNS,
+  dictionaries: [["indicator_id", "BIGINT"], ["column_name", "VARCHAR"], ["dictionary_name", "VARCHAR"],
+    ["element_id", "BIGINT"], ["element_name", "VARCHAR"], ["processed_at_utc", "VARCHAR"]],
+  metadata: [["indicator_id", "BIGINT"], ["metric_name", "VARCHAR"], ["metric_name_en", "VARCHAR"],
+    ["description", "VARCHAR"], ["frequency", "VARCHAR"], ["measure_unit", "VARCHAR"],
+    ["data_source", "VARCHAR"], ["legal_basis", "VARCHAR"], ["last_update", "VARCHAR"], ["processed_at_utc", "VARCHAR"]],
+  taxonomy: [["indicator_id", "BIGINT"], ["indicator_name", "VARCHAR"], ["indicator_name_en", "VARCHAR"],
+    ["thematic_area", "VARCHAR"], ["domain", "VARCHAR"], ["taxonomy_path", "VARCHAR"],
+    ["node_id", "VARCHAR"], ["parent_id", "VARCHAR"], ["processed_at_utc", "VARCHAR"]],
+};
+
 const bronzeColumnsForSource = (sourceId: BronzeCampaignSourceId) => {
   if (sourceId === "opendata_org_locations_bronze") return OPENDATA_LOCATION_COLUMNS;
   if (sourceId === "opendata_org_people_bronze") return OPENDATA_PEOPLE_COLUMNS;
@@ -127,7 +150,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODE_SHA_RE = /^[0-9a-f]{40}$/;
 const DRIVE_ID_RE = /^[A-Za-z0-9_-]{1,255}$/;
 const PARQUET_NAME_RE =
-  /^(fragment-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|br_[A-Za-z0-9_-]+)\.parquet$/;
+  /^(fragment-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:[a-z0-9]+-)*[0-9a-f]{64})|br_[A-Za-z0-9_-]+)\.parquet$/;
 const LANDING_MANIFEST_MAX_BYTES = 1024 * 1024;
 const LANDING_FILE_MAX_BYTES = 8 * 1024 * 1024;
 const BRONZE_FILE_MAX_BYTES = 32 * 1024 * 1024;
@@ -200,6 +223,12 @@ const BRONZE_MANIFEST_FIELDS = new Set([
   "receipt_checkpoint_sha256",
   "tests",
 ]);
+const RETAINED_BRONZE_MANIFEST_FIELDS = new Set([
+  "format_version", "kind", "source_id", "snapshot_id", "created_at_utc", "code_sha",
+  "status", "layer", "coverage_status", "lineage_status", "inventory_sha256",
+  "audit_report_sha256", "audit_run_id", "indicator_count", "published_indicator_count",
+  "pending_indicator_count", "indicator_index", "datasets", "observation_schema", "tests",
+]);
 
 const isBulkSource = (
   sourceId: LandingSourceId
@@ -210,6 +239,7 @@ const isBronzeSource = (
 ): sourceId is BronzeCampaignSourceId => sourceId.endsWith("_bronze");
 
 const tableNameForSource = (sourceId: LandingSourceId): string => {
+  if (sourceId === "gus_dbw_retained_bronze") return "br_dbw_observations";
   if (sourceId === "opendata_org_bronze") return "br_opendata_organizations";
   if (sourceId === "opendata_org_locations_bronze") return "br_opendata_locations";
   if (sourceId === "opendata_org_people_bronze") return "br_opendata_people";
@@ -360,6 +390,9 @@ function parseManifest(
   pointer: LandingSnapshotPointer
 ): LandingSnapshotManifest {
   const raw = decodeJson(bytes, `${pointer.source_id} Landing manifest`);
+  if (pointer.source_id === "gus_dbw_retained_bronze") {
+    return parseRetainedBronzeManifest(raw, pointer);
+  }
   const bulk = isBulkSource(pointer.source_id);
   const bronze = isBronzeSource(pointer.source_id);
   const expectedFields = bronze
@@ -495,6 +528,182 @@ function parseManifest(
   };
 }
 
+const DBW_DATASET_NAMES = ["observations", "dictionaries", "metadata", "taxonomy"] as const;
+
+function parseColumns(raw: unknown, label: string): Array<{ name: string; type: string }> {
+  if (!Array.isArray(raw) || raw.length === 0) throw new Error(`${label} has no columns.`);
+  const columns = raw.map((column) => {
+    if (!isRecord(column) || !hasExactFields(column, new Set(["name", "type"]))) {
+      throw new Error(`${label} has invalid columns.`);
+    }
+    return { name: requiredString(column.name, "column.name"), type: requiredString(column.type, "column.type") };
+  });
+  if (new Set(columns.map(({ name }) => name)).size !== columns.length) {
+    throw new Error(`${label} has duplicate columns.`);
+  }
+  return columns;
+}
+
+export function parseRetainedBronzeManifest(
+  raw: unknown,
+  pointer: LandingSnapshotPointer
+): LandingSnapshotManifest {
+  if (
+    !isRecord(raw) || !hasExactFields(raw, RETAINED_BRONZE_MANIFEST_FIELDS) ||
+    raw.format_version !== 1 || raw.kind !== "retained_bronze_snapshot" ||
+    raw.source_id !== pointer.source_id || raw.snapshot_id !== pointer.snapshot_id ||
+    raw.status !== "validated" || raw.layer !== "02_bronze" ||
+    raw.coverage_status !== "incomplete_retained_inventory" ||
+    raw.lineage_status !== "unresolved_native_to_bronze"
+  ) throw new Error("Retained DBW manifest does not match its source pointer.");
+  const indicatorCount = requiredInteger(raw.indicator_count, "indicator_count", false);
+  const published = requiredInteger(raw.published_indicator_count, "published_indicator_count");
+  const pending = requiredInteger(raw.pending_indicator_count, "pending_indicator_count");
+  if (indicatorCount !== 1550 || published + pending !== indicatorCount) {
+    throw new Error("Retained DBW indicator counts are inconsistent.");
+  }
+  if (!isRecord(raw.tests) || !hasExactFields(raw.tests, new Set(["passed", "rows_and_schemas_preserved"])) ||
+      raw.tests.passed !== true || raw.tests.rows_and_schemas_preserved !== true) {
+    throw new Error("Retained DBW snapshot lacks preservation tests.");
+  }
+  if (!isRecord(raw.indicator_index) || !hasExactFields(raw.indicator_index, new Set(["id", "name", "size", "sha256"]))) {
+    throw new Error("Retained DBW indicator index descriptor is invalid.");
+  }
+  const indicatorIndex = {
+    id: requiredDriveId(raw.indicator_index.id, "indicator_index.id"),
+    name: requiredString(raw.indicator_index.name, "indicator_index.name"),
+    size: requiredInteger(raw.indicator_index.size, "indicator_index.size", false),
+    sha256: requiredSha256(raw.indicator_index.sha256, "indicator_index.sha256"),
+  };
+  if (!/^fragment-(?:[0-9a-f-]{36}|(?:[a-z0-9]+-)*[0-9a-f]{64})\.json$/.test(indicatorIndex.name) || indicatorIndex.size > LANDING_FILE_MAX_BYTES) {
+    throw new Error("Retained DBW indicator index exceeds its bounded contract.");
+  }
+  if (!Array.isArray(raw.datasets) || raw.datasets.length !== 4) throw new Error("Retained DBW datasets are incomplete.");
+  const datasets = raw.datasets.map((dataset) => {
+    if (!isRecord(dataset) || !hasExactFields(dataset, new Set(["name", "table_name", "row_count", "columns", "files"]))) {
+      throw new Error("Retained DBW dataset has invalid fields.");
+    }
+    const name = requiredString(dataset.name, "dataset.name");
+    if (!(DBW_DATASET_NAMES as readonly string[]).includes(name)) throw new Error("Retained DBW dataset name is unsupported.");
+    const expectedTable = `br_dbw_${name === "taxonomy" ? "indicators" : name}`;
+    if (dataset.table_name !== expectedTable) throw new Error("Retained DBW dataset table name is invalid.");
+    const files = Array.isArray(dataset.files)
+      ? dataset.files.map((file) => {
+          if (!isRecord(file) || !hasExactFields(file, new Set(["id", "name", "size", "sha256", "row_count"]))) {
+            throw new Error("Retained DBW dataset fragment is malformed.");
+          }
+          return { ...parseFile({ id: file.id, name: file.name, size: file.size, sha256: file.sha256 },
+            expectedTable, "02_bronze", LANDING_FILE_MAX_BYTES),
+            rowCount: requiredInteger(file.row_count, "file.row_count", false) };
+        })
+      : (() => { throw new Error("Retained DBW dataset files are invalid."); })();
+    if (name === "observations" ? files.length !== 0 : files.length === 0) {
+      throw new Error("Retained DBW fixed files or observation selection contract is invalid.");
+    }
+    const columns = parseColumns(dataset.columns, name);
+    if (JSON.stringify(columns.map(({ name, type }) => [name, type])) !== JSON.stringify(DBW_DATASET_COLUMNS[name])) {
+      throw new Error(`Retained DBW ${name} schema differs from the audited contract.`);
+    }
+    const rowCount = requiredInteger(dataset.row_count, "dataset.row_count");
+    if (name !== "observations" && files.reduce((sum, file) => sum + file.rowCount, 0) !== rowCount) {
+      throw new Error(`Retained DBW ${name} fragment rows do not match its dataset.`);
+    }
+    return { dataset_id: name, layer: "02_bronze" as const, table_name: expectedTable,
+      row_count: rowCount, columns, files };
+  });
+  if (new Set(datasets.map((item) => item.dataset_id)).size !== 4) throw new Error("Retained DBW dataset names are duplicated.");
+  const observationSchema = parseColumns(raw.observation_schema, "observations");
+  const observationDataset = datasets.find((item) => item.dataset_id === "observations");
+  const taxonomyDataset = datasets.find((item) => item.dataset_id === "taxonomy");
+  if (!observationDataset || JSON.stringify(observationDataset.columns) !== JSON.stringify(observationSchema)) {
+    throw new Error("Retained DBW observation schemas are inconsistent.");
+  }
+  if (!taxonomyDataset || taxonomyDataset.row_count !== indicatorCount) {
+    throw new Error("Retained DBW taxonomy rows do not match the indicator inventory.");
+  }
+  const fixedIds = datasets.flatMap((dataset) => dataset.files.map((file) => file.id));
+  if (new Set(fixedIds).size !== fixedIds.length) throw new Error("Retained DBW fixed datasets reuse a file ID.");
+  return {
+    format_version: 1, kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
+    snapshot_id: pointer.snapshot_id, created_at_utc: requiredTimestamp(raw.created_at_utc, "created_at_utc"),
+    code_sha: requiredString(raw.code_sha, "code_sha"), status: "validated", layer: "02_bronze",
+    coverage_status: "incomplete_retained_inventory", lineage_status: "unresolved_native_to_bronze",
+    inventory_sha256: requiredSha256(raw.inventory_sha256, "inventory_sha256"),
+    audit_report_sha256: requiredSha256(raw.audit_report_sha256, "audit_report_sha256"),
+    audit_run_id: requiredString(raw.audit_run_id, "audit_run_id"), indicator_count: indicatorCount,
+    published_indicator_count: published, pending_indicator_count: pending, datasets,
+    table_name: "br_dbw_observations", columns: observationSchema, files: [],
+    row_count: observationDataset.row_count,
+    observation_schema: observationSchema, indicator_index: indicatorIndex,
+    indicators: [], tests: { passed: true, rows_and_schemas_preserved: true },
+  };
+}
+
+export function parseRetainedIndicatorIndex(
+  bytes: Uint8Array,
+  manifest: Extract<LandingSnapshotManifest, { kind: "retained_bronze_snapshot" }>
+): RetainedBronzeIndicator[] {
+  const raw = decodeJson(bytes, "retained DBW indicator index");
+  if (
+    !isRecord(raw) ||
+    !hasExactFields(raw, new Set(["format_version", "kind", "source_id", "inventory_sha256", "indicator_count", "published_indicator_count", "pending_indicator_count", "indicators"])) ||
+    raw.format_version !== 1 || raw.kind !== "retained_bronze_indicator_index" ||
+    raw.source_id !== manifest.source_id || raw.inventory_sha256 !== manifest.inventory_sha256 ||
+    raw.indicator_count !== manifest.indicator_count ||
+    raw.published_indicator_count !== manifest.published_indicator_count ||
+    raw.pending_indicator_count !== manifest.pending_indicator_count || !Array.isArray(raw.indicators)
+  ) throw new Error("Retained DBW indicator index does not match its manifest.");
+  const ids = new Set<number>();
+  const fileIds = new Set(manifest.datasets.flatMap((dataset) => dataset.files.map((file) => file.id)));
+  const fileNames = new Set(manifest.datasets.flatMap((dataset) => dataset.files.map((file) => file.name)));
+  fileIds.add(manifest.indicator_index.id);
+  fileNames.add(manifest.indicator_index.name);
+  const indicators = raw.indicators.map((item): RetainedBronzeIndicator => {
+    if (!isRecord(item) || !hasExactFields(item, new Set([
+      "indicator_id", "indicator_name", "indicator_name_en", "thematic_area", "domain",
+      "taxonomy_path", "status", "row_count", "parts",
+    ]))) throw new Error("Retained DBW indicator index entry is malformed.");
+    const indicatorId = requiredInteger(item.indicator_id, "indicator_id", false);
+    if (ids.has(indicatorId)) throw new Error("Retained DBW indicator index contains duplicate IDs.");
+    ids.add(indicatorId);
+    if (item.status !== "pending" && item.status !== "published") throw new Error("Retained DBW indicator status is invalid.");
+    const parts = Array.isArray(item.parts) ? item.parts.map((part) => {
+      if (!isRecord(part) || !hasExactFields(part, new Set(["id", "name", "size", "sha256", "row_count", "part"]))) {
+        throw new Error("Retained DBW indicator part is malformed.");
+      }
+      const parsed = parseFile({ id: part.id, name: part.name, size: part.size, sha256: part.sha256 },
+        `br_dbw_observations__indicator_${indicatorId}`, "02_bronze", LANDING_FILE_MAX_BYTES);
+      if (fileIds.has(parsed.id) || fileNames.has(parsed.name)) {
+        throw new Error("Retained DBW publication reuses a fragment identity.");
+      }
+      fileIds.add(parsed.id); fileNames.add(parsed.name);
+      const partNumber = requiredInteger(part.part, "part", false);
+      return { ...parsed, rowCount: requiredInteger(part.row_count, "part.row_count", false), part: partNumber };
+    }) : (() => { throw new Error("Retained DBW indicator parts are invalid."); })();
+    const rowCount = requiredInteger(item.row_count, "indicator.row_count");
+    if ((item.status === "pending" && (parts.length !== 0 || rowCount !== 0)) ||
+        (item.status === "published" && parts.length === 0) ||
+        parts.reduce((total, part) => total + part.rowCount, 0) !== rowCount ||
+        parts.some((part, index) => part.part !== index + 1)) {
+      throw new Error("Retained DBW indicator publication state is inconsistent.");
+    }
+    return { indicator_id: indicatorId, indicator_name: requiredString(item.indicator_name, "indicator_name"),
+      indicator_name_en: typeof item.indicator_name_en === "string" ? item.indicator_name_en : "",
+      thematic_area: typeof item.thematic_area === "string" ? item.thematic_area : "",
+      domain: typeof item.domain === "string" ? item.domain : "",
+      taxonomy_path: typeof item.taxonomy_path === "string" ? item.taxonomy_path : "",
+      status: item.status, row_count: rowCount, parts };
+  });
+  if (indicators.length !== 1550 || ids.size !== 1550) throw new Error("Retained DBW indicator index is incomplete.");
+  const published = indicators.filter(({ status }) => status === "published").length;
+  const rows = indicators.reduce((total, indicator) => total + indicator.row_count, 0);
+  if (published !== manifest.published_indicator_count ||
+      indicators.length - published !== manifest.pending_indicator_count || rows !== manifest.row_count) {
+    throw new Error("Retained DBW indicator index totals do not match its manifest.");
+  }
+  return indicators;
+}
+
 async function resolveSource(
   sourceId: LandingSourceId,
   campaignsFolderId: string,
@@ -548,6 +757,16 @@ async function resolveSource(
     throw new Error("Landing manifest does not match its pointer SHA-256.");
   }
   const manifest = parseManifest(manifestBytes, pointer);
+  if (manifest.kind === "retained_bronze_snapshot") {
+    const indexBytes = await downloadExact(
+      manifest.indicator_index.id, manifest.indicator_index.size, LANDING_FILE_MAX_BYTES,
+      "retained DBW indicator index", token, budget
+    );
+    if ((await sha256Hex(indexBytes)) !== manifest.indicator_index.sha256) {
+      throw new Error("Retained DBW indicator index does not match its SHA-256.");
+    }
+    manifest.indicators = parseRetainedIndicatorIndex(indexBytes, manifest);
+  }
   return {
     pointer,
     manifest,

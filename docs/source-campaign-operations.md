@@ -235,8 +235,56 @@ python src/source_campaign.py --source gus_bdl --backend drive --allow-productio
 ```
 
 Run this through the serialized production workflow. Local development uses `--backend local`
-and an explicit `--local-root`. The portal still applies its 64 MiB per-engine data download
+and an explicit `--local-root`. The portal applies its shared 512 MiB per-engine data download
 budget; it does not silently load an unlimited archive.
+
+## Audited retained DBW Bronze publication
+
+This downstream operation copies the completed retained DBW audit. It does not call DBW, alter
+the legacy files, establish native-to-Bronze lineage, or claim current source completeness. The
+snapshot binds to the exact retained-inventory and audit-report SHA-256 values and preserves all
+rows, nulls, duplicates and the four audited schemas.
+
+Use a native Linux workspace because Parquet repacking can spill to disk. Each repacking DuckDB
+connection uses one thread, 256 MiB of managed memory, a unique workspace scratch directory and a
+64 GiB maximum spill allocation. Value verification streams a deterministic, typed CSV row sequence
+directly through SHA-256 for the source and numerically ordered fragments, preserving null, duplicate,
+string and floating representations without a whole-relation sort or materialization. The spill bound
+protects the host; it is not a source-coverage cap, and exceeding it leaves the previous pointer current
+and the publication incomplete. A local run is:
+
+```bash
+python scripts/publish_retained_dbw_bronze.py \
+  --backend local --local-root /tmp/dbw-publication-store \
+  --audit-dir .local/dbw-retained-audit --workspace /tmp/dbw-publication-work \
+  --max-indicators 8
+```
+
+Production authenticates the exact reviewed inventory hash
+`15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e` and audit-report hash
+`29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac` before any Drive
+mutation. A different self-consistent audit is not authorized by this dated publisher.
+The existing Git remote serializes writers through an explicitly leased, non-expiring
+operational ref before Drive store construction; see [ADR 0010](decisions/0010-retained-dbw-publication-ownership.md).
+The Drive owner record is an additional guard, not an atomic cross-host lock. An abandoned
+Git claim requires proof that its exact owner stopped and exact-SHA release; never remove it
+by age or ordinary feature-branch cleanup.
+
+Production also requires a clean reviewed commit, its exact `--expected-code-sha`, an explicit
+`--drive-root-id`, `ZOHELO_ALLOW_PRODUCTION_WRITES=true`, and `--allow-production-write`. Use
+`--until-complete` for the finite continuation. Each promoted increment is printed and saved
+atomically as `workspace/progress.json`. The non-expiring source owner record is released normally.
+Parquet fragments and the indicator index use logical, content-addressed names. A retry verifies and
+reuses each exact object already accepted before an interruption instead of uploading it again.
+After an interruption, first establish that no publisher remains alive. Recovery requires both
+`--recover-stale-owner <exact-owner>` and `--recovery-identity <operator-or-run-id>`; there is no
+time-based takeover.
+
+The manifest exposes observations, dictionaries, metadata and taxonomy in Bronze. The three fixed
+relations load as bounded fragments. The portal makes all 1,550 audited taxonomy indicators
+searchable, including pending ones, and loads observations only after an indicator is selected.
+Selections above 64 MiB use explicit part-qualified relations; every part is at most 8 MiB. The
+full retained observation collection is never loaded into the browser.
 
 ## API keys and free accounts
 
