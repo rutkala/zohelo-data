@@ -361,13 +361,14 @@ function parseFile(
   raw: unknown,
   tableName: string,
   layer: "01_landing" | "02_bronze" = "01_landing",
-  maxBytes: number = LANDING_FILE_MAX_BYTES
+  maxBytes: number = LANDING_FILE_MAX_BYTES,
+  retainedName?: string
 ): LakehouseFile {
   if (!isRecord(raw) || !hasExactFields(raw, new Set(["id", "name", "size", "sha256"]))) {
     throw new Error("Landing manifest has an invalid file.");
   }
   const name = requiredString(raw.name, "file.name");
-  if (!PARQUET_NAME_RE.test(name)) {
+  if (!PARQUET_NAME_RE.test(name) && name !== retainedName) {
     throw new Error("Landing snapshot files must be named Parquet files.");
   }
   const size = requiredInteger(raw.size, "file.size", false);
@@ -544,13 +545,21 @@ function parseColumns(raw: unknown, label: string): Array<{ name: string; type: 
   return columns;
 }
 
+function parseDbwFile(raw: unknown, tableName: string, originalName?: string): LakehouseFile {
+  if (!isRecord(raw) || typeof raw.name !== "string" ||
+      (!raw.name.startsWith("fragment-") && raw.name !== originalName)) {
+    throw new Error("DBW file is neither a query fragment nor its exact original Bronze file.");
+  }
+  return parseFile(raw, tableName, "02_bronze", LANDING_FILE_MAX_BYTES, originalName);
+}
+
 export function parseRetainedBronzeManifest(
   raw: unknown,
   pointer: LandingSnapshotPointer
 ): LandingSnapshotManifest {
   if (
     !isRecord(raw) || !hasExactFields(raw, RETAINED_BRONZE_MANIFEST_FIELDS) ||
-    raw.format_version !== 1 || raw.kind !== "retained_bronze_snapshot" ||
+    (raw.format_version !== 1 && raw.format_version !== 2) || raw.kind !== "retained_bronze_snapshot" ||
     raw.source_id !== pointer.source_id || raw.snapshot_id !== pointer.snapshot_id ||
     raw.status !== "validated" || raw.layer !== "02_bronze" ||
     raw.coverage_status !== "incomplete_retained_inventory" ||
@@ -592,8 +601,9 @@ export function parseRetainedBronzeManifest(
           if (!isRecord(file) || !hasExactFields(file, new Set(["id", "name", "size", "sha256", "row_count"]))) {
             throw new Error("Retained DBW dataset fragment is malformed.");
           }
-          return { ...parseFile({ id: file.id, name: file.name, size: file.size, sha256: file.sha256 },
-            expectedTable, "02_bronze", LANDING_FILE_MAX_BYTES),
+          return { ...parseDbwFile({ id: file.id, name: file.name, size: file.size, sha256: file.sha256 },
+            expectedTable,
+            raw.format_version === 2 ? `${expectedTable}.parquet` : undefined),
             rowCount: requiredInteger(file.row_count, "file.row_count", false) };
         })
       : (() => { throw new Error("Retained DBW dataset files are invalid."); })();
@@ -624,7 +634,7 @@ export function parseRetainedBronzeManifest(
   const fixedIds = datasets.flatMap((dataset) => dataset.files.map((file) => file.id));
   if (new Set(fixedIds).size !== fixedIds.length) throw new Error("Retained DBW fixed datasets reuse a file ID.");
   return {
-    format_version: 1, kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
+    format_version: raw.format_version, kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
     snapshot_id: pointer.snapshot_id, created_at_utc: requiredTimestamp(raw.created_at_utc, "created_at_utc"),
     code_sha: requiredString(raw.code_sha, "code_sha"), status: "validated", layer: "02_bronze",
     coverage_status: "incomplete_retained_inventory", lineage_status: "unresolved_native_to_bronze",
@@ -647,7 +657,7 @@ export function parseRetainedIndicatorIndex(
   if (
     !isRecord(raw) ||
     !hasExactFields(raw, new Set(["format_version", "kind", "source_id", "inventory_sha256", "indicator_count", "published_indicator_count", "pending_indicator_count", "indicators"])) ||
-    raw.format_version !== 1 || raw.kind !== "retained_bronze_indicator_index" ||
+    raw.format_version !== manifest.format_version || raw.kind !== "retained_bronze_indicator_index" ||
     raw.source_id !== manifest.source_id || raw.inventory_sha256 !== manifest.inventory_sha256 ||
     raw.indicator_count !== manifest.indicator_count ||
     raw.published_indicator_count !== manifest.published_indicator_count ||
@@ -671,8 +681,13 @@ export function parseRetainedIndicatorIndex(
       if (!isRecord(part) || !hasExactFields(part, new Set(["id", "name", "size", "sha256", "row_count", "part"]))) {
         throw new Error("Retained DBW indicator part is malformed.");
       }
-      const parsed = parseFile({ id: part.id, name: part.name, size: part.size, sha256: part.sha256 },
-        `br_dbw_observations__indicator_${indicatorId}`, "02_bronze", LANDING_FILE_MAX_BYTES);
+      const parsed = parseDbwFile({ id: part.id, name: part.name, size: part.size, sha256: part.sha256 },
+        `br_dbw_observations__indicator_${indicatorId}`,
+        manifest.format_version === 2 ? `part_${indicatorId}.parquet` : undefined);
+      if (parsed.name === `part_${indicatorId}.parquet` &&
+          (!Array.isArray(item.parts) || item.parts.length !== 1 || part.part !== 1)) {
+        throw new Error("Retained original must be the indicator's single part.");
+      }
       if (fileIds.has(parsed.id) || fileNames.has(parsed.name)) {
         throw new Error("Retained DBW publication reuses a fragment identity.");
       }

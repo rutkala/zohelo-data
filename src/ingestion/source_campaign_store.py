@@ -1484,21 +1484,31 @@ class DriveCampaignStore(_CampaignStore):
     """Campaign transport rooted inside the selected configured Drive tree."""
 
     def __init__(
-        self, storage: Any, source_id: str, *, max_materialized_bytes: int | None = None
+        self, storage: Any, source_id: str, *, max_materialized_bytes: int | None = None,
+        publication_only: bool = False,
     ) -> None:
         # LocalCampaignStore remains usable when Google dependencies are not
         # installed; only constructing the Drive backend imports them.
         from ingestion.drive_state_store import DriveStateStore
 
         source_id = _require_source_id(source_id)
-        selected_root = storage.resolve_root(create=True)
+        if type(publication_only) is not bool:
+            raise CampaignStoreError("publication_only must be a boolean")
+        self._publication_only = publication_only
+        selected_root = storage.resolve_root(create=not publication_only)
         control_root = storage.get_or_create_nested_folder(
             ["06_control", "source_campaigns", source_id], root_id=selected_root
         )
-        landing_root = storage.resolve_zone("landing", create=True)
-        responses_root = storage.get_or_create_nested_folder(
-            [source_id, "responses"], root_id=landing_root
-        )
+        if publication_only:
+            # No Landing lookup, creation or response storage for a layer publication.
+            # put_raw is disabled below, so this required base-class ID cannot be used
+            # to turn the control folder into an alternative raw-data destination.
+            responses_root = control_root
+        else:
+            landing_root = storage.resolve_zone("landing", create=True)
+            responses_root = storage.get_or_create_nested_folder(
+                [source_id, "responses"], root_id=landing_root
+            )
         transport = DriveStateStore(
             storage, selected_root, control_root, allow_landing_pointer=True
         )
@@ -1509,6 +1519,11 @@ class DriveCampaignStore(_CampaignStore):
             responses_root,
             max_materialized_bytes=max_materialized_bytes,
         )
+
+    def put_raw(self, body: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
+        if self._publication_only:
+            raise CampaignStoreError("Publication-only storage cannot receive source responses")
+        return super().put_raw(body, metadata)
 
 
 class LocalCampaignStore(_CampaignStore):

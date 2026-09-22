@@ -1,4 +1,4 @@
-name: DBW retained Bronze release
+name: Publish existing DBW Bronze
 
 on:
   workflow_dispatch:
@@ -7,6 +7,11 @@ on:
         description: 'Exact reviewed main commit to publish from'
         required: true
         type: string
+      recover_drive_owner:
+        description: 'Exact abandoned Drive owner, only after stopped-writer and Git-claim reconciliation'
+        required: false
+        type: string
+        default: ''
       drive_root_id:
         description: 'Existing production Drive root'
         required: true
@@ -85,6 +90,15 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - run: python -m pip install -r requirements.txt
+      - name: Require deployed direct-reference reader
+        run: |
+          python - <<'PYCODE'
+          import json, urllib.request
+          with urllib.request.urlopen('https://data.zohelo.com/portal-build.json', timeout=30) as response:
+              build = json.load(response)
+          if 2 not in build.get('supported_retained_bronze_formats', []):
+              raise SystemExit('Deploy the compatible DBW reader before publishing direct references')
+          PYCODE
       - name: Restore and verify all reviewed inputs directly from Drive
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
@@ -102,12 +116,22 @@ jobs:
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
           EXPECTED_CODE_SHA: ${{ inputs.expected_code_sha }}
+          RECOVER_DRIVE_OWNER: ${{ inputs.recover_drive_owner }}
           ZOHELO_ALLOW_PRODUCTION_WRITES: 'true'
         run: |
           command -v gh >/dev/null
           gh auth setup-git
           git config user.name 'Zohelo DBW release'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [[ -n "$RECOVER_DRIVE_OWNER" ]]; then
+            python scripts/publish_retained_dbw_bronze.py \
+              --audit-dir "$RUNNER_TEMP/dbw-inputs/audit" \
+              --workspace "$RUNNER_TEMP/dbw-publication" \
+              --backend drive --drive-root-id "$DRIVE_ROOT_ID" \
+              --allow-production-write --expected-code-sha "$EXPECTED_CODE_SHA" \
+              --recover-stale-owner "$RECOVER_DRIVE_OWNER" \
+              --recovery-identity "actions/$GITHUB_RUN_ID"
+          fi
           python scripts/publish_retained_dbw_bronze.py \
             --audit-dir "$RUNNER_TEMP/dbw-inputs/audit" \
             --workspace "$RUNNER_TEMP/dbw-publication" \

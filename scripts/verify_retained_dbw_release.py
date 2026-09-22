@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import duckdb
 from googleapiclient.http import MediaIoBaseDownload
@@ -103,8 +105,9 @@ def pointer_bytes(storage, folder):
 def validate_contract(pointer, manifest, index, baseline, expected_snapshot, expected_code_sha):
     require(pointer.get("format_version") == 1 and pointer.get("source_id") == SOURCE and
             pointer.get("snapshot_id") == expected_snapshot, "Unexpected publication pointer")
+    require(manifest.get("format_version") in (1, 2), "Unsupported retained publication format")
     expected = {
-        "format_version": 1, "kind": "retained_bronze_snapshot", "source_id": SOURCE,
+        "format_version": manifest["format_version"], "kind": "retained_bronze_snapshot", "source_id": SOURCE,
         "snapshot_id": expected_snapshot, "code_sha": expected_code_sha,
         "status": "validated", "layer": "02_bronze",
         "coverage_status": "incomplete_retained_inventory",
@@ -133,7 +136,7 @@ def validate_contract(pointer, manifest, index, baseline, expected_snapshot, exp
                 "Observation selections or fixed files are invalid")
     require(manifest.get("observation_schema") == baseline["schemas"]["observations"],
             "Observation schema differs")
-    index_expected = {"format_version": 1, "kind": "retained_bronze_indicator_index",
+    index_expected = {"format_version": manifest["format_version"], "kind": "retained_bronze_indicator_index",
                       **{k: expected[k] for k in ("source_id", "inventory_sha256", "indicator_count",
                                                  "published_indicator_count", "pending_indicator_count")}}
     require(all(index.get(k) == v for k, v in index_expected.items()), "Indicator index mismatch")
@@ -201,21 +204,55 @@ def verify(storage, output, expected_snapshot, expected_code_sha):
     index = json.loads(index_path.read_bytes())
     datasets, indicators = validate_contract(pointer, manifest, index, baseline,
                                              expected_snapshot, expected_code_sha)
+    # Independently bind original-file references to the reviewed retained inventory.
+    originals, _ = audit.validate_inventory(audit.discover(storage))
+    inventory = audit.inventory_document(originals)
+    require(inventory["inventory_sha256"] == baseline["inventory_sha256"], "Original retained inventory changed")
+    originals_by_id = {item["id"]: item for item in inventory["objects"]}
+    def check_original(part, path):
+        if part["name"].startswith("fragment-"):
+            return False
+        require(manifest["format_version"] == 2, "Original reference requires format v2")
+        expected = originals_by_id.get(part["id"])
+        require(expected is not None and expected["path"] == path and
+                all(part[k] == expected[k] for k in ("id", "name", "size", "sha256")),
+                "Original file reference does not match its reviewed table")
+        return True
+    references = 0
     checked = 0
     total_bytes = 0
-    with duckdb.connect() as connection:
-        connection.execute("SET memory_limit='1GB'")
-        for dataset in datasets:
-            work = ([(None, f) for f in dataset["files"]] if dataset["name"] != "observations"
-                    else [(item["indicator_id"], f) for item in indicators for f in item["parts"]])
-            for identity, part in work:
-                path = download(storage, part, output / f"part-{checked}.parquet")
-                check_parquet(connection, path, dataset["columns"], part["row_count"], identity)
-                total_bytes += part["size"]
-                checked += 1
-                path.unlink()
-                if checked % 100 == 0:
-                    print(json.dumps({"verified_fragments": checked, "verified_bytes": total_bytes}), flush=True)
+    work = []
+    for dataset in datasets:
+        fragments = ([(None, f) for f in dataset["files"]] if dataset["name"] != "observations"
+                     else [(item["indicator_id"], f) for item in indicators for f in item["parts"]])
+        for identity, part in fragments:
+            logical_path = (f"observations/part_{identity}.parquet" if identity is not None
+                            else f"{dataset['name']}/{dataset['table_name']}.parquet")
+            references += check_original(part, logical_path)
+            work.append((identity, part, dataset["columns"]))
+    root_id = storage.resolve_root(create=False)
+    local = threading.local()
+    def restore_and_check(number, task):
+        if not hasattr(local, "reader"):
+            local.reader = audit.StorageManager(allow_interactive_auth=False, root_id=root_id)
+        identity, part, columns = task
+        path = output / f"part-{number}.parquet"
+        try:
+            download(local.reader, part, path)
+            with duckdb.connect() as connection:
+                connection.execute("SET memory_limit='256MB'")
+                connection.execute("SET threads=1")
+                check_parquet(connection, path, columns, part["row_count"], identity)
+            return part["size"]
+        finally:
+            path.unlink(missing_ok=True)
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="dbw-consumer-read") as pool:
+        futures = [pool.submit(restore_and_check, number, task) for number, task in enumerate(work)]
+        for future in as_completed(futures):
+            total_bytes += future.result()
+            checked += 1
+            if checked % 100 == 0 or checked == len(work):
+                print(json.dumps({"verified_fragments": checked, "verified_bytes": total_bytes}), flush=True)
     require(pointer_bytes(storage, source) == original_pointer, "Current pointer changed during verification")
     selected = min(indicators, key=lambda i: sum(f["size"] for f in i["parts"]))
     parts = selected["parts"]
@@ -228,6 +265,8 @@ def verify(storage, output, expected_snapshot, expected_code_sha):
         "source_id": SOURCE, "snapshot_id": expected_snapshot, "code_sha": expected_code_sha,
         "verified_at_utc": datetime.now(timezone.utc).isoformat(),
         "verified_fragment_count": checked, "verified_bytes": total_bytes,
+        "referenced_original_file_count": references,
+        "query_part_file_count": checked - references,
         "published_indicator_count": len(indicators), "pending_indicator_count": 0,
         "measured_parquet_rows": baseline["measured_parquet_rows"],
         "coverage_status": manifest["coverage_status"], "lineage_status": manifest["lineage_status"],

@@ -72,7 +72,7 @@ def prepare(storage, output: Path, *, baseline: Path = BASELINE) -> dict:
                 or observed["total_bytes"] != original["remote_total_bytes"]):
             raise PreparationError("Drive inventory differs from the reviewed snapshot")
         package = output / "audit"
-        fresh = audit.audit_retained_dbw(storage, package)
+        fresh = audit.audit_retained_dbw(storage, package, workers=4)
         mismatches = [key for key in SOURCE_FIELDS if fresh.get(key) != original[key]]
         if mismatches:
             raise PreparationError("Restored evidence differs: " + ", ".join(mismatches))

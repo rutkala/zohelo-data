@@ -8,6 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "scripts"))
+from retained_bronze_store import RetainedBronzeDriveStore
 from ingestion.source_campaign_store import DriveCampaignStore, LocalCampaignStore
 from retained_dbw_publication import SOURCE_ID, publish_retained_bronze, publish_retained_bronze_until_complete, validate_audit
 from storage_manager import StorageManager
@@ -46,8 +48,9 @@ def main() -> None:
             # Authenticate the reviewed snapshot before constructing a mutating Drive store.
             validate_audit(args.audit_dir, require_reviewed_snapshot=True)
             publication_lock = stack.enter_context(GitPublicationLock(ROOT, code_sha, args.drive_root_id))
-            store = DriveCampaignStore(
-                StorageManager(allow_interactive_auth=False, root_id=args.drive_root_id), SOURCE_ID
+            store = RetainedBronzeDriveStore(
+                StorageManager(allow_interactive_auth=False, root_id=args.drive_root_id),
+                args.audit_dir, publication_lock.guard,
             )
             store.retained_publication_guard = publication_lock.guard
         if args.recover_stale_owner:
@@ -61,6 +64,8 @@ def main() -> None:
                 "snapshot_id": value["snapshot_id"], "published_indicator_count": value["published_indicator_count"],
                 "pending_indicator_count": value["pending_indicator_count"],
                 "observation_row_count": value["datasets"][0]["row_count"],
+                "publication_format_version": value["format_version"],
+                "operation": "register_existing_bronze_and_prepare_oversized_query_parts",
                 "updated_at_utc": datetime.now(timezone.utc).isoformat()}
             args.workspace.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", dir=args.workspace, delete=False, encoding="utf-8") as stream:

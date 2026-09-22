@@ -376,12 +376,14 @@ def _verified_input(audit_dir: Path, descriptor: dict[str, Any]) -> Path:
     return path
 
 
-def _publication_descriptor(value: Any, *, part: bool = False) -> dict[str, Any]:
+def _publication_descriptor(value: Any, *, part: bool = False, allow_reference: bool = False) -> dict[str, Any]:
     fields = {"id", "name", "size", "sha256", "row_count"} | ({"part"} if part else set())
     if not isinstance(value, dict) or set(value) != fields:
         raise RetainedBronzePublicationError("publication descriptor has invalid fields")
     if (not isinstance(value["id"], str) or not value["id"] or
-        not FRAGMENT_NAME_RE.fullmatch(str(value["name"])) or not value["name"].endswith(".parquet") or
+        not (FRAGMENT_NAME_RE.fullmatch(str(value["name"])) or
+             (allow_reference and re.fullmatch(r"(?:part_[1-9][0-9]*|br_dbw_(?:dictionaries|metadata|indicators))\.parquet", str(value["name"])))) or
+        not value["name"].endswith(".parquet") or
         type(value["size"]) is not int or not 0 < value["size"] <= MAX_LANDING_FILE_BYTES or
         not SHA_RE.fullmatch(str(value["sha256"])) or
         type(value["row_count"]) is not int or value["row_count"] <= 0 or
@@ -428,7 +430,7 @@ def _read_previous(store: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | 
         "audit_report_sha256", "audit_run_id", "indicator_count", "published_indicator_count",
         "pending_indicator_count", "indicator_index", "datasets", "observation_schema", "tests"}
     if (
-        not isinstance(manifest, dict) or set(manifest) != expected_fields or manifest.get("format_version") != 1
+        not isinstance(manifest, dict) or set(manifest) != expected_fields or manifest.get("format_version") not in (1, 2)
         or manifest.get("kind") != KIND or manifest.get("status") != "validated"
         or manifest.get("layer") != "02_bronze"
         or manifest.get("coverage_status") != "incomplete_retained_inventory"
@@ -466,6 +468,7 @@ def _publish_retained_bronze(
         taxonomy_path = _verified_input(audit_dir, by_path["taxonomy/br_dbw_indicators.parquet"])
         entries = _taxonomy_entries(taxonomy_path)
         _, previous = _read_previous(store)
+        direct = getattr(store, "direct_references", False) is True
         datasets: dict[str, Any] = {}
         previous_index: dict[int, dict[str, Any]] = {}
         if previous is not None:
@@ -514,10 +517,15 @@ def _publish_retained_bronze(
                 if (dataset.get("table_name") != expected_table or
                     dataset.get("columns") != [{"name": n, "type": t} for n,t in EXPECTED_SCHEMAS[name]]):
                     raise RetainedBronzePublicationError("current retained Bronze dataset schema changed")
-                dataset["files"] = [_publication_descriptor(item) for item in dataset.get("files", [])]
+                dataset["files"] = [_publication_descriptor(item, allow_reference=previous["format_version"] == 2) for item in dataset.get("files", [])]
                 if (sum(item["row_count"] for item in dataset["files"]) != dataset.get("row_count") or
                     dataset.get("row_count") != report["measured_parquet_rows"][name]):
                     raise RetainedBronzePublicationError("current retained Bronze dataset row counts changed")
+                for value in dataset["files"]:
+                    if not FRAGMENT_NAME_RE.fullmatch(value["name"]):
+                        ref = by_path[f"{name}/{expected_table}.parquet"]
+                        if len(dataset["files"]) != 1 or any(value[k] != ref[k] for k in ("id", "name", "size", "sha256")):
+                            raise RetainedBronzePublicationError("original fixed table reference changed")
                 previous_descriptors.extend(dataset["files"])
             index_desc = previous.get("indicator_index")
             if (not isinstance(index_desc, dict) or set(index_desc) != {"id", "name", "size", "sha256"} or
@@ -531,7 +539,7 @@ def _publish_retained_bronze(
             if (not isinstance(index, dict) or set(index) != {
                 "format_version", "kind", "source_id", "inventory_sha256", "indicator_count",
                 "published_indicator_count", "pending_indicator_count", "indicators"
-            } or index.get("format_version") != 1 or
+            } or index.get("format_version") != previous["format_version"] or
                 index.get("kind") != "retained_bronze_indicator_index" or
                 index.get("source_id") != SOURCE_ID or
                 index.get("inventory_sha256") != inventory["inventory_sha256"] or
@@ -553,12 +561,17 @@ def _publish_retained_bronze(
                 if prior is None or any(prior.get(k) != item[k] for k in ("indicator_name", "indicator_name_en", "thematic_area", "domain", "taxonomy_path")):
                     raise RetainedBronzePublicationError("current indicator index taxonomy changed")
                 status, row_count = prior.get("status"), prior.get("row_count")
-                parts = [_publication_descriptor(value, part=True) for value in prior.get("parts", [])]
+                parts = [_publication_descriptor(value, part=True, allow_reference=previous["format_version"] == 2) for value in prior.get("parts", [])]
                 if (status not in {"pending", "published"} or type(row_count) is not int or row_count < 0 or
                     (status == "pending" and (parts or row_count)) or
                     (status == "published" and (not parts or sum(p["row_count"] for p in parts) != row_count)) or
                     [part["part"] for part in parts] != list(range(1, len(parts)+1))):
                     raise RetainedBronzePublicationError("current indicator publication state changed")
+                for value in parts:
+                    if not FRAGMENT_NAME_RE.fullmatch(value["name"]):
+                        ref = by_path[f"observations/part_{item['indicator_id']}.parquet"]
+                        if len(parts) != 1 or any(value[k] != ref[k] for k in ("id", "name", "size", "sha256")):
+                            raise RetainedBronzePublicationError("original observation reference changed")
                 item.update({"status": status, "row_count": row_count, "parts": parts})
                 previous_descriptors.extend(parts)
             actual_published = sum(item["status"] == "published" for item in entries)
@@ -568,7 +581,7 @@ def _publish_retained_bronze(
                 actual_rows != observations["row_count"]):
                 raise RetainedBronzePublicationError("current retained Bronze index totals are inconsistent")
             store.verify_landing_objects_metadata(previous_descriptors)
-            if previous["pending_indicator_count"] == 0:
+            if previous["pending_indicator_count"] == 0 and previous["code_sha"] == code_sha and previous["format_version"] == (2 if direct else 1):
                 return previous
 
         with tempfile.TemporaryDirectory(dir=workspace) as tmp:
@@ -579,9 +592,11 @@ def _publish_retained_bronze(
                 ("metadata", "metadata/br_dbw_metadata.parquet"),
                 ("taxonomy", "taxonomy/br_dbw_indicators.parquet"),
             ):
-                if name in datasets:
+                ref = by_path[rel_path]
+                if name in datasets and (not direct or ref["size"] > MAX_LANDING_FILE_BYTES
+                        or (len(datasets[name]["files"]) == 1 and datasets[name]["files"][0]["id"] == ref["id"])):
                     continue
-                source = _verified_input(audit_dir, by_path[rel_path])
+                source = _verified_input(audit_dir, ref)
                 files, row_count = [], 0
                 for number, (fragment, rows) in enumerate(
                     bounded_fragments(source, EXPECTED_SCHEMAS[name], temp), 1
@@ -598,14 +613,25 @@ def _publish_retained_bronze(
                     "row_count": row_count, "columns": [{"name": n, "type": t} for n,t in EXPECTED_SCHEMAS[name]], "files": files}
 
             completed = 0
-            for item in entries:
-                if item["status"] == "published" or completed >= max_indicators:
-                    continue
+            # Register every bounded original in one pass; max_indicators bounds only
+            # new oversized repacks in direct mode. Never copy small files for discovery.
+            ordered_entries = sorted(entries, key=lambda item: (
+                by_path[f"observations/part_{item['indicator_id']}.parquet"]["size"] > MAX_LANDING_FILE_BYTES,
+                item["indicator_id"],
+            )) if direct else entries
+            for item in ordered_entries:
                 indicator_id = item["indicator_id"]
                 rel_path = f"observations/part_{indicator_id}.parquet"
                 if rel_path not in by_path:
                     raise RetainedBronzePublicationError("observation inventory is missing an indicator")
-                source = _verified_input(audit_dir, by_path[rel_path])
+                ref = by_path[rel_path]
+                use_reference = direct and ref["size"] <= MAX_LANDING_FILE_BYTES
+                already_reference = (len(item["parts"]) == 1 and item["parts"][0]["id"] == ref["id"])
+                if item["status"] == "published" and (not use_reference or already_reference):
+                    continue
+                if not use_reference and completed >= max_indicators:
+                    continue
+                source = _verified_input(audit_dir, ref)
                 expected_rows = observation_partition_rows(source, indicator_id)
                 parts, row_count = [], 0
                 for number, (fragment, rows) in enumerate(bounded_fragments(source, EXPECTED_SCHEMAS["observations"], temp), 1):
@@ -615,19 +641,21 @@ def _publish_retained_bronze(
                     )
                     descriptor.update({"row_count": rows, "part": number})
                     parts.append(descriptor); row_count += rows
-                    if store.read_landing_object({k: descriptor[k] for k in ("id", "name", "size", "sha256")}) != raw_fragment:
+                    if not use_reference and store.read_landing_object({k: descriptor[k] for k in ("id", "name", "size", "sha256")}) != raw_fragment:
                         raise RetainedBronzePublicationError("uploaded observation fragment readback changed")
+                    if use_reference and any(descriptor[k] != ref[k] for k in ("id", "name", "size", "sha256")):
+                        raise RetainedBronzePublicationError("direct observation reference changed")
                     if fragment.parent == temp: fragment.unlink()
                 if row_count != expected_rows:
                     raise RetainedBronzePublicationError("published indicator row count changed")
                 item.update({"status": "published", "row_count": row_count, "parts": parts})
-                completed += 1
+                completed += not use_reference
 
         published = sum(item["status"] == "published" for item in entries)
         observation_rows = sum(item["row_count"] for item in entries)
         if published == 1550 and observation_rows != report["measured_parquet_rows"]["observations"]:
             raise RetainedBronzePublicationError("complete retained observation rows differ from the audit")
-        index = {"format_version": 1, "kind": "retained_bronze_indicator_index", "source_id": SOURCE_ID,
+        index = {"format_version": 2 if direct else 1, "kind": "retained_bronze_indicator_index", "source_id": SOURCE_ID,
             "inventory_sha256": inventory["inventory_sha256"], "indicator_count": 1550,
             "published_indicator_count": published, "pending_indicator_count": 1550-published,
             "indicators": entries}
@@ -638,7 +666,7 @@ def _publish_retained_bronze(
         index_desc["sha256"] = hashlib.sha256(index_raw).hexdigest()
         snapshot_id = str(uuid4())
         manifest = {
-            "format_version": 1, "kind": KIND, "source_id": SOURCE_ID,
+            "format_version": 2 if direct else 1, "kind": KIND, "source_id": SOURCE_ID,
             "snapshot_id": snapshot_id, "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "code_sha": code_sha, "status": "validated", "layer": "02_bronze",
             "coverage_status": "incomplete_retained_inventory", "lineage_status": "unresolved_native_to_bronze",
