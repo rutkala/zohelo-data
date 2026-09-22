@@ -1,13 +1,6 @@
 name: DBW retained Bronze release
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/dbw-bronze-release.yml'
-      - 'scripts/prepare_retained_dbw_release.py'
-      - 'scripts/verify_retained_dbw_release.py'
-      - 'portal/scripts/verify-dbw-live.mjs'
-      - 'tests/test_retained_dbw_release_actions.py'
   workflow_dispatch:
     inputs:
       expected_code_sha:
@@ -25,7 +18,7 @@ permissions:
 
 concurrency:
   group: dbw-retained-release-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   PYTHONDONTWRITEBYTECODE: '1'
@@ -48,7 +41,6 @@ jobs:
       - name: Credential-free DBW release regressions
         run: python -m unittest discover -s tests -p test_retained_dbw_release_actions.py -v
       - name: Full credential-free data-platform checks before production
-        if: github.event_name == 'workflow_dispatch'
         run: bash scripts/check-data.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -66,6 +58,7 @@ jobs:
     concurrency:
       group: zohelo-production-data
       cancel-in-progress: false
+      queue: max
     outputs:
       snapshot_id: ${{ steps.complete.outputs.snapshot_id }}
     steps:
@@ -153,6 +146,7 @@ jobs:
 
   verify_readers:
     needs: publish
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
