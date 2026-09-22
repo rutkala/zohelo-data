@@ -4,6 +4,35 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL actual Landing visibility check — 23 September 2026, 00:48 Warsaw
+
+The owner reported no visible new BDL files for several hours. Read-only diagnostics
+found the same ten-worker coordinator, PID `383069`, using pinned runtime `5097e7e`.
+The local summary at 22:47:38 UTC on 22 September reported 909 new files in this run,
+439,928,781 new bytes, 1,899/2,420 selection-complete subgroups and 63 blocked selections.
+A separate stable Drive queue/owner read at 22:48:22 UTC reported 3,328 native files /
+1,068,939,192 bytes, ten in-flight subgroups and heartbeat 22:48:14 UTC. Compared with
+the 20:11:07 UTC checkpoint, these counters increased by 263 files / 156,758,335 bytes.
+Counters remain transfer-checkpoint evidence, not a new full-byte or business-content audit.
+
+Independent connected-Drive metadata located the actual native archive
+`NARO_2889_CREL_20260923004330.zip` (89,434 bytes), created at 22:47:33 UTC on
+22 September (00:47:33 Warsaw on 23 September). Its verified parent chain is
+`01_landing/gus_bdl/web_bulk/P2889/0f4dd34309878d2ad27e91eb484e53ef0ec6385f4ad0cf18cc6114f4f4a60885/`.
+The subgroup folder's modification date remains 17 September and `web_bulk` remains
+12 September despite that new descendant. Thus these parent dates are not reliable
+evidence of the last file upload. This is a concrete visibility explanation, not a
+claim to have reproduced the owner's exact Drive view.
+
+See [the evidence receipt](audits/2026-09-23-bdl-landing-visibility.json).
+No BDL process, source setting, checkpoint, data object or folder was changed. No
+replacement writer was launched. The additional terminal read of individual plan
+payloads was tool-blocked; it was not retried, and no new archive-byte verification
+is claimed. The earlier local reporting gap remains unexplained. Full native scope,
+521 not-yet-complete subgroups, blocked-selection recovery and later layers remain open.
+The separate DBW publication execution hold is unchanged.
+
+
 ### DBW publication stopped after unexpected Landing creation — 23 September 2026 (Warsaw)
 
 **Current operation hold:** the owner reported that the Bronze release Action created
