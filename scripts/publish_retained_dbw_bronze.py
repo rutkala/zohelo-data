@@ -67,6 +67,16 @@ def main() -> None:
                 "publication_format_version": value["format_version"],
                 "operation": "register_existing_bronze_and_prepare_oversized_query_parts",
                 "updated_at_utc": datetime.now(timezone.utc).isoformat()}
+            if value["format_version"] == 2:
+                index = json.loads(store.read_landing_object(value["indicator_index"]))
+                progress["referenced_original_observation_files"] = sum(
+                    part["name"] == f"part_{item['indicator_id']}.parquet"
+                    for item in index["indicators"] for part in item["parts"]
+                )
+                progress["observation_query_parts"] = sum(
+                    part["name"].startswith("fragment-")
+                    for item in index["indicators"] for part in item["parts"]
+                )
             args.workspace.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", dir=args.workspace, delete=False, encoding="utf-8") as stream:
                 json.dump(progress, stream, sort_keys=True); stream.flush(); os.fsync(stream.fileno()); temporary=Path(stream.name)

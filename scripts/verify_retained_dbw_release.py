@@ -253,6 +253,9 @@ def verify(storage, output, expected_snapshot, expected_code_sha):
             checked += 1
             if checked % 100 == 0 or checked == len(work):
                 print(json.dumps({"verified_fragments": checked, "verified_bytes": total_bytes}), flush=True)
+    rechecked, _ = audit.validate_inventory(audit.discover(storage))
+    require(audit.inventory_document(rechecked)["inventory_sha256"] == inventory["inventory_sha256"],
+            "Original retained inventory changed during consumer verification")
     require(pointer_bytes(storage, source) == original_pointer, "Current pointer changed during verification")
     selected = min(indicators, key=lambda i: sum(f["size"] for f in i["parts"]))
     parts = selected["parts"]

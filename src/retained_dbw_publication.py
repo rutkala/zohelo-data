@@ -617,6 +617,7 @@ def _publish_retained_bronze(
             # new oversized repacks in direct mode. Never copy small files for discovery.
             ordered_entries = sorted(entries, key=lambda item: (
                 by_path[f"observations/part_{item['indicator_id']}.parquet"]["size"] > MAX_LANDING_FILE_BYTES,
+                by_path[f"observations/part_{item['indicator_id']}.parquet"]["size"],
                 item["indicator_id"],
             )) if direct else entries
             for item in ordered_entries:
@@ -628,6 +629,10 @@ def _publish_retained_bronze(
                 use_reference = direct and ref["size"] <= MAX_LANDING_FILE_BYTES
                 already_reference = (len(item["parts"]) == 1 and item["parts"][0]["id"] == ref["id"])
                 if item["status"] == "published" and (not use_reference or already_reference):
+                    continue
+                # First upgrade registers existing originals and preserves old parts;
+                # publish that verified catalogue before preparing new large-file parts.
+                if not use_reference and direct and (previous is None or previous["format_version"] == 1):
                     continue
                 if not use_reference and completed >= max_indicators:
                     continue

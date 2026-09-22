@@ -610,6 +610,9 @@ export function parseRetainedBronzeManifest(
     if (name === "observations" ? files.length !== 0 : files.length === 0) {
       throw new Error("Retained DBW fixed files or observation selection contract is invalid.");
     }
+    if (files.some(file => file.name === `${expectedTable}.parquet`) && files.length !== 1) {
+      throw new Error("An original DBW fixed table must be its only file.");
+    }
     const columns = parseColumns(dataset.columns, name);
     if (JSON.stringify(columns.map(({ name, type }) => [name, type])) !== JSON.stringify(DBW_DATASET_COLUMNS[name])) {
       throw new Error(`Retained DBW ${name} schema differs from the audited contract.`);
