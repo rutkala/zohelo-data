@@ -1,5 +1,7 @@
 # Review sequence and connection-test brief
 
+> **Historical research plan:** owner-selection gates below were superseded by ADR 0004. Research phases and proposed test cards do not override the current Wave 0–8 programme or establish implemented coverage. Use [the delivery record](../deliverables.md).
+
 **Recommendation for owner review, 8 September 2026. No source selection, account,
 subscription or connection test is implied.** Project status and owner answers remain in
 [the delivery record](../deliverables.md).

@@ -1,5 +1,7 @@
 # Google authorization in Zohelo-data
 
+> **Workflow availability, 22 September 2026:** the standalone `google-access-check.yml` and `google-upload-check.yml` workflows were retired on 15 September. References below preserve their former behavior. Existing diagnostic scripts remain subject to their documented read/write authorization; do not substitute ingestion for a credential check or assume an absent Actions button still exists.
+
 Checked 6 September 2026, starting from main `482b04a`. Google Drive is the only authenticated Google data API currently used by this repository. NBP's public API does not require Google credentials. Browser sign-in, Python jobs and the ChatGPT Drive connector are separate authorization contexts; success in one does not prove the others work.
 
 ## Configuration map

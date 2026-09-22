@@ -1,5 +1,7 @@
 # Zohelo-data architecture
 
+> **Implementation versus target, 22 September 2026:** the current source-specific release paths coexist with unfinished native-only stage separation required by ADR 0009. Earlier intake/parsing descriptions explain remaining implementation, not an exception to that decision. WDI and the limited Eurostat modeled contract already exist; older future-tense sections must not trigger duplicate pipelines. See [the reconciled delivery record](deliverables.md).
+
 Current technical design for `zohelo-data` and `data.zohelo.com`. The umbrella `zohelo.com` site and other subprojects are outside this scope. Delivery/verification status lives in [the delivery record](deliverables.md). The [original proposal](history/2026-09-06-architecture-proposal.md) is historical evidence.
 
 ## Constraints and responsibilities

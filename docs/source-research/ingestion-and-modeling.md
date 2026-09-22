@@ -1,5 +1,7 @@
 # Ingestion and cross-source modeling proposal
 
+> **Decision precedence, 22 September 2026:** these dated proposals are not proof of current implementation. ADR 0009 requires exact native-only Landing, with parsing and modeling downstream; ADR 0006 rejects permanent sample coverage. Current sequencing, exceptions for reviewed retained outputs and outstanding rollout work are in [the delivery record](../deliverables.md).
+
 Research date: 8 September 2026. **Design for review; not implemented or connection-tested.**
 The owner's requirements are accepted; the technical choices below are recommendations
 to validate against selected datasets. The existing NBP release and schedule are unchanged.

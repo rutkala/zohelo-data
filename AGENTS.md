@@ -143,7 +143,7 @@ Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-c
   the distinction between selected source products and every product of their providers.
 
 ## Drive layout migration
-- Use the serialized main-branch migrate-drive-layout.yml workflow. A successful plan artifact
+- The accepted Drive cutover is historical and `migrate-drive-layout.yml` was retired on 15 September 2026. Before a new layout mutation, establish a reviewed, available serialized execution procedure; do not bypass the old workflow safeguards. A successful plan artifact
   is the authorization source for apply, resume, and rollback; preserve its run ID and canonical
   SHA-256. Never bypass plan provenance, cutover guards, durable journal recovery, or pending
   navigation verification.

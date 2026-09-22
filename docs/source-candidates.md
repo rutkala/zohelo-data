@@ -1,5 +1,7 @@
 # Candidate data sources
 
+> **Dated research, not current pipeline status:** candidate priority, connection and selection wording below must be read with the newer [delivery record](deliverables.md) and ADRs 0004, 0006 and 0009. A research row is neither an owner-selection gate nor evidence of production coverage.
+
 The current [global and Polish research package](source-research/README.md), dated
 8 September 2026, covers 182 products/families with access, rights, loading, modeling,
 overlap and evidence fields. Start there for the expanded landscape and proposed review

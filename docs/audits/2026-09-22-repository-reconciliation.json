@@ -1,0 +1,1360 @@
+{
+  "format_version": 1,
+  "review_date": "2026-09-22",
+  "base_commit": "522b72c24eb6c6007a50ea212b333b362be545fe",
+  "scope": "repository documentation, local/remote reconciliation, static changed-source review and dated operational evidence",
+  "documentation_files": [
+    {
+      "path": "docs/architecture.md",
+      "bytes": 15815,
+      "sha256": "0e917eb64b7f94dd6ca0c6345b4c057a41b51b5abc053e537790c27f5d5684f0",
+      "lines": 154
+    },
+    {
+      "path": "docs/audits/2026-09-06-foundation.md",
+      "bytes": 10469,
+      "sha256": "24befb2db9424560ccccbfd50c399725b7a9305ac8bbe255434d7c3f1c2e4c7b",
+      "lines": 71
+    },
+    {
+      "path": "docs/audits/2026-09-07-platform.md",
+      "bytes": 13500,
+      "sha256": "0d00a0dc69d6e8db9fba743082332df242323b6e546f35d58696a1d5728d01a9",
+      "lines": 71
+    },
+    {
+      "path": "docs/audits/2026-09-07-readiness.md",
+      "bytes": 7931,
+      "sha256": "e022764f70750823f8ed2d0944e0641d17b33dd84fa84d02b77f363df25f8823",
+      "lines": 52
+    },
+    {
+      "path": "docs/audits/2026-09-07-workflows.md",
+      "bytes": 10396,
+      "sha256": "63d9e84f2d28077b701022752ca91b20cf845a21f956ae38b0daf7ac2da81e8e",
+      "lines": 100
+    },
+    {
+      "path": "docs/audits/2026-09-13-bdl-signatures.json",
+      "bytes": 37210,
+      "sha256": "0be54059cdb840c242bf3ac46c615df5c119f0ab31d9b2a226e5805c8daa2c0e",
+      "json_type": "dict",
+      "keys": [
+        "checked_at_utc",
+        "method",
+        "expected_release_count",
+        "scanned_release_count",
+        "complete",
+        "distinct_declared_dataset_signatures",
+        "identical_declared_dataset_groups",
+        "errors",
+        "requests_made",
+        "incomplete_reasons",
+        "records"
+      ],
+      "items": 11
+    },
+    {
+      "path": "docs/audits/2026-09-13-drive-structure.json",
+      "bytes": 16102,
+      "sha256": "95a3400a7d4bd2743badf1a25612204e6bab8d4d42ee4033e4ec9291c4e9fff7",
+      "json_type": "dict",
+      "keys": [
+        "status",
+        "audited_at_utc",
+        "duration_seconds",
+        "read_only",
+        "root",
+        "budget_summary",
+        "physical_storage_map",
+        "diagnostic_source_sha256",
+        "verification_scope",
+        "nbp_current_pointer",
+        "nbp_releases",
+        "bdl_current_pointer",
+        "bdl_releases",
+        "structural_details",
+        "annotation_scope"
+      ],
+      "items": 15
+    },
+    {
+      "path": "docs/audits/2026-09-21-bdl-native-verification.json",
+      "bytes": 2199,
+      "sha256": "748ddf3b9488f979cd44534b7daac9585247e962c7e146bc0ea8ec21dc1f0f31",
+      "json_type": "dict",
+      "keys": [
+        "campaign_launched_at_utc",
+        "checks",
+        "completed_at_utc",
+        "download_cap_bytes",
+        "durable_part_receipt",
+        "durable_plan",
+        "format_version",
+        "native_bytes_retained_locally",
+        "native_object",
+        "observed_at_utc",
+        "read_only",
+        "runtime_commit",
+        "selection_id",
+        "source_id",
+        "subgroup_id",
+        "transport",
+        "verification_scope"
+      ],
+      "items": 17
+    },
+    {
+      "path": "docs/audits/2026-09-21-dbw-retained-report.json",
+      "bytes": 5785,
+      "sha256": "29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac",
+      "json_type": "dict",
+      "keys": [
+        "audited_at_utc",
+        "cache_files_downloaded",
+        "cache_files_reused",
+        "diagnostic_scope",
+        "earlier_reported_observation_rows",
+        "expected_retained_indicator_inventory",
+        "format_version",
+        "indicator_receipts",
+        "inventory_sha256",
+        "limitations",
+        "measured_observation_rows_match_earlier_report",
+        "measured_parquet_rows",
+        "observation_partitions",
+        "receipt_reported_native_names",
+        "remote_inventory_stable_after_restore",
+        "remote_object_count",
+        "remote_total_bytes",
+        "required_download_bytes_at_start",
+        "run_id",
+        "schemas",
+        "source_id",
+        "status"
+      ],
+      "items": 22
+    },
+    {
+      "path": "docs/audits/2026-09-21-portal-inventory-live.json",
+      "bytes": 1360,
+      "sha256": "1167bf2df1f74f48c0fa729273a63508eb471de8d9cfaca02f97f37a98b17c45",
+      "json_type": "dict",
+      "keys": [
+        "observed_at_utc",
+        "url",
+        "status",
+        "authentication",
+        "drive_read_requests",
+        "blocked_drive_writes",
+        "inventory_text"
+      ],
+      "items": 7
+    },
+    {
+      "path": "docs/audits/2026-09-22-bdl-ten-worker-verification.json",
+      "bytes": 1584,
+      "sha256": "f2b0d42db5f7ae4243dd3500e7d9b31833e8137dfb261fd1b6fc0deed8e79cbd",
+      "json_type": "dict",
+      "keys": [
+        "observed_at_utc",
+        "source_id",
+        "record_type",
+        "launch_performed_by",
+        "coordinator_pid",
+        "mode",
+        "concurrency",
+        "runtime_commit",
+        "workspace",
+        "running_proxy_processes_observed",
+        "logged_worker_ids",
+        "logged_proxy_http_ports_in_worker_order",
+        "initial_in_flight_subgroups",
+        "baseline_native_files",
+        "baseline_native_bytes",
+        "baseline_selection_complete_subgroups",
+        "reported_native_files",
+        "reported_native_bytes",
+        "selection_complete_subgroups",
+        "known_subgroups",
+        "blocked_selections",
+        "new_checkpoint_reported_files",
+        "new_checkpoint_reported_bytes",
+        "queue_sha256",
+        "writer_status",
+        "heartbeat_utc",
+        "verification",
+        "native_only",
+        "full_source_complete"
+      ],
+      "items": 29
+    },
+    {
+      "path": "docs/business-review.md",
+      "bytes": 1079,
+      "sha256": "36815296e165f1370fbc1927e9ce641acb088937073682e2800a14380b23a372",
+      "lines": 11
+    },
+    {
+      "path": "docs/collaboration.md",
+      "bytes": 9091,
+      "sha256": "bb8b309c8d6823bcee128dab65304538065ade6e356ce71935f478862d910224",
+      "lines": 88
+    },
+    {
+      "path": "docs/contracts/eurostat.md",
+      "bytes": 11651,
+      "sha256": "82ed5048aff9973ebc920545e2257caf209c4f2a02825b7cf6a2b2557e473c32",
+      "lines": 186
+    },
+    {
+      "path": "docs/contracts/gus-bdl.md",
+      "bytes": 17729,
+      "sha256": "b02a734800d95541550d2ff285e8c4b864734ba5820d5200441b88931e2e4f75",
+      "lines": 255
+    },
+    {
+      "path": "docs/contracts/gus-dbw.md",
+      "bytes": 6045,
+      "sha256": "8190cf9d9a4d16770aaff4e2e961f2f13335414c0626b70ccab2c5d9d3701487",
+      "lines": 90
+    },
+    {
+      "path": "docs/contracts/world-bank-wdi.md",
+      "bytes": 14902,
+      "sha256": "a7aba0398d93c90e4094ff3e76d8e2c596b14934aee4ee5c9bc38c064e594d7d",
+      "lines": 212
+    },
+    {
+      "path": "docs/decisions/0001-nbp-corrections.md",
+      "bytes": 6026,
+      "sha256": "6114176b13ae579c4572ce17ca0c310b9ed70f2c75e5eaace385ca77bc046730",
+      "lines": 34
+    },
+    {
+      "path": "docs/decisions/0002-portal-catalogue-and-project-boundaries.md",
+      "bytes": 4648,
+      "sha256": "09c13c869ba921b0f5d45b08ea8b37565d2f8233d9d73a89bec880cf107547ec",
+      "lines": 30
+    },
+    {
+      "path": "docs/decisions/0003-source-expansion-scope.md",
+      "bytes": 3172,
+      "sha256": "a1a802d3e937dd2b46760a58a8ef9fe47b77953567d1b9d0f92cf196f4dfe80a",
+      "lines": 49
+    },
+    {
+      "path": "docs/decisions/0004-autonomous-source-onboarding.md",
+      "bytes": 2683,
+      "sha256": "95b146bfac84ecd52f3238923c1fb86b60e07bf5cf8dd9a3dd8760bcafd5e7d6",
+      "lines": 42
+    },
+    {
+      "path": "docs/decisions/0005-agile-landing-and-source-access.md",
+      "bytes": 3749,
+      "sha256": "a79e3850e5988c066e5a9f015e718a1108573b37a5938dfc30c4bbfe1facdc75",
+      "lines": 56
+    },
+    {
+      "path": "docs/decisions/0006-complete-selected-source-coverage.md",
+      "bytes": 3205,
+      "sha256": "95d8ad5dc61820503dba47fb1b9f318fab65177cb6d11c23bbaf39c6cdabe65a",
+      "lines": 46
+    },
+    {
+      "path": "docs/decisions/0007-unified-vectorized-execution-standard.md",
+      "bytes": 2316,
+      "sha256": "c00ee47210c17c65ff57b4a111e42ddbfe7cac35c9cbb3479a2edab9cd1e39c5",
+      "lines": 40
+    },
+    {
+      "path": "docs/decisions/0008-google-drive-layout-consolidation.md",
+      "bytes": 4135,
+      "sha256": "651cec53646390fc4c69c1a4acf64ff578740e4aa6cbf9115a523c867fbf79b1",
+      "lines": 45
+    },
+    {
+      "path": "docs/decisions/0009-native-only-landing.md",
+      "bytes": 5102,
+      "sha256": "ed232b3dd904432d9b8eedf5ead99996baa62fbef0c8b796008d4c57a988e84e",
+      "lines": 87
+    },
+    {
+      "path": "docs/decisions/0010-retained-dbw-publication-ownership.md",
+      "bytes": 3132,
+      "sha256": "01d6715737395393fe66df5797599fd953179c8e5360affe34f5acda9191fd06",
+      "lines": 53
+    },
+    {
+      "path": "docs/deliverables.md",
+      "bytes": 137774,
+      "sha256": "2db9fe696f08d4e226b71bfe7341a4df7eb0dd74c435bb33a7e6a68c354d1906",
+      "lines": 1307
+    },
+    {
+      "path": "docs/development.md",
+      "bytes": 7812,
+      "sha256": "c2c1ad9ace6c39edc545a42a576d9fd4612541f98d28676484fbe7e483520c93",
+      "lines": 67
+    },
+    {
+      "path": "docs/drive-structure.md",
+      "bytes": 6803,
+      "sha256": "19562dd4090247705ec6bbe072acc14f1fc88ee30f7de213bd7db6afd4cc4855",
+      "lines": 95
+    },
+    {
+      "path": "docs/google-authorization.md",
+      "bytes": 15424,
+      "sha256": "1d1a67271a448b89237b46a860668c09c952d17f312cd37a05e3b626c9ce0742",
+      "lines": 99
+    },
+    {
+      "path": "docs/history/2026-09-06-architecture-proposal.md",
+      "bytes": 29384,
+      "sha256": "046229b3b222626744ee1246c1f42cae5cd6f53452cc794d8915201a2fd73e8e",
+      "lines": 211
+    },
+    {
+      "path": "docs/metricflow-compatibility.md",
+      "bytes": 4755,
+      "sha256": "9de9cd8e2b4c39038d6767c5feeac868b40dbc13eb1ad462774c071128ee2172",
+      "lines": 92
+    },
+    {
+      "path": "docs/nbp-business-definitions.md",
+      "bytes": 11330,
+      "sha256": "1f69b5944299a18af1183ffe1ab312d3c18d93b1e6f02d441bd1b7ab48cd83ce",
+      "lines": 181
+    },
+    {
+      "path": "docs/nbp-data-contracts.md",
+      "bytes": 15827,
+      "sha256": "528bfe008514ede0beb66505c6dceb288274daaf81f890b2d901345d45a7ba66",
+      "lines": 97
+    },
+    {
+      "path": "docs/nbp-gold-design.md",
+      "bytes": 7116,
+      "sha256": "ca9c817955e4dd4cf9fc98243fc40cb1a99ee8f08169a49281429b24392a7a44",
+      "lines": 60
+    },
+    {
+      "path": "docs/nbp-ingestion-recovery-plan.md",
+      "bytes": 11666,
+      "sha256": "76275150d1fe6c382f698ea0b4d3827ad2d84ad1fb1a79999e7e2d76e82a5a28",
+      "lines": 162
+    },
+    {
+      "path": "docs/nbp-platform-operations.md",
+      "bytes": 8742,
+      "sha256": "9518f7b949b796d6db224b824f60a3d630197a5b8f337092d14dca3ccf298b31",
+      "lines": 102
+    },
+    {
+      "path": "docs/nbp-silver-publication.md",
+      "bytes": 5979,
+      "sha256": "61d035759eca24872273ec366dd5eef2ec3c5cf364723489f9d65ca91a867a1e",
+      "lines": 41
+    },
+    {
+      "path": "docs/operations/bdl-web-full-history.md",
+      "bytes": 10058,
+      "sha256": "45467b86de7898e698f6dc1efb1473e9c4d61a5545379bea2b4681c80d7c02c4",
+      "lines": 150
+    },
+    {
+      "path": "docs/operations/drive-migration.md",
+      "bytes": 9924,
+      "sha256": "ed29813be7bcb9bc3ffab9691a0fe9852724a9ce27d08af00e366d7d412a11f2",
+      "lines": 150
+    },
+    {
+      "path": "docs/releases/2026-09-07-medallion-portal.md",
+      "bytes": 5147,
+      "sha256": "5beb087f24509755603a631cd0ff7708a98a7dbf28d115704cde34fc5c16ff0f",
+      "lines": 51
+    },
+    {
+      "path": "docs/releases/2026-09-07-nbp-platform.md",
+      "bytes": 6741,
+      "sha256": "c4aabe8cf7e98ff5e1eb42dca54bbdf2e5c50b8034f0e26a2ac5c24223898068",
+      "lines": 71
+    },
+    {
+      "path": "docs/releases/2026-09-07-nbp-silver.md",
+      "bytes": 3221,
+      "sha256": "d4f3220e57f63a845fb43409fa74a49b2a2444b6db6bf4c2dbef67dc1b557343",
+      "lines": 55
+    },
+    {
+      "path": "docs/releases/2026-09-07-platform-readiness.md",
+      "bytes": 9247,
+      "sha256": "fe590f1efd1a6746fec77acaf7bb4893cd330fb72bbbc85c9442ecf78ec2ddbd",
+      "lines": 106
+    },
+    {
+      "path": "docs/releases/2026-09-08-agile-landing.md",
+      "bytes": 7520,
+      "sha256": "86078ea5be96fe6ff0479c7cc0c799c39a601d388404f2b6402146badf4dfcb0",
+      "lines": 65
+    },
+    {
+      "path": "docs/releases/2026-09-08-complete-source-correction.md",
+      "bytes": 12393,
+      "sha256": "a0fc57e19135b8e7a96b96159a913ff7b2998b72c6f5ef53f4252f67c800805c",
+      "lines": 165
+    },
+    {
+      "path": "docs/releases/2026-09-08-source-campaigns.md",
+      "bytes": 9606,
+      "sha256": "5fc5e061808eec4efd0d2f80ab70d654286baca6320718803b45bc29db4b862f",
+      "lines": 67
+    },
+    {
+      "path": "docs/releases/2026-09-14-drive-layout.json",
+      "bytes": 3827,
+      "sha256": "47a3e35874da263c53d6bb1e73af335744cd6322e4331d52374df4474099e313",
+      "json_type": "dict",
+      "keys": [
+        "apply",
+        "completed_at",
+        "cutover_preconditions",
+        "independent_verification",
+        "limitations",
+        "operation",
+        "plan",
+        "plan_review",
+        "preservation_checks",
+        "private_evidence_directory",
+        "schema_version",
+        "status"
+      ],
+      "items": 12
+    },
+    {
+      "path": "docs/research/full-source-routes-2026-09-08.md",
+      "bytes": 18484,
+      "sha256": "c3aaae97a6f4c5e7ee4f92b431ea7398f8f39483abd932220d44b17a82975b25",
+      "lines": 332
+    },
+    {
+      "path": "docs/source-accounts.md",
+      "bytes": 11764,
+      "sha256": "212cd2e9b079ddca7aae7ba5df313239dc59f469b1f3022c3784113e33bcb22c",
+      "lines": 93
+    },
+    {
+      "path": "docs/source-campaign-operations.md",
+      "bytes": 30188,
+      "sha256": "757520d5f0d52f635c32cb7017e2868478bf93b6dc414ffb89a16ea3a90e6b9f",
+      "lines": 472
+    },
+    {
+      "path": "docs/source-candidates.md",
+      "bytes": 3297,
+      "sha256": "96f4b32641d1fd55bf8bf070c1492f127250630d82cc7b4661d24f5796ff7524",
+      "lines": 19
+    },
+    {
+      "path": "docs/source-expansion-plan.md",
+      "bytes": 30764,
+      "sha256": "a1810e6f69b061cb0b810c6049d0f932ab84ec768bb693d58f1f572c7c9a397a",
+      "lines": 311
+    },
+    {
+      "path": "docs/source-research/README.md",
+      "bytes": 9648,
+      "sha256": "dc9a65dfa9c8368d490697a19987e9b191b23eee57023266e96ea3cdce80ad72",
+      "lines": 132
+    },
+    {
+      "path": "docs/source-research/additional.md",
+      "bytes": 2276,
+      "sha256": "03234a6f0de03650d506ad8a17dd339231c77a8e722c0d8e468b0ee1634189e4",
+      "lines": 31
+    },
+    {
+      "path": "docs/source-research/commercial-disclosures.md",
+      "bytes": 19466,
+      "sha256": "be90776c56b82dbf4e894e0117c445ca6b04c0ec18d722f9b18c52a6b065094c",
+      "lines": 93
+    },
+    {
+      "path": "docs/source-research/coverage-and-taxonomy.md",
+      "bytes": 9862,
+      "sha256": "ff618a747e68c8f237118cd21d2d9956227c230a804a2a71a8fd1960c4f29392",
+      "lines": 99
+    },
+    {
+      "path": "docs/source-research/global-public.md",
+      "bytes": 16467,
+      "sha256": "0c41c3a966080c4416a5f19036d51dc2a9ebd8e3e8ccebaee477ec16053b930a",
+      "lines": 87
+    },
+    {
+      "path": "docs/source-research/ingestion-and-modeling.md",
+      "bytes": 26190,
+      "sha256": "032184ae2c18e9343c8c8231851329df975594f426354849fccaf85d19789fcf",
+      "lines": 314
+    },
+    {
+      "path": "docs/source-research/inventory-index.md",
+      "bytes": 42496,
+      "sha256": "e7fa74310a54b8c7be0d54cfa61350b100f7655a5ba8e56fdc4f8f13d8fed0d7",
+      "lines": 188
+    },
+    {
+      "path": "docs/source-research/inventory-summary.json",
+      "bytes": 710,
+      "sha256": "f9093f2408ebdc60af8c4858c2f6e03e964f40d0355d7f8a8e4be62f830633d7",
+      "json_type": "dict",
+      "keys": [
+        "products",
+        "publisher_labels",
+        "unique_reference_urls",
+        "reference_entries",
+        "by_section",
+        "by_priority",
+        "by_access_evidence",
+        "by_reuse_status",
+        "by_reference_depth"
+      ],
+      "items": 9
+    },
+    {
+      "path": "docs/source-research/poland-environment.md",
+      "bytes": 21868,
+      "sha256": "cafd3849e7f38afa00f81795973b08f34662ae78b42f5b7b9cff282834f2f1ae",
+      "lines": 91
+    },
+    {
+      "path": "docs/source-research/poland-governance.md",
+      "bytes": 19006,
+      "sha256": "8fc9f501984c0f15c16d2989fc1e23652024dfcadf15f89a5b94d556afb14228",
+      "lines": 85
+    },
+    {
+      "path": "docs/source-research/poland-social.md",
+      "bytes": 18078,
+      "sha256": "743b11a4203b63afcd6bded18fad41f8479ed5b28e686bc58f3437e967448b7f",
+      "lines": 73
+    },
+    {
+      "path": "docs/source-research/review-plan.md",
+      "bytes": 6211,
+      "sha256": "cb422471ded2ceaa64d9a1f68b863670fae591211aa8bbc71c9281276bfa9bc1",
+      "lines": 81
+    },
+    {
+      "path": "docs/source-research/source-inventory.csv",
+      "bytes": 238215,
+      "sha256": "bac634efd2bd39e854437cce809764bb55a3107c33698bb975561680664c556e",
+      "rows": 182,
+      "columns": [
+        "﻿id",
+        "provider",
+        "product",
+        "geography",
+        "provider_type",
+        "domains",
+        "entities",
+        "granularity",
+        "coverage_history",
+        "interfaces",
+        "access_auth",
+        "cost",
+        "reuse_status",
+        "reuse_notes",
+        "limits",
+        "update_behavior",
+        "history_load",
+        "incremental_load",
+        "keys_and_links",
+        "modeling_notes",
+        "overlap_notes",
+        "priority",
+        "access_evidence",
+        "connection_status",
+        "blockers",
+        "references",
+        "research_section"
+      ]
+    },
+    {
+      "path": "docs/source-research/source-inventory.json",
+      "bytes": 437929,
+      "sha256": "4c3bf96ab206601cdddd47943c05fe08644e9d9f6c3f5c3ba5119e8f86adc729",
+      "json_type": "list",
+      "keys": [],
+      "items": 182
+    },
+    {
+      "path": "docs/sql-joins.md",
+      "bytes": 2214,
+      "sha256": "60506853edaec1ae4965f58e1f8108a673497ea7fefadaefbec98bec9952ffe0",
+      "lines": 48
+    },
+    {
+      "path": "docs/using-the-portal.md",
+      "bytes": 6333,
+      "sha256": "bb744dbf8b33862dfd019abc47b46ae7c660237935634e783cf899f879c9a503",
+      "lines": 90
+    }
+  ],
+  "local_changed_files": [
+    {
+      "path": ".devcontainer/devcontainer.json",
+      "bytes": 1020,
+      "local_sha256": "07bad48d78789718648d59a0d0a6f1d69c83e948400f7e06b24769aa1c77fa2c",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": ".devcontainer/install-codex.sh",
+      "bytes": 334,
+      "local_sha256": "5fc4285e47ed5bc9844b833c86f2fc693010fbd9fd29b40ad631846e18de16a2",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": ".devcontainer/setup.sh",
+      "bytes": 1348,
+      "local_sha256": "186154bd8d773ccd877a6b32405327534fd9a4dc32a3f483b32128a4284ba7db",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": ".gitattributes",
+      "bytes": 144,
+      "local_sha256": "db2b78ba03ab36ecbb4b028eaa99c382003e49a69e931c62281e7e44fb43b3ce",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "AGENTS.md",
+      "bytes": 20175,
+      "local_sha256": "4a0360e18e03a64b4196b8458378400c45a05ab406eac85c987f4153a374dae5",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "config/sources.yaml",
+      "bytes": 17323,
+      "local_sha256": "71a5fe1c698ce5f0e214a9e2a4e58cfc562a910ba619c8813d7ae0538017392b",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/audits/2026-09-21-bdl-native-verification.json",
+      "bytes": 2199,
+      "local_sha256": "748ddf3b9488f979cd44534b7daac9585247e962c7e146bc0ea8ec21dc1f0f31",
+      "same_as_current_main": true,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/audits/2026-09-21-dbw-retained-report.json",
+      "bytes": 5785,
+      "local_sha256": "29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac",
+      "same_as_current_main": true,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/audits/2026-09-21-portal-inventory-live.json",
+      "bytes": 1360,
+      "local_sha256": "1167bf2df1f74f48c0fa729273a63508eb471de8d9cfaca02f97f37a98b17c45",
+      "same_as_current_main": true,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/deliverables.md",
+      "bytes": 133309,
+      "local_sha256": "13ed90a6510ab1588672dc88eaba036da582d45df19c0a4715447cdbc452b3dd",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/development.md",
+      "bytes": 8730,
+      "local_sha256": "c357a6e9e2a476658bd425d2020658008a808f9fa18e561a2a6e546897e9711f",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "docs/zohelo-codex-handoff-2026-09-21.md",
+      "bytes": 11879,
+      "local_sha256": "f9df36a399d6b2de0bd2b4623348aada82077fcbe1d2fa25d80110ec7e3a9a9b",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/biala_lista_schema.yml",
+      "bytes": 1541,
+      "local_sha256": "d4fc00296ca248eef593ed21abe0e7036d8e2722a41af03c41a2746d31616270",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/bronze/sources.yml",
+      "bytes": 10002,
+      "local_sha256": "d4975c7862d00c18dcc780b65036defa479fad8649c260d10cb82d54b39fb1d0",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "models/gleif_schema.yml",
+      "bytes": 1975,
+      "local_sha256": "7fcb6c673487e6e39df6cd6f38abf92dfb4711f87196cab85f0dc8e43b69b027",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_administrative_boundary.sql",
+      "bytes": 892,
+      "local_sha256": "b030206aea5b9e8f67e9ae2f99a4aa666b7e4c094fd8bb563009b2dba53e948f",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_corporate_entity.sql",
+      "bytes": 988,
+      "local_sha256": "06438343a1babc0a9e8f368f288a6ca58ee347cfec008c193cc34be1e77a23bb",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_locality.sql",
+      "bytes": 969,
+      "local_sha256": "331adfc2b3cc8c5910c540b807f904e0ec1be226442fea508a34c9f4b27140cb",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_street.sql",
+      "bytes": 725,
+      "local_sha256": "0b099b79268e467283a15191edd79d8fff331ca7b4bb829460c7f413a2a86149",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_territory.sql",
+      "bytes": 968,
+      "local_sha256": "e200b6cd4888e8c2fc9abd266d3f063b01a6141d0f8b30c9a778ab546a3113cd",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_vat_taxpayer_account.sql",
+      "bytes": 282,
+      "local_sha256": "8255acfd73e47f3df314c8d86f9daf523937ae7a32efdb3543b140220b37918e",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/dim_weather_station.sql",
+      "bytes": 347,
+      "local_sha256": "b0f816a643c46f6d4c14383a1535a2b34424ec180155ac7c353eeabcbfe92d4f",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/fact_daily_weather.sql",
+      "bytes": 730,
+      "local_sha256": "fe3c1fa74a0d121d3d88e476307619719b6b46dc3377f52c37b31141f70badfa",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/gold/marts/mart_weather_daily_summary.sql",
+      "bytes": 1181,
+      "local_sha256": "e977958a37708014db352851704777d33fa008f0fe1ffa1ade6ce139b50df216",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/imgw_schema.yml",
+      "bytes": 1971,
+      "local_sha256": "90e391d6eb16eb83e907fbda64baa614e3640334aab2b5610743dd27ff2f01ce",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/prg_schema.yml",
+      "bytes": 1187,
+      "local_sha256": "92a922fa79dd022c614fa05b019412289ff514570d2ef364a2097cd70e397faf",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_biala_lista_masks.sql",
+      "bytes": 283,
+      "local_sha256": "43345fad5165937aaffb29d0e3a0c40c8d1113a6a9bed54825066b736ed7e3a1",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_biala_lista_taxpayers.sql",
+      "bytes": 278,
+      "local_sha256": "e7fb739462c414f3c9319439eb2d83f3322d70aeae5dc375bc86d2993bb25a88",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_gleif_entities.sql",
+      "bytes": 541,
+      "local_sha256": "40c438fdc226313d8e51beb0a58aedb369f09a0012a1e51c8722861df214eb0f",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_gleif_relationships.sql",
+      "bytes": 437,
+      "local_sha256": "44024ffd63f0058e7638a90a49c597d12a0cc3f9bdf021d51b99d72b8f826d26",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_imgw_stations.sql",
+      "bytes": 457,
+      "local_sha256": "ebcaac87683650fe1728d2253021959adc1234912d26d10448c6eaff814e7896",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_imgw_synoptic_daily.sql",
+      "bytes": 1568,
+      "local_sha256": "e3a05442d882eab4492a40413726ae72ce9ad95a94032b3080258f519055e8db",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_prg_boundaries.sql",
+      "bytes": 1492,
+      "local_sha256": "df84b44cbf06d45d2f3afdd52a7b234bf25e18e0f4bf93069eca2fd0dc515f3f",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_teryt_localities.sql",
+      "bytes": 822,
+      "local_sha256": "623745204df1d0c14b6b54b5b1821de9dda0dc10f57048c2ba54503a57b850b5",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_teryt_streets.sql",
+      "bytes": 700,
+      "local_sha256": "1084edb26b450f7d777be2f74c1ef5e573f280e68695384c6642d773d23e8aa7",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/silver/stg_teryt_territories.sql",
+      "bytes": 697,
+      "local_sha256": "a01fce1b82997221139147a10730acb1842c4556f414e952b5d69fd25f42473c",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "models/teryt_schema.yml",
+      "bytes": 2871,
+      "local_sha256": "8fa97ecc5e9c5607dafdc805ea66405788e596e2be45c85f392280a4a812c04a",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "portal/scripts/teryt-bulk-worker.mjs",
+      "bytes": 2415,
+      "local_sha256": "b865735659d240691d93e0e4ecb7e89eb608ad85580b41c70d1658686f60d850",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/dbw_bronze_loader.py",
+      "bytes": 29960,
+      "local_sha256": "65453e60d02bf7280d7915c2425bce300fbb12f3e0e97454141ab68d77e7eab2",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "src/gleif_bronze_loader.py",
+      "bytes": 13813,
+      "local_sha256": "1c243d165bb18b8c0dc4822e95fe6b8679f530df2ce7ef84b5c71e8f6478afcc",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/imgw_bronze_loader.py",
+      "bytes": 14902,
+      "local_sha256": "80529a924ae3888f6dcb8eaa5387e1cd992216c40ca0cb1f129c185651c7979b",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/ingestion/sources/gios_bulk.py",
+      "bytes": 12591,
+      "local_sha256": "eb89d960f3a065b34f18ab12ee603463883390cf22aa3d82a8791e796b326320",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/ingestion/sources/gleif_bulk.py",
+      "bytes": 11391,
+      "local_sha256": "747d61d4ea280c43b5c68fc7f9685e2d986dd4aebf4ed13e6fc5ae5f8e48548f",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "src/ingestion/sources/gugik_prg_bulk.py",
+      "bytes": 9602,
+      "local_sha256": "e418b433162913962f51ba9203bd2bbb0829ba2c99e5b65f12a40935e47c7ef3",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/ingestion/sources/gus_teryt_bulk.py",
+      "bytes": 7711,
+      "local_sha256": "339abf6cd1fe05ac60051eaa03856249036401c0dcd0a52bca992f44680aa5b7",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/ingestion/sources/imgw_bulk.py",
+      "bytes": 10816,
+      "local_sha256": "dd9c3d26b5b29d170cfe0ff2f7b525b16fa89083545ccd3b2601dd72bdbff571",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/ingestion/sources/mf_biala_lista_bulk.py",
+      "bytes": 10674,
+      "local_sha256": "85b51ce1753291164b7c1eb3ebb782997f458058e6fbb96c32ae0a481617e200",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/mf_biala_lista_bronze_loader.py",
+      "bytes": 14335,
+      "local_sha256": "7149d8b1291512901dbb492a494319f488adc5f0c694c00d1260479158747341",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/prg_bronze_loader.py",
+      "bytes": 14946,
+      "local_sha256": "0d080f02df33c04a58b60e858c7b2131f6524265b80ababcbd7097d4140d5feb",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "src/teryt_bronze_loader.py",
+      "bytes": 17582,
+      "local_sha256": "261b2ae6e3b581af329515d02b6e3b2977038926e7b71338f3487cc4cf3a1fa2",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_bdl_bronze_loader.py",
+      "bytes": 1888,
+      "local_sha256": "505ec61ac8c90ff795e74ad9a55fadccadbbd8310c173d5b8862a124a29fee51",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "tests/test_bdl_platform_models.py",
+      "bytes": 18315,
+      "local_sha256": "81406342427d344863386e88b614f19b88775dfcaa44ec9ec3cb779d8c2a918c",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "tests/test_dbt_models.py",
+      "bytes": 15995,
+      "local_sha256": "34d265809ea15ec1bb19c641fb57f9f1239306d361efbecf11f4850051916876",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "tests/test_dbw_platform_models.py",
+      "bytes": 7162,
+      "local_sha256": "4fb49b90d91ee37702945ce2cd7e20ab347c8b20c5db506b7a25aa7a78d60dcc",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_gios_bulk.py",
+      "bytes": 2030,
+      "local_sha256": "a28186d7c4025926bfff8af4c74a54daaf1c8d424c4e259a090e85808ea8fdb5",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_gleif_bronze_loader.py",
+      "bytes": 5314,
+      "local_sha256": "17e65a7cc381feaf27b60bfb05c39534bff2e07338c5ae5a4485c9d85515fad3",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_gleif_bulk.py",
+      "bytes": 1769,
+      "local_sha256": "1e31bf568ff14e77020980f1448d605712748108f9329db1932100b51faccc08",
+      "same_as_current_main": false,
+      "exists_current_main": true
+    },
+    {
+      "path": "tests/test_imgw_bronze_loader.py",
+      "bytes": 4774,
+      "local_sha256": "999404bfabe52266b7fc4137f74c731abed08dfbf8e2241159f7697d6fb64153",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_imgw_bulk.py",
+      "bytes": 2409,
+      "local_sha256": "f795e322c3426e9371f6f8b1b1303b240b4368570530128762271627af084353",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_imgw_platform_models.py",
+      "bytes": 6743,
+      "local_sha256": "790d00f968f7d92119a9f76ddc0511179bacbb1b7cb3cdf5d837adb367a459ab",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_mf_biala_lista_bronze_loader.py",
+      "bytes": 3444,
+      "local_sha256": "813959ecdda602d1d11faaf3e57b7bf20a1d056be75a9dd6b86f27bb33e306bf",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_mf_biala_lista_bulk.py",
+      "bytes": 2374,
+      "local_sha256": "9dbc64741095443ab01b6aa2e3440a33b5e25c7ab3d22e69a2187a1d16d328aa",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_prg_bronze_loader.py",
+      "bytes": 2215,
+      "local_sha256": "7d61533eeddb234b4b219ddc403af66b3df5840e3df7a8c6509672ab3806da76",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    },
+    {
+      "path": "tests/test_teryt_bronze_loader.py",
+      "bytes": 4483,
+      "local_sha256": "004cc055b244a3093949ec625394f3040b34b2f3aaa903b9e67ba5707f608171",
+      "same_as_current_main": false,
+      "exists_current_main": false
+    }
+  ],
+  "python_static_checks": [
+    {
+      "path": "src/dbw_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 424,
+          "call": "unlink"
+        },
+        {
+          "line": 577,
+          "call": "unlink"
+        },
+        {
+          "line": 94,
+          "call": "delete"
+        },
+        {
+          "line": 394,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/gleif_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 102,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/imgw_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 153,
+          "call": "unlink"
+        },
+        {
+          "line": 261,
+          "call": "unlink"
+        },
+        {
+          "line": 100,
+          "call": "delete"
+        },
+        {
+          "line": 212,
+          "call": "unlink"
+        },
+        {
+          "line": 225,
+          "call": "unlink"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/gios_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 139,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/gleif_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 116,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/gugik_prg_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 108,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/gus_teryt_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 78,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/imgw_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 83,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/ingestion/sources/mf_biala_lista_bulk.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 95,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/mf_biala_lista_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 148,
+          "call": "unlink"
+        },
+        {
+          "line": 309,
+          "call": "unlink"
+        },
+        {
+          "line": 102,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/prg_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 94,
+          "call": "delete"
+        }
+      ]
+    },
+    {
+      "path": "src/teryt_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 93,
+          "call": "delete"
+        },
+        {
+          "line": 185,
+          "call": "extractall"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_bdl_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": [
+        {
+          "line": 48,
+          "call": "unlink"
+        }
+      ]
+    },
+    {
+      "path": "tests/test_bdl_platform_models.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_dbt_models.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_dbw_platform_models.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_gios_bulk.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_gleif_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_gleif_bulk.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_imgw_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_imgw_bulk.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_imgw_platform_models.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_mf_biala_lista_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_mf_biala_lista_bulk.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_prg_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": []
+    },
+    {
+      "path": "tests/test_teryt_bronze_loader.py",
+      "syntax": "ok",
+      "hotspots": []
+    }
+  ],
+  "validation": [
+    {
+      "command": "scripts/check-source-coverage.py",
+      "exit": 0,
+      "stdout": "{\n  \"additional_candidate_assignments\": 30,\n  \"additional_candidates\": 7,\n  \"analytical_dimensions\": 17,\n  \"categories\": 231,\n  \"categories_with_any_candidates\": 177,\n  \"categories_with_inventory_candidates\": 160,\n  \"categories_without_any_candidates\": 54,\n  \"categories_without_inventory_candidates\": 71,\n  \"coverage_gap_records\": 15,\n  \"discovery_evidence_only\": true,\n  \"inventory_candidate_assignments\": 442,\n  \"inventory_sources\": 182,\n  \"official_classifications\": 11,\n  \"source_mappings\": 182,\n  \"status\": \"ok\",\n  \"subdomains\": 45,\n  \"subject_domains\": 15\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "scripts/check-workflows.py",
+      "exit": 0,
+      "stdout": "GitHub Actions policy check passed.\n",
+      "stderr": ""
+    }
+  ],
+  "limitations": [
+    "No new independent full-source data audit or all-local-changes end-to-end test.",
+    "External source links were inventoried, not individually revalidated.",
+    "A supplemental read-only log/build inspection was blocked before execution; it supplied no new evidence.",
+    "Ingestion was not restarted, paused or reconfigured during this review."
+  ],
+  "bdl_durable_checkpoint": {
+    "observed_at_utc": "20260922T100934Z",
+    "root_id": "1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf",
+    "queue_sha256": "9c663abff2f8d4289836ef8127184a1b2c638e91135e2ce764e385c689e894e5",
+    "known_subgroups": 2420,
+    "selection_complete_subgroups": 1131,
+    "pass_outcomes": {
+      "partial": 265,
+      "landed": 1131,
+      "failed": 60
+    },
+    "failure_classes": {
+      "legacy_unclassified": 68,
+      "provider_timeout": 137,
+      "provider_error": 55,
+      "ui_protocol": 49
+    },
+    "in_flight": [
+      "P4306",
+      "P4307",
+      "P4344",
+      "P4354",
+      "P4355",
+      "P4356",
+      "P4357",
+      "P4358",
+      "P4359",
+      "P4360"
+    ],
+    "reported_native_files": 2464,
+    "reported_native_bytes": 639962821,
+    "blocked_selections": 62,
+    "writer_lock": {
+      "status": "active",
+      "pid": 383069,
+      "host": "codespace",
+      "heartbeat_utc": "2026-09-22T10:09:17.015202Z",
+      "released_at_utc": null
+    },
+    "snapshot_directory": "/workspaces/zohelo-data/.local/recovery-2026-09-21/rebuilt-2047/bdl-remote-20260922T100934Z",
+    "read_only": true
+  },
+  "documentation_link_check": {
+    "broken_targets_before": 10,
+    "broken_targets_after": 0,
+    "external_urls_revalidated": false,
+    "anchors_checked": false
+  }
+}

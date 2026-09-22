@@ -1,5 +1,7 @@
 # Source campaign operations
 
+> **Current policy and historical paths:** ADR 0009 supersedes earlier content-processing-in-Landing descriptions below. Existing response-envelope publications and legacy BDL API models remain retained artifacts; they are not the current full-history BDL Web intake and do not establish completed cross-source migration. The newest [delivery record](deliverables.md) distinguishes implemented paths, completion gates and pending publication.
+
 The owner now requires complete selected-source coverage (ADR 0006). In addition to
 the API response campaigns described below, the same serialized source job runs
 `python src/full_source_campaign.py --source world_bank_wdi --allow-production-write`

@@ -1,5 +1,7 @@
 # Source expansion implementation plan
 
+> **Current execution authority:** this document retains the research/onboarding design and historical phases. The newest [delivery record](deliverables.md) contains the accepted Wave 0–8 order and current dated priorities. Autonomous onboarding follows ADR 0004; full selected-product coverage follows ADR 0006; native-only Landing follows ADR 0009. Existing implementations are not all migrated merely because those decisions are accepted.
+
 Status: implementation sequence for the accepted worldwide and detailed-Poland scope, 8 September 2026.
 [ADR 0005](decisions/0005-agile-landing-and-source-access.md) adds immediate consecutive collection,
 queryable Landing increments and secure free-account/key onboarding; these no longer wait for complete medallion modeling.
