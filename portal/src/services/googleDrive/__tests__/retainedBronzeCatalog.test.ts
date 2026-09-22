@@ -42,6 +42,17 @@ function fixture(){
 }
 
 describe("retained DBW Bronze catalogue",()=>{
+  it("accepts logical content-addressed publication names",()=>{
+    const {raw,index}=fixture();
+    raw.indicator_index.name=`fragment-indicator-index-${"e".repeat(64)}.json`;
+    raw.datasets.slice(1).forEach((dataset,i)=>{
+      dataset.files[0].name=`fragment-${dataset.name}-1-${String(i+1).repeat(64).slice(0,64)}.parquet`;
+    });
+    index.indicators[0].parts[0].name=`fragment-observations-1-1-${"9".repeat(64)}.parquet`;
+    const manifest=parseRetainedBronzeManifest(raw,pointer) as RetainedBronzeManifest;
+    expect(parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),manifest)).toHaveLength(1550);
+  });
+
   it("validates all indicators and exposes only selected files",()=>{
     const {manifest,index}=fixture();
     manifest.indicators=parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),manifest);

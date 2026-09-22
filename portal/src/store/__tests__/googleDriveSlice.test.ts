@@ -1020,6 +1020,38 @@ describe("lazy published-query loading", () => {
     expect(store.getState().activeLakehouseDataset).toBe("previous");
     expect(store.getState().activeLakehouseLayer).toBe("03_silver");
   });
+  it.each([
+    "SELECT 'br_dbw_observations' AS label",
+    "-- br_dbw_observations\nSELECT 1",
+    "SELECT * FROM main.br_dbw_observations",
+  ])("does not reject non-published DBW text or relations: %s", async (sql) => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({ currentSession: {
+      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+    } } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
+    await expect(store.getState().preparePublishedTablesForQuery(sql)).resolves.toBeUndefined();
+    expect(resolvePublishedTableReferences).toHaveBeenCalled();
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+  });
+
+  it("blocks only the parsed aggregate published DBW relation before downloading", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({ currentSession: {
+      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+    } } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      { datasetName: "br_dbw_observations", layerName: "02_bronze", files: [] },
+    ]);
+    await expect(store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "02_bronze"."br_dbw_observations"'
+    )).rejects.toThrow("Choose a dated retained DBW indicator");
+    expect(resolvePublishedTableReferences).toHaveBeenCalled();
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+  });
+
   it("keeps existing local relations and reloads a release relation after it is dropped", async () => {
     const store = makeStore();
     configurePinnedGoldRelease(store);

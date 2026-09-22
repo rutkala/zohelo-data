@@ -44,8 +44,9 @@ _POINTER_NAME = "current-ingestion-state.json"
 _LANDING_POINTER_NAME = "current-landing.json"
 _PUBLICATION_OWNER_NAME = "publication-owner.json"
 _LANDING_OBJECT_RE = re.compile(
-    r"^(?:fragment|manifest)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
-    r"[0-9a-f]{4}-[0-9a-f]{12}\.(?:parquet|json)$"
+    r"^(?:fragment-(?:(?:[a-z0-9]+-)*[0-9a-f]{64}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{12})|manifest-[0-9a-f]{8}-[0-9a-f]{4}-"
+    r"[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(?:parquet|json)$"
 )
 
 _SHARDED_FIELDS = (
@@ -1036,6 +1037,51 @@ class _CampaignStore:
             "size": len(data),
             "sha256": sha256(data).hexdigest(),
         }
+
+    def put_or_reuse_landing_object(
+        self, identity: str, extension: str, data: bytes, *,
+        maximum_bytes: int = MAX_LANDING_FILE_BYTES
+    ) -> dict[str, Any]:
+        """Create or exactly reuse one content-addressed immutable object.
+
+        A retry after an interruption resolves the unique object by its digest
+        name and verifies its complete bytes before returning its descriptor.
+        """
+        if extension not in {"parquet", "json"}:
+            raise CampaignStoreError("unsupported Landing content object extension")
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", identity):
+            raise CampaignStoreError("invalid Landing content object identity")
+        if not isinstance(data, bytes) or not data:
+            raise CampaignStoreError("Landing publication object must contain bytes")
+        digest = sha256(data).hexdigest()
+        name = f"fragment-{identity}-{digest}.{extension}"
+        descriptor = {"name": name, "size": len(data), "sha256": digest}
+        self.guard_publication_owner()
+        found = self._find(name, self._landing_root())
+        if len(found) > 1:
+            raise CampaignStoreError("content-addressed Landing object is ambiguous")
+        if found:
+            candidate = {"id": found[0], **descriptor}
+            if self.read_landing_object(candidate, maximum_bytes=maximum_bytes) != data:
+                raise CampaignStoreError("content-addressed Landing object bytes changed")
+            self.guard_publication_owner()
+            return candidate
+        try:
+            return self.put_landing_object(name, data, maximum_bytes=maximum_bytes)
+        except CampaignStoreError as original:
+            # Reconcile a create that succeeded remotely or raced with the same
+            # exact content. Never accept a duplicate or same-name mismatch.
+            found = self._find(name, self._landing_root())
+            if len(found) != 1:
+                raise original
+            candidate = {"id": found[0], **descriptor}
+            try:
+                if self.read_landing_object(candidate, maximum_bytes=maximum_bytes) != data:
+                    raise original
+                self.guard_publication_owner()
+                return candidate
+            except CampaignStoreError:
+                raise original
 
     def read_landing_object(
         self, descriptor: dict[str, Any], *, maximum_bytes: int = MAX_LANDING_FILE_BYTES

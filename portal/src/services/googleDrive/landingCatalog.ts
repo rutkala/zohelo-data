@@ -150,7 +150,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 const CODE_SHA_RE = /^[0-9a-f]{40}$/;
 const DRIVE_ID_RE = /^[A-Za-z0-9_-]{1,255}$/;
 const PARQUET_NAME_RE =
-  /^(fragment-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|br_[A-Za-z0-9_-]+)\.parquet$/;
+  /^(fragment-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|(?:[a-z0-9]+-)*[0-9a-f]{64})|br_[A-Za-z0-9_-]+)\.parquet$/;
 const LANDING_MANIFEST_MAX_BYTES = 1024 * 1024;
 const LANDING_FILE_MAX_BYTES = 8 * 1024 * 1024;
 const BRONZE_FILE_MAX_BYTES = 32 * 1024 * 1024;
@@ -575,7 +575,7 @@ export function parseRetainedBronzeManifest(
     size: requiredInteger(raw.indicator_index.size, "indicator_index.size", false),
     sha256: requiredSha256(raw.indicator_index.sha256, "indicator_index.sha256"),
   };
-  if (!/^fragment-[0-9a-f-]{36}\.json$/.test(indicatorIndex.name) || indicatorIndex.size > LANDING_FILE_MAX_BYTES) {
+  if (!/^fragment-(?:[0-9a-f-]{36}|(?:[a-z0-9]+-)*[0-9a-f]{64})\.json$/.test(indicatorIndex.name) || indicatorIndex.size > LANDING_FILE_MAX_BYTES) {
     throw new Error("Retained DBW indicator index exceeds its bounded contract.");
   }
   if (!Array.isArray(raw.datasets) || raw.datasets.length !== 4) throw new Error("Retained DBW datasets are incomplete.");

@@ -146,3 +146,9 @@ and a bounded taxonomy-derived indicator index. Observation queries select one i
 explicit part for selections above 64 MiB. Snapshot identity is the audited retained inventory and
 audit report; native-to-Bronze lineage remains unresolved. This snapshot is independent of NBP
 release identity and the native dbt business catalogue.
+
+The retained DBW publisher alone additionally uses a non-expiring operational Git-ref
+claim acquired atomically before Drive namespace mutation. Explicit expected-SHA leases
+protect acquisition/release, and the reviewed audit hashes are enforced before either
+Git/Drive owner is acquired. See [ADR 0010](decisions/0010-retained-dbw-publication-ownership.md).
+Other source writers retain their own documented coordination boundaries.

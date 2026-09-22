@@ -4,6 +4,33 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Owner two-track delivery priority and local continuation — 22 September 2026
+
+The owner requires both autonomous backend delivery across the approved source programme
+and usable new data in `data.zohelo.com`. Routine engineering does not need owner supervision.
+Portal SQL access is an acceptance requirement, not satisfied by physical inventory alone.
+Preserve stage isolation and native-only Landing; expose each verified existing layer with
+its actual scope and remaining blockers, without relabelling retained Bronze as native Landing.
+Immediate engineering priority is finishing existing PR #145, followed by other retained
+source query contracts while source ingestion/modeling remains an open programme.
+
+At 07:54 UTC, a fresh, stable read of BDL's durable queue verified 2,385 reported native
+files / 626,046,982 bytes, 1,087 selection-complete / 2,420 known subgroups and 56 blocked
+selections. The writer record is released and no local worker is running; the monitor is
+monitor-only. The last worker stopped after a Drive folder-create timeout, so further
+reconciliation precedes any resume. This is retained native-transfer evidence, not full
+coverage or Bronze availability. No BDL restart or downstream launch is claimed here.
+
+The live portal still reports inventory-only commit `5e5f42a`. PR #145 remains unpublished.
+Inherited uncommitted query work was preserved before continuation in
+`.local/chat-delivery-2026-09-22/inherited-dbw-work.patch`. Review repairs now enforce exact
+reviewed audit hashes before production mutation, verify taxonomy bytes before using them,
+and apply the observation-selection guard to parsed SQL references instead of raw text.
+ADR 0010 adds server-serialized ownership before Drive namespace mutation; real local-Git
+race tests exercise this boundary. Ten focused Python tests and 38 focused portal tests pass.
+Full current-revision checks are running. No merge, Drive publication or live SQL acceptance
+is claimed until the corresponding subsequent receipt is recorded.
+
 ### Recovery deployed and retained DBW audit completed — 21 September 2026, 21:42 UTC
 
 **BDL repair merged and resumed:** [PR #143](https://github.com/rutkala/zohelo-data/pull/143)
@@ -90,8 +117,10 @@ under the local recovery evidence directory. This exercises the deployed UI with
 existing owner OAuth access token; it does not claim a new interactive Google sign-in test.
 
 **Active retained-DBW query work:** the audited dated Bronze snapshot now has an implementation
-for value-preserving fragments, resumable immutable publication, a strict four-dataset manifest,
-and an indicator/part selector in the portal. Local fixtures and review are in progress. No Drive
+for value-preserving fragments, per-object content-addressed resume, bounded typed row-stream
+verification, a strict four-dataset manifest, and an indicator/part selector in the portal. Local
+fixtures and review are in progress; the largest retained indicator still requires actual-data
+acceptance of the bounded stream proof before production continuation. No Drive
 publication, merge, deployment or authenticated browser query is claimed yet; native-to-Bronze
 lineage and current source completeness remain explicitly unresolved.
 

@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import threading
 from typing import Any, Iterable
 from uuid import uuid4
 
@@ -22,6 +23,7 @@ from ingestion.source_campaign_store import (
     MAX_LANDING_FILE_BYTES,
     MAX_LANDING_MANIFEST_BYTES,
     CampaignStoreError,
+    DriveCampaignStore,
 )
 
 
@@ -29,6 +31,13 @@ SOURCE_ID = "gus_dbw_retained_bronze"
 KIND = "retained_bronze_snapshot"
 MAX_INDEX_BYTES = MAX_LANDING_FILE_BYTES
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+# This publisher is for one reviewed, dated retained snapshot, not an arbitrary cache.
+REVIEWED_INVENTORY_SHA256 = "15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e"
+REVIEWED_AUDIT_REPORT_SHA256 = "29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac"
+FRAGMENT_NAME_RE = re.compile(
+    r"^fragment-(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|"
+    r"(?:[a-z0-9]+-)*[0-9a-f]{64})\.(?:parquet|json)$"
+)
 
 EXPECTED_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "observations": [
@@ -89,7 +98,9 @@ def _load_json(path: Path, label: str) -> dict[str, Any]:
     return value
 
 
-def validate_audit(audit_dir: Path) -> tuple[dict[str, Any], dict[str, Any], str]:
+def validate_audit(
+    audit_dir: Path, *, require_reviewed_snapshot: bool = False
+) -> tuple[dict[str, Any], dict[str, Any], str]:
     """Authenticate the completed audit and its exact pinned inventory."""
     report_path = audit_dir / "audit-report.json"
     inventory_path = audit_dir / "descriptor-inventory.json"
@@ -112,6 +123,11 @@ def validate_audit(audit_dir: Path) -> tuple[dict[str, Any], dict[str, Any], str
         or not SHA_RE.fullmatch(str(inventory.get("inventory_sha256", "")))
     ):
         raise RetainedBronzePublicationError("retained audit identity or completion is invalid")
+    if require_reviewed_snapshot and (
+        inventory["inventory_sha256"] != REVIEWED_INVENTORY_SHA256
+        or audit_sha != REVIEWED_AUDIT_REPORT_SHA256
+    ):
+        raise RetainedBronzePublicationError("Drive publication requires the exact reviewed audit hashes")
     objects = inventory.get("objects")
     if not isinstance(objects, list) or len(objects) != 3103 or inventory.get("object_count") != len(objects):
         raise RetainedBronzePublicationError("retained descriptor inventory is incomplete")
@@ -177,29 +193,86 @@ def _quoted(path: Path) -> str:
     return "'" + str(path).replace("'", "''") + "'"
 
 
+def _update_canonical_stream_digest(
+    con: duckdb.DuckDBPyConnection, path: Path, digest: Any
+) -> None:
+    """Stream a deterministic typed CSV row sequence into one SHA-256 digest."""
+    read_fd, write_fd = os.pipe()
+    reader_error: list[BaseException] = []
+
+    def consume() -> None:
+        try:
+            with os.fdopen(read_fd, "rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+        except BaseException as exc:  # propagated after COPY closes the pipe
+            reader_error.append(exc)
+
+    reader = threading.Thread(target=consume, name="retained-bronze-stream-hash")
+    reader.start()
+    copy_error: BaseException | None = None
+    try:
+        destination = f"/proc/self/fd/{write_fd}"
+        con.execute(
+            f"COPY (SELECT * FROM read_parquet({_quoted(path)})) TO {_quoted(Path(destination))} "
+            "(FORMAT CSV, HEADER false, FORCE_QUOTE *, NULL 'NULL', COMPRESSION 'none')"
+        )
+    except BaseException as exc:
+        copy_error = exc
+    finally:
+        os.close(write_fd)
+        reader.join()
+    if copy_error is not None:
+        raise RetainedBronzePublicationError("canonical row stream failed") from copy_error
+    if reader_error:
+        raise RetainedBronzePublicationError("canonical row stream could not be hashed") from reader_error[0]
+
+
+def _canonical_stream_sha(paths: list[Path]) -> str:
+    digest = hashlib.sha256()
+    con = duckdb.connect()
+    try:
+        con.execute("SET memory_limit='256MB'")
+        con.execute("SET threads=1")
+        con.execute("SET preserve_insertion_order=true")
+        for path in paths:
+            _update_canonical_stream_digest(con, path, digest)
+    finally:
+        con.close()
+    return digest.hexdigest()
+
+
 def _verify_repack(source: Path, fragments: list[Path], expected_rows: int) -> None:
     con = duckdb.connect()
     try:
-        scratch = fragments[0].parent / f"duckdb-spill-{uuid4()}"
-        scratch.mkdir()
         con.execute("SET memory_limit='256MB'")
         con.execute("SET threads=1")
-        con.execute("SET temp_directory=?", [str(scratch)])
-        con.execute("SET max_temp_directory_size='64GB'")
-        source_sql = f"read_parquet({_quoted(source)})"
         fragment_sql = "read_parquet([" + ",".join(_quoted(path) for path in fragments) + "])"
         rows = int(con.execute(f"SELECT count(*) FROM {fragment_sql}").fetchone()[0])
         if rows != expected_rows:
             raise RetainedBronzePublicationError("repacked fragments changed row count")
-        # EXCEPT ALL in both directions preserves duplicate and null multiplicity.
-        changed = con.execute(
-            f"SELECT EXISTS((SELECT * FROM {source_sql} EXCEPT ALL SELECT * FROM {fragment_sql}) "
-            f"UNION ALL (SELECT * FROM {fragment_sql} EXCEPT ALL SELECT * FROM {source_sql}))"
-        ).fetchone()[0]
-        if changed:
-            raise RetainedBronzePublicationError("repacked fragments changed retained values")
     finally:
         con.close()
+    # A byte-identical digest of the complete typed CSV row sequence preserves
+    # order, nulls, duplicates, strings and floating representations without a
+    # whole-relation sort or materialization. Each fragment is appended in its
+    # proven source order, so fragment boundaries do not affect the digest.
+    if _canonical_stream_sha([source]) != _canonical_stream_sha(fragments):
+        raise RetainedBronzePublicationError("repacked fragments changed retained row values or order")
+
+
+def _numeric_fragment_order(paths: Iterable[Path]) -> list[Path]:
+    numbered: list[tuple[int, Path]] = []
+    for path in paths:
+        match = re.fullmatch(r"data_(\d+)\.parquet", path.name)
+        if match is None:
+            raise RetainedBronzePublicationError("repacking produced an unexpected fragment name")
+        numbered.append((int(match.group(1)), path))
+    numbered.sort(key=lambda item: item[0])
+    numbers = [number for number, _ in numbered]
+    if numbers not in (list(range(len(numbers))), list(range(1, len(numbers) + 1))):
+        raise RetainedBronzePublicationError("repacking produced a non-contiguous fragment sequence")
+    return [path for _, path in numbered]
 
 
 def bounded_fragments(source: Path, schema: list[tuple[str, str]], work: Path) -> Iterable[tuple[Path, int]]:
@@ -230,7 +303,7 @@ def bounded_fragments(source: Path, schema: list[tuple[str, str]], work: Path) -
         )
     finally:
         con.close()
-    fragments = sorted(output_dir.glob("*.parquet"))
+    fragments = _numeric_fragment_order(output_dir.glob("*.parquet"))
     if not fragments:
         raise RetainedBronzePublicationError("repacking produced no fragments")
     normalized: list[Path] = []
@@ -278,7 +351,7 @@ def _publication_descriptor(value: Any, *, part: bool = False) -> dict[str, Any]
     if not isinstance(value, dict) or set(value) != fields:
         raise RetainedBronzePublicationError("publication descriptor has invalid fields")
     if (not isinstance(value["id"], str) or not value["id"] or
-        not re.fullmatch(r"fragment-[0-9a-f-]{36}\.parquet", str(value["name"])) or
+        not FRAGMENT_NAME_RE.fullmatch(str(value["name"])) or not value["name"].endswith(".parquet") or
         type(value["size"]) is not int or not 0 < value["size"] <= MAX_LANDING_FILE_BYTES or
         not SHA_RE.fullmatch(str(value["sha256"])) or
         type(value["row_count"]) is not int or value["row_count"] <= 0 or
@@ -351,9 +424,16 @@ def _publish_retained_bronze(
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise RetainedBronzePublicationError("another retained Bronze publisher owns this workspace") from exc
-        report, inventory, audit_sha = validate_audit(audit_dir)
+        report, inventory, audit_sha = validate_audit(
+            audit_dir, require_reviewed_snapshot=isinstance(store, DriveCampaignStore)
+        )
+        if isinstance(store, DriveCampaignStore):
+            guard = getattr(store, "retained_publication_guard", None)
+            if not callable(guard):
+                raise RetainedBronzePublicationError("Drive publication requires the operational Git lock")
+            guard()
         by_path = _descriptor_by_path(inventory)
-        taxonomy_path = audit_dir / "verified-cache/taxonomy/br_dbw_indicators.parquet"
+        taxonomy_path = _verified_input(audit_dir, by_path["taxonomy/br_dbw_indicators.parquet"])
         entries = _taxonomy_entries(taxonomy_path)
         _, previous = _read_previous(store)
         datasets: dict[str, Any] = {}
@@ -362,6 +442,12 @@ def _publish_retained_bronze(
             if (
                 previous.get("inventory_sha256") != inventory["inventory_sha256"]
                 or previous.get("audit_report_sha256") != audit_sha
+                or previous.get("audit_run_id") != report["run_id"]
+                or not re.fullmatch(r"[0-9a-f]{40}", str(previous.get("code_sha", "")))
+                or previous.get("tests") != {"passed": True, "rows_and_schemas_preserved": True}
+                or previous.get("observation_schema") != [
+                    {"name": n, "type": t} for n, t in EXPECTED_SCHEMAS["observations"]
+                ]
                 or not isinstance(previous.get("datasets"), list)
             ):
                 raise RetainedBronzePublicationError("current retained Bronze snapshot uses different audit evidence")
@@ -373,25 +459,63 @@ def _publish_retained_bronze(
                 "observations", "dictionaries", "metadata", "taxonomy"
             }:
                 raise RetainedBronzePublicationError("current retained Bronze datasets are invalid")
-            datasets = {item["name"]: item for item in previous["datasets"] if item["name"] != "observations"}
+            if any(not isinstance(item, dict) or set(item) != {
+                "name", "table_name", "row_count", "columns", "files"
+            } for item in previous["datasets"]):
+                raise RetainedBronzePublicationError("current retained Bronze dataset fields are invalid")
+            all_datasets = {item["name"]: item for item in previous["datasets"]}
+            if len(all_datasets) != 4:
+                raise RetainedBronzePublicationError("current retained Bronze datasets are duplicated")
+            observations = all_datasets["observations"]
+            if (
+                observations.get("table_name") != "br_dbw_observations"
+                or observations.get("columns") != [
+                    {"name": n, "type": t} for n, t in EXPECTED_SCHEMAS["observations"]
+                ]
+                or observations.get("files") != []
+                or type(observations.get("row_count")) is not int
+                or observations["row_count"] < 0
+            ):
+                raise RetainedBronzePublicationError("current retained observations dataset is invalid")
+            datasets = {name: value for name, value in all_datasets.items() if name != "observations"}
             previous_descriptors: list[dict[str, Any]] = []
             for name, dataset in datasets.items():
-                if dataset.get("columns") != [{"name": n, "type": t} for n,t in EXPECTED_SCHEMAS[name]]:
+                expected_table = f"br_dbw_{'indicators' if name == 'taxonomy' else name}"
+                if (dataset.get("table_name") != expected_table or
+                    dataset.get("columns") != [{"name": n, "type": t} for n,t in EXPECTED_SCHEMAS[name]]):
                     raise RetainedBronzePublicationError("current retained Bronze dataset schema changed")
                 dataset["files"] = [_publication_descriptor(item) for item in dataset.get("files", [])]
-                if sum(item["row_count"] for item in dataset["files"]) != dataset.get("row_count"):
+                if (sum(item["row_count"] for item in dataset["files"]) != dataset.get("row_count") or
+                    dataset.get("row_count") != report["measured_parquet_rows"][name]):
                     raise RetainedBronzePublicationError("current retained Bronze dataset row counts changed")
                 previous_descriptors.extend(dataset["files"])
             index_desc = previous.get("indicator_index")
             if (not isinstance(index_desc, dict) or set(index_desc) != {"id", "name", "size", "sha256"} or
-                not re.fullmatch(r"fragment-[0-9a-f-]{36}\.json", str(index_desc.get("name", ""))) or
+                not FRAGMENT_NAME_RE.fullmatch(str(index_desc.get("name", ""))) or
+                not str(index_desc.get("name", "")).endswith(".json") or
+                type(index_desc.get("size")) is not int or not 0 < index_desc["size"] <= MAX_INDEX_BYTES or
                 not SHA_RE.fullmatch(str(index_desc.get("sha256", "")))):
                 raise RetainedBronzePublicationError("current indicator index descriptor changed")
             index_raw = store.read_landing_object(index_desc, maximum_bytes=MAX_INDEX_BYTES)
             index = json.loads(index_raw)
-            if (index.get("source_id") != SOURCE_ID or index.get("inventory_sha256") != inventory["inventory_sha256"]):
+            if (not isinstance(index, dict) or set(index) != {
+                "format_version", "kind", "source_id", "inventory_sha256", "indicator_count",
+                "published_indicator_count", "pending_indicator_count", "indicators"
+            } or index.get("format_version") != 1 or
+                index.get("kind") != "retained_bronze_indicator_index" or
+                index.get("source_id") != SOURCE_ID or
+                index.get("inventory_sha256") != inventory["inventory_sha256"] or
+                index.get("indicator_count") != 1550 or
+                index.get("published_indicator_count") != previous["published_indicator_count"] or
+                index.get("pending_indicator_count") != previous["pending_indicator_count"] or
+                not isinstance(index.get("indicators"), list) or len(index["indicators"]) != 1550):
                 raise RetainedBronzePublicationError("current indicator index audit binding changed")
-            previous_index = {item["indicator_id"]: item for item in index.get("indicators", [])}
+            indicator_fields = {"indicator_id", "indicator_name", "indicator_name_en", "thematic_area",
+                "domain", "taxonomy_path", "status", "row_count", "parts"}
+            if any(not isinstance(item, dict) or set(item) != indicator_fields
+                   for item in index["indicators"]):
+                raise RetainedBronzePublicationError("current indicator index entries are invalid")
+            previous_index = {item["indicator_id"]: item for item in index["indicators"]}
             if len(previous_index) != 1550:
                 raise RetainedBronzePublicationError("current indicator index is incomplete")
             for item in entries:
@@ -407,6 +531,12 @@ def _publish_retained_bronze(
                     raise RetainedBronzePublicationError("current indicator publication state changed")
                 item.update({"status": status, "row_count": row_count, "parts": parts})
                 previous_descriptors.extend(parts)
+            actual_published = sum(item["status"] == "published" for item in entries)
+            actual_rows = sum(item["row_count"] for item in entries)
+            if (actual_published != previous["published_indicator_count"] or
+                1550 - actual_published != previous["pending_indicator_count"] or
+                actual_rows != observations["row_count"]):
+                raise RetainedBronzePublicationError("current retained Bronze index totals are inconsistent")
             store.verify_landing_objects_metadata(previous_descriptors)
             if previous["pending_indicator_count"] == 0:
                 return previous
@@ -423,8 +553,12 @@ def _publish_retained_bronze(
                     continue
                 source = _verified_input(audit_dir, by_path[rel_path])
                 files, row_count = [], 0
-                for fragment, rows in bounded_fragments(source, EXPECTED_SCHEMAS[name], temp):
-                    descriptor = store.put_landing_object(f"fragment-{uuid4()}.parquet", fragment.read_bytes())
+                for number, (fragment, rows) in enumerate(
+                    bounded_fragments(source, EXPECTED_SCHEMAS[name], temp), 1
+                ):
+                    descriptor = store.put_or_reuse_landing_object(
+                        f"{name}-{number}", "parquet", fragment.read_bytes()
+                    )
                     descriptor["row_count"] = rows
                     files.append(descriptor); row_count += rows
                     if fragment.parent == temp: fragment.unlink()
@@ -444,10 +578,13 @@ def _publish_retained_bronze(
                 source = _verified_input(audit_dir, by_path[rel_path])
                 parts, row_count = [], 0
                 for number, (fragment, rows) in enumerate(bounded_fragments(source, EXPECTED_SCHEMAS["observations"], temp), 1):
-                    descriptor = store.put_landing_object(f"fragment-{uuid4()}.parquet", fragment.read_bytes())
+                    raw_fragment = fragment.read_bytes()
+                    descriptor = store.put_or_reuse_landing_object(
+                        f"observations-{indicator_id}-{number}", "parquet", raw_fragment
+                    )
                     descriptor.update({"row_count": rows, "part": number})
                     parts.append(descriptor); row_count += rows
-                    if store.read_landing_object({k: descriptor[k] for k in ("id", "name", "size", "sha256")}) != fragment.read_bytes():
+                    if store.read_landing_object({k: descriptor[k] for k in ("id", "name", "size", "sha256")}) != raw_fragment:
                         raise RetainedBronzePublicationError("uploaded observation fragment readback changed")
                     if fragment.parent == temp: fragment.unlink()
                 item.update({"status": "published", "row_count": row_count, "parts": parts})
@@ -464,7 +601,7 @@ def _publish_retained_bronze(
         index_raw = canonical(index)
         if len(index_raw) > MAX_INDEX_BYTES:
             raise RetainedBronzePublicationError("indicator index exceeds 8 MiB")
-        index_desc = store.put_landing_object(f"fragment-{uuid4()}.json", index_raw)
+        index_desc = store.put_or_reuse_landing_object("indicator-index", "json", index_raw)
         index_desc["sha256"] = hashlib.sha256(index_raw).hexdigest()
         snapshot_id = str(uuid4())
         manifest = {
@@ -519,6 +656,13 @@ def _with_owner(store: Any, operation: Any) -> dict[str, Any]:
 def publish_retained_bronze(
     store: Any, audit_dir: Path, workspace: Path, code_sha: str, *, max_indicators: int = 8
 ) -> dict[str, Any]:
+    # The owner record is a remote write; reject unreviewed inputs before acquiring it.
+    if isinstance(store, DriveCampaignStore):
+        validate_audit(audit_dir, require_reviewed_snapshot=True)
+        guard = getattr(store, "retained_publication_guard", None)
+        if not callable(guard):
+            raise RetainedBronzePublicationError("Drive publication requires the operational Git lock")
+        guard()
     return _with_owner(store, lambda: _publish_retained_bronze(
         store, audit_dir, workspace, code_sha, max_indicators=max_indicators
     ))
@@ -543,4 +687,10 @@ def publish_retained_bronze_until_complete(
             if pending >= previous_pending:
                 raise RetainedBronzePublicationError("publication continuation made no durable progress")
             previous_pending = pending
+    if isinstance(store, DriveCampaignStore):
+        validate_audit(audit_dir, require_reviewed_snapshot=True)
+        guard = getattr(store, "retained_publication_guard", None)
+        if not callable(guard):
+            raise RetainedBronzePublicationError("Drive publication requires the operational Git lock")
+        guard()
     return _with_owner(store, run)

@@ -507,11 +507,6 @@ export const createGoogleDriveSlice: StateCreator<
     // existing execution path. Only a resolved immutable release participates.
     const datasets = publishedDatasets(source, landing);
     if (!local || datasets.length === 0) return;
-    if (/\bbr_dbw_observations\b/i.test(sql)) {
-      throw new Error(
-        "Choose a dated retained DBW indicator (or one of its explicit parts) before querying observations; the full 4.8 GB retained collection is not loaded into the browser."
-      );
-    }
     const current = () =>
       get().currentSession === session &&
       get().googleAuth.token === token &&
@@ -530,6 +525,13 @@ export const createGoogleDriveSlice: StateCreator<
         throw new Error("Google Drive session changed before SQL dependencies could be resolved.");
       }
       if (referenced.length === 0) return;
+      if (referenced.some((table) =>
+        table.layerName === "02_bronze" && table.datasetName === "br_dbw_observations"
+      )) {
+        throw new Error(
+          "Choose a dated retained DBW indicator (or one of its explicit parts) before querying observations; the full retained collection is not loaded into the browser."
+        );
+      }
       if (referenced.some((table) =>
         table.datasetName.startsWith("br_dbw_observations__indicator_") && table.files.length === 0
       )) {

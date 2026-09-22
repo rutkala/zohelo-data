@@ -300,13 +300,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               legacy / unversioned
             </Badge>
           )}
-          {(lakehouseLanding?.snapshots.length ?? 0) > 0 && (
+          {(lakehouseLanding?.snapshots.filter(({ manifest }) => manifest.kind === "landing_snapshot").length ?? 0) > 0 && (
             <Badge
               variant="secondary"
               className="text-[10px] h-4 font-mono px-1.5 shrink-0"
               title="Independently validated source Landing snapshots"
             >
-              Landing {lakehouseLanding?.snapshots.length}
+              Landing {lakehouseLanding?.snapshots.filter(({ manifest }) => manifest.kind === "landing_snapshot").length}
             </Badge>
           )}
           {activeLakehouseDataset && (
