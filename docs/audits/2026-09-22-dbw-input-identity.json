@@ -1,0 +1,23 @@
+{
+  "audit_report_sha256": "29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac",
+  "code_sha": "667afa87b4d3d2c3db0201d4ec7dd17b47efa0f4",
+  "drive_reads": false,
+  "drive_writes": false,
+  "elapsed_seconds": 196.208,
+  "expected_partitions": 1550,
+  "failures": [],
+  "finished_at_utc": "2026-09-22T12:51:52.357558+00:00",
+  "format_version": 1,
+  "inventory_sha256": "15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e",
+  "limitations": [
+    "Local verified cache only; no current remote object recheck.",
+    "Not a query publication, full provider coverage, or native-to-Bronze lineage proof."
+  ],
+  "scope": "local_retained_input_indicator_identity",
+  "source_id": "gus_dbw",
+  "started_at_utc": "2026-09-22T12:48:36.149702+00:00",
+  "status": "verified",
+  "verified_bytes": 4737200817,
+  "verified_partitions": 1550,
+  "verified_rows": 879999727
+}
