@@ -13,7 +13,7 @@ Official API Documentation: [API DBW Documentation](https://api-dbw.stat.gov.pl/
 
 Dziedzinowe Bazy Wiedzy (DBW) is Statistics Poland's specialized thematic repository providing deep statistical domain series across macroeconomics, industry, construction, national accounts, demography, labor market, public finance, agriculture, transport, and environmental indicators. Unlike BDL, which is organized primarily by territorial administrative division (NUTS/TERYT levels), DBW organizes data into structured thematic domains with specialized multi-dimensional cross-sections (`przekroje`), dimensions (`wymiary`), positions (`pozycje`), and information presentation types (`typy informacji`).
 
-Statistics Poland permits reuse of DBW data under [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/). Published products must attribute Statistics Poland (GUS) and identify DBW as the source. In accordance with [ADR 0009](docs/decisions/0009-native-only-landing.md), exact response bytes, original archive packages, and source metadata are landed unchanged in their native formats.
+Statistics Poland permits reuse of DBW data under [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/). Published products must attribute Statistics Poland (GUS) and identify DBW as the source. In accordance with [ADR 0009](../decisions/0009-native-only-landing.md), exact response bytes, original archive packages, and source metadata are landed unchanged in their native formats.
 
 ## Architecture and access channels
 
@@ -63,7 +63,7 @@ GUS edge firewalls drop TCP SYN packets originating from Microsoft Azure / GitHu
 
 ## Native landing layout (ADR 0009)
 
-In adherence to [ADR 0009](docs/decisions/0009-native-only-landing.md), all downloaded objects are stored in their exact provider bytes without parsing CSV, unzipping archives, validating business content, inferring schemas, or transforming to Parquet in the landing step:
+In adherence to [ADR 0009](../decisions/0009-native-only-landing.md), all downloaded objects are stored in their exact provider bytes without parsing CSV, unzipping archives, validating business content, inferring schemas, or transforming to Parquet in the landing step:
 
 ```
 01_landing/gus_dbw/

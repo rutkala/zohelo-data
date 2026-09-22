@@ -1,5 +1,7 @@
 # Google Drive Structure and Canonical Publication Guide
 
+> **Operations clarification, 22 September 2026:** the accepted 14 September layout remains the storage baseline. The migration workflow referenced by the historical cutover procedure was subsequently retired; it is not an available current Actions button. New layout mutations need a separately reviewed procedure preserving the same provenance and data-preservation controls.
+
 This guide explains the Google Drive storage layout for `zohelo-data` (`data.zohelo.com`), how current data is addressed, how sources publish packages, and how the canonical medallion layout operates.
 
 > [!NOTE]

@@ -1,5 +1,7 @@
 # BDL Web full-history execution contract
 
+> **Current operational qualification, 22 September 2026:** the owner has selected the local devcontainer and ten isolated workers on the existing VPN routes. This does not waive provider restrictions or permit multiple coordinators. The Drive writer record is an application-level guard, not an atomic cross-host lock; before recovery prove the previous writer stopped and reconcile uncertain writes. Time-based staleness alone is not evidence that takeover is safe. Current runtime/checkpoints are in [the delivery record](../deliverables.md).
+
 Owner requirement clarified on 17 September 2026. This is the implementation and
 acceptance contract for PR #126, not a claim that a Codespace campaign is deployed
 or that full BDL coverage has been collected. Current project delivery status

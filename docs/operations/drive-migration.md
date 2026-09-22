@@ -1,5 +1,7 @@
 # Google Drive Layout Migration Operational Runbook
 
+> **Historical workflow, not a current launch instruction:** `migrate-drive-layout.yml` was retired on 15 September 2026 after the accepted cutover. Preserve this completed-operation runbook and all plan/journal/provenance safeguards. Any new mutation requires a reviewed, available execution procedure first; do not bypass the safeguards or rerun the old plan from newer code.
+
 This runbook defines the operational procedure for executing, resuming, verifying, or rolling back the physical Google Drive consolidation for `zohelo-data`.
 
 > [!IMPORTANT]

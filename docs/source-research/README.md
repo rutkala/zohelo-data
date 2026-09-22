@@ -1,5 +1,7 @@
 # Global and Polish data-source landscape
 
+> **Status clarification, 22 September 2026:** this is dated research, not the current connection or delivery registry. ADR 0004 supersedes owner-by-owner source selection; ADR 0006 requires complete selected-product scope; ADR 0009 supersedes processing-in-Landing proposals. Use [the current delivery record](../deliverables.md) for execution order and verified status.
+
 **Research date: 8 September 2026. Research delivered for review; new connections have
 not been tested and onboarding has not started.**
 

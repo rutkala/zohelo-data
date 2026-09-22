@@ -15,8 +15,8 @@ Open [Actions](https://github.com/rutkala/zohelo-data/actions). The [workflow in
 | Rebuild from retained raw | Same, mode `rebuild` | No NBP request. Build and publish from saved verified responses. |
 | Prove raw recovery as well | Enable `verify_raw_replay` | A separate process rebuilds exact released inputs and compares all tables. |
 | Restore a previous retained release | Same, operation `promote_retained_release` | Requires target and expected-current release UUIDs; verifies data before switching. See recovery below. |
-| Diagnose Google read access | **Check Google access** | Read-only credential/root check. |
-| Verify a temporary upload | **Check Google upload** | Explicit temporary upload, content readback and deletion. |
+| Diagnose Google read access | Documented `scripts/check_google_access.py` diagnostic; the standalone Action was retired | Explicitly requested read-only credential/root check; not an ingestion run. |
+| Verify a temporary upload | Documented `scripts/check_google_upload.py --allow-write-test`; the standalone Action was retired | Explicitly authorized temporary upload, content readback and cleanup of only the test object. |
 | Create missing configured folders | **Reconcile Drive folders** | Manual metadata mutation; does not publish data. |
 
 Use `main` for production. Production writers share one non-cancelling concurrency group. Do not start a parallel local production writer. A production push runs only when its reviewed merge message includes `[run-nbp-platform]`; normal commits do not silently ingest data.
