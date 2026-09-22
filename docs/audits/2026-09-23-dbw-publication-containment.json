@@ -1,0 +1,52 @@
+{
+  "format_version": 1,
+  "scope": "DBW retained Bronze publication containment",
+  "observed_at_utc": "2026-09-22T22:27:36.366631+00:00",
+  "run_id": 35783126258,
+  "run_conclusion": "cancelled",
+  "workflow_state": "disabled_manually",
+  "deleted_landing_folder": {
+    "path": "01_landing/gus_dbw_retained_bronze",
+    "trashed": true,
+    "child_folder": "responses",
+    "response_objects_including_trashed": 0
+  },
+  "original_input_inventory": {
+    "inventory_sha256": "15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e",
+    "object_count": 3103,
+    "total_bytes": 4803673234,
+    "matches_reviewed_hash": true,
+    "observation_partitions": 1550
+  },
+  "publication": {
+    "snapshot_id": "37464abe-8c54-4610-a215-b5bbdb6f2529",
+    "code_sha": "ea39f7ab9b3b8ae45aff1bd14260a3c0eb9bae96",
+    "published_indicator_count": 160,
+    "pending_indicator_count": 1390,
+    "coverage_status": "incomplete_retained_inventory",
+    "lineage_status": "unresolved_native_to_bronze",
+    "dataset_rows": {
+      "observations": 22010748,
+      "dictionaries": 8358612,
+      "metadata": 1531,
+      "taxonomy": 1550
+    }
+  },
+  "publication_object_inventory": {
+    "objects": 300,
+    "bytes": 440616632,
+    "parquet_objects": 260,
+    "json_objects": 40
+  },
+  "publication_payload_location": "06_control/source_campaigns/gus_dbw_retained_bronze/landing_publications",
+  "drive_owner_status": "held",
+  "git_owner_sha": "8d28aa6c6a4303aa10a25406f06fa1292ad80d67",
+  "locks_changed": false,
+  "drive_mutations_by_containment": false,
+  "bdl_changed": false,
+  "limitations": [
+    "Original inputs were reconciled by IDs, sizes and stored checksums, not re-downloaded for a new full-byte audit.",
+    "The selected publication manifest hash and stable pointer were verified; fragment SQL and live browser acceptance did not run.",
+    "Already-created publication objects and the partial current pointer are preserved; do not delete referenced files or clear owner records automatically."
+  ]
+}

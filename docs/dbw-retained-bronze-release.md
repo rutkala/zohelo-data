@@ -1,5 +1,7 @@
 # Publish the retained DBW Bronze snapshot
 
+> **Execution hold, 23 September 2026 (Warsaw):** this workflow is disabled after the unexpected Landing-folder creation. The run was cancelled; do not re-enable or rerun the unchanged implementation. Read the current hold, preserved snapshot and recovery requirements in [deliverables.md](deliverables.md).
+
 This runbook covers the dated retained DBW inventory, not a new ingestion campaign,
 complete provider coverage, native-to-Bronze lineage, Silver, Gold or semantic release.
 Current delivery status belongs in [deliverables.md](deliverables.md); a workflow file
