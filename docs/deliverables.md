@@ -4,6 +4,30 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### DBW Bronze Actions release path — 22 September 2026
+
+The owner explicitly requested completion of DBW Bronze SQL availability in the portal.
+[PR #151](https://github.com/rutkala/zohelo-data/pull/151) adds the missing main-only
+Actions path: exact reviewed input restoration from Drive, serialized retained-Bronze
+publication to all 1,550 indicators, a separate fresh read-only consumer checking every
+published fragment, and real SQL against all four Bronze relations in data.zohelo.com.
+See [the operation and acceptance runbook](dbw-retained-bronze-release.md). This replaces
+the unfinished preflight-only implementation plan, not the source/lineage boundaries.
+
+The selected scope is the dated audited retained inventory: 879,999,727 observation rows,
+8,358,612 dictionary rows, 1,550 taxonomy rows and 1,531 metadata rows. Publication must
+retain the unresolved native-to-Bronze lineage and source-completeness labels. It does
+not authorize a new ingestion, Silver/Gold/semantic processing, or modification of BDL.
+
+At this code handoff, production publication and live SQL acceptance are still pending.
+Read exact-head CI and the actual dispatched Actions run before upgrading that status.
+A successful PR test, input preflight, publisher process or native restore alone is not
+portal acceptance. Only the final real-browser receipt establishes that boundary.
+No local developer cache, checkout clean-up, new credential, paid overage or BDL restart
+is required by this release procedure. Existing operational ownership claims must never
+be removed automatically or bypassed merely to obtain a successful run.
+
+
 ### DBW retained-query integrity repair — 22 September 2026
 
 Direct engineering resumed in a clean worktree based on `59dc6f9`. Two defects were reproduced with credential-free fixtures: an observation partition with a wrong, null or mixed `indicator_id` could be indexed under another indicator; and the oversized-fragment fallback bound COPY parameters in the wrong order, failing with `read_parquet(INTEGER)` instead of writing the requested slice.
