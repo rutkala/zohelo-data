@@ -1,0 +1,206 @@
+name: DBW retained Bronze release
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/dbw-bronze-release.yml'
+      - 'scripts/prepare_retained_dbw_release.py'
+      - 'scripts/verify_retained_dbw_release.py'
+      - 'portal/scripts/verify-dbw-live.mjs'
+      - 'tests/test_retained_dbw_release_actions.py'
+  workflow_dispatch:
+    inputs:
+      expected_code_sha:
+        description: 'Exact reviewed main commit to publish from'
+        required: true
+        type: string
+      drive_root_id:
+        description: 'Existing production Drive root'
+        required: true
+        type: string
+        default: '1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dbw-retained-release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: Full credential-free data-platform checks
+        run: bash scripts/check-data.sh
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Check live-consumer JavaScript syntax without credentials or browser launch
+        run: node --check portal/scripts/verify-dbw-live.mjs
+
+  publish:
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: write
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
+    outputs:
+      snapshot_id: ${{ steps.complete.outputs.snapshot_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Verify reviewed main revision and explicit root
+        env:
+          EXPECTED_CODE_SHA: ${{ inputs.expected_code_sha }}
+          DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
+        run: |
+          python - <<'PY'
+          import os, re, subprocess
+          expected = os.environ['EXPECTED_CODE_SHA']
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if not re.fullmatch(r'[0-9a-f]{40}', expected) or actual != expected:
+              raise SystemExit('Requested reviewed main SHA does not match this run')
+          if not re.fullmatch(r'[A-Za-z0-9_-]+', os.environ['DRIVE_ROOT_ID']):
+              raise SystemExit('Invalid explicit Drive root')
+          PY
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: Restore and verify all reviewed inputs directly from Drive
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
+        run: |
+          python scripts/prepare_retained_dbw_release.py \
+            --drive-root-id "$DRIVE_ROOT_ID" --output "$RUNNER_TEMP/dbw-inputs"
+      - name: Publish all retained Bronze indicators through existing ownership guards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
+          EXPECTED_CODE_SHA: ${{ inputs.expected_code_sha }}
+          ZOHELO_ALLOW_PRODUCTION_WRITES: 'true'
+        run: |
+          command -v gh >/dev/null
+          gh auth setup-git
+          git config user.name 'Zohelo DBW release'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python scripts/publish_retained_dbw_bronze.py \
+            --audit-dir "$RUNNER_TEMP/dbw-inputs/audit" \
+            --workspace "$RUNNER_TEMP/dbw-publication" \
+            --backend drive --drive-root-id "$DRIVE_ROOT_ID" \
+            --allow-production-write --expected-code-sha "$EXPECTED_CODE_SHA" \
+            --until-complete
+      - name: Require complete retained-inventory publication
+        id: complete
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, uuid
+          progress = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'dbw-publication/progress.json').read_bytes())
+          if progress['published_indicator_count'] != 1550 or progress['pending_indicator_count'] != 0:
+              raise SystemExit('Retained DBW publication is not complete')
+          snapshot = str(uuid.UUID(progress['snapshot_id']))
+          if snapshot != progress['snapshot_id']:
+              raise SystemExit('Invalid snapshot identity')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write(f'snapshot_id={snapshot}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+              stream.write(f'Published retained DBW snapshot `{snapshot}`: 1,550 indicators. Fresh consumer and live portal acceptance are separate downstream jobs.\n')
+          PY
+      - name: Retain diagnostic summaries, never payloads or credentials
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dbw-bronze-publication-evidence
+          path: |
+            ${{ runner.temp }}/dbw-inputs/restore-evidence.json
+            ${{ runner.temp }}/dbw-inputs/fresh-audit-report.json
+            ${{ runner.temp }}/dbw-inputs/fresh-run-status.json
+            ${{ runner.temp }}/dbw-inputs/audit/progress.json
+            ${{ runner.temp }}/dbw-publication/progress.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  verify_readers:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - name: Fresh read-only restore and SQL checks of every published fragment
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
+          EXPECTED_SNAPSHOT: ${{ needs.publish.outputs.snapshot_id }}
+        run: |
+          python scripts/verify_retained_dbw_release.py \
+            --drive-root-id "$DRIVE_ROOT_ID" --output "$RUNNER_TEMP/dbw-consumer" \
+            --expected-snapshot "$EXPECTED_SNAPSHOT" --expected-code-sha "$GITHUB_SHA"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Install pinned browser-test dependencies
+        run: npm --prefix portal ci --ignore-scripts --no-audit --no-fund
+      - name: Install browser
+        working-directory: portal
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Query all four Bronze relations in the actual deployed portal
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: |
+          node portal/scripts/verify-dbw-live.mjs \
+            "$RUNNER_TEMP/dbw-consumer/consumer-evidence.json" \
+            "$RUNNER_TEMP/dbw-consumer/portal-evidence.json"
+      - name: Retain reader acceptance summaries only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dbw-bronze-reader-evidence
+          path: |
+            ${{ runner.temp }}/dbw-consumer/consumer-evidence.json
+            ${{ runner.temp }}/dbw-consumer/portal-evidence.json
+          if-no-files-found: ignore
+          retention-days: 14
