@@ -2,13 +2,17 @@
 /** Real deployed-portal acceptance. No mocked Drive, screenshots, traces or token artifacts. */
 import { chromium } from '@playwright/test';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash } from 'node:crypto';
 
 const [inputPath, outputPath] = process.argv.slice(2);
 if (!inputPath || !outputPath) throw new Error('Consumer evidence and output paths are required');
 const evidence = JSON.parse(await readFile(inputPath, 'utf8'));
+const manifestBytes = await readFile(join(dirname(inputPath), 'manifest.json'));
+const manifestDigest = createHash('sha256').update(manifestBytes).digest('hex');
+const nativeManifest = JSON.parse(manifestBytes.toString('utf8'));
 if (evidence.status !== 'verified' || evidence.pending_indicator_count !== 0 ||
+    nativeManifest.snapshot_id !== evidence.snapshot_id || nativeManifest.source_id !== evidence.source_id ||
     !/^br_dbw_observations__indicator_\d+(?:__part_\d+)?$/.test(evidence.browser_probe?.table_name)) {
   throw new Error('Fresh complete native-consumer evidence is required');
 }
@@ -43,7 +47,6 @@ try {
   stage = 'open_portal';
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  // The ordinary manual-token session is populated only on the owned portal origin.
   await context.addInitScript((accessToken) => {
     if (location.origin === 'https://data.zohelo.com') {
       sessionStorage.setItem('zohelo_gdrive_access_token', accessToken);
@@ -68,18 +71,18 @@ try {
         !response.ok()) return;
     const id = url.pathname.split('/').at(-1);
     if (probe.file_ids.includes(id)) verifiedProbeFiles.add(id);
-    // Check the exact current manifest read by the real portal, not a fixture.
     const check = (async () => {
-      const type = response.headers()['content-type'] || '';
-      if (!type.includes('json')) return;
+      // Drive may serve JSON as application/octet-stream. Compare exact verified
+      // bytes, not the MIME label or a self-declared matching snapshot UUID.
+      const headers = response.headers();
+      const length = Number(headers['content-length']);
+      if (Number.isFinite(length) && length > 8 * 1024 * 1024) return;
       const bytes = await response.body();
-      if (bytes.length > 8 * 1024 * 1024) return;
-      let value;
-      try { value = JSON.parse(bytes.toString('utf8')); } catch { return; }
-      if (value.kind === 'retained_bronze_snapshot' && value.source_id === result.source_id &&
-          value.snapshot_id === result.snapshot_id && value.pending_indicator_count === 0) {
+      if (bytes.length !== manifestBytes.length) return;
+      const digest = createHash('sha256').update(bytes).digest('hex');
+      if (digest === manifestDigest) {
         observedSnapshot = true;
-        result.portal_manifest_sha256 = createHash('sha256').update(bytes).digest('hex');
+        result.portal_manifest_sha256 = digest;
       }
     })().catch(() => {});
     pendingChecks.push(check);
@@ -93,7 +96,6 @@ try {
   await profile.getByRole('button', { name: 'Create Profile', exact: true }).click();
   await profile.waitFor({ state: 'hidden' });
   stage = 'load_published_catalog';
-  // Wait for the real DBW manifest response before issuing source-bound SQL.
   for (let i = 0; i < 120 && !observedSnapshot; i++) await page.waitForTimeout(1000);
   if (!observedSnapshot) throw new Error('Expected DBW snapshot was not discovered');
   const editor = page.locator('.monaco-editor .view-lines:visible').first();
