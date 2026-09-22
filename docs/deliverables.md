@@ -4,9 +4,17 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### DBW retained-query integrity repair — 22 September 2026
+
+Direct engineering resumed in a clean worktree based on `59dc6f9`. Two defects were reproduced with credential-free fixtures: an observation partition with a wrong, null or mixed `indicator_id` could be indexed under another indicator; and the oversized-fragment fallback bound COPY parameters in the wrong order, failing with `read_parquet(INTEGER)` instead of writing the requested slice.
+
+The repair adds a one-column, vectorized indicator-identity check before publishing each new observation partition, binds COPY arguments by name, explicitly preserves order, and cleans disposable fallback spill directories on success and failure. It does not change native bytes, row meanings, schemas, audit hashes, publication ownership or browser size limits. Previously published fragments are not retrospectively declared row-identity-verified by this new-input check; fresh consumer/data acceptance remains required.
+
+All 15 retained-publication/locking tests passed locally, including five new regressions covering invalid identity, preservation of the previous snapshot, exact nonzero-offset slicing, actual bounded repacking and failure cleanup. Full current-head CI and merge remain pending for this repair. No production publisher or BDL process was launched, stopped or changed; a read-only Drive namespace search returned no match, which is not a full production-release audit. Actual DBW publication and live portal SQL remain open under the previously recorded execution hold.
+
 ### Reconciled autonomous programme — 22 September 2026
 
-**First local integration package opened:** the owner-approved pinned Codex CLI installer, editor extension and setup instructions have been ported from the preserved root onto current main in an isolated worktree. Four credential-free installer tests pass (pinned arguments/version-only execution, repeat execution, install failure, version failure); shell syntax, workflow policy, configuration JSON and diff checks pass. The live container was not rebuilt and no agent or package installation was started by these tests. Current-head CI and merge are still required; the rest of the local source/model backlog is not integrated by this package.
+**First local integration package merged:** PR #148 merged as `59dc6f98188cb431fc8e53a3d5d863d8fa6569bb` after data CI 35715635772 and devcontainer CI 35715635838 passed. The CI container confirmed the pinned Codex CLI, all 661 fixtures and the responding development portal. The owner's live container was not rebuilt. This accepts the setup package only; its branch/worktree cleanup and the remaining source/model integration are separate.
 
 **Current authority:** the owner requests autonomous delivery, routine review of all repository work and continued local-to-remote integration. Both outcomes remain mandatory: complete feasible source ingestion through independently validated layers, and real query availability in `data.zohelo.com`. A file inventory, merged adapter, running backfill or portal deployment is not full-source or live-SQL completion. This section supersedes dated operational summaries below without deleting their evidence.
 
