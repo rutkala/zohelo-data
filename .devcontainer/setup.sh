@@ -4,6 +4,12 @@ set -euo pipefail
 ZOHELO_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ZOHELO_REPO_ROOT}"
 
+# Install independently of Python dependencies, including a stale workspace venv.
+# Optional AI tooling must not prevent ordinary project setup after a network failure.
+if ! bash .devcontainer/install-codex.sh; then
+  echo 'Codex CLI installation failed; retry bash .devcontainer/install-codex.sh when ready.' >&2
+fi
+
 python - <<'PY'
 import sys
 from pathlib import Path
@@ -25,4 +31,4 @@ python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm --prefix portal ci --ignore-scripts --no-audit --no-fund
 echo 'Development setup complete. Local data checks: bash scripts/check-data.sh'
-echo 'Optional AI tools are installed and started explicitly; see docs/development.md.'
+echo 'Start Codex CLI explicitly with codex; retry any installation warning above. See docs/development.md.'

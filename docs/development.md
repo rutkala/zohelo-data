@@ -18,6 +18,7 @@ Read-only `resolve_root()` / `resolve_zone()` calls do not initialize folders. P
 | Portal packages | `portal/package-lock.json`, installed with `npm ci --ignore-scripts --no-audit --no-fund` |
 | Editor | Python, Pylance, dbt and TOML extensions declared in `.devcontainer/devcontainer.json` |
 | GitHub CLI | Official devcontainer feature; authentication remains a separate operation |
+| Codex CLI | Owner-requested npm installation pinned in `.devcontainer/install-codex.sh`; no automatic agent startup |
 
 The Python dependency set starts from the packages recorded in the [successful deployment on 6 September](https://github.com/rutkala/zohelo-data/actions/runs/34023732492). CI validates it with Python 3.12 and the current models. The native MetricFlow CLI uses a separate distribution/version from its engine; see [runtime verification](metricflow-compatibility.md). A synthetic fixture is not a production metrics service. Node 24 is an LTS line; the previous Node 20 line is now EOL ([Node release status](https://nodejs.org/en/about/previous-releases)).
 
@@ -25,11 +26,13 @@ Python patch releases, the base image, devcontainer features and Actions tags ca
 
 ## Codespaces lifecycle
 
-1. Creating/rebuilding the container runs `.devcontainer/setup.sh`: verify runtimes, create `.venv`, install the pinned Python and locked portal packages.
+1. Creating/rebuilding the container runs `.devcontainer/setup.sh`: install the pinned Codex CLI, verify runtimes, create `.venv`, install the pinned Python and locked portal packages. Codex installation runs before Python setup so an incompatible existing `.venv` does not prevent CLI installation.
 2. Starting the container starts only the local Vite preview on forwarded port 5173. Its PID and log are under ignored `.local/`. `--strictPort` avoids silently switching to a different port.
 3. Opening the environment does not launch an AI agent or a production data job. Production OAuth variables are not forwarded by this configuration. Codespaces secrets are a distinct mechanism and are not removed by this change. After updating them, a running Codespace may need to be stopped and restarted before its environment sees the new values.
 
-Optional AI CLIs are not required to build or test the project. Before installing one, the responsible agent verifies its current official installation method, version, authentication and cost. Installation and startup are explicit, and a missing optional tool must not break ordinary development. The previous automatic remote installer and unrestricted Antigravity startup have been removed.
+The owner requested Codex CLI installation on 21 September 2026. Setup installs the pinned `@openai/codex` npm package globally; see the [official Codex CLI installation guidance](https://learn.chatgpt.com/docs/codex/cli). To install or retry it in an existing container, run `bash .devcontainer/install-codex.sh`; run `codex --version` to check it and `codex` to start it. Sign in with ChatGPT if prompted; installation does not purchase access, start model tasks, change credentials or enable API billing. Update the version in the installer deliberately and verify it before rebuilding.
+
+AI CLIs are not required to build or test the project. The installer checks that the standalone binary starts; a failed Codex download warns without blocking ordinary dependency setup. Other optional AI tools still require explicit installation after verifying their official installation method, version, authentication and cost. Agent startup remains explicit. The previous automatic remote installer and unrestricted Antigravity startup remain removed.
 
 The [development-container workflow](../.github/workflows/devcontainer-validation.yml) builds the actual configuration, executes data checks inside it and checks that the portal responds. This validates the container definition on a GitHub runner; it does not prove a particular owner's existing Codespace was rebuilt or authenticated. For the agent's bounded credential check, stop and restart a running Codespace after a secret update, then run `python scripts/check_google_access.py` in that environment. A rebuild is not required just to refresh secrets. The diagnostic is read-only and must not be replaced with an ingestion smoke test. See [devcontainers CI](https://github.com/devcontainers/ci) for the underlying action.
 
