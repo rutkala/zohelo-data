@@ -4,6 +4,30 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### Ten-worker BDL runtime verified after owner launch — 22 September 2026, 09:33 UTC
+
+The owner manually launched the reviewed native-only resume coordinator after the remote
+launch was blocked. PID `383069` is running from unchanged runtime `5097e7e`, with
+`--concurrency 10` and workspace `.local/bdl-recovery-2026-09-22-ten`. The process inventory
+contains one BDL coordinator and ten wireproxy processes. The log maps workers 0–9 to
+separate loopback HTTP proxy ports 8081–8090 and distinct initial subgroups P4304–P4313.
+A stable Drive read at 09:31 UTC independently confirmed all ten in-flight selections
+and the active writer identity. This supersedes the earlier paused handover state.
+
+At 09:33:26 UTC, another stable Drive read verified **2,421 checkpoint-reported native
+files / 629,353,778 bytes**, compared with 2,418 / 628,920,977 before this launch:
+**three new files / 432,801 bytes**. Selection-complete subgroups increased from 1,090
+to **1,093 / 2,420**; 56 blocked selections remain. The writer heartbeat at 09:33:20 UTC
+belongs to PID 383069. See the [sanitized verification receipt](audits/2026-09-22-bdl-ten-worker-verification.json).
+The reads checked stable control metadata, size, MD5 and SHA-256; this is not an independent
+full-byte audit of every new archive or proof of full BDL coverage. No source data was parsed,
+no downstream stage was started, and no production setting was changed during verification.
+
+Keep the ten-worker coordinator and VPN routes running without another competing writer.
+Inspect this new workspace and fresh durable checkpoints in subsequent monitoring, not an
+old PID or historical summary. Remaining full-source ingestion, failed-selection recovery,
+Bronze safety and portal query publication remain open; the local container must stay running.
+
 ### Owner two-track delivery priority and local continuation — 22 September 2026
 
 The owner requires both autonomous backend delivery across the approved source programme
