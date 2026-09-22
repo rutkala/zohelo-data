@@ -19,8 +19,22 @@ The selected scope is the dated audited retained inventory: 879,999,727 observat
 retain the unresolved native-to-Bronze lineage and source-completeness labels. It does
 not authorize a new ingestion, Silver/Gold/semantic processing, or modification of BDL.
 
-At this code handoff, production publication and live SQL acceptance are still pending.
-Read exact-head CI and the actual dispatched Actions run before upgrading that status.
+**Implementation merged:** PR #151 merged as `ea39f7ab9b3b8ae45aff1bd14260a3c0eb9bae96`
+after [full data-platform CI 35781698355](https://github.com/rutkala/zohelo-data/actions/runs/35781698355)
+and [DBW release validation 35781698395](https://github.com/rutkala/zohelo-data/actions/runs/35781698395)
+passed at exact head `a9a0870d213cfc871a821cae98de0c976814033d`. The checked head and
+merged commit have identical tree `63eca46036034d733c06a42a9be466ed51c06345`.
+PR testing and production publication are separate workflows; the production writer
+retains the mandatory main guard, operational claim and `queue: max` serialization.
+
+**Production operation actually started:** [DBW Bronze release run 35783126258](https://github.com/rutkala/zohelo-data/actions/runs/35783126258)
+was dispatched on `main` at 20:52:50 UTC (22:52:50 Warsaw), pinned to the merged code SHA
+above and the existing production Drive root. It includes code validation, full reviewed
+input restoration, publication until all 1,550 retained indicators are covered, and a
+separate fresh native/browser consumer job. The initial observed phase was validation;
+no publication completion or live SQL success was established at dispatch. Read this
+specific run and its evidence before repeating an operation or upgrading the status.
+This is an active external Actions operation, not a promise of continuous AI execution.
 A successful PR test, input preflight, publisher process or native restore alone is not
 portal acceptance. Only the final real-browser receipt establishes that boundary.
 No local developer cache, checkout clean-up, new credential, paid overage or BDL restart
