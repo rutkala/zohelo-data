@@ -57,7 +57,7 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Setup and checks.**
 
-Use an isolated Python 3.12 environment and Node from `.node-version`. These runtime files are shared with CI; the devcontainer Node feature must match. Python's complete resolved dependency set is pinned in `requirements.txt`; direct dependencies are listed in `requirements.in`. See [docs/development.md](docs/development.md) for setup and update instructions. Opening Codespaces starts the local preview only; optional AI tools are installed and started explicitly.
+Use an isolated Python 3.12 environment and Node from `.node-version`. These runtime files are shared with CI; the devcontainer Node feature must match. Python's complete resolved dependency set is pinned in `requirements.txt`; direct dependencies are listed in `requirements.in`. See [docs/development.md](docs/development.md) for setup and update instructions. Opening Codespaces starts the local preview only. Container creation installs the owner-requested pinned Codex CLI; agent startup and installation of other optional AI tools remain explicit.
 
 Install only the dependencies needed for the assigned work:
 

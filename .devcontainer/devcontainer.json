@@ -19,7 +19,8 @@
         "ms-python.python",
         "ms-python.vscode-pylance",
         "innoverio.vscode-dbt-power-user",
-        "tamasfe.even-better-toml"
+        "tamasfe.even-better-toml",
+        "openai.chatgpt"
       ]
     }
   },
