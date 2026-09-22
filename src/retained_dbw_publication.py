@@ -173,20 +173,50 @@ def _rows(path: Path) -> int:
 
 
 def _write_slice(source: Path, output: Path, offset: int, count: int) -> None:
+    # COPY binds its destination before its SELECT in some DuckDB versions.
+    # Named parameters keep filenames, offsets and counts unambiguous.
+    with tempfile.TemporaryDirectory(prefix="duckdb-spill-", dir=output.parent) as scratch:
+        con = duckdb.connect()
+        try:
+            con.execute("SET memory_limit='256MB'")
+            con.execute("SET threads=1")
+            con.execute("SET preserve_insertion_order=true")
+            con.execute("SET temp_directory=?", [scratch])
+            con.execute("SET max_temp_directory_size='64GB'")
+            con.execute(
+                "COPY (SELECT * FROM read_parquet($source) LIMIT $count OFFSET $offset) "
+                "TO $output (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 10000)",
+                {"source": str(source), "count": count, "offset": offset, "output": str(output)},
+            )
+        finally:
+            con.close()
+
+
+def observation_partition_rows(source: Path, indicator_id: int) -> int:
+    """Validate the one-column indicator binding without altering retained values."""
+    if type(indicator_id) is not int or indicator_id <= 0:
+        raise RetainedBronzePublicationError("observation indicator identity is invalid")
     con = duckdb.connect()
     try:
-        scratch = output.parent / f"duckdb-spill-{uuid4()}"
-        scratch.mkdir()
-        con.execute("SET memory_limit='256MB'"); con.execute("SET threads=1")
-        con.execute("SET temp_directory=?", [str(scratch)])
-        con.execute("SET max_temp_directory_size='64GB'")
-        con.execute(
-            "COPY (SELECT * FROM read_parquet(?) LIMIT ? OFFSET ?) TO ? "
-            "(FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 10000)",
-            [str(source), count, offset, str(output)],
-        )
+        con.execute("SET memory_limit='256MB'")
+        con.execute("SET threads=1")
+        schema = [(row[0], row[1]) for row in con.execute(
+            "DESCRIBE SELECT * FROM read_parquet(?)", [str(source)]
+        ).fetchall()]
+        if schema != EXPECTED_SCHEMAS["observations"]:
+            raise RetainedBronzePublicationError("unexpected retained observation schema")
+        rows, mismatched = con.execute(
+            "SELECT count(*), count(*) FILTER (WHERE indicator_id IS DISTINCT FROM $indicator) "
+            "FROM read_parquet($source)",
+            {"source": str(source), "indicator": indicator_id},
+        ).fetchone()
+    except duckdb.Error as exc:
+        raise RetainedBronzePublicationError("observation indicator identity could not be verified") from exc
     finally:
         con.close()
+    if rows <= 0 or mismatched:
+        raise RetainedBronzePublicationError("observation indicator identity does not match its partition")
+    return int(rows)
 
 
 def _quoted(path: Path) -> str:
@@ -576,6 +606,7 @@ def _publish_retained_bronze(
                 if rel_path not in by_path:
                     raise RetainedBronzePublicationError("observation inventory is missing an indicator")
                 source = _verified_input(audit_dir, by_path[rel_path])
+                expected_rows = observation_partition_rows(source, indicator_id)
                 parts, row_count = [], 0
                 for number, (fragment, rows) in enumerate(bounded_fragments(source, EXPECTED_SCHEMAS["observations"], temp), 1):
                     raw_fragment = fragment.read_bytes()
@@ -587,6 +618,8 @@ def _publish_retained_bronze(
                     if store.read_landing_object({k: descriptor[k] for k in ("id", "name", "size", "sha256")}) != raw_fragment:
                         raise RetainedBronzePublicationError("uploaded observation fragment readback changed")
                     if fragment.parent == temp: fragment.unlink()
+                if row_count != expected_rows:
+                    raise RetainedBronzePublicationError("published indicator row count changed")
                 item.update({"status": "published", "row_count": row_count, "parts": parts})
                 completed += 1
 

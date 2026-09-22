@@ -247,6 +247,8 @@ the legacy files, establish native-to-Bronze lineage, or claim current source co
 snapshot binds to the exact retained-inventory and audit-report SHA-256 values and preserves all
 rows, nulls, duplicates and the four audited schemas.
 
+Before publishing each new observation partition, a bounded-memory DuckDB scan verifies that every row has the non-null indicator ID used by its index entry. Wrong or mixed IDs fail before pointer promotion; they are not filtered, relabelled or discarded. This check establishes retained partition identity only, not provider completeness or native-to-Bronze lineage. The oversized-fragment fallback uses named COPY parameters and preserves source order; disposable spill directories are removed after the DuckDB connection closes, including on failure. Existing published snapshots still require separate consumer verification.
+
 Use a native Linux workspace because Parquet repacking can spill to disk. Each repacking DuckDB
 connection uses one thread, 256 MiB of managed memory, a unique workspace scratch directory and a
 64 GiB maximum spill allocation. Value verification streams a deterministic, typed CSV row sequence
