@@ -4,6 +4,49 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### DBW publication stopped after unexpected Landing creation — 23 September 2026 (Warsaw)
+
+**Current operation hold:** the owner reported that the Bronze release Action created
+another DBW namespace in Landing and that they deleted it. The lead cancelled
+[run 35783126258](https://github.com/rutkala/zohelo-data/actions/runs/35783126258);
+GitHub confirmed cancellation at 22:22:40 UTC on 22 September (00:22:40 Warsaw on
+23 September). Only `DBW retained Bronze release` is now `disabled_manually`.
+No DBW replacement run was started. BDL and other source operations were not changed.
+
+**Root cause in the executed code:** `DriveCampaignStore.__init__` eagerly creates
+both `06_control/source_campaigns/<source_id>` and
+`01_landing/<source_id>/responses`, even for this Bronze-only publisher. The retained
+publisher then writes its Parquet copies/fragments, indicator indexes and manifests
+under the control namespace's `landing_publications`, not under that responses folder.
+Using the ingestion store introduced an unnecessary Landing side effect. Publication
+is not metadata-only: existing Bronze files are read, large files repacked, and
+publication copies written. No source recollection or Bronze-from-Landing build occurs.
+
+**Post-stop evidence:** the deleted `01_landing/gus_dbw_retained_bronze` folder and its
+empty `responses` child are in Trash. The original 3,103-object input inventory,
+including all 1,550 observation partitions, still matches reviewed inventory SHA-256
+`15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e` and
+4,803,673,234 bytes. This is a metadata/descriptor reconciliation, not another full-byte audit.
+The stable current publication is `37464abe-8c54-4610-a215-b5bbdb6f2529`: 160 published
+indicators, 1,390 pending, and 22,010,748 observation rows. The publication folder contains
+300 objects (260 Parquet and 40 JSON), totaling 440,616,632 bytes; these can include
+not-yet-promoted files. The final independent fragment/browser acceptance did not run.
+See [the containment receipt](audits/2026-09-23-dbw-publication-containment.json).
+
+**Preserve and repair, do not restart unchanged:** the Git operational claim and Drive
+owner record remain held following cancellation. They were not cleared; abandoned-owner
+recovery must follow ADR 0010 after writer-stop and reference reconciliation. Preserve
+all original Bronze/native data, completed publication fragments and the current partial
+pointer. Do not recreate the deleted Landing folder, recollect DBW, delete referenced
+publication files, or silently call the current 160-indicator snapshot complete.
+
+**Next engineering boundary:** remove Landing initialization from publication-only
+storage; evaluate direct registration of verified immutable existing Bronze files to
+avoid unnecessary duplicate uploads; retain bounded derived parts only where the reader
+needs them. Reconcile the chosen design with the common release lifecycle, then verify
+all intended indicators and actual portal SQL before enabling a repaired release route.
+No replacement implementation or full Bronze portal acceptance is claimed here.
+
 ### DBW Bronze Actions release path — 22 September 2026
 
 The owner explicitly requested completion of DBW Bronze SQL availability in the portal.
@@ -34,7 +77,7 @@ input restoration, publication until all 1,550 retained indicators are covered, 
 separate fresh native/browser consumer job. The initial observed phase was validation;
 no publication completion or live SQL success was established at dispatch. Read this
 specific run and its evidence before repeating an operation or upgrading the status.
-This is an active external Actions operation, not a promise of continuous AI execution.
+This was an active external Actions operation; it is now cancelled and held as recorded above.
 A successful PR test, input preflight, publisher process or native restore alone is not
 portal acceptance. Only the final real-browser receipt establishes that boundary.
 No local developer cache, checkout clean-up, new credential, paid overage or BDL restart
