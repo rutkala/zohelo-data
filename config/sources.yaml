@@ -192,3 +192,92 @@ sources:
       quote_unit: "Domain-specific measure units vary by variable; preserved as delivered."
       methodology_notes: "Preserves exact DBW area hierarchy (Area -> Group -> Subgroup -> Indicator -> Section -> Dimension/Position) and dictionaries. Native-only transfer in landing according to ADR 0009."
       description: "Statistics Poland Subject-Matter Knowledge Databases (Dziedzinowe Bazy Wiedzy) multi-dimensional statistical metadata, bulk exports, and observations."
+
+  # ==========================================
+  # SOURCE 10: GUS TERYT (Territorial Register)
+  # ==========================================
+  gus_teryt:
+    metadata:
+      domain: "geography_and_registers"
+      category: "administrative_territorial_register"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "GUS TERYT (Krajowy Rejestr Urzędowy Podziału Terytorialnego Kraju)"
+      source_name: "Statistics Poland (GUS)"
+      provider_url: "https://eteryt.stat.gov.pl/"
+      documentation_url: "https://eteryt.stat.gov.pl/eTeryt/rejestr_teryt/udostepnianie_danych/baza_internetowa/pliki_pelne.aspx"
+      publication_schedule_url: "https://stat.gov.pl/obszary-tematyczne/inne-opracowania/rejestr-teryt/"
+      frequency: "official public register, updated continuously upon territorial changes"
+      coverage_start: "1999-01-01"
+      reuse_terms_url: "https://stat.gov.pl/informacja-o-ponownym-wykorzystywaniu-informacji-sektora-publicznego/"
+      reuse_summary: "Public register data available free of charge under Polish public sector information re-use provisions."
+      quote_unit: "Official administrative codes: TERC (voivodeship, powiat, gmina), SIMC (locality), ULIC (street)"
+      methodology_notes: "Official territorial division hierarchy of Poland. TERC represents territorial division; SIMC represents localities; ULIC represents streets."
+      description: "Complete national register of territorial division, localities, and streets maintained by Statistics Poland."
+
+  # ==========================================
+  # SOURCE 11: GUGiK PRG (State Register of Boundaries)
+  # ==========================================
+  gugik_prg:
+    metadata:
+      domain: "geography_and_registers"
+      category: "geodetic_administrative_boundaries"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "GUGiK PRG (Państwowy Rejestr Granic)"
+      source_name: "Head Office of Geodesy and Cartography (GUGiK)"
+      provider_url: "https://www.geoportal.gov.pl/"
+      documentation_url: "https://www.geoportal.gov.pl/pl/dane/panstwowy-rejestr-granic-prg/"
+      publication_schedule_url: "https://opendata.geoportal.gov.pl/prg/"
+      frequency: "official geodetic boundary packages and annual surface area registers"
+      coverage_start: "source_defined"
+      reuse_terms_url: "https://www.geoportal.gov.pl/pl/o-geoportalu/zasady-korzystania/"
+      reuse_summary: "Open data under Polish Geodetic and Cartographic Law; freely available for re-use without license restrictions."
+      quote_unit: "Official GIS polygons (EPSG:2180 / WGS84 WKT) and geodetic surface area in hectares and square kilometers."
+      methodology_notes: "Official State Register of Boundaries maintained by the Surveyor General of Poland. Defines spatial geometries of all Polish administrative units."
+      description: "Official geospatial boundary polygons and geodetic area registers for country, voivodeships, powiats, and gminas."
+
+  # ==========================================
+  # SOURCE 12: MF Biała Lista (VAT Taxpayers Register)
+  # ==========================================
+  mf_biala_lista:
+    metadata:
+      domain: "tax_and_finance"
+      category: "vat_taxpayer_register"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "MF Biała Lista Podatników VAT"
+      source_name: "Ministry of Finance / National Revenue Administration (KAS)"
+      provider_url: "https://www.podatki.gov.pl/"
+      documentation_url: "https://www.podatki.gov.pl/vat/bezpieczna-transakcja/wykaz-podatnikow-vat/plik-plaski/"
+      publication_schedule_url: "https://plikplaski.mf.gov.pl/pliki/"
+      frequency: "daily official flat file snapshot published at 00:00"
+      coverage_start: "2019-09-01"
+      reuse_terms_url: "https://www.podatki.gov.pl/"
+      reuse_summary: "Free of charge under Creative Commons Attribution 3.0 Poland (CC BY 3.0 PL)."
+      quote_unit: "VAT registration status, settlement account masks, and cryptographic validation hashes."
+      methodology_notes: "Official register of entities registered as VAT taxpayers (active, exempt, deleted, restored) and verified business bank accounts."
+      description: "Ministerstwo Finansów daily flat file containing comprehensive register of VAT taxpayers and bank account verification hashes."
+
+  # ==========================================
+  # SOURCE 13: GLEIF Global LEI Index
+  # ==========================================
+  gleif:
+    metadata:
+      domain: "business_registries"
+      category: "global_legal_entity_identifier"
+      geography: "global"
+      provider_type: "international_public_official"
+      display_name: "Global Legal Entity Identifier Foundation (GLEIF)"
+      source_name: "Global Legal Entity Identifier Foundation (GLEIF)"
+      provider_url: "https://www.gleif.org/"
+      documentation_url: "https://www.gleif.org/en/lei-data/access-and-use-lei-data"
+      publication_schedule_url: "https://goldencopy.gleif.org/api/v2/golden-copies/publishes"
+      frequency: "golden copy updated 3 times daily; official daily bulk distributions"
+      coverage_start: "2012-01-01"
+      reuse_terms_url: "https://www.gleif.org/en/lei-data/access-and-use-lei-data/lei-data-terms-of-use"
+      reuse_summary: "Open data under GLEIF LEI Data Terms of Use; free public access without registration."
+      quote_unit: "20-character ISO 17442 LEI code, legal names, addresses, registration authorities, and parent ownership linkages."
+      methodology_notes: "Level 1: Legal entity reference data (who is who). Level 2: Relationship records and exceptions (who owns whom)."
+      description: "Global Legal Entity Identifier Golden Copy and Concatenated Files linking entities, jurisdictions, and corporate control structures globally."
+

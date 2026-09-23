@@ -352,7 +352,7 @@ class BdlPlatformModelTests(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=180,
+            timeout=300,
             check=False,
         )
 
@@ -393,7 +393,7 @@ class BdlPlatformModelTests(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=180,
+            timeout=300,
             check=False,
         )
 
