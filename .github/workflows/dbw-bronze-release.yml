@@ -3,6 +3,21 @@ name: Publish existing DBW Bronze
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'Publish existing Bronze, or independently verify an already published snapshot without any data writes'
+        type: choice
+        default: publish
+        options: [publish, verify_only]
+      expected_snapshot:
+        description: 'Exact published snapshot UUID; required for verify_only'
+        required: false
+        type: string
+        default: ''
+      expected_publication_code_sha:
+        description: 'Code SHA in the published snapshot; required for verify_only'
+        required: false
+        type: string
+        default: ''
       expected_code_sha:
         description: 'Exact reviewed main commit to publish from'
         required: true
@@ -37,6 +52,32 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - name: Verify reviewed execution revision and operation inputs
+        env:
+          EXPECTED_CODE_SHA: ${{ inputs.expected_code_sha }}
+          OPERATION: ${{ inputs.operation }}
+          EXPECTED_SNAPSHOT: ${{ inputs.expected_snapshot }}
+          EXPECTED_PUBLICATION_CODE_SHA: ${{ inputs.expected_publication_code_sha }}
+          RECOVER_DRIVE_OWNER: ${{ inputs.recover_drive_owner }}
+        run: |
+          python - <<'PYCODE'
+          import os, re, subprocess, uuid
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          expected = os.environ['EXPECTED_CODE_SHA']
+          if not re.fullmatch(r'[0-9a-f]{40}', expected) or expected != actual:
+              raise SystemExit('Exact reviewed execution revision does not match this run')
+          operation = os.environ['OPERATION']
+          if operation not in ('publish', 'verify_only'):
+              raise SystemExit('Unknown operation')
+          if operation == 'verify_only':
+              snapshot = os.environ['EXPECTED_SNAPSHOT']
+              if str(uuid.UUID(snapshot)) != snapshot:
+                  raise SystemExit('Exact canonical snapshot UUID is required')
+              if not re.fullmatch(r'[0-9a-f]{40}', os.environ['EXPECTED_PUBLICATION_CODE_SHA']):
+                  raise SystemExit('Exact published code SHA is required')
+              if os.environ['RECOVER_DRIVE_OWNER']:
+                  raise SystemExit('Read-only verification cannot recover a publication owner')
+          PYCODE
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version-file: .python-version
@@ -46,6 +87,7 @@ jobs:
       - name: Credential-free DBW release regressions
         run: python -m unittest discover -s tests -p test_retained_dbw_release_actions.py -v
       - name: Full credential-free data-platform checks before production
+        if: inputs.operation == 'publish'
         run: bash scripts/check-data.sh
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
@@ -55,7 +97,7 @@ jobs:
 
   publish:
     needs: validate
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.operation == 'publish'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     permissions:
@@ -169,8 +211,11 @@ jobs:
           retention-days: 14
 
   verify_readers:
-    needs: publish
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: [validate, publish]
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+      needs.validate.result == 'success' &&
+      (inputs.operation == 'verify_only' || needs.publish.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -191,11 +236,12 @@ jobs:
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
-          EXPECTED_SNAPSHOT: ${{ needs.publish.outputs.snapshot_id }}
+          EXPECTED_SNAPSHOT: ${{ inputs.operation == 'verify_only' && inputs.expected_snapshot || needs.publish.outputs.snapshot_id }}
+          EXPECTED_PUBLICATION_CODE_SHA: ${{ inputs.operation == 'verify_only' && inputs.expected_publication_code_sha || github.sha }}
         run: |
           python scripts/verify_retained_dbw_release.py \
             --drive-root-id "$DRIVE_ROOT_ID" --output "$RUNNER_TEMP/dbw-consumer" \
-            --expected-snapshot "$EXPECTED_SNAPSHOT" --expected-code-sha "$GITHUB_SHA"
+            --expected-snapshot "$EXPECTED_SNAPSHOT" --expected-code-sha "$EXPECTED_PUBLICATION_CODE_SHA"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version

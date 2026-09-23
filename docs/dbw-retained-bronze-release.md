@@ -100,3 +100,24 @@ No source-completeness or lineage label is upgraded by this runbook. The retaine
 manifest continues to carry `incomplete_retained_inventory` and
 `unresolved_native_to_bronze`; the exact completed publication counts are reported
 separately. Full native source reconciliation remains its own delivery work.
+
+
+## Read-only verification of an existing publication
+
+Use the existing **Publish existing DBW Bronze** workflow with `operation=verify_only`
+when repairing a reader acceptance check or rechecking an already published snapshot.
+Supply the exact reviewed current-main `expected_code_sha`, the existing Drive root,
+the exact `expected_snapshot` UUID and `expected_publication_code_sha` recorded in
+that snapshot. The verifier code revision and data publication revision are separate
+pins; verification must not require republishing data to change only test code.
+Leave `recover_drive_owner` empty. Verification-only rejects owner recovery and skips
+the production writer. It still requires complete retained-inventory coverage, checks
+every published file and executes SQL in the actual portal. It cannot turn a partial
+snapshot into complete acceptance.
+
+A fresh portal profile opens the Home tab. The live checker must select **New SQL
+query** before waiting for the editor; merely discovering a correct manifest does
+not create a SQL tab. The browser fixture now follows this same Home-to-query path.
+If a publication completes but the old checker fails at that UI step, preserve the
+published data and use read-only verification with the corrected checker. Do not
+restart ingestion or publication for a checker-only repair.

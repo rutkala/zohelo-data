@@ -98,6 +98,9 @@ try {
   stage = 'load_published_catalog';
   for (let i = 0; i < 120 && !observedSnapshot; i++) await page.waitForTimeout(1000);
   if (!observedSnapshot) throw new Error('Expected DBW snapshot was not discovered');
+  stage = 'open_sql_query';
+  await page.getByRole('button', { name: 'New SQL query', exact: true }).click();
+  stage = 'wait_for_sql_editor';
   const editor = page.locator('.monaco-editor .view-lines:visible').first();
   await editor.waitFor({ state: 'visible' });
   const sql = `WITH o AS (
