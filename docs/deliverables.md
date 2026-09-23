@@ -4,6 +4,50 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+
+### DBW original-file registration repair deployed — 23 September 2026
+
+[PR #155](https://github.com/rutkala/zohelo-data/pull/155) merged as
+`2df5b04300706fbe1eacd3d7907e107535b26b78` after full data CI 35799088034,
+portal CI 35799088047 (both base paths) and DBW validation 35799088053 passed
+at exact head `8f13186b69f025195a24293f7d078d245b85e794`. Checked and merged
+trees are identical. Portal deployment 35800224013 passed, and the actual
+portal build reports the merged revision and retained-Bronze formats 1 and 2.
+The new real-browser fixture queries all four DBW relations using original-file
+references; that is fixture evidence, separate from live production data acceptance.
+
+The repaired publication-only store does not initialize Landing and rejects source
+response writes. It registers bounded existing Bronze files by their original Drive
+IDs and SHA-256 rather than uploading copies. The saved reviewed inventory has 1,517
+observation files within the existing 8 MiB bound and 33 above it. Existing query
+parts remain reusable; only missing oversized-file parts are written under
+`02_bronze/gus_dbw/query_parts/<inventory-sha256>/`. Prior snapshots and files stay
+preserved. Cold restore and fresh consumer verification use four independent
+read-only clients. This does not recollect DBW or build Bronze from Landing.
+
+The cancelled run's log explicitly confirms termination of publisher PID 7537,
+matching its exact Git claim. The original input inventory and the old partial
+snapshot were rechecked unchanged. The abandoned Git claim was released only with
+its exact expected-SHA lease; no Drive owner or data file was changed by that step.
+The optional exact Drive-owner recovery is requested through the repaired Action,
+under a new operational claim. Codespace enumeration was unavailable with the
+current token scope; the actual claim owner was proved terminated in Actions.
+
+The existing workflow is now named **Publish existing DBW Bronze**. Only the repaired
+route was enabled after the compatible reader deployment. Run
+[35800626942](https://github.com/rutkala/zohelo-data/actions/runs/35800626942) was
+actually dispatched on main at 00:07:25 UTC, pinned to `2df5b0`, with the exact
+abandoned Drive owner. It continues registration, required large-file preparation,
+full independent data verification and live portal SQL checks. This supersedes
+the execution hold on the old implementation, not any data acceptance requirement.
+
+At dispatch no new DBW data publication or live SQL acceptance was established.
+Read this specific run and its receipts before upgrading the status or starting
+another writer. BDL, the dirty original checkout and original Drive payloads were
+not changed. The immediate target remains the entire dated retained inventory;
+current-provider completeness and native-to-Bronze lineage remain unresolved.
+See the [integration receipt](audits/2026-09-23-dbw-direct-registration-integration.json).
+
 ### BDL actual Landing visibility check — 23 September 2026, 00:48 Warsaw
 
 The owner reported no visible new BDL files for several hours. Read-only diagnostics
