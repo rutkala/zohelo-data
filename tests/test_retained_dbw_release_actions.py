@@ -30,7 +30,7 @@ class PreparationTests(unittest.TestCase):
         report["run_id"] = "fresh-independent-run"
         if mismatch:
             report[mismatch] = "changed"
-        def audit(storage, package):
+        def audit(storage, package, **kwargs):
             package.mkdir(parents=True)
             (package / "audit-report.json").write_text(json.dumps(report))
             (package / "run-status.json").write_text(json.dumps({"run_id": report["run_id"]}))

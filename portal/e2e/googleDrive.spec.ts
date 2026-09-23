@@ -387,3 +387,116 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
     page.getByRole("tab", { name: "world_bank_wdi_responses", exact: true })
   ).toHaveAttribute("aria-selected", "true");
 });
+
+// Synthetic Bronze fixtures only. This exercises direct original-file loading in
+// the actual browser engine, separately from live production acceptance.
+test("DBW v2 loads original Bronze files without a publication copy", async ({ page }) => {
+  const snapshot = "a23e4567-e89b-42d3-a456-426614174000";
+  const pair = (entries: string[][]) => entries.map(([name, type]) => ({ name, type }));
+  const schemas = {
+    observations: pair([
+      ["indicator_id", "BIGINT"], ["przekroj_id", "BIGINT"],
+      ...Array.from({ length: 9 }, (_, n) => [[`wymiar_${n+1}`, "BIGINT"], [`pozycja_${n+1}`, "BIGINT"]]).flat(),
+      ["okres_id", "INTEGER"], ["sposob_prezentacji_miara_id", "INTEGER"], ["period_year", "INTEGER"],
+      ["wartosc_raw", "VARCHAR"], ["wartosc_numeric", "DOUBLE"], ["precyzja", "INTEGER"],
+      ["brak_wartosci_id", "INTEGER"], ["tajnosci_id", "INTEGER"], ["flaga_id", "INTEGER"],
+      ["raw_archive_file", "VARCHAR"], ["source_row_number", "BIGINT"], ["processed_at_utc", "VARCHAR"],
+    ]),
+    dictionaries: pair([["indicator_id","BIGINT"],["column_name","VARCHAR"],["dictionary_name","VARCHAR"],
+      ["element_id","BIGINT"],["element_name","VARCHAR"],["processed_at_utc","VARCHAR"]]),
+    metadata: pair([["indicator_id","BIGINT"],["metric_name","VARCHAR"],["metric_name_en","VARCHAR"],
+      ["description","VARCHAR"],["frequency","VARCHAR"],["measure_unit","VARCHAR"],["data_source","VARCHAR"],
+      ["legal_basis","VARCHAR"],["last_update","VARCHAR"],["processed_at_utc","VARCHAR"]]),
+    taxonomy: pair([["indicator_id","BIGINT"],["indicator_name","VARCHAR"],["indicator_name_en","VARCHAR"],
+      ["thematic_area","VARCHAR"],["domain","VARCHAR"],["taxonomy_path","VARCHAR"],["node_id","VARCHAR"],
+      ["parent_id","VARCHAR"],["processed_at_utc","VARCHAR"]]),
+  };
+  const blobs = new Map<string, { name: string; body: Buffer }>();
+  const retain = (id: string, name: string, body: Buffer) => {
+    blobs.set(id, { name, body });
+    return { id, name, size: body.length, sha256: createHash("sha256").update(body).digest("hex") };
+  };
+  const files = Object.fromEntries((Object.keys(schemas) as Array<keyof typeof schemas>).map(name => {
+    const originalName = name === "observations" ? "part_1.parquet" :
+      `br_dbw_${name === "taxonomy" ? "indicators" : name}.parquet`;
+    return [name, retain(`original-${name}`, originalName,
+      readFileSync(new URL(`./fixtures/dbw-${name}.parquet`, import.meta.url)))];
+  }));
+  const index = {
+    format_version: 2, kind: "retained_bronze_indicator_index", source_id: "gus_dbw_retained_bronze",
+    inventory_sha256: "c".repeat(64), indicator_count: 1550, published_indicator_count: 1, pending_indicator_count: 1549,
+    indicators: Array.from({ length: 1550 }, (_, n) => ({
+      indicator_id: n+1, indicator_name: `Indicator ${n+1}`, indicator_name_en: `Indicator ${n+1}`,
+      thematic_area: "Area", domain: "Domain", taxonomy_path: "Area > Domain",
+      status: n === 0 ? "published" : "pending", row_count: n === 0 ? 1 : 0,
+      parts: n === 0 ? [{ ...files.observations, row_count: 1, part: 1 }] : [],
+    })),
+  };
+  const indexFile = retain("dbw-index", `fragment-indicator-index-${"d".repeat(64)}.json`, Buffer.from(JSON.stringify(index)));
+  const manifest = {
+    format_version: 2, kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
+    snapshot_id: snapshot, created_at_utc: "2026-09-21T00:00:00Z", code_sha: "b".repeat(40),
+    status: "validated", layer: "02_bronze", coverage_status: "incomplete_retained_inventory",
+    lineage_status: "unresolved_native_to_bronze", inventory_sha256: "c".repeat(64),
+    audit_report_sha256: "e".repeat(64), audit_run_id: "fixture", indicator_count: 1550,
+    published_indicator_count: 1, pending_indicator_count: 1549, indicator_index: indexFile,
+    datasets: (Object.keys(schemas) as Array<keyof typeof schemas>).map(name => ({
+      name, table_name: `br_dbw_${name === "taxonomy" ? "indicators" : name}`,
+      row_count: name === "taxonomy" ? 1550 : 1, columns: schemas[name],
+      files: name === "observations" ? [] : [{ ...files[name], row_count: name === "taxonomy" ? 1550 : 1 }],
+    })),
+    observation_schema: schemas.observations, tests: { passed: true, rows_and_schemas_preserved: true },
+  };
+  const manifestFile = retain("dbw-manifest", `manifest-${snapshot}.json`, Buffer.from(JSON.stringify(manifest)));
+  const pointer = Buffer.from(JSON.stringify({
+    format_version: 1, source_id: "gus_dbw_retained_bronze", snapshot_id: snapshot,
+    manifest_file_id: manifestFile.id, manifest_file_name: manifestFile.name,
+    manifest_sha256: manifestFile.sha256, manifest_size_bytes: manifestFile.size,
+  }));
+  retain("dbw-pointer", "current-landing.json", pointer);
+  const downloaded = new Set<string>();
+  await page.addInitScript(() => sessionStorage.setItem("zohelo_gdrive_access_token", "synthetic-test-token"));
+  await page.route("https://www.googleapis.com/drive/v3/files**", async route => {
+    const url = new URL(route.request().url());
+    const id = url.pathname.split("/").at(-1)!;
+    const blob = blobs.get(id);
+    const headers = { "access-control-allow-origin": "*" };
+    if (blob) {
+      if (url.searchParams.get("alt") === "media") {
+        downloaded.add(id);
+        return route.fulfill({ headers, contentType: "application/octet-stream", body: blob.body });
+      }
+      return route.fulfill({ headers, json: { id, name: blob.name, size: String(blob.body.length), mimeType: "application/octet-stream" } });
+    }
+    const q = url.searchParams.get("q") ?? "";
+    const folders: Record<string,string> = {
+      "zohelo-data": "dbw-root", "06_control": "dbw-control", "source_campaigns": "dbw-campaigns",
+      "gus_dbw_retained_bronze": "dbw-source",
+    };
+    const folder = Object.entries(folders).find(([name]) => q.includes(`name='${name}'`));
+    const children = folder ? [{ id: folder[1], name: folder[0], mimeType: "application/vnd.google-apps.folder" }] :
+      q.includes("'dbw-source' in parents") && q.includes("current-landing.json") ?
+        [{ id: "dbw-pointer", name: "current-landing.json", size: String(pointer.length), mimeType: "application/json" }] : [];
+    await route.fulfill({ headers, json: { files: children } });
+  });
+  await page.goto("./");
+  const profile = page.getByRole("dialog", { name: "Create Profile" });
+  await profile.getByPlaceholder("Profile name").fill("DBW original references");
+  await profile.getByRole("button", { name: "Create Profile", exact: true }).click();
+  await expect(profile).toBeHidden();
+  await page.getByText("br_dbw_indicators", { exact: true }).click({ timeout: 60000 });
+  const editor = page.locator(".monaco-editor .view-lines:visible").first();
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText(`SELECT CASE WHEN
+    (SELECT count(*) FROM "02_bronze"."br_dbw_observations__indicator_1" WHERE indicator_id=1)=1
+    AND (SELECT count(*) FROM "02_bronze"."br_dbw_indicators")=1550
+    AND (SELECT count(*) FROM "02_bronze"."br_dbw_metadata")=1
+    AND (SELECT count(*) FROM "02_bronze"."br_dbw_dictionaries")=1
+    THEN 'DBW_ORIGINALS_VERIFIED' ELSE 'MISMATCH' END AS verification;`);
+  await page.getByRole("button", { name: "Run Query", exact: true }).click();
+  await expect(page.locator(':text-is("DBW_ORIGINALS_VERIFIED"):visible').first()).toBeVisible({ timeout: 60000 });
+  expect([...downloaded].filter(id => id.startsWith("original-")).sort()).toEqual(
+    ["original-dictionaries", "original-metadata", "original-observations", "original-taxonomy"]
+  );
+});

@@ -83,4 +83,36 @@ describe("retained DBW Bronze catalogue",()=>{
     expect(catalog.filter(d=>d.table_name.startsWith("br_dbw_observations__indicator_1__part_"))).toHaveLength(9);
     expect(catalog.some(d=>d.table_name==="br_dbw_observations__indicator_1")).toBe(false);
   });
+  it("v2 references original Bronze IDs and names without requiring publication copies",()=>{
+    const {raw,index}=fixture();
+    raw.format_version=2;
+    index.format_version=2;
+    raw.datasets.slice(1).forEach(dataset=>{
+      dataset.files[0].name=`${dataset.table_name}.parquet`;
+    });
+    index.indicators[0].parts[0].name="part_1.parquet";
+    const manifest=parseRetainedBronzeManifest(raw,pointer) as RetainedBronzeManifest;
+    manifest.indicators=parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),manifest);
+    const catalog=landingDatasets({snapshots:[{pointer,manifest,fingerprint:"v2"}],issues:[],fingerprint:"v2"});
+    expect(catalog.find(d=>d.table_name==="br_dbw_observations__indicator_1")?.files[0].name).toBe("part_1.parquet");
+    expect(catalog.find(d=>d.table_name==="br_dbw_metadata")?.files[0].name).toBe("br_dbw_metadata.parquet");
+    expect(manifest.format_version).toBe(2);
+  });
+
+  it("original-file references are v2-only and bound to the right indicator",()=>{
+    const {raw,index}=fixture();
+    index.indicators[0].parts[0].name="part_1.parquet";
+    const legacy=parseRetainedBronzeManifest(raw,pointer) as RetainedBronzeManifest;
+    expect(()=>parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),legacy)).toThrow();
+    raw.format_version=2; index.format_version=2;
+    const manifest=parseRetainedBronzeManifest(raw,pointer) as RetainedBronzeManifest;
+    index.indicators[0].parts[0].name="part_2.parquet";
+    expect(()=>parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),manifest)).toThrow();
+    index.indicators[0].parts[0].name="part_1.parquet";
+    index.indicators[0].parts[0].size=8*1024*1024+1;
+    expect(()=>parseRetainedIndicatorIndex(new TextEncoder().encode(JSON.stringify(index)),manifest)).toThrow();
+    raw.datasets[1].files[0].name="br_dbw_metadata.parquet";
+    expect(()=>parseRetainedBronzeManifest(raw,pointer)).toThrow();
+  });
+
 });

@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/dbw-bronze-release*.yml'
       - 'scripts/prepare_retained_dbw_release.py'
+      - 'src/retained_bronze_store.py'
+      - 'tests/test_retained_bronze_direct_store.py'
       - 'scripts/verify_retained_dbw_release.py'
       - 'portal/scripts/verify-dbw-live.mjs'
       - 'tests/test_retained_dbw_release_actions.py'
@@ -38,6 +40,7 @@ jobs:
         run: |
           python scripts/check-workflows.py
           python -m unittest discover -s tests -p test_retained_dbw_release_actions.py -v
+          python -m unittest discover -s tests -p test_retained_bronze_direct_store.py -v
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version

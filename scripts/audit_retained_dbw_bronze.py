@@ -20,6 +20,8 @@ import shutil
 import sys
 from typing import Any, Callable
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import duckdb
 from googleapiclient.http import MediaIoBaseDownload
@@ -443,8 +445,37 @@ def _run_status(output_dir: Path, run_id: str, status: str, **extra: Any) -> Non
     })
 
 
+def prefetch_verified(storage, descriptors, cache, *, workers=4, reader_factory=None, on_progress=None):
+    """Bounded read-only restore with one independent Drive client per worker.
+
+    No shared httplib2 transport, remote mutation, or unverified cache reuse. A
+    failed worker is propagated after all workers have joined; partial cache
+    files retain only successfully verified bytes, never successful run status.
+    """
+    if type(workers) is not int or not 1 <= workers <= 4:
+        raise RetainedDbwAuditError("Restore workers must be between one and four")
+    if reader_factory is None:
+        root_id = storage.resolve_root(create=False)
+        reader_factory = lambda: StorageManager(allow_interactive_auth=False, root_id=root_id)
+    local = threading.local()
+    def restore(item):
+        if not hasattr(local, "reader"):
+            local.reader = reader_factory()
+        reused = restore_verified(local.reader, item, _cache_path(cache, item))
+        return item["path"], reused
+    result = {}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="dbw-read-only") as pool:
+        futures = [pool.submit(restore, item) for item in descriptors]
+        for future in as_completed(futures):
+            path, reused = future.result()
+            result[path] = reused
+            if on_progress is not None:
+                on_progress(len(result), len(descriptors))
+    return result
+
+
 def _audit_locked(
-    storage: StorageManager, output_dir: Path, run_id: str
+    storage: StorageManager, output_dir: Path, run_id: str, *, workers: int = 1
 ) -> dict[str, Any]:
     cache = output_dir / "verified-cache"
     groups = discover(storage)
@@ -478,11 +509,23 @@ def _audit_locked(
 
     _atomic_json(output_dir / "progress.json", progress)
 
+    prefetched = {}
+    if workers > 1:
+        def restore_progress(done, total):
+            if done % 100 == 0 or done == total:
+                print(json.dumps({"operation": "restore_existing_drive_inputs", "objects_verified": done,
+                                  "objects_total": total, "read_only": True}), flush=True)
+        prefetched = prefetch_verified(storage, _all_descriptors(descriptors), cache,
+                                       workers=workers, on_progress=restore_progress)
+    def restore_input(descriptor, path):
+        reused = restore_verified(storage, descriptor, path)
+        return prefetched.get(descriptor["path"], reused)
+
     receipt_names: set[str] = set()
     for indicator_id in sorted(indicator_ids):
         descriptor = descriptors["receipts"][indicator_id]
         path = _cache_path(cache, descriptor)
-        was_reused = restore_verified(storage, descriptor, path)
+        was_reused = restore_input(descriptor, path)
         receipt = validate_receipt(path, indicator_id)
         receipt_names.update(receipt["files_landed"])
         record(descriptor, was_reused)
@@ -498,7 +541,7 @@ def _audit_locked(
     for group, schema_name in fixed_schema.items():
         descriptor = descriptors["fixed"][group]
         path = _cache_path(cache, descriptor)
-        was_reused = restore_verified(storage, descriptor, path)
+        was_reused = restore_input(descriptor, path)
         evidence = parquet_evidence(path, EXPECTED_SCHEMAS[schema_name])
         fixed_rows[group] = evidence["rows"]
         schema_evidence[group] = evidence["columns"]
@@ -508,7 +551,7 @@ def _audit_locked(
     for indicator_id in sorted(indicator_ids):
         descriptor = descriptors["observations"][indicator_id]
         path = _cache_path(cache, descriptor)
-        was_reused = restore_verified(storage, descriptor, path)
+        was_reused = restore_input(descriptor, path)
         evidence = parquet_evidence(path, EXPECTED_SCHEMAS["observations"])
         observation_rows += evidence["rows"]
         schema_evidence.setdefault("observations", evidence["columns"])
@@ -561,7 +604,7 @@ def _audit_locked(
     return report
 
 
-def audit_retained_dbw(storage: StorageManager, output_dir: Path) -> dict[str, Any]:
+def audit_retained_dbw(storage: StorageManager, output_dir: Path, *, workers: int = 1) -> dict[str, Any]:
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     run_id = str(uuid.uuid4())
@@ -574,7 +617,7 @@ def audit_retained_dbw(storage: StorageManager, output_dir: Path) -> dict[str, A
             ) from exc
         _run_status(output_dir, run_id, "running", started_at_utc=datetime.now(timezone.utc).isoformat())
         try:
-            report = _audit_locked(storage, output_dir, run_id)
+            report = _audit_locked(storage, output_dir, run_id, workers=workers)
         except BaseException as exc:
             _run_status(
                 output_dir,

@@ -247,7 +247,8 @@ export interface RetainedBronzeIndicator {
 }
 
 export interface RetainedBronzeManifest {
-  format_version: 1;
+  /** v2 can reference exact existing Bronze files; v1 uses publication copies. */
+  format_version: 1 | 2;
   kind: "retained_bronze_snapshot";
   source_id: "gus_dbw_retained_bronze";
   snapshot_id: string;
