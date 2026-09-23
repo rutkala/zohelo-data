@@ -1,0 +1,84 @@
+{
+  "integration": {
+    "pr": 155,
+    "head_sha": "8f13186b69f025195a24293f7d078d245b85e794",
+    "merge_sha": "2df5b04300706fbe1eacd3d7907e107535b26b78",
+    "tree_sha": "6e1d3ae853f9db0e12000158b289bb440a9cbe70",
+    "checks": [
+      {
+        "name": "Python and dbt fixture checks",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rutkala/zohelo-data/actions/runs/35799088034/job/106985121822"
+      },
+      {
+        "name": "portal (./)",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rutkala/zohelo-data/actions/runs/35799088047/job/106985061569"
+      },
+      {
+        "name": "portal (/zohelo-data/)",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rutkala/zohelo-data/actions/runs/35799088047/job/106985061417"
+      },
+      {
+        "name": "validate",
+        "status": "COMPLETED",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/rutkala/zohelo-data/actions/runs/35799088053/job/106985061689"
+      }
+    ],
+    "tree_equivalent": true,
+    "production_data_written": false
+  },
+  "owner_recovery": {
+    "observed_at_utc": "2026-09-23T00:05:57.585732+00:00",
+    "cancelled_run": 35783126258,
+    "terminated_publisher_pid": 7537,
+    "exact_git_claim": "8d28aa6c6a4303aa10a25406f06fa1292ad80d67",
+    "git_claim_record": {
+      "code_sha": "ea39f7ab9b3b8ae45aff1bd14260a3c0eb9bae96",
+      "drive_root_sha256": "fa2a115aa5ec2ca18ece0275df9e9805a7f06d3ca00091ed2b0d440bdb7f1d26",
+      "owner": "f2a0ebce-8a4c-4381-a926-331093df427e",
+      "pid": 7537,
+      "source": "gus_dbw_retained_bronze"
+    },
+    "local_dbw_writers": [],
+    "active_actions_dbw_writers": 0,
+    "deployed_reader": {
+      "git_commit": "2df5b04300706fbe1eacd3d7907e107535b26b78",
+      "supported_release_formats": [
+        1,
+        2
+      ],
+      "supported_drive_layouts": [
+        "canonical-release-roots-v1"
+      ],
+      "supported_retained_bronze_formats": [
+        1,
+        2
+      ]
+    },
+    "codespace_enumeration": "Not available with current token scope; exact claim owner was independently identified and confirmed terminated in the Actions job log.",
+    "drive_records_changed": false,
+    "git_claim_released": true,
+    "finished_at_utc": "2026-09-23T00:06:01.044673+00:00"
+  },
+  "dispatch": {
+    "run_id": 35800626942,
+    "url": "https://github.com/rutkala/zohelo-data/actions/runs/35800626942",
+    "code_sha": "2df5b04300706fbe1eacd3d7907e107535b26b78",
+    "name": "Publish existing DBW Bronze",
+    "status": "queued",
+    "created_at": "2026-09-23T00:07:25Z",
+    "portal_deployment_run": 35800224013,
+    "old_git_claim_recovered": "8d28aa6c6a4303aa10a25406f06fa1292ad80d67",
+    "exact_drive_owner_recovery_requested": "58c1713b-9d93-4d8b-b505-abdcd414da6b",
+    "publication_complete": false
+  },
+  "run_status_observed": "in_progress",
+  "run_conclusion_observed": null,
+  "production_acceptance_at_dispatch": false
+}
