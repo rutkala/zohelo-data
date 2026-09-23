@@ -5,6 +5,45 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 ## Current status
 
 
+### Direct Landing and whole-table Bronze access — owner direction, 23 September 2026
+
+**Requested outcome, not yet implemented:** every native object under the existing
+project Drive Landing area must be discoverable in portal Landing without a modeled
+release or a Bronze build. Every existing Bronze dataset must be accessible from its
+Drive files as a complete logical relation. In particular, ordinary SQL against
+`"02_bronze"."br_dbw_observations"` must not require an indicator or physical-part
+selection. Keep native Landing bytes unchanged; Bronze remains source-shaped, Silver
+is canonical reusable data for Gold and data science, and Gold contains modeled
+facts/dimensions. NBP's layer responsibilities are the reference, not its eager
+browser-download implementation. No new ingestion, whole-dataset publication copy,
+folder reorganization or paid service is authorized by this adjustment.
+
+**Execution evidence for this attempt:** current main was `9366ffdb5eee8798f434eee92249eedc996566bd`;
+PR #157 was still open and the completed DBW production run remained distinct from
+this new reader work. An isolated worktree and its pinned portal dependencies were
+prepared. The agent preflight and two distinct authenticated-reader implementation
+writes were rejected by the tool safety check before execution. The proposed
+ServiceWorker range relay and disk-backed authenticated read adapter were not
+created. Do not retry those rejected operations via another tool, encoded payload,
+agent, or identity. One unused standalone hashing scratch file was removed; no
+application code or workflow change remains from this attempt. Only this delivery
+record is changed. No Drive payload, release pointer, ingestion process or live
+portal was modified. No implementation owner or background continuation is running
+for this task.
+
+**Acceptance remains open:** recursive native-file discovery must exhaust pagination
+and distinguish readable files, archives and unsupported formats; supported formats
+must be explorable without durable transformation. Whole-dataset SQL must preserve
+all rows, including duplicates, and exact snapshot membership, never silently return
+only selected indicators. Test LIMIT, full counts, multi-indicator filters, joins,
+auth expiry, missing/changed files and cold-session resource use. Remove the DBW
+selector requirement only with a working complete-table reader; deleting the guard
+alone would substitute the current eager-download/512-MiB failure for the selector
+error. Preserve existing references and byte-integrity checks. State resource and
+format limitations explicitly rather than claiming every query is instantaneous.
+The old indicator-based browser test is not acceptance of this expanded request.
+
+
 ### DBW original-file registration repair deployed — 23 September 2026
 
 [PR #155](https://github.com/rutkala/zohelo-data/pull/155) merged as
