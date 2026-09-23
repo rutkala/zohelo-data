@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
-from hashlib import sha256
+from hashlib import md5, sha256
 import json
 import os
 from pathlib import Path
@@ -136,10 +136,14 @@ def progress(state: dict, landed: set[str], completed: int, transferred_bytes: i
 
 
 class DriveControl:
-    """One BDL-owned small checkpoint, with exact read-back and drift detection."""
+    """One serialized BDL checkpoint; recover lost responses by reads, never replay writes."""
+    RECOVERY_READ_DELAYS = (0, 0.5, 1.0)
+    METADATA_FIELDS = "id,name,parents,trashed,size,version,modifiedTime,md5Checksum,appProperties"
+
     def __init__(self, storage: Any, parent: str, name: str):
         from bdl_bulk_ingest import _find_exact_file
         self.storage, self.parent, self.name = storage, parent, name
+        self.poisoned = False
         matches = _find_exact_file(storage, name, parent)
         if len(matches) > 1:
             raise RuntimeError("Ambiguous BDL Web checkpoint")
@@ -150,8 +154,80 @@ class DriveControl:
         if matches and (matches[0].get("appProperties") or {}).get("sha256") != sha256(self.observed).hexdigest():
             raise RuntimeError("BDL checkpoint content does not match its recorded hash")
 
-    def _read(self) -> bytes:
-        return self.storage.drive_service.files().get_media(fileId=self.file_id).execute(num_retries=4)
+    def _close_http(self) -> None:
+        # The caller serializes this service. Drop timed-out pooled sockets before
+        # read-only reconciliation; do not change credentials or create a writer.
+        http = getattr(self.storage.drive_service, "_http", None)
+        close = getattr(http, "close", None)
+        if callable(close):
+            close()
+
+    @staticmethod
+    def _is_retryable(exc: BaseException) -> bool:
+        from googleapiclient.errors import HttpError
+        if isinstance(exc, HttpError):
+            return exc.resp.status in {408, 429, 500, 502, 503, 504}
+        return isinstance(exc, (TimeoutError, OSError))
+
+    def _read(self, *, file_id=None, num_retries=4) -> bytes:
+        return self.storage.drive_service.files().get_media(
+            fileId=self.file_id if file_id is None else file_id
+        ).execute(num_retries=num_retries)
+
+    def _unique_candidate(self, expected_id):
+        # A bounded name lookup detects duplicate creates and renamed/moved IDs.
+        escape = lambda value: value.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"'{escape(self.parent)}' in parents and name='{escape(self.name)}' and trashed=false"
+        result = self.storage.drive_service.files().list(
+            q=query, fields="files(id),nextPageToken", pageSize=2
+        ).execute(num_retries=0)
+        matches = result.get("files", [])
+        if result.get("nextPageToken") or len(matches) > 1:
+            raise RuntimeError("Ambiguous BDL Web checkpoint during reconciliation")
+        if not matches:
+            return None
+        identity = matches[0]["id"]
+        if expected_id is not None and identity != expected_id:
+            raise RuntimeError("BDL checkpoint identity changed during reconciliation")
+        return identity
+
+    def _read_candidate(self, identity, raw):
+        files = self.storage.drive_service.files()
+        before = files.get(fileId=identity, fields=self.METADATA_FIELDS).execute(num_retries=0)
+        if (before.get("id") != identity or before.get("name") != self.name
+                or before.get("trashed") or self.parent not in before.get("parents", [])):
+            raise RuntimeError("BDL checkpoint moved or disappeared during reconciliation")
+        size = int(before.get("size", -1))
+        if not 0 < size <= MAX_CONTROL_BYTES:
+            raise RuntimeError("Invalid BDL checkpoint size during reconciliation")
+        payload = self._read(file_id=identity, num_retries=0)
+        after = files.get(fileId=identity, fields=self.METADATA_FIELDS).execute(num_retries=0)
+        if before != after or self._unique_candidate(identity) != identity:
+            raise RuntimeError("BDL checkpoint changed during reconciliation")
+        props = before.get("appProperties") or {}
+        if (len(payload) != size or sha256(payload).hexdigest() != props.get("sha256")
+                or props.get("source_id") != "gus_bdl" or props.get("transport") != "web_ui"
+                or (before.get("md5Checksum") and md5(payload).hexdigest() != before["md5Checksum"])):
+            raise RuntimeError("BDL checkpoint hashes did not verify during reconciliation")
+        if payload == raw:
+            return True
+        if payload != self.observed:
+            raise RuntimeError("BDL checkpoint contains unexpected bytes during reconciliation")
+        return False
+
+    def _reconcile(self, raw, expected_id):
+        for delay in self.RECOVERY_READ_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                identity = self._unique_candidate(expected_id)
+                if identity is not None and self._read_candidate(identity, raw):
+                    return identity
+            except Exception as exc:
+                if not self._is_retryable(exc):
+                    raise
+                self._close_http()
+        raise RuntimeError("BDL checkpoint write remains uncertain after bounded read-only reconciliation")
 
     def load(self) -> dict | None:
         if self.observed is None:
@@ -165,23 +241,35 @@ class DriveControl:
 
     def save(self, value: dict) -> None:
         from googleapiclient.http import MediaInMemoryUpload
+        if self.poisoned:
+            raise RuntimeError("BDL checkpoint requires explicit reconciliation before another write")
         raw = rendered(value)
         if len(raw) > MAX_CONTROL_BYTES:
             raise RuntimeError("BDL Web checkpoint exceeds its bound")
+        if self.file_id and self._read() != self.observed:
+            raise RuntimeError("BDL Web checkpoint changed outside the serialized writer")
         files = self.storage.drive_service.files()
         props = {"source_id": "gus_bdl", "transport": "web_ui", "sha256": sha256(raw).hexdigest()}
         media = MediaInMemoryUpload(raw, mimetype="application/json", resumable=False)
-        if self.file_id:
-            if self._read() != self.observed:
-                raise RuntimeError("BDL Web checkpoint changed outside the serialized writer")
-            files.update(fileId=self.file_id, body={"appProperties": props}, media_body=media).execute(num_retries=0)
-        else:
-            answer = files.create(body={"name": self.name, "parents": [self.parent], "appProperties": props},
-                                  media_body=media, fields="id").execute(num_retries=0)
-            self.file_id = answer["id"]
-        if self._read() != raw:
-            raise RuntimeError("BDL Web checkpoint did not verify after publication")
-        self.observed = raw
+        candidate_id = self.file_id
+        try:
+            if candidate_id:
+                files.update(fileId=candidate_id, body={"appProperties": props}, media_body=media).execute(num_retries=0)
+            else:
+                answer = files.create(body={"name": self.name, "parents": [self.parent], "appProperties": props},
+                                      media_body=media, fields="id").execute(num_retries=0)
+                candidate_id = answer["id"]
+            if self._read(file_id=candidate_id) != raw:
+                raise RuntimeError("BDL Web checkpoint did not verify after publication")
+        except Exception as exc:
+            self.poisoned = True
+            if not self._is_retryable(exc):
+                raise
+            self._close_http()
+            candidate_id = self._reconcile(raw, candidate_id)
+            print(json.dumps({"status": "bdl_checkpoint_write_recovered", "checkpoint": self.name,
+                              "sha256": sha256(raw).hexdigest(), "write_replayed": False}), flush=True)
+        self.file_id, self.observed, self.poisoned = candidate_id, raw, False
 
 
 def invoke(script: str, env: dict, timeout: int, result_path: Path) -> dict:

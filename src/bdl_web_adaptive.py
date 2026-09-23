@@ -28,6 +28,41 @@ WRITER_HEARTBEAT_SECONDS = 60
 BDL_PROXY_CLUSTER_FILE = Path("/workspaces/zohelo-data/.wireguard/cluster.json")
 
 
+def validate_cluster_proxies(cluster_proxies: list[str], *, require_proxy_count: int, concurrency: int) -> list[str]:
+    if require_proxy_count < 0:
+        raise ValueError("--require-proxy-count cannot be negative")
+    if require_proxy_count == 0:
+        return list(cluster_proxies)
+    if concurrency != require_proxy_count:
+        raise ValueError("--require-proxy-count must match --concurrency when enabled")
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for proxy in cluster_proxies:
+        if not isinstance(proxy, str) or not proxy.strip():
+            raise ValueError("Configured proxy entry is empty or missing")
+        if proxy.lower() in {"none", "null", "false"}:
+            raise ValueError("Configured proxy entry is not a valid localhost HTTP proxy")
+        if proxy.startswith("http://127.0.0.1:"):
+            port = proxy.rsplit(":", 1)[1]
+            if not port or not port.isdigit():
+                raise ValueError(f"Configured proxy is missing a valid port: {proxy}")
+            port_number = int(port)
+            if not 1 <= port_number <= 65535:
+                raise ValueError(f"Configured proxy port is out of range: {proxy}")
+            proxy = f"http://127.0.0.1:{port_number}"
+            if proxy in seen:
+                raise ValueError(f"Proxy port reused across workers: {proxy}")
+            seen.add(proxy)
+            cleaned.append(proxy)
+            continue
+        raise ValueError(f"Configured proxy is not a HEALTHY localhost HTTP proxy: {proxy}")
+    if len(cleaned) != require_proxy_count:
+        raise ValueError(f"Configured healthy proxy count {len(cleaned)} does not match required {require_proxy_count}")
+    if len(set(cleaned)) != require_proxy_count:
+        raise ValueError("Proxy list contains duplicates or reused ports")
+    return cleaned
+
+
 class WorkerFailure(RuntimeError):
     def __init__(self, message, failure_class):
         super().__init__(message)
@@ -91,10 +126,18 @@ def invoke_selection_for_worker(item, node, workspace, timeout, proxy=None):
 def check_stored_receipt(storage, plan, node, receipt):
     """Receipt bytes were already verified by DriveControl; verify its native object."""
     probe = json.loads(json.dumps(plan))
-    parts.accept_download(probe, probe["nodes"][node["id"]], receipt)
+    probe_node = probe["nodes"][node["id"]]
+    if probe_node.get("status") == "landed":
+        probe_node["status"] = "pending"
+    parts.accept_download(probe, probe_node, receipt)
     obj = receipt["archive_object"]
-    current = storage.drive_service.files().get(
-        fileId=obj["id"], fields="id,size,md5Checksum,appProperties,trashed").execute(num_retries=4)
+    try:
+        current = storage.drive_service.files().get(
+            fileId=obj["id"], fields="id,size,md5Checksum,appProperties,trashed").execute(num_retries=4)
+    except Exception as exc:
+        raise CampaignControlFailure(
+            "Retained native receipt could not be read; refusing speculative recollection"
+        ) from exc
     if (current.get("trashed") or int(current.get("size", -1)) != obj["size"]
             or current.get("md5Checksum") != obj.get("md5")
             or (current.get("appProperties") or {}).get("sha256") != obj["sha256"]):
@@ -336,7 +379,7 @@ def select_next_candidate(state: dict[str, Any], legacy: set[str]) -> dict[str, 
     return None
 
 
-def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, allow_codespace=False):
+def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, allow_codespace=False, require_proxy_count=0):
     from bdl_bulk_plan import _bulk_roots, _durable_status
     from bdl_web_bootstrap import _clean_ephemeral
     from storage_manager import StorageManager
@@ -345,6 +388,18 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         raise ValueError("max_seconds must be positive when provided")
     if concurrency < 1:
         concurrency = 1
+    cluster_proxies = []
+    if Path(BDL_PROXY_CLUSTER_FILE).is_file():
+        try:
+            cdata = json.loads(Path(BDL_PROXY_CLUSTER_FILE).read_text(encoding='utf-8'))
+            cluster_proxies = [
+                f"http://127.0.0.1:{inst['http_port']}"
+                for inst in cdata
+                if inst.get("status") == "HEALTHY" and isinstance(inst.get("http_port"), int)
+            ]
+        except Exception:
+            pass
+    cluster_proxies = validate_cluster_proxies(cluster_proxies, require_proxy_count=require_proxy_count, concurrency=concurrency)
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     storage = StorageManager(allow_interactive_auth=False)
@@ -665,15 +720,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
             else:
                 state["pass_outcomes"][subgroup] = {"status": "partial", "files": summary_val["files"], "outstanding_selections": summary_val["outstanding_selections"], "updated_at_utc": now()}
 
-    # Load proxies from cluster.json if available
-    cluster_file = BDL_PROXY_CLUSTER_FILE
-    cluster_proxies = []
-    if cluster_file.is_file():
-        try:
-            cdata = json.loads(cluster_file.read_text(encoding="utf-8"))
-            cluster_proxies = [f"http://127.0.0.1:{inst['http_port']}" for inst in cdata if inst.get("status") == "HEALTHY"]
-        except Exception:
-            pass
+    # Use the proxy list validated before storage initialization; never silently remap.
     if cluster_proxies:
         print(f"Loaded {len(cluster_proxies)} cluster proxies for BDL", flush=True)
 
@@ -873,6 +920,7 @@ def main():
     parser.add_argument("--mode", choices=["resume", "reload"], default="resume")
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--allow-codespace", action="store_true", default=False)
+    parser.add_argument("--require-proxy-count", type=int, default=0)
     args = parser.parse_args()
     result = run(
         args.workspace,
@@ -881,6 +929,7 @@ def main():
         mode=args.mode,
         concurrency=args.concurrency,
         allow_codespace=args.allow_codespace,
+        require_proxy_count=args.require_proxy_count,
     )
     if result["status"] in {"pass_complete", "load_complete", "complete"}:
         return 0

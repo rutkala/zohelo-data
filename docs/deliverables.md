@@ -4,6 +4,47 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### BDL checkpoint-save recovery and ten-proxy restart — 24 September 2026
+
+The owner requested BDL ingestion only: repair interruptions, clean stale runtime
+state, and resume the last confirmed checkpoint with ten existing VPN/IP workers.
+No native reset, downstream processing, new source or Drive reorganization is in scope.
+
+Before changes, the stable Drive queue had SHA-256
+`871d3a13dccb0481562674760f09ce720e82edaa243b94963167680c54058af8`:
+2,420 subgroups, 2,075 selection-complete, 278 partial, 67 failed, 69 blocked
+selections, 4,814 checkpoint-reported files and 1,287,389,217 bytes. All 2,420
+referenced plans matched the unique control-object identities and stored hashes.
+The nine interrupted plans were independently downloaded, checksum/structure
+verified; all 551 native objects referenced by their landed receipts matched
+Drive size/MD5/SHA-256 metadata. Native archive content was not re-downloaded or
+parsed. The stale lock's PID 1343576 and all BDL browser workers were absent;
+no BDL Actions writer was active. All ten existing proxies (ports 8081–8090)
+were reachable, returned ten distinct egress IPs and reached BDL with HTTP 200.
+
+The repair reconciles lost checkpoint-write responses through bounded read-only
+checks of unique namespace, stable metadata and exact candidate bytes. It never
+blindly repeats a create/update. An unresolved, damaged, conflicting or denied
+operation still stops safely; the uncertain object rejects further writes.
+Recovery emits a log event, not an additional Drive object. Completed receipt
+validation now checks an isolated pending-state copy rather than rejecting an
+already-landed node, preventing unnecessary recollection of valid completed work.
+Native metadata transport failures remain control failures, not source retries.
+
+`--require-proxy-count 10` verifies ten distinct configured localhost proxies
+before constructing storage and prohibits silent direct/reused-proxy fallback.
+The monitor accepts explicit BDL workspace/runtime overrides so it no longer
+reports the obsolete September 21 summary; DBW monitoring behavior is unchanged.
+
+Validation so far: 26 focused recovery/receipt/proxy/monitor tests and 52 existing
+BDL Web tests pass; the pinned Python environment passes pip check. Full merge CI
+and actual resume/upload verification are still pending at this code handoff.
+An initial Copilot patch was reviewed and corrected by the lead; no implementation
+agent is continuing. All old workspaces, native payloads and checkpoints are retained.
+The last writer's exit cause is not independently established; earlier logs prove
+Drive plan/queue save timeouts. This repair does not claim full historical ingestion.
+
+
 
 ### Direct Landing and whole-table Bronze access — owner direction, 23 September 2026
 

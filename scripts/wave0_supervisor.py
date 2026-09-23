@@ -67,11 +67,12 @@ def read_checkpoint(path: Path) -> tuple[dict, str | None]:
         return {}, 'checkpoint_unreadable'
 
 
-def observe(runtime_root: Path, find_processes=process_ids) -> dict:
+def observe(runtime_root: Path, find_processes=process_ids, *, bdl_workspace: Path | None = None, bdl_runtime_root: Path | None = None) -> dict:
     logs = runtime_root / 'portal/test-results'
-    bdl, bdl_error = read_checkpoint(logs / 'bdl-web-bulk/bootstrap-summary.json')
+    bdl_checkpoint = (bdl_workspace or (logs / 'bdl-web-bulk')) / 'bootstrap-summary.json'
+    bdl, bdl_error = read_checkpoint(bdl_checkpoint)
     dbw, dbw_error = read_checkpoint(logs / 'dbw-bronze/checkpoint.json')
-    bdl_pids = find_processes(runtime_root / 'src/bdl_web_adaptive.py')
+    bdl_pids = find_processes((bdl_runtime_root or runtime_root) / 'src/bdl_web_adaptive.py')
     dbw_pids = find_processes(runtime_root / 'src/dbw_bronze_loader.py')
     return {
         'format_version': 1,
@@ -83,6 +84,9 @@ def observe(runtime_root: Path, find_processes=process_ids) -> dict:
             'process_status': 'running' if bdl_pids else 'stopped',
             'duplicate_writers_detected': len(bdl_pids) > 1,
             'checkpoint_error': bdl_error,
+            'checkpoint_path': str(bdl_checkpoint),
+            'reported_new_files_this_run': bdl.get('new_files_this_run'),
+            'reported_stop_reason': bdl.get('run_stop_reason'),
             'checkpoint_updated_at_utc': bdl.get('updated_at_utc'),
             'reported_selection_complete_subgroups': bdl.get('selection_complete_subgroups'),
             'reported_remaining_subgroups': bdl.get('remaining_subgroups'),
@@ -129,6 +133,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime-root', type=Path, default=ROOT)
     parser.add_argument('--state-dir', type=Path)
+    parser.add_argument('--bdl-workspace', type=Path, help='Actual BDL recovery workspace, without changing DBW monitoring')
+    parser.add_argument('--bdl-runtime-root', type=Path, help='Pinned BDL executable checkout when different from runtime-root')
     parser.add_argument('--interval', type=float, default=60)
     parser.add_argument('--once', action='store_true')
     args = parser.parse_args(argv)
@@ -148,7 +154,7 @@ def main(argv=None) -> int:
             print('A recovery supervisor already owns this runtime root.', flush=True)
             return 2
         while True:
-            state = observe(runtime_root)
+            state = observe(runtime_root, bdl_workspace=args.bdl_workspace, bdl_runtime_root=args.bdl_runtime_root)
             save_state(state_dir / 'status.json', state)
             print(json.dumps(state), flush=True)
             if args.once:
