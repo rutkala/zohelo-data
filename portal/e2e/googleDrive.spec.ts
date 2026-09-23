@@ -484,7 +484,8 @@ test("DBW v2 loads original Bronze files without a publication copy", async ({ p
   await profile.getByPlaceholder("Profile name").fill("DBW original references");
   await profile.getByRole("button", { name: "Create Profile", exact: true }).click();
   await expect(profile).toBeHidden();
-  await page.getByText("br_dbw_indicators", { exact: true }).click({ timeout: 60000 });
+  await expect(page.getByText("br_dbw_indicators", { exact: true })).toBeVisible({ timeout: 60000 });
+  await page.getByRole("button", { name: "New SQL query", exact: true }).click();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
