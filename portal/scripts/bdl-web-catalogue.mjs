@@ -1,6 +1,7 @@
 // Read one complete metadata table using BDL's ordinary website and pager.
 // This performs no BDL API requests and never fetches observation values.
 import { chromium } from '@playwright/test';
+import { bdlBrowserOptions } from './bdl-web-proxy.mjs';
 import fs from 'node:fs/promises';
 
 const task = JSON.parse(process.env.BDL_CATALOGUE_TASK || '{}');
@@ -13,7 +14,7 @@ if (!prefix || !output || task.url !== `https://bdl.stat.gov.pl${expectedPath}`)
   throw new Error('Invalid BDL Web catalogue task');
 }
 const result = { url: task.url, complete: false, records: [], pages: [], expected_count: null };
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch(bdlBrowserOptions());
 const page = await browser.newPage({ locale: 'pl-PL' });
 page.setDefaultTimeout(30000);
 

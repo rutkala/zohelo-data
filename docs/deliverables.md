@@ -36,7 +36,14 @@ before constructing storage and prohibits silent direct/reused-proxy fallback.
 The monitor accepts explicit BDL workspace/runtime overrides so it no longer
 reports the obsolete September 21 summary; DBW monitoring behavior is unchanged.
 
-Validation so far: 26 focused recovery/receipt/proxy/monitor tests and 52 existing
+A further transport review found that the worker environment contained proxy
+settings but Playwright launches did not explicitly use them. Both selection and
+catalogue browser workers now take a validated `BDL_WEB_PROXY` through Playwright's
+proxy option. A pure Node regression validates all ten routes and rejects malformed
+or remote proxy URLs. Real browser egress verification remains required before
+resuming the ten-route operation; prior environment settings alone are not proof.
+
+Validation so far: 27 focused recovery/receipt/proxy/monitor tests and 52 existing
 BDL Web tests pass; the pinned Python environment passes pip check. Full merge CI
 and actual resume/upload verification are still pending at this code handoff.
 An initial Copilot patch was reviewed and corrected by the lead; no implementation

@@ -86,6 +86,7 @@ def invoke_selection(item, node, workspace, timeout, session_path=None, proxy=No
              "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")
     env = {key: os.environ[key] for key in names if key in os.environ}
     if proxy:
+        env["BDL_WEB_PROXY"] = proxy
         env["HTTP_PROXY"] = env["HTTPS_PROXY"] = env["http_proxy"] = env["https_proxy"] = proxy
     env.update(BDL_WEB_TASK_PATH=str(request_path), BDL_BULK_OUT_DIR=str(workspace))
     # Each worker workspace has its own isolated session state to prevent ASP.NET session state collisions.
@@ -742,6 +743,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     env = {k: os.environ[k] for k in ("PATH", "HOME", "LD_LIBRARY_PATH", "PLAYWRIGHT_BROWSERS_PATH",
                                                       "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy") if k in os.environ}
                     if worker_proxy:
+                        env["BDL_WEB_PROXY"] = worker_proxy
                         env["HTTP_PROXY"] = env["HTTPS_PROXY"] = env["http_proxy"] = env["https_proxy"] = worker_proxy
                     env.update(BDL_CATALOGUE_TASK=json.dumps(catalogue_task), BDL_CATALOGUE_OUTPUT=str(workspace / "catalogue-task.json"))
                     try:

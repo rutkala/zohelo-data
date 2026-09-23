@@ -4,6 +4,8 @@ from hashlib import md5, sha256
 from pathlib import Path
 import json
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -230,6 +232,31 @@ class MonitorWorkspaceTests(unittest.TestCase):
             self.assertEqual(report["dbw"]["checkpoint_error"], "checkpoint_missing")
             self.assertEqual(finder.call_args_list[0].args[0], bdl_root / "src/bdl_web_adaptive.py")
             self.assertEqual(finder.call_args_list[1].args[0], root / "src/dbw_bronze_loader.py")
+
+
+class BrowserProxyTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node is required for browser transport option checks")
+    def test_explicit_playwright_routes_validate_all_ten_ports(self):
+        root = Path(__file__).resolve().parents[1]
+        script = """
+import assert from 'node:assert/strict';
+import { bdlBrowserOptions } from './portal/scripts/bdl-web-proxy.mjs';
+assert.deepEqual(bdlBrowserOptions({}), {headless: true});
+for (let port=8081; port<=8090; port++) {
+  const server = `http://127.0.0.1:${port}`;
+  assert.deepEqual(bdlBrowserOptions({BDL_WEB_PROXY:server}), {headless:true, proxy:{server}});
+}
+for (const server of ['', 'http://remote:8081', 'http://127.0.0.1:0', 'http://127.0.0.1:65536', 'http://user:secret@127.0.0.1:8081']) {
+  assert.throws(() => bdlBrowserOptions({BDL_WEB_PROXY:server}));
+}
+"""
+        subprocess.run(["node", "--input-type=module", "-e", script], cwd=root, check=True, timeout=20)
+        for filename in ("bdl-web-selection-worker.mjs", "bdl-web-catalogue.mjs"):
+            source = (root / "portal/scripts" / filename).read_text()
+            self.assertIn("chromium.launch(bdlBrowserOptions())", source)
+        source = (root / "src/bdl_web_adaptive.py").read_text()
+        self.assertIn('env["BDL_WEB_PROXY"] = proxy', source)
+        self.assertIn('env["BDL_WEB_PROXY"] = worker_proxy', source)
 
 
 class ResumeAndProxyTests(unittest.TestCase):
