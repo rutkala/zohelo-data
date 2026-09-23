@@ -130,6 +130,12 @@ export interface BdlPlatformReleaseManifest extends ReleaseManifestBase {
   release_scope: "bdl_platform";
 }
 
+/** The complete GUS DBW platform release, including Bronze, Silver, and Gold. */
+export interface DbwPlatformReleaseManifest extends ReleaseManifestBase {
+  format_version: 2;
+  release_scope: "dbw_platform";
+}
+
 /** The complete-current-archive WDI platform release. */
 export interface WdiPlatformReleaseManifest extends ReleaseManifestBase {
   format_version: 2;
@@ -146,6 +152,7 @@ export type ReleaseManifest =
   | SilverReleaseManifest
   | PlatformReleaseManifest
   | BdlPlatformReleaseManifest
+  | DbwPlatformReleaseManifest
   | WdiPlatformReleaseManifest
   | EurostatPlatformReleaseManifest;
 

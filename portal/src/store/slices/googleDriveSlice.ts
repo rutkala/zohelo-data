@@ -299,7 +299,7 @@ export const createGoogleDriveSlice: StateCreator<
       lakehouseStatusMessage: `Loading '${label}' from Google Drive...`,
     });
     try {
-      if (tableName === "br_dbw_observations") {
+      if (tableName === "br_dbw_observations" && (!table || table.children.length === 0)) {
         throw new Error("Search and choose a dated retained DBW indicator or explicit part before loading observations.");
       }
       if (table?.availability === "pending") {
@@ -526,7 +526,9 @@ export const createGoogleDriveSlice: StateCreator<
       }
       if (referenced.length === 0) return;
       if (referenced.some((table) =>
-        table.layerName === "02_bronze" && table.datasetName === "br_dbw_observations"
+        table.layerName === "02_bronze" &&
+        table.datasetName === "br_dbw_observations" &&
+        table.files.length === 0
       )) {
         throw new Error(
           "Choose a dated retained DBW indicator (or one of its explicit parts) before querying observations; the full retained collection is not loaded into the browser."

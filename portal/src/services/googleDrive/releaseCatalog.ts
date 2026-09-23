@@ -8,6 +8,7 @@ import {
 } from "./driveApi";
 import type {
   BdlPlatformReleaseManifest,
+  DbwPlatformReleaseManifest,
   BusinessCatalogue,
   BusinessCatalogueLineageNode,
   BusinessCatalogueSource,
@@ -74,6 +75,19 @@ export const BDL_DATASETS: Record<string, ReleaseLayer> = {
   dim_bdl_unit: "04_gold",
   fact_bdl_observations: "04_gold",
   mart_bdl_coverage: "04_gold",
+};
+export const DBW_DATASETS: Record<string, ReleaseLayer> = {
+  bronze_dbw_dictionaries: "02_bronze",
+  bronze_dbw_indicators: "02_bronze",
+  bronze_dbw_metadata: "02_bronze",
+  bronze_dbw_observations: "02_bronze",
+  dbw_dictionaries: "03_silver",
+  dbw_indicators: "03_silver",
+  dbw_metadata: "03_silver",
+  dbw_observations: "03_silver",
+  dim_dbw_indicator: "04_gold",
+  fact_dbw_observations: "04_gold",
+  mart_dbw_coverage: "04_gold",
 };
 export const BDL_DATED_DATASETS = new Set([
   "dim_bdl_period",
@@ -282,6 +296,7 @@ function parseDataset(
     | "nbp_silver"
     | "nbp_platform"
     | "bdl_platform"
+    | "dbw_platform"
     | "wdi_platform"
     | "eurostat_progressive_api_platform"
 ): ReleaseDataset {
@@ -294,9 +309,11 @@ function parseDataset(
         ? V2_DATASETS[dataset_id]
         : scope === "bdl_platform"
           ? BDL_DATASETS[dataset_id]
-          : scope === "wdi_platform"
-            ? WDI_DATASETS[dataset_id]
-            : EUROSTAT_DATASETS[dataset_id];
+          : scope === "dbw_platform"
+            ? DBW_DATASETS[dataset_id]
+            : scope === "wdi_platform"
+              ? WDI_DATASETS[dataset_id]
+              : EUROSTAT_DATASETS[dataset_id];
   if (!expectedLayer || raw.layer !== expectedLayer) {
     throw new Error(`Release dataset '${dataset_id}' has an invalid layer.`);
   }
@@ -445,6 +462,7 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
     (format_version === 2 &&
       rawScope !== "nbp_platform" &&
       rawScope !== "bdl_platform" &&
+      rawScope !== "dbw_platform" &&
       rawScope !== "wdi_platform" &&
       rawScope !== "eurostat_progressive_api_platform") ||
     raw.status !== "validated"
@@ -459,11 +477,13 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
     | "nbp_silver"
     | "nbp_platform"
     | "bdl_platform"
+    | "dbw_platform"
     | "wdi_platform"
     | "eurostat_progressive_api_platform" = rawScope as
     | "nbp_silver"
     | "nbp_platform"
     | "bdl_platform"
+    | "dbw_platform"
     | "wdi_platform"
     | "eurostat_progressive_api_platform";
   if (!isRecord(raw.tests) || raw.tests.passed !== true) {
@@ -480,7 +500,9 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
         ? Object.keys(V2_DATASETS)
         : scope === "bdl_platform"
           ? Object.keys(BDL_DATASETS)
-          : scope === "wdi_platform"
+          : scope === "dbw_platform"
+            ? Object.keys(DBW_DATASETS)
+            : scope === "wdi_platform"
             ? Object.keys(WDI_DATASETS)
             : Object.keys(EUROSTAT_DATASETS);
   if (
@@ -495,9 +517,11 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
           ? "The selected platform release must contain exactly the 15 required NBP datasets."
           : scope === "bdl_platform"
             ? "The selected platform release must contain exactly the 18 required BDL datasets."
-            : scope === "wdi_platform"
-              ? "The selected platform release must contain exactly the 14 required WDI datasets."
-              : "The selected platform release must contain exactly the 8 required Eurostat datasets."
+            : scope === "dbw_platform"
+              ? "The selected platform release must contain exactly the 11 required DBW datasets."
+              : scope === "wdi_platform"
+                ? "The selected platform release must contain exactly the 14 required WDI datasets."
+                : "The selected platform release must contain exactly the 8 required Eurostat datasets."
     );
   }
   const fileIds = new Set<string>();
@@ -551,6 +575,13 @@ function parseManifest(bytes: Uint8Array, pointer: ReleasePointer): ReleaseManif
       format_version: 2,
       release_scope: "bdl_platform",
     } satisfies BdlPlatformReleaseManifest;
+  }
+  if (scope === "dbw_platform") {
+    return {
+      ...base,
+      format_version: 2,
+      release_scope: "dbw_platform",
+    } satisfies DbwPlatformReleaseManifest;
   }
   if (scope === "wdi_platform") {
     return {
@@ -619,6 +650,7 @@ function parseBusinessCatalogue(
   manifest:
     | PlatformReleaseManifest
     | BdlPlatformReleaseManifest
+    | DbwPlatformReleaseManifest
     | WdiPlatformReleaseManifest
     | EurostatPlatformReleaseManifest
 ): BusinessCatalogue {
@@ -772,8 +804,8 @@ export async function resolveReleaseCatalog(
   }
   const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
 
-  const establishedSources = new Set<"nbp" | "bdl" | "wdi" | "eurostat">();
-  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "wdi" | "eurostat") => {
+  const establishedSources = new Set<"nbp" | "bdl" | "dbw" | "wdi" | "eurostat">();
+  const findCanonicalPointer = async (sourceName: "nbp" | "bdl" | "dbw" | "wdi" | "eurostat") => {
     if (!releasesFolderId) return undefined;
     const folders = (await findFoldersByName(sourceName, releasesFolderId, token)).filter(
       (folder) => folder.name === sourceName
@@ -814,8 +846,8 @@ export async function resolveReleaseCatalog(
     return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
   };
   const findPlatformPointer = async (
-    folderName: "bdl-platform" | "wdi-platform",
-    sourceName: "bdl" | "wdi"
+    folderName: "bdl-platform" | "dbw-platform" | "wdi-platform",
+    sourceName: "bdl" | "dbw" | "wdi"
   ) => {
     const folders = (await findFoldersByName(folderName, rootId, token)).filter(
       (folder) => folder.name === folderName
@@ -839,7 +871,7 @@ export async function resolveReleaseCatalog(
     return pointerFiles.length === 1 ? pointerFiles[0] : undefined;
   };
   const selectSource = (
-    sourceName: "nbp" | "bdl" | "wdi" | "eurostat",
+    sourceName: "nbp" | "bdl" | "dbw" | "wdi" | "eurostat",
     canonical: Awaited<ReturnType<typeof findCanonicalPointer>>,
     legacy: Awaited<ReturnType<typeof findLegacyNbpPointer>>
   ) => {
@@ -869,16 +901,19 @@ export async function resolveReleaseCatalog(
   // Preserve a stable first-pass observation order for all sources.
   const canonicalNbpPointer = await findCanonicalPointer("nbp");
   const canonicalBdlPointer = await findCanonicalPointer("bdl");
+  const canonicalDbwPointer = await findCanonicalPointer("dbw");
   const canonicalWdiPointer = await findCanonicalPointer("wdi");
   const canonicalEurostatPointer = await findCanonicalPointer("eurostat");
   const legacyNbpPointer = await findLegacyNbpPointer();
   const legacyBdlPointer = await findPlatformPointer("bdl-platform", "bdl");
+  const legacyDbwPointer = await findPlatformPointer("dbw-platform", "dbw");
   const legacyWdiPointer = await findPlatformPointer("wdi-platform", "wdi");
   let effectiveNbp = selectSource("nbp", canonicalNbpPointer, legacyNbpPointer);
   let effectiveBdl = selectSource("bdl", canonicalBdlPointer, legacyBdlPointer);
+  let effectiveDbw = selectSource("dbw", canonicalDbwPointer, legacyDbwPointer);
   let effectiveWdi = selectSource("wdi", canonicalWdiPointer, legacyWdiPointer);
   let effectiveEurostat = selectSource("eurostat", canonicalEurostatPointer, undefined);
-  const discoverSource = async (sourceName: "nbp" | "bdl" | "wdi" | "eurostat") => {
+  const discoverSource = async (sourceName: "nbp" | "bdl" | "dbw" | "wdi" | "eurostat") => {
     const canonical = await findCanonicalPointer(sourceName);
     const legacy =
       sourceName === "eurostat"
@@ -886,7 +921,11 @@ export async function resolveReleaseCatalog(
         : sourceName === "nbp"
           ? await findLegacyNbpPointer()
           : await findPlatformPointer(
-              sourceName === "bdl" ? "bdl-platform" : "wdi-platform",
+              sourceName === "bdl"
+                ? "bdl-platform"
+                : sourceName === "dbw"
+                  ? "dbw-platform"
+                  : "wdi-platform",
               sourceName
             );
     return selectSource(sourceName, canonical, legacy);
@@ -894,19 +933,22 @@ export async function resolveReleaseCatalog(
   // A source can move between canonical and legacy parents while the calls above
   // are in flight. Retry every missing source once and then fail visibly if a
   // source container was observed without its pointer.
-  for (const sourceName of ["nbp", "bdl", "wdi", "eurostat"] as const) {
+  for (const sourceName of ["nbp", "bdl", "dbw", "wdi", "eurostat"] as const) {
     const current =
       sourceName === "nbp"
         ? effectiveNbp
         : sourceName === "bdl"
           ? effectiveBdl
-          : sourceName === "wdi"
-            ? effectiveWdi
-            : effectiveEurostat;
+          : sourceName === "dbw"
+            ? effectiveDbw
+            : sourceName === "wdi"
+              ? effectiveWdi
+              : effectiveEurostat;
     if (current) continue;
     const retry = await discoverSource(sourceName);
     if (sourceName === "nbp") effectiveNbp = retry;
     else if (sourceName === "bdl") effectiveBdl = retry;
+    else if (sourceName === "dbw") effectiveDbw = retry;
     else if (sourceName === "wdi") effectiveWdi = retry;
     else effectiveEurostat = retry;
     if (!retry && establishedSources.has(sourceName)) {
@@ -918,7 +960,7 @@ export async function resolveReleaseCatalog(
       );
     }
   }
-  if (!effectiveNbp && !effectiveBdl && !effectiveWdi && !effectiveEurostat) {
+  if (!effectiveNbp && !effectiveBdl && !effectiveDbw && !effectiveWdi && !effectiveEurostat) {
     return { kind: "legacy" };
   }
 
@@ -928,6 +970,9 @@ export async function resolveReleaseCatalog(
   }
   if (effectiveBdl) {
     releases.push(await resolveSingleRelease(effectiveBdl.file, effectiveBdl.label, token, budget));
+  }
+  if (effectiveDbw) {
+    releases.push(await resolveSingleRelease(effectiveDbw.file, effectiveDbw.label, token, budget));
   }
   if (effectiveWdi) {
     releases.push(await resolveSingleRelease(effectiveWdi.file, effectiveWdi.label, token, budget));

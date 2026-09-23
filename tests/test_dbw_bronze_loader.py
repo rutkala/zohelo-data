@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, call, patch
@@ -606,10 +607,9 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 "ZOHELO_DBW_BRONZE_RELEASE_ID": release_id,
                 "ZOHELO_DUCKDB_PATH": str(Path(tmp) / "dbw.duckdb"),
             })
-            dbt_executable = shutil.which("dbt") or str(repo_root / ".venv/bin/dbt")
+            dbt_command = [sys.executable, "-c", "from dbt.cli.main import cli; cli()"]
             result = subprocess.run(
-                [
-                    dbt_executable,
+                dbt_command + [
                     "build", "--profiles-dir", str(repo_root),
                     "--project-dir", str(repo_root), "--select",
                     "br_dbw_observations", "br_dbw_indicators",
@@ -638,8 +638,8 @@ class TestDBWBronzeLoader(unittest.TestCase):
             con.close()
             os.replace(altered, release_root / "observations/part_7.parquet")
             tampered = subprocess.run(
-                [
-                    dbt_executable, "build", "--profiles-dir", str(repo_root),
+                dbt_command + [
+                    "build", "--profiles-dir", str(repo_root),
                     "--project-dir", str(repo_root), "--select", "br_dbw_observations",
                     "--vars", '{"enable_gus_dbw": true}',
                 ],

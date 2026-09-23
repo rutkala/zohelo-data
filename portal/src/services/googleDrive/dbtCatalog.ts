@@ -27,6 +27,13 @@ const BDL_BRONZE_MODELS: readonly string[] = [
   "model.zohelo_data.br_bdl_observations",
 ];
 
+const DBW_BRONZE_MODELS: readonly string[] = [
+  "model.zohelo_data.br_dbw_dictionaries",
+  "model.zohelo_data.br_dbw_indicators",
+  "model.zohelo_data.br_dbw_metadata",
+  "model.zohelo_data.br_dbw_observations",
+];
+
 const WDI_BRONZE_MODELS: readonly string[] = [
   "model.zohelo_data.br_wdi_country",
   "model.zohelo_data.br_wdi_country_series",
@@ -313,6 +320,16 @@ export function prepareDbtManifest(
         }
       }
       releasedStatusLines.push(statusLine(bdlSource, BDL_BRONZE_MODELS[0]));
+    } else if (rel.manifest.release_scope === "dbw_platform") {
+      const dbwSource = byId.get("gus_dbw");
+      if (!dbwSource) return prepared;
+      for (const modelId of DBW_BRONZE_MODELS) {
+        const node = prepared.nodes[modelId];
+        if (node) {
+          prepared.nodes[modelId] = writeIngestionMeta(node, dbwSource);
+        }
+      }
+      releasedStatusLines.push(statusLine(dbwSource, DBW_BRONZE_MODELS[0]));
     } else if (rel.manifest.release_scope === "wdi_platform") {
       const wdiSource = byId.get("world_bank_wdi");
       if (!wdiSource) return prepared;
