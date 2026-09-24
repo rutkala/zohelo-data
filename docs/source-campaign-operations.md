@@ -474,3 +474,35 @@ stage transitions. It contains no credentials and is not a portal data-release c
 This monitor is an interim recovery control, not completed autonomous orchestration. It does
 not restart ingestion after a crash, verify Drive bytes, or declare full source acceptance.
 The active delivery record identifies the actual running writer and remaining repairs.
+
+
+## BDL interrupted checkpoint recovery
+
+Use a clean reviewed runtime and the existing native checkpoint, not a reset or
+`reload`, for a stopped BDL Web campaign. Before restarting, verify that the prior
+writer and its browser workers have terminated and no BDL Actions writer is active.
+Preserve stable queue/lock bytes and metadata; reconcile all referenced plan IDs
+and hashes and validate interrupted-plan native receipts. Do not clear ownership
+based on elapsed time alone. Once termination and checkpoint consistency are
+established, the existing stale-lock acquisition and `--mode resume` path can
+replace the stale owner and clear in-flight work without discarding completion.
+
+A lost create/update response is reconciled through read-only checks. Only the
+exact, uniquely addressed, checksum-verified candidate can be adopted. There is
+no blind write retry and no recovery metadata upload. An unresolved control result
+still stops the campaign, preserving the last observed state for explicit recovery.
+
+For the approved ten-route local setup use `--concurrency 10 --require-proxy-count 10`.
+Verify real egress diversity/reachability separately; the argument validates the
+configured route count, not remote IP health. Do not replace or rotate routes to
+override a provider refusal; existing authentication/rate-limit stop rules remain.
+Launch detached in the existing authorized devcontainer, with a fresh disposable
+workspace and captured logs. Do not use the dirty/shared checkout or delete old
+workspaces that may hold interrupted transfers.
+
+For monitoring a recovery workspace, `scripts/wave0_supervisor.py` accepts
+`--bdl-workspace <actual-workspace> --bdl-runtime-root <reviewed-runtime>`.
+Its original `--runtime-root` continues to define other source monitoring. It is
+still monitor-only: it does not autonomously delete locks, restart uncertain
+writers or trigger downstream transformations. After restart, verify a fresh
+Drive heartbeat and actual newly saved native files, not only a process ID.
