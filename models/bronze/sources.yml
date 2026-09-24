@@ -60,132 +60,19 @@ sources:
         description: "GUS DBW Bronze observations partitioned by indicator."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/observations/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/observations/part_*.parquet', union_by_name = true)"
       - name: indicators
         description: "GUS DBW Bronze indicators taxonomy mapped to areas and domains."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/taxonomy/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/taxonomy/br_dbw_indicators.parquet', union_by_name = true)"
       - name: metadata
         description: "GUS DBW Bronze methodological metryka for indicators."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/metadata/*.parquet', union_by_name = true)"
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/metadata/br_dbw_metadata.parquet', union_by_name = true)"
       - name: dictionaries
         description: "GUS DBW Bronze dimension and element dictionaries."
         meta:
           formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/dictionaries/*.parquet', union_by_name = true)"
-
-  - name: bronze_teryt
-    schema: 02_bronze
-    description: "GUS TERYT (Krajowy Rejestr Urzędowy Podziału Terytorialnego Kraju) Bronze Parquet tables."
-    config:
-      enabled: "{{ var('enable_gus_teryt', false) }}"
-    tables:
-      - name: terc
-        description: "Official administrative division hierarchy (voivodeships, powiats, gminas)."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_teryt/br_teryt_terc.parquet')"
-      - name: simc
-        description: "Official localities register (towns, villages, parts of localities)."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_teryt/br_teryt_simc.parquet')"
-      - name: ulic
-        description: "Official streets register."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_teryt/br_teryt_ulic.parquet')"
-
-  - name: bronze_prg
-    schema: 02_bronze
-    description: "GUGiK PRG (Państwowy Rejestr Granic) Bronze Parquet tables with official GIS boundaries."
-    config:
-      enabled: "{{ var('enable_gugik_prg', false) }}"
-    tables:
-      - name: country
-        description: "National boundary of Poland (Polska)."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gugik_prg/br_prg_country.parquet')"
-      - name: voivodeships
-        description: "Voivodeship boundaries."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gugik_prg/br_prg_voivodeships.parquet')"
-      - name: counties
-        description: "County (powiat) boundaries."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gugik_prg/br_prg_counties.parquet')"
-      - name: municipalities
-        description: "Municipality (gmina) boundaries."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gugik_prg/br_prg_municipalities.parquet')"
-
-  - name: bronze_mf_biala_lista
-    schema: 02_bronze
-    description: "Ministerstwo Finansów Biała Lista Podatników VAT Bronze Parquet tables."
-    config:
-      enabled: "{{ var('enable_mf_biala_lista', false) }}"
-    tables:
-      - name: header
-        description: "Official Biała Lista generation metadata and transformation parameters."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/mf_biala_lista/br_biala_lista_header.parquet')"
-      - name: masks
-        description: "Virtual bank account masks for subaccount validation."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/mf_biala_lista/br_biala_lista_masks.parquet')"
-      - name: taxpayers
-        description: "Active and exempt VAT taxpayer and bank account SHA-512 hashes."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/mf_biala_lista/br_biala_lista_taxpayers.parquet')"
-
-  - name: bronze_gleif
-    schema: 02_bronze
-    description: "GLEIF (Global Legal Entity Identifier) Bronze Parquet tables."
-    config:
-      enabled: "{{ var('enable_gleif', false) }}"
-    tables:
-      - name: lei2
-        description: "Global entity reference records with national registration authority crosswalks (KRS, REGON)."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gleif/br_gleif_lei2.parquet')"
-      - name: relationship_records
-        description: "Level 2 Golden Copy parent-child ownership relationships (who owns whom)."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gleif/br_gleif_relationship_records.parquet')"
-      - name: reporting_exceptions
-        description: "Level 2 Golden Copy reasons for parent consolidation reporting exceptions."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gleif/br_gleif_reporting_exceptions.parquet')"
-
-  - name: bronze_imgw
-    schema: 02_bronze
-    description: "IMGW-PIB (Instytut Meteorologii i Gospodarki Wodnej) Bronze Parquet tables."
-    config:
-      enabled: "{{ var('enable_imgw_pib', false) }}"
-    tables:
-      - name: stations
-        description: "Official IMGW-PIB meteorological stations catalog."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/imgw_pib/br_imgw_stations.parquet')"
-      - name: synoptic_daily
-        description: "Official IMGW-PIB synoptic daily meteorological observations."
-        meta:
-          formatter: template
-          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/imgw_pib/br_imgw_synoptic_daily.parquet')"
-
-
-
+          external_location: "read_parquet('{{ env_var('ZOHELO_DATA_ROOT', '/tmp/zohelo_data') }}/02_bronze/gus_dbw/releases/{{ env_var('ZOHELO_DBW_BRONZE_RELEASE_ID', '__DBW_RELEASE_NOT_SELECTED__') }}/dictionaries/br_dbw_dictionaries.parquet', union_by_name = true)"
