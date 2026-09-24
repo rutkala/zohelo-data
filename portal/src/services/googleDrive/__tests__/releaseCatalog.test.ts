@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { sha256Hex, createDriveDownloadBudget, resolveReleaseCatalog } from "../releaseCatalog";
+import {
+  sha256Hex,
+  createDriveDownloadBudget,
+  resolveReleaseCatalog,
+  DriveDownloadBudget,
+  DBW_DATASETS,
+  DRIVE_DOWNLOAD_LIMIT_BYTES,
+} from "../releaseCatalog";
 import {
   fetchDriveFileBuffer,
   findFoldersByName,
@@ -1214,3 +1221,294 @@ describe("Release discovery mutation safety", () => {
     }
   );
 });
+
+const dbwDatasetIds = Object.keys(DBW_DATASETS);
+
+async function dbwPlatformFixture(
+  manifestOverride: Record<string, unknown> = {},
+  catalogueOverride: Record<string, unknown> = {}
+) {
+  const releaseId = "323e4567-e89b-42d3-a456-426614174000";
+  const codeSha = "d".repeat(40);
+  const catalogue = {
+    format_version: 1,
+    code_sha: codeSha,
+    sources: [
+      {
+        source_id: "gus_dbw",
+        name: "GUS DBW (Dziedzinowe Bazy Wiedzy)",
+        description: "Dziedzinowe Bazy Wiedzy published by Statistics Poland.",
+        status: "published",
+        checked_through: "2026-09-24",
+        latest_observation_date: "2026-09-24",
+        last_successful_ingestion_at: "2026-09-24T11:00:00Z",
+        last_attempt_at: "2026-09-24T11:00:00Z",
+        raw_response_count: 1550,
+      },
+    ],
+    lineage: {
+      nodes: [
+        {
+          id: "source",
+          label: "GUS DBW",
+          kind: "source",
+          layer: "01_landing",
+          description: "Source response",
+        },
+        {
+          id: "bronze",
+          label: "DBW Bronze",
+          kind: "model",
+          layer: "02_bronze",
+          description: "Bronze tables",
+        },
+      ],
+      edges: [{ from: "source", to: "bronze" }],
+    },
+    metrics: [{ name: "dbw_indicator_coverage_ratio" }],
+    ...catalogueOverride,
+  };
+  const catalogueBytes = bytes(catalogue);
+  const manifest = {
+    format_version: 2,
+    release_id: releaseId,
+    release_scope: "dbw_platform",
+    status: "validated",
+    code_sha: codeSha,
+    created_at_utc: "2026-09-24T12:00:00Z",
+    datasets: dbwDatasetIds.map((dataset_id) => ({
+      dataset_id,
+      layer: DBW_DATASETS[dataset_id],
+      table_name: dataset_id.replace(/^bronze_/, ""),
+      row_count: 10,
+      min_date: null,
+      max_date: null,
+      columns: [{ name: "id", type: "VARCHAR" }],
+      files: [
+        {
+          id: `${dataset_id}-file`,
+          name: `${dataset_id}.parquet`,
+          size: 100,
+          sha256: "d".repeat(64),
+        },
+      ],
+    })),
+    artifacts: [
+      { id: "manifest-id", name: "manifest.json", size: 1, sha256: "e".repeat(64) },
+      { id: "catalog-id", name: "catalog.json", size: 1, sha256: "e".repeat(64) },
+      { id: "run-results-id", name: "run_results.json", size: 1, sha256: "e".repeat(64) },
+      { id: "ingestion-state-id", name: "ingestion-state.json", size: 1, sha256: "e".repeat(64) },
+      {
+        id: "business-catalogue-id",
+        name: "business-catalog.json",
+        size: catalogueBytes.byteLength,
+        sha256: await sha256Hex(catalogueBytes),
+      },
+    ],
+    inputs: [],
+    tests: { passed: true },
+    ...manifestOverride,
+  };
+  const manifestBytes = bytes(manifest);
+  const pointerBytes = bytes({
+    format_version: 1,
+    release_id: releaseId,
+    manifest_file_id: "dbw-manifest-id",
+    manifest_sha256: await sha256Hex(manifestBytes),
+    updated_at_utc: "2026-09-24T12:01:00Z",
+  });
+
+  vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+    if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+    if (name === "releases" && parentId === "root-id") return [{ id: "releases-root-id", name }];
+    if (name === "dbw" && parentId === "releases-root-id") return [{ id: "dbw-rel-id", name }];
+    return [];
+  });
+  vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+    if (name === "current-release.json" && parentId === "dbw-rel-id") {
+      return [{ id: "dbw-pointer-id", name, size: pointerBytes.byteLength }];
+    }
+    return [];
+  });
+  vi.mocked(findNamedFilesInFolderById).mockResolvedValue({
+    id: "dbw-manifest-id",
+    name: "release.json",
+    size: manifestBytes.byteLength,
+  });
+  vi.mocked(fetchDriveFileBuffer).mockImplementation(async (id) => {
+    if (id === "dbw-pointer-id") return pointerBytes;
+    if (id === "business-catalogue-id") return catalogueBytes;
+    return manifestBytes;
+  });
+  return { manifestBytes, pointerBytes, catalogueBytes };
+}
+
+describe("DBW platform release resolution", () => {
+  it("resolves all eleven DBW datasets and business catalogue from canonical releases/dbw folder", async () => {
+    await dbwPlatformFixture();
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog).toMatchObject({ kind: "release" });
+    expect(catalog.kind === "release" && catalog.manifest).toMatchObject({
+      format_version: 2,
+      release_scope: "dbw_platform",
+    });
+    expect(catalog.kind === "release" && catalog.manifest.datasets).toHaveLength(11);
+    expect(catalog.kind === "release" && catalog.businessCatalogue?.sources[0].source_id).toBe(
+      "gus_dbw"
+    );
+    expect(catalog.kind === "release" && catalog.releases).toHaveLength(1);
+  });
+
+  it("resolves DBW platform release from fallback dbw-platform folder when canonical is absent", async () => {
+    const { pointerBytes } = await dbwPlatformFixture();
+    vi.mocked(findFoldersByName).mockImplementation(async (name, parentId) => {
+      if (name === "zohelo-data" && parentId === "root") return [{ id: "root-id", name }];
+      if (name === "dbw-platform" && parentId === "root-id") return [{ id: "dbw-platform-id", name }];
+      return [];
+    });
+    vi.mocked(findNamedFilesInFolder).mockImplementation(async (name, parentId) => {
+      if (name === "current-release.json" && parentId === "dbw-platform-id") {
+        return [{ id: "dbw-pointer-id", name, size: pointerBytes.byteLength }];
+      }
+      return [];
+    });
+    const catalog = await resolveReleaseCatalog("token", createDriveDownloadBudget());
+    expect(catalog).toMatchObject({ kind: "release" });
+    expect(catalog.kind === "release" && catalog.manifest.release_scope).toBe("dbw_platform");
+    expect(catalog.kind === "release" && catalog.manifest.datasets).toHaveLength(11);
+  });
+
+  it("rejects DBW platform release if fewer than 11 datasets are present", async () => {
+    await dbwPlatformFixture({
+      datasets: dbwDatasetIds.slice(0, 10).map((dataset_id) => ({
+        dataset_id,
+        layer: DBW_DATASETS[dataset_id],
+        table_name: dataset_id.replace(/^bronze_/, ""),
+        row_count: 10,
+        min_date: null,
+        max_date: null,
+        columns: [{ name: "id", type: "VARCHAR" }],
+        files: [
+          {
+            id: `${dataset_id}-file`,
+            name: `${dataset_id}.parquet`,
+            size: 100,
+            sha256: "d".repeat(64),
+          },
+        ],
+      })),
+    });
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /The selected platform release must contain exactly the 11 required DBW datasets./
+    );
+  });
+
+  it("rejects DBW platform release with format_version 1", async () => {
+    await dbwPlatformFixture({
+      format_version: 1,
+    });
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /The selected release is not a validated nbp_silver release./
+    );
+  });
+
+  it("rejects DBW platform release with invalid scope", async () => {
+    await dbwPlatformFixture({
+      release_scope: "dbw_unknown",
+    });
+    await expect(resolveReleaseCatalog("token", createDriveDownloadBudget())).rejects.toThrow(
+      /The selected release is not a validated platform release./
+    );
+  });
+});
+
+describe("DriveDownloadBudget", () => {
+  it("initializes with 0 consumed bytes", () => {
+    const budget = new DriveDownloadBudget();
+    expect(budget.consumedBytes).toBe(0);
+  });
+
+  describe("reserve", () => {
+    it("reserves planned bytes without updating consumedBytes", () => {
+      const budget = new DriveDownloadBudget();
+      budget.reserve(1024, "file.parquet");
+      expect(budget.consumedBytes).toBe(0);
+      budget.reserve(2048, "file2.parquet");
+      expect(budget.consumedBytes).toBe(0);
+    });
+
+    it("accepts exactly 0 bytes", () => {
+      const budget = new DriveDownloadBudget();
+      expect(() => budget.reserve(0, "empty.parquet")).not.toThrow();
+      expect(budget.consumedBytes).toBe(0);
+    });
+
+    it("rejects negative or non-safe-integer byte amounts", () => {
+      const budget = new DriveDownloadBudget();
+      expect(() => budget.reserve(-1, "negative.parquet")).toThrow(
+        "Drive did not provide a valid size for negative.parquet."
+      );
+      expect(() => budget.reserve(1.5, "float.parquet")).toThrow(
+        "Drive did not provide a valid size for float.parquet."
+      );
+      expect(() => budget.reserve(Number.NaN, "nan.parquet")).toThrow(
+        "Drive did not provide a valid size for nan.parquet."
+      );
+    });
+
+    it("enforces per-file 512 MiB limit", () => {
+      const budget = new DriveDownloadBudget();
+      expect(() => budget.reserve(DRIVE_DOWNLOAD_LIMIT_BYTES + 1, "huge.parquet")).toThrow(
+        "huge.parquet exceeds the per-file download limit of 512 MiB."
+      );
+    });
+
+    it("enforces session cumulative planned 512 MiB limit", () => {
+      const budget = new DriveDownloadBudget();
+      budget.reserve(300 * 1024 * 1024, "file1.parquet");
+      expect(() => budget.reserve(250 * 1024 * 1024, "file2.parquet")).toThrow(
+        "The selected release exceeds the 512 MiB browser download limit for this session."
+      );
+    });
+  });
+
+  describe("consume", () => {
+    it("consumes bytes and increments consumedBytes", () => {
+      const budget = new DriveDownloadBudget();
+      budget.consume(1024, "file1.parquet");
+      expect(budget.consumedBytes).toBe(1024);
+      budget.consume(2048, "file2.parquet");
+      expect(budget.consumedBytes).toBe(3072);
+    });
+
+    it("accepts consuming exactly 0 bytes", () => {
+      const budget = new DriveDownloadBudget();
+      budget.consume(0, "empty.parquet");
+      expect(budget.consumedBytes).toBe(0);
+    });
+
+    it("rejects negative, non-safe-integer, or per-file limit breaches", () => {
+      const budget = new DriveDownloadBudget();
+      expect(() => budget.consume(-10, "negative.parquet")).toThrow(
+        "negative.parquet exceeded the per-file download limit of 512 MiB."
+      );
+      expect(() => budget.consume(1.23, "float.parquet")).toThrow(
+        "float.parquet exceeded the per-file download limit of 512 MiB."
+      );
+      expect(() => budget.consume(DRIVE_DOWNLOAD_LIMIT_BYTES + 1, "huge.parquet")).toThrow(
+        "huge.parquet exceeded the per-file download limit of 512 MiB."
+      );
+    });
+
+    it("enforces session cumulative consumed 512 MiB limit", () => {
+      const budget = new DriveDownloadBudget();
+      budget.consume(400 * 1024 * 1024, "chunk1.parquet");
+      expect(budget.consumedBytes).toBe(400 * 1024 * 1024);
+      expect(() => budget.consume(150 * 1024 * 1024, "chunk2.parquet")).toThrow(
+        "Drive downloads exceeded the 512 MiB browser download limit for this session."
+      );
+      expect(budget.consumedBytes).toBe(400 * 1024 * 1024);
+    });
+  });
+});
+

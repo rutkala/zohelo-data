@@ -318,6 +318,97 @@ describe("release dbt artifacts", () => {
     expect(overview?.block_contents).toContain("1 governed metric definition is published");
   });
 
+  it("annotates DBW bronze models and projects DBW source into overview for dbw_platform release", () => {
+    const dbwBronzeModels = [
+      "model.zohelo_data.br_dbw_dictionaries",
+      "model.zohelo_data.br_dbw_indicators",
+      "model.zohelo_data.br_dbw_metadata",
+      "model.zohelo_data.br_dbw_observations",
+    ];
+    const manifest: DbtManifest = {
+      metadata: {
+        dbt_schema_version: "https://schemas.getdbt.com/dbt/manifest/v12.json",
+        invocation_id: "dbw-run",
+        project_name: "zohelo_data",
+      },
+      nodes: Object.fromEntries(
+        dbwBronzeModels.map((id) => [
+          id,
+          {
+            unique_id: id,
+            package_name: "zohelo_data",
+            meta: { layer: "02_bronze" },
+            config: { meta: { layer: "02_bronze" } },
+          },
+        ])
+      ),
+      sources: {},
+      docs: {
+        "doc.zohelo_data.__overview__": {
+          name: "__overview__",
+          package_name: "zohelo_data",
+          block_contents: "Existing project overview.",
+        },
+      },
+    };
+    const selected: Extract<ReleaseCatalogResolution, { kind: "release" }> = {
+      kind: "release",
+      pointer: {
+        format_version: 1,
+        release_id: "323e4567-e89b-42d3-a456-426614174000",
+        manifest_file_id: "dbw-manifest-id",
+        manifest_sha256: "d".repeat(64),
+        updated_at_utc: "2026-09-24T12:00:00Z",
+      },
+      manifestFileId: "dbw-manifest-id",
+      fingerprint: "dbw-release",
+      manifest: {
+        format_version: 2,
+        release_scope: "dbw_platform",
+        release_id: "323e4567-e89b-42d3-a456-426614174000",
+        status: "validated",
+        code_sha: "f".repeat(40),
+        created_at_utc: "2026-09-24T12:00:00Z",
+        datasets: [],
+        artifacts: [],
+        inputs: [],
+        tests: { passed: true },
+      },
+      businessCatalogue: {
+        format_version: 1,
+        code_sha: "f".repeat(40),
+        lineage: { nodes: [], edges: [] },
+        metrics: [{ name: "dbw_indicator_coverage_ratio" }],
+        sources: [
+          {
+            source_id: "gus_dbw",
+            name: "GUS DBW (Dziedzinowe Bazy Wiedzy)",
+            description: "Dziedzinowe Bazy Wiedzy published by Statistics Poland.",
+            status: "published",
+            checked_through: "2026-09-24",
+            latest_observation_date: "2026-09-24",
+            last_successful_ingestion_at: "2026-09-24T11:00:00Z",
+            last_attempt_at: "2026-09-24T11:00:00Z",
+            raw_response_count: 1550,
+          },
+        ],
+      },
+    };
+
+    const prepared = prepareDbtManifest(manifest, selected);
+    for (const modelId of dbwBronzeModels) {
+      expect(prepared.nodes[modelId].meta).toMatchObject({
+        zohelo_source_id: "gus_dbw",
+        zohelo_checked_through: "2026-09-24",
+        zohelo_ingestion_status: "published",
+      });
+    }
+    const overview = prepared.docs?.["doc.zohelo_data.__overview__"];
+    expect(overview?.block_contents).toContain("323e4567-e89b-42d3-a456-426614174000");
+    expect(overview?.block_contents).toContain("GUS DBW");
+    expect(overview?.block_contents).toContain("1 governed metric definition is published");
+  });
+
   it("annotates the Eurostat bronze model without claiming full-catalogue completion", () => {
     const modelId = "model.zohelo_data.br_eurostat_observations";
     const manifest: DbtManifest = {

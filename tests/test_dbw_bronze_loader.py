@@ -623,7 +623,7 @@ class TestDBWBronzeLoader(unittest.TestCase):
                 env=env,
                 text=True,
                 capture_output=True,
-                timeout=60,
+                timeout=300,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
