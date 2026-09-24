@@ -1,5 +1,6 @@
 // BDL Web UI transport only. No API observations and no archive/data processing.
 import { chromium } from '@playwright/test';
+import { bdlBrowserOptions } from './bdl-web-proxy.mjs';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
@@ -24,7 +25,7 @@ try {
   hasSession = true;
 } catch {}
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch(bdlBrowserOptions());
 const context = await browser.newContext({
   acceptDownloads: true,
   locale: 'pl-PL',
