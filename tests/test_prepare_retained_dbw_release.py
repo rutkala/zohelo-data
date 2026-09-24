@@ -29,7 +29,7 @@ class PrepareRetainedDbwTests(unittest.TestCase):
         self.observed = {"inventory_sha256": M.REVIEWED_INVENTORY_SHA256,
                          "object_count": self.baseline["remote_object_count"],
                          "total_bytes": self.baseline["remote_total_bytes"]}
-        def audit_fixture(_storage, path):
+        def audit_fixture(_storage, path, **kwargs):
             path.mkdir(parents=True)
             (path / "verified-cache").mkdir()
             (path / "audit-report.json").write_text(json.dumps(self.fresh))
@@ -80,7 +80,7 @@ class PrepareRetainedDbwTests(unittest.TestCase):
                              object_count=inventory["object_count"],
                              total_bytes=inventory["total_bytes"])
         fresh = {**report, "run_id": "fresh-fixture"}
-        def restore_fixture(_storage, output):
+        def restore_fixture(_storage, output, **kwargs):
             output.mkdir()
             (output / "descriptor-inventory.json").write_text(json.dumps(inventory))
             (output / "audit-report.json").write_text(json.dumps(fresh))
