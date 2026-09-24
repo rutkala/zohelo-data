@@ -5,9 +5,12 @@ import tempfile
 import unittest
 import zipfile
 
-import duckdb
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = REPO_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import duckdb
 
 from bdl_bronze_loader import process_bdl_zip_to_parquet
 

@@ -1,0 +1,6 @@
+# Auto detect text files and perform LF normalization on checkout
+* text=auto eol=lf
+
+# Windows scripts
+*.cmd text eol=crlf
+*.bat text eol=crlf
