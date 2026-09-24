@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: stg_prg_boundaries
+    description: "Staging table for official GUGiK PRG administrative boundaries with geometries."
+    columns:
+      - name: teryt_code
+        description: "Territorial identifier (TERYT code or PL for country)."
+        tests:
+          - not_null
+      - name: level
+        description: "Administrative level ('kraj', 'wojewodztwo', 'powiat', 'gmina')."
+        tests:
+          - not_null
+      - name: unit_name
+        description: "Unit name."
+        tests:
+          - not_null
+      - name: geometry_wkt
+        description: "Well-Known Text (WKT) boundary polygon geometry."
+        tests:
+          - not_null
+
+  - name: dim_administrative_boundary
+    description: "Enterprise dimension combining territorial division hierarchy with GIS boundary polygons and official surface areas."
+    columns:
+      - name: teryt_code
+        description: "Territorial identifier."
+        tests:
+          - not_null
+      - name: level
+        description: "Administrative level."
+        tests:
+          - not_null
+      - name: geometry_wkt
+        description: "WKT boundary polygon geometry."
+        tests:
+          - not_null

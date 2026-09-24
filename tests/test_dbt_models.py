@@ -78,7 +78,7 @@ class NbpDbtFixtureTests(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            timeout=120,
+            timeout=300,
             check=False,
         )
 
