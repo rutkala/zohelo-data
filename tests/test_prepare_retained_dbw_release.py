@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -10,6 +11,10 @@ from unittest.mock import Mock, patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "tests") not in sys.path:
+    sys.path.insert(0, str(ROOT / "tests"))
+if str(ROOT / "src") not in sys.path:
+    sys.path.insert(0, str(ROOT / "src"))
 SCRIPT = ROOT / "scripts/prepare_retained_dbw_release.py"
 SPEC = importlib.util.spec_from_file_location("prepare_retained_dbw_release", SCRIPT)
 M = importlib.util.module_from_spec(SPEC)
