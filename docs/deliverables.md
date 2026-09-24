@@ -52,6 +52,31 @@ The last writer's exit cause is not independently established; earlier logs prov
 Drive plan/queue save timeouts. This repair does not claim full historical ingestion.
 
 
+### DBW all-layer portal contract — implementation added, publication still blocked, 23 September 2026
+
+The portal now recognizes a validated `dbw_platform` release, discovers canonical
+`releases/dbw/current-release.json` and legacy `dbw-platform/current-release.json`
+pointers, validates all 11 DBW Bronze/Silver/Gold datasets, and projects the DBW
+Bronze models into the release-bound dbt catalogue. The release protocol now also
+defines the eleven-dataset `dbw_platform` contract, and the local Bronze-to-Gold
+fixture passes with the native-snapshot integrity guard enabled. This remains code
+and fixture validation only: no validated DBW platform release or live all-layer SQL
+receipt exists in Drive. The retained DBW snapshot remains Bronze-only and its
+complete observation selector guard is unchanged. Do not report DBW as available in
+all portal layers until a DBW platform release is published and a fresh
+authenticated portal consumer verifies Landing, Bronze, Silver and Gold queries.
+The new `src/dbw_platform.py` builder closes the local candidate-building gap, but
+the current Actions workflow still publishes retained Bronze only; serialized Drive
+promotion and the corresponding live acceptance job remain to be wired. The
+retained Bronze pointer currently uses a UUID snapshot identity, while the dbt
+Bronze source guard intentionally requires the audited 64-character inventory
+identity; a reviewed restore/materialization bridge between those identities is
+still required before modeled publication can run safely.
+When that release exists, the portal no longer requires an indicator selection for
+the aggregate `02_bronze.br_dbw_observations` relation; the guard remains only for
+the retained Bronze compatibility snapshot whose aggregate files are intentionally
+not browser-loadable.
+
 
 ### Direct Landing and whole-table Bronze access — owner direction, 23 September 2026
 

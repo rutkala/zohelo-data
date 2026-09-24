@@ -1052,6 +1052,41 @@ describe("lazy published-query loading", () => {
     expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
   });
 
+  it("loads an aggregate DBW observation relation when a platform release provides files", async () => {
+    const store = makeStore();
+    configurePinnedGoldRelease(store);
+    store.setState({
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
+    } as unknown as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      {
+        datasetName: "br_dbw_observations",
+        layerName: "02_bronze",
+        files: [{
+          id: "dbw-platform-observations",
+          name: "bronze_dbw_observations.parquet",
+          size: 10,
+          sha256: "d".repeat(64),
+          tableName: "br_dbw_observations",
+          layer: "02_bronze",
+        }],
+      },
+    ]);
+    vi.mocked(loadTablesIntoDuckDB).mockResolvedValue({
+      loadedFiles: ["/google-drive/dbw-platform-observations"],
+      queryTargets: ['"02_bronze"."br_dbw_observations"'],
+    });
+
+    await expect(
+      store.getState().preparePublishedTablesForQuery(
+        'SELECT count(*) FROM "02_bronze"."br_dbw_observations"'
+      )
+    ).resolves.toBeUndefined();
+    expect(loadTablesIntoDuckDB).toHaveBeenCalled();
+  });
+
   it("keeps existing local relations and reloads a release relation after it is dropped", async () => {
     const store = makeStore();
     configurePinnedGoldRelease(store);

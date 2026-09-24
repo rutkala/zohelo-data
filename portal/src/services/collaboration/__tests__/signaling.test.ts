@@ -7,6 +7,7 @@ import {
   type ManualInvite,
 } from "../signaling/manualSignaling";
 import { resolveIceServers } from "../signaling/client";
+import { GuestLiveSession } from "../liveSession";
 
 const invite = (overrides: Partial<ManualInvite> = {}): ManualInvite => ({
   v: 1,
@@ -211,13 +212,11 @@ describe("ICE configuration", () => {
 });
 
 describe("guest session roster", () => {
-  it("knows who is in the session from the invite alone", async () => {
+  it("knows who is in the session from the invite alone", () => {
     // Regression: a connected guest showed "waiting for someone to join",
     // because participants were only ever populated on the host. The roster is
     // derivable from the invite plus the guest's own identity, with no
     // handshake and no roster message.
-    const { GuestLiveSession } = await import("../liveSession");
-
     const session = Object.create(GuestLiveSession.prototype) as {
       people: { peerId: string; displayName: string; isHost: boolean; color: string }[];
     };
