@@ -22,14 +22,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${ZOHELO_WORKER1:-}"
-          case "$ZOHELO_WORKER1" in
-            *"[Interface]"*"[Peer]"*"PrivateKey"*) ;;
-            *)
-              echo "ZOHELO_WORKER1 is present but does not look like a complete WireGuard config."
-              exit 1
-              ;;
-          esac
+          if [ -z "${ZOHELO_WORKER1:-}" ]; then
+            echo "ZOHELO_WORKER1 is missing or empty."
+            exit 1
+          fi
+          if [[ "$ZOHELO_WORKER1" == *"[Interface]"* && "$ZOHELO_WORKER1" == *"[Peer]"* && "$ZOHELO_WORKER1" == *"PrivateKey"* ]]; then
+            echo "ZOHELO_WORKER1 contains a complete WireGuard config."
+          elif [[ "$ZOHELO_WORKER1" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
+            echo "ZOHELO_WORKER1 contains a WireGuard private key."
+          else
+            echo "ZOHELO_WORKER1 exists, but is neither a complete WireGuard config nor a valid-looking WireGuard private key."
+            exit 1
+          fi
 
       - name: Install pinned wireproxy
         shell: bash
@@ -38,13 +42,27 @@ jobs:
           go install github.com/pufferffish/wireproxy/cmd/wireproxy@v1.1.3
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Build temporary proxy config
+      - name: Build temporary worker1 proxy config
         shell: bash
         run: |
           set -euo pipefail
           CONF="$RUNNER_TEMP/zohelo-worker1.conf"
           umask 077
-          printf '%s\n' "$ZOHELO_WORKER1" > "$CONF"
+          if [[ "$ZOHELO_WORKER1" == *"[Interface]"* && "$ZOHELO_WORKER1" == *"[Peer]"* ]]; then
+            printf '%s\n' "$ZOHELO_WORKER1" > "$CONF"
+          else
+            {
+              printf '%s\n' '[Interface]'
+              printf 'PrivateKey = %s\n' "$ZOHELO_WORKER1"
+              printf '%s\n' 'Address = 10.2.0.2/32, 2a07:b944::2:2/128'
+              printf '%s\n' 'DNS = 10.2.0.1, 2a07:b944::2:1'
+              printf '\n%s\n' '[Peer]'
+              printf '%s\n' 'PublicKey = wpfRQRhJirL++QclFH6SDhc+TuJJB4UxbCABy7A1tS4='
+              printf '%s\n' 'AllowedIPs = 0.0.0.0/0, ::/0'
+              printf '%s\n' 'Endpoint = 79.127.186.193:51820'
+              printf '%s\n' 'PersistentKeepalive = 25'
+            } > "$CONF"
+          fi
           cat >> "$CONF" <<'EOF'
 
           [http]
@@ -62,14 +80,17 @@ jobs:
           set -euo pipefail
           wireproxy -c "$WIREPROXY_CONF" >"$RUNNER_TEMP/wireproxy.log" 2>&1 &
           echo "WIREPROXY_PID=$!" >> "$GITHUB_ENV"
-          for _ in $(seq 1 20); do
+          for _ in $(seq 1 25); do
+            if ! kill -0 "$!" 2>/dev/null; then
+              echo "wireproxy exited before the proxy became ready."
+              exit 1
+            fi
             if curl --silent --show-error --fail --max-time 5               --proxy http://127.0.0.1:8081 https://api.ipify.org               >"$RUNNER_TEMP/proxy-ip.txt"; then
               exit 0
             fi
             sleep 1
           done
-          echo "worker1 proxy did not become reachable"
-          sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1[REDACTED]/' "$RUNNER_TEMP/wireproxy.log" | tail -50
+          echo "worker1 proxy did not become reachable."
           exit 1
 
       - name: Verify isolated VPN egress and BDL reachability
@@ -93,8 +114,8 @@ jobs:
               ;;
           esac
           echo "worker1 VPN smoke test passed."
-          echo "Direct runner IP and VPN IP are distinct."
-          echo "BDL is reachable through the VPN proxy."
+          echo "Direct runner egress and VPN egress are distinct."
+          echo "BDL is reachable through the worker1 VPN proxy."
 
       - name: Stop worker1 VPN proxy
         if: always()
