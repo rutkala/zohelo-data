@@ -83,6 +83,10 @@ jobs:
           for _ in $(seq 1 25); do
             if ! kill -0 "$!" 2>/dev/null; then
               echo "wireproxy exited before the proxy became ready."
+              sed -E \
+                -e 's/(PrivateKey[[:space:]]*=[[:space:]]*)[^[:space:]]+/\1[REDACTED]/g' \
+                -e 's/[A-Za-z0-9+\\/]{43}=/[KEY_REDACTED]/g' \
+                "$RUNNER_TEMP/wireproxy.log" | tail -80
               exit 1
             fi
             if curl --silent --show-error --fail --max-time 5               --proxy http://127.0.0.1:8081 https://api.ipify.org               >"$RUNNER_TEMP/proxy-ip.txt"; then
@@ -91,6 +95,10 @@ jobs:
             sleep 1
           done
           echo "worker1 proxy did not become reachable."
+          sed -E \
+            -e 's/(PrivateKey[[:space:]]*=[[:space:]]*)[^[:space:]]+/\1[REDACTED]/g' \
+            -e 's/[A-Za-z0-9+\\/]{43}=/[KEY_REDACTED]/g' \
+            "$RUNNER_TEMP/wireproxy.log" | tail -80
           exit 1
 
       - name: Verify isolated VPN egress and BDL reachability
