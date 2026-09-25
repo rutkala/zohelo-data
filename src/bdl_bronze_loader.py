@@ -3,10 +3,10 @@
 Vectorized streaming DuckDB architecture:
 - Reads native BDL Web ZIP archives from Google Drive or local landing directory
 - Extracts and parses native CSVs using DuckDB vectorized read_csv
-- Preserves 12-character territorial unit codes with leading zeros
-- Normalizes Polish decimal commas into IEEE 754 floating point numbers
+- Preserves 12-character territorial unit codes with leading zeros and 7-digit municipal TERC codes
+- Normalizes Polish decimal commas and strips whitespace (space, nbsp, narrow nbsp)
 - Captures dynamic dimensions into a structured JSON payload
-- Writes partitioned Parquet files (part_{subgroup_id}.parquet) into 02_bronze/gus_bdl/
+- Writes partitioned Parquet files (part_{subgroup_id}_{selection_id}.parquet) into 02_bronze/gus_bdl/
 - Uploads to Google Drive 02_bronze/gus_bdl/observations/ idempotently
 """
 from __future__ import annotations
@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import sys
@@ -66,6 +67,9 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
+from drive_safe_upload import safe_drive_upload
+
+
 def _upload_file_to_drive(
     storage: StorageManager,
     local_path: Path,
@@ -73,32 +77,14 @@ def _upload_file_to_drive(
     parent_id: str,
     mime_type: str = "application/octet-stream",
 ) -> dict[str, Any]:
-    sha256_hex, md5_hex = _hash_file(local_path)
-    query = f"name='{_escape_query(name)}' and '{_escape_query(parent_id)}' in parents and trashed=false"
-    with DRIVE_LOCK:
-        existing = storage.drive_service.files().list(
-            q=query, spaces="drive", fields="files(id,name,size,md5Checksum,appProperties)"
-        ).execute().get("files", [])
-
-    if existing:
-        item = existing[0]
-        props = item.get("appProperties") or {}
-        if (
-            props.get("sha256") == sha256_hex
-            and item.get("md5Checksum") == md5_hex
-            and int(item.get("size", -1)) == local_path.stat().st_size
-        ):
-            return {"id": item["id"], "name": name, "size": local_path.stat().st_size, "reused": True}
-        with DRIVE_LOCK:
-            storage.drive_service.files().delete(fileId=item["id"]).execute()
-
-    media = MediaFileUpload(str(local_path), mimetype=mime_type, resumable=True)
-    body = {"name": name, "parents": [parent_id], "appProperties": {"sha256": sha256_hex}}
-    with DRIVE_LOCK:
-        created = storage.drive_service.files().create(
-            body=body, media_body=media, fields="id,name,size,md5Checksum"
-        ).execute(num_retries=4)
-    return {"id": created["id"], "name": name, "size": local_path.stat().st_size, "reused": False}
+    return safe_drive_upload(
+        storage,
+        local_path,
+        name,
+        parent_id,
+        mime_type=mime_type,
+        drive_lock=DRIVE_LOCK,
+    )
 
 
 def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_id: str) -> str:
@@ -115,73 +101,172 @@ def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_
     return created["id"]
 
 
+def generate_partition_filename(
+    subgroup_id: str,
+    selection_id: str = "",
+    part_hash: str = "",
+) -> str:
+    """Generate partition filename that includes subgroup_id and selection_id (or part hash).
+
+    Prevents partition overwriting when subgroups are adaptively split into multiple slices.
+    """
+    clean_sub = subgroup_id.strip()
+    clean_sel = selection_id.strip()
+    if clean_sel:
+        safe_sel = re.sub(r"[^A-Za-z0-9_-]", "_", clean_sel)
+        return f"part_{clean_sub}_{safe_sel}.parquet"
+    if part_hash:
+        safe_hash = re.sub(r"[^A-Za-z0-9]", "", part_hash.strip())[:16]
+        return f"part_{clean_sub}_{safe_hash}.parquet"
+    return f"part_{clean_sub}.parquet"
+
+
+def _escape_sql_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _escape_sql_ident(ident: str) -> str:
+    return ident.replace('"', '""')
+
+
 def process_bdl_zip_to_parquet(
     zip_bytes: bytes,
     subgroup_id: str,
     output_parquet_path: Path,
     con: duckdb.DuckDBPyConnection,
+    selection_id: str = "",
+    raw_archive_file: str = "",
 ) -> int:
-    """Extract CSV from ZIP and convert to standardized Parquet via DuckDB."""
+    """Extract all CSVs from ZIP and convert to standardized Parquet via DuckDB."""
+    target_path = Path(output_parquet_path)
+    if target_path.is_dir():
+        target_path = target_path / generate_partition_filename(subgroup_id, selection_id)
+
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         csv_names = [n for n in z.namelist() if n.endswith(".csv")]
         if not csv_names:
             return 0
-        csv_name = csv_names[0]
-        csv_bytes = z.read(csv_name)
 
-    # Temporary file for DuckDB streaming CSV scan
-    with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp_csv:
-        tmp_csv.write(csv_bytes)
-        tmp_csv_path = tmp_csv.name
+        with tempfile.TemporaryDirectory(prefix=f"bdl_{subgroup_id}_") as tmp_dir:
+            tmp_csv_paths = []
+            for idx, name in enumerate(csv_names):
+                clean_name = f"{idx}_{Path(name).name}"
+                csv_path = Path(tmp_dir) / clean_name
+                csv_path.write_bytes(z.read(name))
+                tmp_csv_paths.append(str(csv_path))
 
-    try:
-        # Inspect columns in CSV
-        inspect_query = f"""
-            select * from read_csv('{tmp_csv_path}',
-                delim=';',
-                header=true,
-                all_varchar=true,
-                quote='"',
-                escape='"'
-            ) limit 1
-        """
-        cols = [col[0] for col in con.execute(inspect_query).description]
-        standard_cols = {"Kod", "Nazwa", "Rok", "Wartosc", "Jednostka miary", "Atrybut"}
-        dim_cols = [c for c in cols if c not in standard_cols and c.strip()]
+            paths_expr = "[" + ", ".join([f"'{_escape_sql_literal(p)}'" for p in tmp_csv_paths]) + "]"
 
-        if dim_cols:
-            dim_json_expr = "json_object(" + ", ".join([f"'{c}', coalesce(\"{c}\", '')" for c in dim_cols]) + ")"
-        else:
-            dim_json_expr = "'{}'"
-
-        transform_sql = f"""
-            copy (
-                select
-                    '{subgroup_id}' as subgroup_id,
-                    lpad(trim(coalesce("Kod", '')), 12, '0') as unit_id,
-                    trim(coalesce("Nazwa", '')) as unit_name,
-                    try_cast(trim("Rok") as integer) as period_year,
-                    trim(coalesce("Wartosc", '')) as val_raw,
-                    try_cast(replace(trim("Wartosc"), ',', '.') as double) as val_numeric,
-                    trim(coalesce("Jednostka miary", '')) as measure_unit,
-                    trim(coalesce("Atrybut", '')) as attr_name,
-                    {dim_json_expr} as dimensions_json,
-                    current_timestamp as processed_at_utc
-                from read_csv('{tmp_csv_path}',
+            # Inspect unioned columns across all CSVs in archive
+            inspect_query = f"""
+                select * from read_csv({paths_expr},
                     delim=';',
                     header=true,
                     all_varchar=true,
                     quote='"',
-                    escape='"'
-                )
-                where "Rok" is not null and trim("Rok") != ''
-            ) to '{output_parquet_path}' (format 'parquet', compression 'zstd');
-        """
-        con.execute(transform_sql)
-        row_count = con.execute(f"select count(*) from '{output_parquet_path}'").fetchone()[0]
-        return row_count
-    finally:
-        Path(tmp_csv_path).unlink(missing_ok=True)
+                    escape='"',
+                    union_by_name=true
+                ) limit 1
+            """
+            cols = [col[0] for col in con.execute(inspect_query).description]
+            standard_cols = {"Kod", "Nazwa", "Rok", "Okres", "Wartosc", "Jednostka miary", "Atrybut"}
+            dim_cols = [c for c in cols if c not in standard_cols and c.strip()]
+
+            if dim_cols:
+                dim_json_expr = "json_object(" + ", ".join([f"'{_escape_sql_literal(c)}', coalesce(\"{_escape_sql_ident(c)}\", '')" for c in dim_cols]) + ")"
+            else:
+                dim_json_expr = "'{}'"
+
+            period_col = "Rok" if "Rok" in cols else ("Okres" if "Okres" in cols else None)
+            if period_col:
+                escaped_period_col = f'"{_escape_sql_ident(period_col)}"'
+                period_raw_expr = f'trim(coalesce({escaped_period_col}, \'\'))'
+                period_year_expr = f"""coalesce(
+                    try_cast(trim({escaped_period_col}) as integer),
+                    try_cast(regexp_extract(trim({escaped_period_col}), '([0-9]{{4}})', 1) as integer)
+                )"""
+                where_clause = f'where {escaped_period_col} is not null and trim({escaped_period_col}) != \'\''
+            else:
+                period_raw_expr = "''"
+                period_year_expr = "cast(null as integer)"
+                where_clause = ""
+
+            escaped_subgroup = _escape_sql_literal(subgroup_id)
+            escaped_selection = _escape_sql_literal(selection_id)
+            escaped_archive = _escape_sql_literal(raw_archive_file)
+
+            kod_expr = '"Kod"' if "Kod" in cols else "''"
+            nazwa_expr = 'trim(coalesce("Nazwa", \'\'))' if "Nazwa" in cols else "''"
+            wartosc_expr = '"Wartosc"' if "Wartosc" in cols else "null"
+            jm_expr = 'trim(coalesce("Jednostka miary", \'\'))' if "Jednostka miary" in cols else "''"
+            attr_expr = 'trim(coalesce("Atrybut", \'\'))' if "Atrybut" in cols else "''"
+
+            val_numeric_sql = f"""try_cast(
+                replace(
+                    replace(
+                        replace(
+                            replace(trim(coalesce({wartosc_expr}, '')), ' ', ''),
+                            chr(160), ''
+                        ),
+                        chr(8239), ''
+                    ),
+                    ',', '.'
+                ) as double
+            )"""
+
+            val_raw_sql = f'trim(coalesce({wartosc_expr}, \'\'))'
+
+            unit_id_sql = f"""case
+                when length(trim(coalesce({kod_expr}, ''))) = 0 then ''
+                when length(trim(coalesce({kod_expr}, ''))) <= 2 then lpad(trim({kod_expr}), 2, '0')
+                when length(trim(coalesce({kod_expr}, ''))) <= 4 then lpad(trim({kod_expr}), 4, '0')
+                when length(trim(coalesce({kod_expr}, ''))) <= 7 then lpad(trim({kod_expr}), 7, '0')
+                when length(trim(coalesce({kod_expr}, ''))) <= 12 then lpad(trim({kod_expr}), 12, '0')
+                else trim({kod_expr})
+            end"""
+
+            terc_code_sql = f"""case
+                when length(trim(coalesce({kod_expr}, ''))) = 7 then trim({kod_expr})
+                when length(trim(coalesce({kod_expr}, ''))) = 6 then lpad(trim({kod_expr}), 7, '0')
+                when length(trim(coalesce({kod_expr}, ''))) = 12 then substr(trim({kod_expr}), 3, 7)
+                when length(trim(coalesce({kod_expr}, ''))) = 11 then substr(lpad(trim({kod_expr}), 12, '0'), 3, 7)
+                else null
+            end"""
+
+            escaped_target_path = _escape_sql_literal(str(target_path))
+
+            transform_sql = f"""
+                copy (
+                    select
+                        '{escaped_subgroup}' as subgroup_id,
+                        '{escaped_selection}' as selection_id,
+                        {unit_id_sql} as unit_id,
+                        {nazwa_expr} as unit_name,
+                        {terc_code_sql} as terc_code,
+                        {period_raw_expr} as period_raw,
+                        {period_year_expr} as period_year,
+                        {val_raw_sql} as val_raw,
+                        {val_numeric_sql} as val_numeric,
+                        {jm_expr} as measure_unit,
+                        {attr_expr} as attr_name,
+                        {dim_json_expr} as dimensions_json,
+                        '{escaped_archive}' as raw_archive_file,
+                        current_timestamp as processed_at_utc
+                    from read_csv({paths_expr},
+                        delim=';',
+                        header=true,
+                        all_varchar=true,
+                        quote='"',
+                        escape='"',
+                        union_by_name=true
+                    )
+                    {where_clause}
+                ) to '{escaped_target_path}' (format 'parquet', compression 'zstd');
+            """
+            con.execute(transform_sql)
+            row_count = con.execute(f"select count(*) from '{escaped_target_path}'").fetchone()[0]
+            return row_count
+
 
 
 def main():

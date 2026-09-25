@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: br_bdl_web_observations
+    description: "Bronze BDL Web Bulk observation rows extracted from Landing ZIP CSV archives."
+    config:
+      enabled: "{{ var('enable_gus_bdl_web', false) }}"
+    columns:
+      - name: subgroup_id
+        tests: [not_null]
+      - name: unit_id
+        tests: [not_null]
+      - name: period_raw
+        tests: [not_null]
+
+  - name: stg_bdl_web_observations
+    description: "Silver BDL Web Bulk observations deduplicated by subgroup, unit, period, and dimensions."
+    config:
+      enabled: "{{ var('enable_gus_bdl_web', false) }}"
+    columns:
+      - name: observation_key
+        tests: [not_null, unique]
+      - name: subgroup_id
+        tests: [not_null]
+      - name: unit_id
+        tests: [not_null]
+      - name: period_key
+        tests: [not_null]
+
+  - name: dim_bdl_subgroup
+    description: "Gold BDL Web Bulk conformed subgroup dimension."
+    config:
+      enabled: "{{ var('enable_gus_bdl_web', false) }}"
+    columns:
+      - name: subgroup_key
+        tests: [not_null, unique]
+
+  - name: fact_bdl_web_observations
+    description: "Gold BDL Web Bulk fact table with linked conformed period and subgroup dimensions."
+    config:
+      enabled: "{{ var('enable_gus_bdl_web', false) }}"
+    columns:
+      - name: observation_key
+        tests: [not_null, unique]
+      - name: subgroup_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_bdl_subgroup')
+                field: subgroup_key
+      - name: unit_key
+        tests: [not_null]
+      - name: period_key
+        tests: [not_null]
