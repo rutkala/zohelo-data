@@ -1,0 +1,106 @@
+name: BDL VPN worker1 smoke test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - test/bdl-github-vpn-worker1
+    paths:
+      - .github/workflows/bdl-vpn-worker1-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  vpn_smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ZOHELO_WORKER1: ${{ secrets.ZOHELO_WORKER1 }}
+    steps:
+      - name: Validate worker secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${ZOHELO_WORKER1:-}"
+          case "$ZOHELO_WORKER1" in
+            *"[Interface]"*"[Peer]"*"PrivateKey"*) ;;
+            *)
+              echo "ZOHELO_WORKER1 is present but does not look like a complete WireGuard config."
+              exit 1
+              ;;
+          esac
+
+      - name: Install pinned wireproxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/pufferffish/wireproxy/cmd/wireproxy@v1.1.3
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Build temporary proxy config
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONF="$RUNNER_TEMP/zohelo-worker1.conf"
+          umask 077
+          printf '%s\n' "$ZOHELO_WORKER1" > "$CONF"
+          cat >> "$CONF" <<'EOF'
+
+          [http]
+          BindAddress = 127.0.0.1:8081
+
+          [Socks5]
+          BindAddress = 127.0.0.1:1081
+          EOF
+          chmod 600 "$CONF"
+          echo "WIREPROXY_CONF=$CONF" >> "$GITHUB_ENV"
+
+      - name: Start worker1 VPN proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          wireproxy -c "$WIREPROXY_CONF" >"$RUNNER_TEMP/wireproxy.log" 2>&1 &
+          echo "WIREPROXY_PID=$!" >> "$GITHUB_ENV"
+          for _ in $(seq 1 20); do
+            if curl --silent --show-error --fail --max-time 5               --proxy http://127.0.0.1:8081 https://api.ipify.org               >"$RUNNER_TEMP/proxy-ip.txt"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "worker1 proxy did not become reachable"
+          sed -E 's/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1[REDACTED]/' "$RUNNER_TEMP/wireproxy.log" | tail -50
+          exit 1
+
+      - name: Verify isolated VPN egress and BDL reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIRECT_IP="$(curl --silent --show-error --fail --max-time 10 https://api.ipify.org)"
+          PROXY_IP="$(cat "$RUNNER_TEMP/proxy-ip.txt")"
+          test -n "$DIRECT_IP"
+          test -n "$PROXY_IP"
+          if [ "$DIRECT_IP" = "$PROXY_IP" ]; then
+            echo "VPN test failed: proxy egress matches direct runner egress."
+            exit 1
+          fi
+          STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}'             --max-time 20 --proxy http://127.0.0.1:8081 https://bdl.stat.gov.pl/)"
+          case "$STATUS" in
+            2*|3*) ;;
+            *)
+              echo "BDL reachability failed through worker1 proxy: HTTP $STATUS"
+              exit 1
+              ;;
+          esac
+          echo "worker1 VPN smoke test passed."
+          echo "Direct runner IP and VPN IP are distinct."
+          echo "BDL is reachable through the VPN proxy."
+
+      - name: Stop worker1 VPN proxy
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${WIREPROXY_PID:-}" ]; then
+            kill "$WIREPROXY_PID" 2>/dev/null || true
+          fi
+          rm -f "${WIREPROXY_CONF:-}" "$RUNNER_TEMP/proxy-ip.txt" "$RUNNER_TEMP/wireproxy.log"
