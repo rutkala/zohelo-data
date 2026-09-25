@@ -24,11 +24,15 @@ SELECT
     END AS national_registry_type,
     e.registration_status,
     e.managing_lou,
-    r.parent_lei AS direct_parent_lei,
-    r.relationship_type AS parent_relationship_type,
+    r_direct.parent_lei AS direct_parent_lei,
+    r_ultimate.parent_lei AS ultimate_parent_lei,
     e.processed_at_utc
 FROM {{ ref('stg_gleif_entities') }} e
-LEFT JOIN {{ ref('stg_gleif_relationships') }} r
-    ON e.lei = r.child_lei
-    AND r.relationship_type IN ('IS_DIRECTLY_CONSOLIDATED_BY', 'IS_ULTIMATELY_CONSOLIDATED_BY')
-    AND r.relationship_status = 'ACTIVE'
+LEFT JOIN {{ ref('stg_gleif_relationships') }} r_direct
+    ON e.lei = r_direct.child_lei
+    AND r_direct.relationship_type = 'IS_DIRECTLY_CONSOLIDATED_BY'
+    AND r_direct.relationship_status = 'ACTIVE'
+LEFT JOIN {{ ref('stg_gleif_relationships') }} r_ultimate
+    ON e.lei = r_ultimate.child_lei
+    AND r_ultimate.relationship_type = 'IS_ULTIMATELY_CONSOLIDATED_BY'
+    AND r_ultimate.relationship_status = 'ACTIVE'

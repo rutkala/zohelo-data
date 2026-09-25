@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import logging
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -26,6 +27,10 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from drive_safe_upload import safe_drive_upload
+from retained_publication_lock import GitPublicationLock, PublicationLockError
+from storage_manager import StorageManager
+
 from ingestion.bulk_transport import (  # noqa: E402
     BulkTransportError,
     fetch_to_file,
@@ -33,6 +38,7 @@ from ingestion.bulk_transport import (  # noqa: E402
 
 logger = logging.getLogger("gleif_bulk")
 
+GLEIF_LOCK_REF = "refs/heads/ops-locks/gleif-landing"
 SOURCE_ID = "gleif"
 PRODUCT_MEMBERS = ("lei2", "rr", "repex")
 DISCOVERY_URL = "https://goldencopy.gleif.org/api/v2/golden-copies/publishes"
@@ -419,6 +425,51 @@ def _download_member(workspace: Path, snapshot: Mapping[str, Any], member: dict[
         staged.unlink(missing_ok=True)
 
 
+def _escape_query(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_id: str) -> str:
+    query = f"name='{_escape_query(folder_name)}' and '{_escape_query(parent_id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    existing = storage.drive_service.files().list(q=query, spaces="drive", fields="files(id,name)").execute().get("files", [])
+    if existing:
+        return existing[0]["id"]
+    created = storage.drive_service.files().create(
+        body={"name": folder_name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]},
+        fields="id,name",
+    ).execute(num_retries=4)
+    return created["id"]
+
+
+def _upload_file_to_drive(
+    storage: StorageManager,
+    local_path: Path,
+    name: str,
+    parent_id: str,
+    mime_type: str = "application/zip",
+) -> dict[str, Any]:
+    return safe_drive_upload(
+        storage,
+        local_path,
+        name,
+        parent_id,
+        mime_type=mime_type,
+    )
+
+
+def _get_code_sha() -> str:
+    try:
+        from runtime_metadata import _code_sha
+        return _code_sha()
+    except Exception:
+        try:
+            return subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True
+            ).strip()
+        except Exception:
+            return "0000000000000000000000000000000000000000"
+
+
 def _run_gleif_ingestion_locked(
     workspace: Path,
     selected: tuple[str, ...],
@@ -453,9 +504,6 @@ def _run_gleif_ingestion_locked(
         snapshot = _download_snapshot(workspace)
         local_records = []
         cache_records: dict[str, Any] = {}
-        # A fresh discovery can safely reuse only records pinned to its exact
-        # provider-advertised member descriptors.  The new discovery response
-        # itself is persisted before member work starts.
         if cache_path.exists():
             try:
                 existing = _read_cache(cache_path)
@@ -473,16 +521,80 @@ def _run_gleif_ingestion_locked(
                 try:
                     _verify_cached_local(target, transport, member)
                 except GleifBulkError:
-                    # A bad cache is never reused.  The bounded download stages
-                    # separately, preserving the prior local target on failure.
                     target, transport = _download_member(workspace, snapshot, member)
             else:
                 target, transport = _download_member(workspace, snapshot, member)
             local_records.append({"dataset_key": key, "target_path": target, "transport": transport, "member": member})
             cache_records[key] = {"transport": transport}
-            # A failed later member leaves every earlier member durably eligible
-            # for verified reuse on the next run.
             _write_cache(cache_path, snapshot, cache_records)
+
+    in_actions = os.environ.get("GITHUB_ACTIONS") == "true"
+    can_upload = (in_actions or allow_codespace or allow_production_write) and not skip_upload
+
+    if can_upload:
+        if allow_codespace or allow_production_write:
+            os.environ["ZOHELO_ALLOW_PRODUCTION_WRITES"] = "true"
+        storage = StorageManager(allow_interactive_auth=False)
+        storage.resolve_root(create=False)
+        storage.authorize_writes()
+
+        code_sha = _get_code_sha()
+        with GitPublicationLock(REPO_ROOT, code_sha, storage.root_id, lock_ref=GLEIF_LOCK_REF):
+            landing_id = storage.resolve_zone("landing")
+            gleif_landing_id = _resolve_or_create_folder(storage, "gleif", landing_id)
+            native_id = _resolve_or_create_folder(storage, "native", gleif_landing_id)
+            bulk_id = _resolve_or_create_folder(storage, "bulk", native_id)
+            date_folder_name = snapshot["provider_publish_date"].split(" ")[0]
+            date_folder_id = _resolve_or_create_folder(storage, date_folder_name, bulk_id)
+
+            control_id = storage.resolve_zone("control")
+            campaigns_id = _resolve_or_create_folder(storage, "source_campaigns", control_id)
+            gleif_control_id = _resolve_or_create_folder(storage, "gleif", campaigns_id)
+
+            drive_archives = []
+            for item in local_records:
+                target_path = item["target_path"]
+                uploaded = _upload_file_to_drive(
+                    storage,
+                    target_path,
+                    target_path.name,
+                    date_folder_id,
+                    mime_type="application/zip",
+                )
+                drive_archives.append({
+                    "dataset_key": item["dataset_key"],
+                    "file_name": target_path.name,
+                    "drive_id": uploaded["id"],
+                    "size_bytes": target_path.stat().st_size,
+                    "reused": uploaded["reused"],
+                })
+
+            discovery_file = _discovery_path(workspace, snapshot)
+            _upload_file_to_drive(
+                storage,
+                discovery_file,
+                discovery_file.name,
+                date_folder_id,
+                mime_type="application/json",
+            )
+
+            receipt_data = {
+                "status": "published_to_drive",
+                "source_id": "gleif",
+                "snapshot_date": date_folder_name,
+                "provider_publish_date": snapshot["provider_publish_date"],
+                "selected_members": list(selected),
+                "complete_current_product": selected == PRODUCT_MEMBERS,
+                "extracted_at_utc": datetime.now(timezone.utc).isoformat(),
+                "load_complete": True,
+                "catalogue_exhausted": selected == PRODUCT_MEMBERS,
+                "archives": drive_archives,
+            }
+            receipt_path = workspace / "gleif_receipt.json"
+            receipt_path.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
+            _upload_file_to_drive(storage, receipt_path, "gleif_receipt.json", gleif_control_id, mime_type="application/json")
+            logger.info("GLEIF Landing complete and receipt uploaded to Drive.")
+            return receipt_data
 
     return {
         "status": "downloaded_locally",
@@ -507,14 +619,8 @@ def run_gleif_ingestion(
 
     ``--skip-download`` is intentionally stricter than the legacy behavior: it
     accepts only the cache written by this adapter after byte/hash verification.
-    Drive publication is intentionally disabled pending a verified cross-host
-    serializer.
     """
     selected = _selected_keys(datasets)  # Must fail before workspace/network I/O.
-    if (allow_codespace or allow_production_write) and not skip_upload:
-        raise GleifBulkError(
-            "Drive publication disabled until a verified cross-host serializer is provisioned"
-        )
     if not isinstance(workspace, Path):
         raise GleifBulkError("workspace must be a pathlib.Path")
     workspace.mkdir(parents=True, exist_ok=True)

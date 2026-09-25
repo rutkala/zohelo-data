@@ -98,15 +98,22 @@ class GleifBulkTests(unittest.TestCase):
                     gleif.run_gleif_ingestion(missing, datasets=selection, skip_upload=True)
         self.assertFalse(missing.exists())
 
+    @patch("ingestion.sources.gleif_bulk.StorageManager")
+    @patch("ingestion.sources.gleif_bulk.GitPublicationLock")
     @patch.object(gleif, "fetch_to_file")
-    def test_upload_flags_fail_closed_before_workspace_or_network(self, fetch):
-        missing = self.workspace / "not-created"
-        for kwargs in ({"allow_codespace": True}, {"allow_production_write": True}):
-            with self.subTest(kwargs=kwargs):
-                with self.assertRaisesRegex(gleif.GleifBulkError, "publication disabled"):
-                    gleif.run_gleif_ingestion(missing, **kwargs)
-        self.assertFalse(missing.exists())
-        fetch.assert_not_called()
+    def test_upload_flags_acquire_git_publication_lock(self, fetch, mock_lock, mock_storage):
+        fetch.side_effect = fetching(discovery_document())
+        mock_storage_inst = mock_storage.return_value
+        mock_storage_inst.root_id = "test-root"
+        mock_lock_inst = mock_lock.return_value
+        mock_lock_inst.__enter__.return_value = mock_lock_inst
+
+        with patch.object(gleif, "safe_drive_upload", return_value={"id": "f1", "reused": False}):
+            res = gleif.run_gleif_ingestion(self.workspace, allow_codespace=True)
+            self.assertEqual(res["status"], "published_to_drive")
+            mock_lock.assert_called_once()
+            _, kwargs = mock_lock.call_args
+            self.assertEqual(kwargs.get("lock_ref"), gleif.GLEIF_LOCK_REF)
 
     @patch.object(gleif, "fetch_to_file")
     def test_local_current_product_is_cached_as_native_files(self, fetch):

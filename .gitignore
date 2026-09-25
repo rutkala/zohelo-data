@@ -22,3 +22,5 @@ scratch/
 *.conf
 .wireguard/
 .devcontainer/wireguard/
+.agents/
+ORIGINAL_REQUEST.md

@@ -73,6 +73,15 @@ class PublicationLockTests(unittest.TestCase):
             owner.__exit__(None, None, None)
         self.assertEqual(owner._remote_claim(), replacement)
 
+    def test_custom_lock_ref(self):
+        custom_ref = "refs/heads/ops-locks/gleif-landing"
+        with GitPublicationLock(self.repo, self.sha, "fixture-root", lock_ref=custom_ref) as one:
+            one.guard()
+            with self.assertRaises(PublicationLockError):
+                GitPublicationLock(self.repo, self.sha, "other-root", lock_ref=custom_ref).__enter__()
+        self.assertEqual(self.git("ls-remote", "origin", custom_ref), "")
+
 
 if __name__ == "__main__":
     unittest.main()
+

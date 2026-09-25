@@ -281,3 +281,48 @@ sources:
       methodology_notes: "Level 1: Legal entity reference data (who is who). Level 2: Relationship records and exceptions (who owns whom)."
       description: "Global Legal Entity Identifier Golden Copy and Concatenated Files linking entities, jurisdictions, and corporate control structures globally."
 
+  # ==========================================
+  # SOURCE 14: IMGW-PIB (Meteorology & Climatology)
+  # ==========================================
+  imgw_pib:
+    metadata:
+      domain: "environment_and_climate"
+      category: "meteorological_observations"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "IMGW-PIB (Instytut Meteorologii i Gospodarki Wodnej)"
+      source_name: "Institute of Meteorology and Water Management (IMGW-PIB)"
+      provider_url: "https://imgw.pl/"
+      documentation_url: "https://danepubliczne.imgw.pl/"
+      publication_schedule_url: "https://danepubliczne.imgw.pl/datastore"
+      frequency: "daily synoptic observations, monthly historical archives, annual station catalogs"
+      coverage_start: "1951-01-01"
+      reuse_terms_url: "https://danepubliczne.imgw.pl/pl/regulamin"
+      reuse_summary: "Open public meteorological data under Polish public sector information re-use terms; free with attribution."
+      quote_unit: "Degrees Celsius, millimeters of precipitation, hectopascals, meters per second, relative humidity percent."
+      methodology_notes: "Synoptic station ground meteorological records. Native-only landing per ADR 0009."
+      description: "Official meteorological observations and ground synoptic weather station data across Poland."
+
+  # ==========================================
+  # SOURCE 15: GIOŚ PJP (Air Quality Portal)
+  # ==========================================
+  gios_pjp:
+    metadata:
+      domain: "environment_and_climate"
+      category: "air_quality_monitoring"
+      geography: "poland"
+      provider_type: "public_governed_official"
+      display_name: "GIOŚ PJP (Główny Inspektorat Ochrony Środowiska)"
+      source_name: "Chief Inspectorate of Environmental Protection (GIOŚ)"
+      provider_url: "https://powietrze.gios.gov.pl/"
+      documentation_url: "https://powietrze.gios.gov.pl/pjp/archives"
+      publication_schedule_url: "https://powietrze.gios.gov.pl/pjp/archives"
+      frequency: "annual air quality measurement archives, station and sensor registries"
+      coverage_start: "2000-01-01"
+      reuse_terms_url: "https://powietrze.gios.gov.pl/pjp/home"
+      reuse_summary: "Public sector environmental data freely available under Polish PSI legislation with attribution."
+      quote_unit: "Micrograms per cubic meter (ug/m3) or milligrams per cubic meter (mg/m3)."
+      methodology_notes: "Air quality monitoring stations and automated sensors for PM10, PM2.5, NO2, SO2, CO, O3, C6H6. Native-only landing per ADR 0009."
+      description: "Official State Environmental Monitoring (PMŚ) air quality measurements and station metadata."
+
+

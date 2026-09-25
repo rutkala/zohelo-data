@@ -21,10 +21,18 @@ class PublicationLockError(RuntimeError):
 
 
 class GitPublicationLock:
-    def __init__(self, repository: Path, code_sha: str, root_id: str) -> None:
+    def __init__(
+        self,
+        repository: Path,
+        code_sha: str,
+        root_id: str,
+        *,
+        lock_ref: str = LOCK_REF,
+    ) -> None:
         if not re.fullmatch(r"[0-9a-f]{40}", code_sha) or not root_id:
             raise PublicationLockError("exact code identity and Drive root are required")
         self.repository, self.code_sha, self.root_id = repository, code_sha, root_id
+        self.lock_ref = lock_ref
         self.claim: str | None = None
 
     def _git(self, arguments: list[str], *, text: str | None = None) -> str:
@@ -43,11 +51,11 @@ class GitPublicationLock:
         return result.stdout.strip()
 
     def _remote_claim(self) -> str | None:
-        output = self._git(["ls-remote", "origin", LOCK_REF])
+        output = self._git(["ls-remote", "origin", self.lock_ref])
         if not output:
             return None
         rows = [line.split() for line in output.splitlines()]
-        if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != LOCK_REF:
+        if len(rows) != 1 or len(rows[0]) != 2 or rows[0][1] != self.lock_ref:
             raise PublicationLockError("Git publication owner is ambiguous")
         if not re.fullmatch(r"[0-9a-f]{40}", rows[0][0]):
             raise PublicationLockError("Git publication owner identity is invalid")
@@ -55,17 +63,18 @@ class GitPublicationLock:
 
     def __enter__(self) -> "GitPublicationLock":
         if self._remote_claim() is not None:
-            raise PublicationLockError("another retained DBW publisher holds the operational Git ref")
+            raise PublicationLockError("another publisher holds the operational Git ref")
+        source_name = self.lock_ref.split("/")[-1]
         record = json.dumps({"owner": str(uuid4()), "code_sha": self.code_sha,
             "drive_root_sha256": hashlib.sha256(self.root_id.encode()).hexdigest(),
-            "pid": os.getpid(), "source": "gus_dbw_retained_bronze"}, sort_keys=True)
+            "pid": os.getpid(), "source": source_name}, sort_keys=True)
         claim = self._git(["commit-tree", f"{self.code_sha}^{{tree}}", "-p", self.code_sha], text=record)
         if not re.fullmatch(r"[0-9a-f]{40}", claim):
             raise PublicationLockError("Git publication claim creation failed")
         try:
             # Explicit empty expected value: the server requires a nonexistent ref.
-            self._git(["push", "--no-follow-tags", "--porcelain", f"--force-with-lease={LOCK_REF}:",
-                       "origin", f"{claim}:{LOCK_REF}"])
+            self._git(["push", "--no-follow-tags", "--porcelain", f"--force-with-lease={self.lock_ref}:",
+                       "origin", f"{claim}:{self.lock_ref}"])
         except PublicationLockError:
             if self._remote_claim() != claim:
                 raise
@@ -76,15 +85,15 @@ class GitPublicationLock:
 
     def guard(self) -> None:
         if self.claim is None or self._remote_claim() != self.claim:
-            raise PublicationLockError("retained DBW publication ownership was lost")
+            raise PublicationLockError("retained publication ownership was lost")
 
     def __exit__(self, exc_type, exc, traceback) -> bool:
         try:
             self.guard()
             try:
                 # Delete only our exact claim; never delete a replacement owner's ref.
-                self._git(["push", "--no-follow-tags", "--porcelain", f"--force-with-lease={LOCK_REF}:{self.claim}",
-                           "origin", f":{LOCK_REF}"])
+                self._git(["push", "--no-follow-tags", "--porcelain", f"--force-with-lease={self.lock_ref}:{self.claim}",
+                           "origin", f":{self.lock_ref}"])
             except PublicationLockError:
                 if self._remote_claim() is not None:
                     raise

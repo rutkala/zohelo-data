@@ -2,9 +2,9 @@
 
 with boundaries as (
     select * from {{ ref('stg_prg_boundaries') }}
-),
-
-territories as (
+)
+{% if var('enable_gus_teryt', false) %}
+, territories as (
     select
         teryt_code,
         level,
@@ -38,3 +38,22 @@ select
 from boundaries b
 left join territories t
     on b.teryt_code = t.teryt_code
+{% else %}
+select
+    b.teryt_code,
+    b.level,
+    b.unit_name,
+    cast(null as varchar) as unit_type_name,
+    cast(null as varchar) as voivodeship_code,
+    cast(null as varchar) as voivodeship_name,
+    cast(null as varchar) as county_code,
+    cast(null as varchar) as county_name,
+    cast(null as varchar) as municipality_code,
+    cast(null as varchar) as parent_teryt_code,
+    b.surface_area_ha,
+    b.surface_area_km2,
+    b.regon,
+    b.geometry_wkt,
+    b.extracted_at_utc as ingested_at_utc
+from boundaries b
+{% endif %}
