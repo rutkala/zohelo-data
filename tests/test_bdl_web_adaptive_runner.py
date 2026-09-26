@@ -69,6 +69,19 @@ class FakeDriveControl:
 
 
 class BdlWebAdaptiveRunnerTests(unittest.TestCase):
+    def test_failed_selection_and_partial_work_are_distinct_for_budget_resume(self):
+        state = queue.new_state()
+        state["candidates"] = {"P1": make_candidate(1), "P2": make_candidate(2)}
+        state["discovery_pending"] = []
+        state["pass_outcomes"] = {"P1": {"status": "failed"}, "P2": {"status": "partial"}}
+        state["failures"] = {"P1": {"failure_class": "provider_error"}}
+        summary = adaptive.campaign_summary(state, set(), 0, 0, "runtime_budget_reached")
+        self.assertTrue(summary["resumable_work"])
+        self.assertFalse(summary["source_errors_require_review"])
+        self.assertEqual("P2", adaptive.select_next_candidate(state, set())["subgroup_id"])
+        state["pass_outcomes"]["P2"] = {"status": "failed"}
+        self.assertIsNone(adaptive.select_next_candidate(state, set()))
+
     def test_worker_proxy_is_forwarded_without_changing_default_call_shape(self):
         item = {"subgroup_id": "P1", "url": "https://example.test"}
         node = {"id": "node", "scope": {"kind": "download"}}
@@ -202,7 +215,16 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
 
             self.assertEqual("interrupted", result["status"])
             self.assertFalse(result["load_complete"])
-            self.assertEqual("interrupted", result["run_stop_reason"])
+            self.assertEqual("runtime_budget_reached", result["run_stop_reason"])
+            self.assertTrue(result["checkpoint_saved"])
+            self.assertTrue(result["writer_released"])
+            self.assertTrue(result["resumable_work"])
+            # A fresh invocation restores the same durable queue and finishes it.
+            with patch.object(adaptive, "invoke_selection", return_value={"status": "download"}), \
+                 patch.object(adaptive, "persist_download", side_effect=fake_persist):
+                resumed = adaptive.run(workspace, mode="resume")
+            self.assertTrue(resumed["load_complete"])
+            self.assertEqual(4, result["new_files_this_run"] + resumed["new_files_this_run"])
 
     def test_writer_lock_prevents_concurrent_active_execution(self):
         """Active writer lock with recent heartbeat prevents second runner startup."""
@@ -221,40 +243,20 @@ class BdlWebAdaptiveRunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Another active writer owns the BDL campaign"):
                 adaptive.run(workspace, max_seconds=60)
 
-    def test_writer_lock_overrides_stale_lock(self):
-        """Stale writer lock (> 600s old) is overridden safely."""
+    def test_writer_lock_refuses_stale_ownership_without_explicit_release(self):
         with tempfile.TemporaryDirectory() as td:
             workspace = Path(td)
             self.setup_environment(workspace, {"P1": make_candidate(1)})
-
-            # Stale heartbeat (15 minutes ago)
-            stale_time = "2026-09-17T00:00:00Z"
             stale_lock = {
                 "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
                 "record_type": "bdl_writer_lock", "host": "dead-host", "pid": 11111,
-                "started_at_utc": stale_time, "heartbeat_utc": stale_time, "status": "active",
+                "started_at_utc": "2026-09-17T00:00:00Z",
+                "heartbeat_utc": "2026-09-17T00:00:00Z", "status": "active",
             }
             FakeDriveControl.records["control/bdl-writer-lock.json"] = queue.rendered(stale_lock)
-
-            def fake_persist(storage, session, landing_root, control, p, node, result, ws, part_store):
-                raw = b"test-raw"
-                return {
-                    "format_version": 1, "source_id": "gus_bdl", "transport": "web_ui",
-                    "record_type": "native_partition_receipt", "subgroup_id": p["subgroup_id"],
-                    "selection_id": node["id"], "selection": node["scope"],
-                    "landing_scope": "native_bytes_only", "content_validation": "not_performed",
-                    "archive_object": {"id": "d1", "size": len(raw), "sha256": sha256(raw).hexdigest(), "md5": "b" * 32},
-                    "completed_at_utc": queue.now(),
-                }
-
-            with patch.object(adaptive, "invoke_selection", return_value={"status": "download"}), \
-                 patch.object(adaptive, "persist_download", side_effect=fake_persist):
-                result = adaptive.run(workspace, max_seconds=60)
-
-            self.assertEqual("load_complete", result["status"])
-            # Verify lock was released on exit
-            final_lock = json.loads(FakeDriveControl.records["control/bdl-writer-lock.json"].decode())
-            self.assertEqual("released", final_lock["status"])
+            with self.assertRaisesRegex(RuntimeError, "Another active writer owns"):
+                adaptive.run(workspace, max_seconds=60)
+            self.assertEqual(queue.rendered(stale_lock), FakeDriveControl.records["control/bdl-writer-lock.json"])
 
     def test_codespace_authorization_requires_opt_in_and_credentials(self):
         """Codespace execution requires explicit opt-in and valid env credentials."""

@@ -4,6 +4,12 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Current owner priority — 26 September 2026: finish existing sources.**
 
+**BDL host clarification — 26 September:** proceed from reviewed GitHub main;
+assume no available devcontainer and no unpushed work for this BDL migration.
+The main-only ten-route preflight is read-only and runs after the reviewed merge.
+Actual ingestion is a later manual dispatch after verifying exclusive Drive writer
+ownership. Do not treat heartbeat age alone as permission to take over a lock.
+
 - The owner has returned engineering coordination to the lead assistant and explicitly
   paused new-source research/onboarding. Finish BDL's move to GitHub Actions with the
   existing ten WireGuard routes, DBW whole-table and all-layer portal access, every

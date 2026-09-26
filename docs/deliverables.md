@@ -4,6 +4,31 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
+**BDL Actions migration code, awaiting reviewed merge and live preflight.** The
+portable ten-worker implementation is prepared on `feat/bdl-ten-wireguard-actions`:
+the main-only credential/network preflight validates ten full encrypted worker
+configs and ten distinct Playwright egress identities with BDL reachability. The
+manual ingestion path will restore the existing queue in resume mode without a
+reset, require ten localhost proxies, and dispatch a successor only after a
+bounded stop with saved checkpoint, released writer, and selectable work. This
+is code readiness, **not** a passed VPN preflight or a resumed ingestion. The
+owner's 26 September clarification supersedes the devcontainer/unpushed-work
+dependency in the older takeover note below; implementation starts fresh from
+GitHub main. No new source or downstream model is included.
+
+**Operational handover remains blocked by the recorded active lock.** A read-only
+26 September inspection found the last durable queue (modified 25 September
+10:18 UTC) reporting 2,086 / 2,420 selection-complete with ten in-flight
+markers. The `bdl-writer-lock.json` still reports active host `codespace`, PID
+3421786, last heartbeat 25 September 10:17:51 UTC. Heartbeat age does not prove
+the writer stopped. The Actions runner now refuses this lock even when old. After
+the preflight receipt, use the owner's absent-host premise, inspect exact current
+lock/queue bytes, reconcile interrupted receipts, and perform a separate explicit
+serialized ownership release bound to the exact inspected lock and queue bytes
+before manually launching ingestion. This is not a request to reconnect the
+devcontainer. No production
+writer or Drive mutation occurred in this code change.
+
 **Owner direction:** the lead assistant again coordinates this repository. Finish
 the sources and work already present; new-source research/onboarding and the dated
 wave-expansion schedule are paused. This supersedes older expansion priorities,

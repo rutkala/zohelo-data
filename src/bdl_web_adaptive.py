@@ -25,7 +25,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 WRITER_HEARTBEAT_SECONDS = 60
-BDL_PROXY_CLUSTER_FILE = Path("/workspaces/zohelo-data/.wireguard/cluster.json")
+BDL_PROXY_CLUSTER_FILE = Path(os.environ.get("BDL_PROXY_CLUSTER_FILE", ROOT / ".wireguard" / "cluster.json"))
 
 
 def validate_cluster_proxies(cluster_proxies: list[str], *, require_proxy_count: int, concurrency: int) -> list[str]:
@@ -45,17 +45,17 @@ def validate_cluster_proxies(cluster_proxies: list[str], *, require_proxy_count:
         if proxy.startswith("http://127.0.0.1:"):
             port = proxy.rsplit(":", 1)[1]
             if not port or not port.isdigit():
-                raise ValueError(f"Configured proxy is missing a valid port: {proxy}")
+                raise ValueError("Configured proxy is missing a valid port")
             port_number = int(port)
             if not 1 <= port_number <= 65535:
-                raise ValueError(f"Configured proxy port is out of range: {proxy}")
+                raise ValueError("Configured proxy port is out of range")
             proxy = f"http://127.0.0.1:{port_number}"
             if proxy in seen:
-                raise ValueError(f"Proxy port reused across workers: {proxy}")
+                raise ValueError("Proxy port reused across workers")
             seen.add(proxy)
             cleaned.append(proxy)
             continue
-        raise ValueError(f"Configured proxy is not a HEALTHY localhost HTTP proxy: {proxy}")
+        raise ValueError("Configured proxy is not a HEALTHY localhost HTTP proxy")
     if len(cleaned) != require_proxy_count:
         raise ValueError(f"Configured healthy proxy count {len(cleaned)} does not match required {require_proxy_count}")
     if len(set(cleaned)) != require_proxy_count:
@@ -251,19 +251,8 @@ def acquire_writer_lock(storage, control, host_kind: str) -> tuple[DriveControl,
     lock_store = DriveControl(storage, control, "bdl-writer-lock.json")
     existing = lock_store.load()
     if existing and existing.get("status") == "active":
-        heartbeat = existing.get("heartbeat_utc") or existing.get("started_at_utc", "")
-        if heartbeat:
-            try:
-                from datetime import datetime, timezone
-                hb_time = datetime.fromisoformat(heartbeat.replace("Z", "+00:00"))
-                age = (datetime.now(timezone.utc) - hb_time).total_seconds()
-                if age < 600 and (existing.get("host") != host_kind or existing.get("pid") != os.getpid()):
-                    raise RuntimeError(
-                        f"Another active writer owns the BDL campaign: host={existing.get('host')}, "
-                        f"pid={existing.get('pid')}, last heartbeat {age:.0f}s ago ({heartbeat})"
-                    )
-            except (ValueError, TypeError):
-                pass
+        # Age does not establish host death or resolve an uncertain Drive write.
+        raise RuntimeError("Another active writer owns the BDL campaign; verify and release ownership manually")
     lock_data = {
         "format_version": 1,
         "source_id": "gus_bdl",
@@ -352,6 +341,8 @@ def campaign_summary(state, legacy, files, transferred, reason, mode="resume"):
             if reason == "control_error" else "durable_checkpoint_plus_current_run"
         ),
         "recurring_schedule": False,
+        "resumable_work": bool(unvisited or unresolved_partial or state["discovery_pending"]),
+        "source_errors_require_review": bool(state["catalogue_errors"]),
     }
 
 
@@ -366,6 +357,8 @@ class RunContext:
         self.consecutive_failures = 0
         self.reason = "running"
         self.control_state_uncertain = False
+        self.checkpoint_saved = False
+        self.writer_released = False
 
 
 def select_next_candidate(state: dict[str, Any], legacy: set[str]) -> dict[str, Any] | None:
@@ -504,6 +497,8 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
 
     def report():
         value = campaign_summary(state, legacy, ctx.files, ctx.transferred, ctx.reason, mode=mode)
+        value["checkpoint_saved"] = ctx.checkpoint_saved and not ctx.control_state_uncertain
+        value["writer_released"] = ctx.writer_released
         (workspace / "bootstrap-summary.json").write_bytes(rendered(value))
         print(json.dumps(value, ensure_ascii=False), flush=True)
         if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -629,7 +624,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                 break
             if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
                 with ctx.lock:
-                    ctx.reason = "interrupted"
+                    ctx.reason = "runtime_budget_reached"
                     ctx.stop_event.set()
                     ctx.condition.notify_all()
                 break
@@ -731,7 +726,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         while not ctx.stop_event.is_set():
             if max_seconds is not None and (time.monotonic() - start) >= max_seconds:
                 with ctx.lock:
-                    ctx.reason = "interrupted"
+                    ctx.reason = "runtime_budget_reached"
                     ctx.stop_event.set()
                     ctx.condition.notify_all()
                 break
@@ -867,7 +862,11 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         if ctx.fatal_error is not None:
             raise ctx.fatal_error
 
-        return report()
+        # Reaffirm the final stopped queue after every worker has drained.
+        save_control(store, state, "BDL Web queue")
+        ctx.checkpoint_saved = True
+        final_result = report()
+        return final_result
     except BaseException as exc:
         primary_error = exc
         with ctx.lock:
@@ -890,6 +889,7 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
         if lock_store and lock_data:
             try:
                 release_writer_lock(lock_store, lock_data)
+                ctx.writer_released = True
             except Exception as release_error:
                 release_cause = release_error
                 release_failure = CampaignControlFailure(
@@ -903,7 +903,9 @@ def run(workspace, max_seconds=None, seed=None, mode="resume", concurrency=1, al
                     )
         if "state" in locals() and "legacy" in locals():
             try:
-                report()
+                latest = report()
+                if "final_result" in locals():
+                    final_result.update(latest)
             except Exception as report_error:
                 if primary_error is None and release_failure is None:
                     raise
