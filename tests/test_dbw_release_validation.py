@@ -10,6 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 import dbw_release_validation as validation  # noqa: E402
+from dbw_retained_source import (  # noqa: E402
+    RETAINED_COVERAGE_STATUS,
+    RETAINED_LINEAGE_STATUS,
+    RETAINED_SOURCE_ID,
+)
 from dbw_platform_contract import (  # noqa: E402
     DBW_PLATFORM_DATASETS,
     DBW_PLATFORM_DATE_COLUMNS,
@@ -51,6 +56,9 @@ def _entry(file_id, raw):
 def _candidate():
     code_sha = "a" * 40
     retained_release = "8c10d951-1b2d-42cd-8378-315cdc14e2fa"
+    inventory_sha256 = "b" * 64
+    retained_pointer_id = "retained-pointer"
+    retained_manifest_id = "retained-manifest"
     files = {}
     datasets = []
     catalogue_datasets = []
@@ -122,6 +130,55 @@ def _candidate():
             }
         }
 
+    retained_document = {
+        "format_version": 2,
+        "kind": "retained_bronze_snapshot",
+        "source_id": RETAINED_SOURCE_ID,
+        "snapshot_id": retained_release,
+        "status": "validated",
+        "inventory_sha256": inventory_sha256,
+        "coverage_status": RETAINED_COVERAGE_STATUS,
+        "lineage_status": RETAINED_LINEAGE_STATUS,
+        "indicator_count": 1550,
+        "published_indicator_count": 1550,
+        "pending_indicator_count": 0,
+        "datasets": [
+            {"name": "observations", "row_count": observation_rows}
+        ],
+        "tests": {
+            "passed": True,
+            "rows_and_schemas_preserved": True,
+        },
+    }
+    retained_raw = json.dumps(
+        retained_document, sort_keys=True, separators=(",", ":")
+    ).encode()
+    pointer_document = {
+        "format_version": 1,
+        "source_id": RETAINED_SOURCE_ID,
+        "snapshot_id": retained_release,
+        "manifest_file_id": retained_manifest_id,
+        "manifest_sha256": hashlib.sha256(retained_raw).hexdigest(),
+        "manifest_size_bytes": len(retained_raw),
+    }
+    files[retained_manifest_id] = retained_raw
+    files[retained_pointer_id] = json.dumps(
+        pointer_document, sort_keys=True, separators=(",", ":")
+    ).encode()
+    retained_source = {
+        "source_id": RETAINED_SOURCE_ID,
+        "pointer_file_id": retained_pointer_id,
+        "snapshot_id": retained_release,
+        "manifest_file_id": retained_manifest_id,
+        "manifest_sha256": pointer_document["manifest_sha256"],
+        "manifest_size_bytes": pointer_document["manifest_size_bytes"],
+        "inventory_sha256": inventory_sha256,
+        "coverage_status": RETAINED_COVERAGE_STATUS,
+        "lineage_status": RETAINED_LINEAGE_STATUS,
+        "indicator_count": 1550,
+        "observation_rows": observation_rows,
+    }
+
     artifacts = {
         "manifest.json": json.dumps({"nodes": manifest_nodes}).encode(),
         "catalog.json": json.dumps({"nodes": catalog_nodes}).encode(),
@@ -130,7 +187,12 @@ def _candidate():
             {
                 "format_version": 1,
                 "code_sha": code_sha,
-                "sources": [{"source_id": "gus_dbw"}],
+                "sources": [{
+                    "source_id": "gus_dbw",
+                    "retained_snapshot_id": retained_release,
+                    "coverage_status": RETAINED_COVERAGE_STATUS,
+                    "lineage_status": RETAINED_LINEAGE_STATUS,
+                }],
                 "datasets": catalogue_datasets,
                 "metrics": [],
                 "metrics_status": "awaiting_business_approval",
@@ -148,7 +210,12 @@ def _candidate():
                     "gus_dbw": {
                         "status": "published_snapshot",
                         "release_id": retained_release,
-                        "coverage_status": "complete_retained_inventory",
+                        "native_inventory_sha256": inventory_sha256,
+                        "retained_manifest_file_id": retained_manifest_id,
+                        "retained_manifest_sha256":
+                            pointer_document["manifest_sha256"],
+                        "coverage_status": RETAINED_COVERAGE_STATUS,
+                        "lineage_status": RETAINED_LINEAGE_STATUS,
                     }
                 },
             }
@@ -168,12 +235,7 @@ def _candidate():
         "code_sha": code_sha,
         "datasets": datasets,
         "artifacts": artifact_entries,
-        "inputs": [
-            {
-                "source_id": "gus_dbw",
-                "release_id": retained_release,
-            }
-        ],
+        "inputs": [retained_source],
     }
     return _Store(files), manifest
 
@@ -262,6 +324,40 @@ class DBWReleaseValidationTests(unittest.TestCase):
 
         self.assertEqual(report["min_date"], "1995-01-01")
         self.assertEqual(report["max_date"], "2025-01-01")
+
+    def test_changed_live_retained_manifest_is_rejected(self):
+        store, manifest = _candidate()
+        store.files["retained-manifest"] += b" "
+        with patch.object(
+            validation, "restore_release", return_value=manifest
+        ), patch.object(
+            validation,
+            "verify_local_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "retained source manifest fingerprint changed",
+            ):
+                validation.validate_staged_dbw_release(store, {})
+
+    def test_retained_coverage_cannot_be_upgraded_by_candidate(self):
+        store, manifest = _candidate()
+        manifest["inputs"][0]["coverage_status"] = (
+            "complete_retained_inventory"
+        )
+        with patch.object(
+            validation, "restore_release", return_value=manifest
+        ), patch.object(
+            validation,
+            "verify_local_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "input differs from the live retained source",
+            ):
+                validation.validate_staged_dbw_release(store, {})
 
     def test_dbw_has_a_canonical_release_root(self):
         self.assertIn("dbw", RELEASE_SOURCES)
