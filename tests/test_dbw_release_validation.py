@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -233,6 +234,34 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 ReleaseValidationError, "fingerprint changed"
             ):
                 validation.validate_staged_dbw_release(store, {})
+
+    def test_integer_period_year_bounds_use_iso_dates(self):
+        import duckdb
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "integer-years.parquet"
+            with duckdb.connect() as connection:
+                connection.execute(
+                    f"COPY (SELECT * FROM (VALUES (1995), (2025)) "
+                    f"AS years(period_year)) TO '{path}' (FORMAT PARQUET)"
+                )
+                report = validation.verify_local_dataset(
+                    connection,
+                    {
+                        "dataset_id": "dbw_observations",
+                        "row_count": 2,
+                        "date_column": "period_year",
+                        "min_date": "1995-01-01",
+                        "max_date": "2025-01-01",
+                        "columns": [
+                            {"name": "period_year", "type": "INTEGER"}
+                        ],
+                    },
+                    [path],
+                )
+
+        self.assertEqual(report["min_date"], "1995-01-01")
+        self.assertEqual(report["max_date"], "2025-01-01")
 
     def test_dbw_has_a_canonical_release_root(self):
         self.assertIn("dbw", RELEASE_SOURCES)
