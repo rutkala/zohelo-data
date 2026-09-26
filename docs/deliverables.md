@@ -444,15 +444,22 @@ The repair adds a one-column, vectorized indicator-identity check before publish
 
 **Publication remains open:** a read-only connected-Drive traversal of the selected root through `06_control/source_campaigns` returned 17 direct child folders and no `gus_dbw_retained_bronze` namespace on 22 September. This is a connector-visible metadata observation, not a transactional release audit or authenticated portal SQL. No production publisher or BDL process was launched, stopped or changed. The earlier production-launch hold was not retried or rerouted. Actual immutable query publication, fresh consumer verification and live portal SQL still need completion. The full critical user outcome is not Done merely because this repair merged.
 
-### Reconciled autonomous programme — 22 September 2026
+### Historical reconciled autonomous programme — 22 September 2026
+
+**Historical evidence only:** this section and the following dated 22 September
+subsections preserve the state and plan recorded that day. Their
+`Current`/`Next`/`Today`/`keep` wording is not an active instruction and is
+superseded by the 26 September takeover section above. Do not resume an old PID,
+reconnect the devcontainer, or use its availability as the routine production
+architecture.
 
 **First local integration package merged:** PR #148 merged as `59dc6f98188cb431fc8e53a3d5d863d8fa6569bb` after data CI 35715635772 and devcontainer CI 35715635838 passed. The CI container confirmed the pinned Codex CLI, all 661 fixtures and the responding development portal. The owner's live container was not rebuilt. This accepts the setup package only. Its feature branch and clean worktree have now been removed after exact tree-equivalence and unpublished-change checks; the original dirty root, operational refs and remaining source/model work remain preserved.
 
-**Current authority:** the owner requests autonomous delivery, routine review of all repository work and continued local-to-remote integration. Both outcomes remain mandatory: complete feasible source ingestion through independently validated layers, and real query availability in `data.zohelo.com`. A file inventory, merged adapter, running backfill or portal deployment is not full-source or live-SQL completion. This section supersedes dated operational summaries below without deleting their evidence.
+**Authority recorded at that checkpoint:** the owner requested autonomous delivery, routine review of repository work and continued local-to-remote integration. Both outcomes remain mandatory: complete feasible source ingestion through independently validated layers, and real query availability in `data.zohelo.com`. A file inventory, merged adapter, running backfill or portal deployment is not full-source or live-SQL completion. This section supersedes dated operational summaries below without deleting their evidence.
 
 **Review completed:** 70 current-main documentation files plus the local handoff, all six open issues, recent PRs/Actions, all local worktrees/branches and the 64 non-temporary changed files were inventoried/reconciled at baseline `522b72c`. Read [the audit](audits/2026-09-22-repository-reconciliation.md) for findings and [its receipt](audits/2026-09-22-repository-reconciliation.json) for hashes/checks. This is not a new full-data audit, external revalidation of all research references, or functional acceptance of every local adapter. Source-only backups and the separate DBW worktree's uncommitted note are preserved.
 
-| Workstream | Current verified status | Next acceptance boundary |
+| Workstream | Status recorded on 22 September | Then-next acceptance boundary |
 | --- | --- | --- |
 | BDL native history | Owner-launched PID 383069, ten workers/proxy routes. Stable 10:09 UTC Drive read: 2,464 native files / 639,962,821 bytes; 1,131/2,420 selection-complete subgroups; 62 blocked selections. | Continue the finite pass, investigate failed selections and control reliability, reconcile the entire selected native scope. Do not reduce the ten-worker setting silently or launch a second coordinator. |
 | NBP | Selected A/B/C/gold product has accepted 15-table/five-metric delivery. Scheduled run 35678350460 succeeded today. | Preserve daily freshness, cold recovery and source-specific semantics; complete remaining stage-decoupling work without regressing the release. |
@@ -464,19 +471,19 @@ The repair adds a one-column, vectorized indicator-identity check before publish
 
 **GitHub reconciliation:** #146 and #145 are merged; there were no open PRs when this review started. Issues #130–#135 remain the programme breakdown, but their initial text is not current acceptance evidence. #133's WDI implementation request is substantially superseded by accepted releases; its residual stage-separation/recovery scope remains. #135 is not delivered by the current monitor-only supervisor: catalogue discovery alone must never authorize downstream data processing. The current main branch remains unprotected; PR discipline is still procedural rather than server-enforced.
 
-**Next implementation order:** retain one active engineering owner. Running provider ingestion is independent of that engineering slot. First integrate the reviewed documentation/status reconciliation and small environment/handoff changes; next close the supported DBW publication and live-SQL gap when its execution boundary is available; then finish retained TERYT/PRG query contracts and source-local publication repairs. The twelve delete-before-create upload helpers, GLEIF parent-grain defect and IMGW missing/revision semantics are integration blockers, not reasons to discard existing bytes.
+**Historical implementation order:** the plan retained one active engineering owner. Running provider ingestion is independent of that engineering slot. First integrate the reviewed documentation/status reconciliation and small environment/handoff changes; next close the supported DBW publication and live-SQL gap when its execution boundary is available; then finish retained TERYT/PRG query contracts and source-local publication repairs. The twelve delete-before-create upload helpers, GLEIF parent-grain defect and IMGW missing/revision semantics are integration blockers, not reasons to discard existing bytes.
 
-**Today — Tuesday 22 September:** keep and measure the ten-worker BDL pass; deliver the repository/document reconciliation; move the first safe local setup changes into a checked PR; advance DBW's actual query publication/verification rather than another inventory-only update. Complete or record a concrete blocker for each active item, retaining the full outcome. Do not restart native collection just because a newer release format exists.
+**Historical plan for Tuesday 22 September:** keep and measure the ten-worker BDL pass; deliver the repository/document reconciliation; move the first safe local setup changes into a checked PR; advance DBW's actual query publication/verification rather than another inventory-only update. Complete or record a concrete blocker for each active item, retaining the full outcome. Do not restart native collection just because a newer release format exists.
 
-**Rest of this week — 23–27 September:** stabilize Wave 0 and close the most immediate portal gaps. Finish DBW retained SQL acceptance and progress TERYT/PRG publication; repair source-sized local changes before merge; reconcile BDL failed selections and prepare its preservation-safe Bronze path. Begin/continue WDI and Eurostat native-only stage separation, followed by NBP/OpenData as appropriate. Automatic downstream work must wait for the selected source's verified native-completion contract; dated retained-output publication is its separately accepted exception, not permission to process arbitrary partial intake. Establish restart/control failure evidence and current freshness/coverage reporting.
+**Historical plan for 23–27 September:** stabilize Wave 0 and close the most immediate portal gaps. Finish DBW retained SQL acceptance and progress TERYT/PRG publication; repair source-sized local changes before merge; reconcile BDL failed selections and prepare its preservation-safe Bronze path. Begin/continue WDI and Eurostat native-only stage separation, followed by NBP/OpenData as appropriate. Automatic downstream work must wait for the selected source's verified native-completion contract; dated retained-output publication is its separately accepted exception, not permission to process arbitrary partial intake. Establish restart/control failure evidence and current freshness/coverage reporting.
 
-**Next week — 28 September–4 October:** carry unfinished Wave 0 and publication work forward first; do not reset priorities merely because the calendar changes. Integrate feasible Wave 1 backbones (TERYT/PRG/GLEIF first, then appropriately scoped Wikidata/OSM) with tested keys, editions and query contracts. Start feasible Wave 2 macro/central-bank bulk sources (IMF WEO, BIS, ECB, NBP extensions, OECD) in dependency order within existing access/cost boundaries. Validate layers, dbt grain, source-defined semantics, fresh restore and portal SQL as each source qualifies. Complete executable stage handoffs and continue reducing local/remote drift.
+**Historical plan for 28 September–4 October:** carry unfinished Wave 0 and publication work forward first; do not reset priorities merely because the calendar changes. Integrate feasible Wave 1 backbones (TERYT/PRG/GLEIF first, then appropriately scoped Wikidata/OSM) with tested keys, editions and query contracts. Start feasible Wave 2 macro/central-bank bulk sources (IMF WEO, BIS, ECB, NBP extensions, OECD) in dependency order within existing access/cost boundaries. Validate layers, dbt grain, source-defined semantics, fresh restore and portal SQL as each source qualifies. Complete executable stage handoffs and continue reducing local/remote drift.
 
 These are delivery priorities and acceptance targets, not promised full-source completion dates. The 182 researched products/families and seven additional gap candidates are a long programme, not 189 active pipelines or a claim that all can be completed in two weeks. Waves 3–8 retain the fiscal/register/procurement, social/health/education, environment/energy/transport, corporate/knowledge, multilateral-sector and conditional-commercial backlog. Public access, research evidence, native receipt coverage, modeled coverage and query readiness remain separate.
 
 **Local integration packages:** environment/Codex setup and explicit startup; test/runtime fixes; DBW performance changes ported onto #136; TERYT/PRG; GLEIF without regressing #137; MF VAT/IMGW/GIOS; separately reviewed line-ending changes. Preserve the Telegram branch outside the data-readiness critical path. New-source upload paths must preserve prior objects and verify immutable replacements before becoming production-capable. After each accepted PR, remove only its verified merged branch/worktree; never remove operational ownership refs or unresolved work.
 
-**Autonomous operating cadence:** the existing hourly `Advance Zohelo-data delivery` task supplies scheduled review/engineering within available tool/model capacity, while BDL and scheduled provider jobs execute independently. It must read this current section, current PRs and fresh evidence; avoid duplicate engineering and source writers, and continue the highest-priority unblocked task without another routine owner approval. Notify material progress or actionable blockers, not every successful polling cycle. This is not continuous AI execution and does not guarantee a future task run. Keep the local devcontainer alive for local jobs; a disconnect/rebuild can interrupt them.
+**Historical operating cadence:** the hourly `Advance Zohelo-data delivery` task supplied scheduled review/engineering within available tool/model capacity, while BDL and scheduled provider jobs executed independently. It must read this current section, current PRs and fresh evidence; avoid duplicate engineering and source writers, and continue the highest-priority unblocked task without another routine owner approval. Notify material progress or actionable blockers, not every successful polling cycle. This is not continuous AI execution and does not guarantee a future task run. At that checkpoint, selected local jobs depended on the devcontainer. That dependency is historical and is not the routine production architecture.
 
 **Acceptance before Done:** reviewed code merged, applicable deployment verified, complete claimed scope reconciled, fresh independent data restore/query passed, portal discovery and actual SQL exercised, and remaining limitations stated. Neither green CI nor an inventory screen satisfies those outcomes alone. No new paid service, model overage, source-credential disclosure, destructive reset or scope reduction is authorized by this plan.
 
@@ -499,20 +506,22 @@ The reads checked stable control metadata, size, MD5 and SHA-256; this is not an
 full-byte audit of every new archive or proof of full BDL coverage. No source data was parsed,
 no downstream stage was started, and no production setting was changed during verification.
 
-Keep the ten-worker coordinator and VPN routes running without another competing writer.
-Inspect this new workspace and fresh durable checkpoints in subsequent monitoring, not an
-old PID or historical summary. Remaining full-source ingestion, failed-selection recovery,
-Bronze safety and portal query publication remain open; the local container must stay running.
+The recorded 22 September instruction was to keep that coordinator and its VPN routes
+running without a competing writer and to inspect its fresh workspace/checkpoints. It is
+historical: do not resume the old PID or reconnect that host as the production path.
+Remaining full-source ingestion, failed-selection recovery, Bronze safety and portal query
+publication remain open under the current Actions and serialized-handover gates above.
 
-### Owner two-track delivery priority and local continuation — 22 September 2026
+### Historical owner two-track priority and local continuation — 22 September 2026
 
 The owner requires both autonomous backend delivery across the approved source programme
 and usable new data in `data.zohelo.com`. Routine engineering does not need owner supervision.
 Portal SQL access is an acceptance requirement, not satisfied by physical inventory alone.
 Preserve stage isolation and native-only Landing; expose each verified existing layer with
 its actual scope and remaining blockers, without relabelling retained Bronze as native Landing.
-Immediate engineering priority is finishing existing PR #145, followed by other retained
-source query contracts while source ingestion/modeling remains an open programme.
+The recorded immediate engineering priority was finishing PR #145, followed by other
+retained-source query contracts while source ingestion/modeling remained open. That PR
+status and ordering are historical; use the 26 September priorities above.
 
 At 07:54 UTC, a fresh, stable read of BDL's durable queue verified 2,385 reported native
 files / 626,046,982 bytes, 1,087 selection-complete / 2,420 known subgroups and 56 blocked
