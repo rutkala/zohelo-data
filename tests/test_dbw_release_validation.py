@@ -255,6 +255,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
         ) as verify:
             report = validation.validate_staged_dbw_release(
                 store, {"manifest_file_id": "unused"}
+                retained_pointer_file_id="retained-pointer",
             )
 
         self.assertEqual(verify.call_count, 11)
@@ -286,7 +287,11 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 ReleaseValidationError,
                 "Bronze, Silver and Gold observation row counts differ",
             ):
-                validation.validate_staged_dbw_release(store, {})
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
 
     def test_common_observation_truncation_is_rejected(self):
         store, manifest = _candidate()
@@ -308,7 +313,11 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 ReleaseValidationError,
                 "modeled observation rows differ from retained source",
             ):
-                validation.validate_staged_dbw_release(store, {})
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
 
     def test_changed_remote_file_is_rejected_before_sql_acceptance(self):
         store, manifest = _candidate()
@@ -317,7 +326,11 @@ class DBWReleaseValidationTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ReleaseValidationError, "fingerprint changed"
             ):
-                validation.validate_staged_dbw_release(store, {})
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
 
     def test_integer_period_year_bounds_use_iso_dates(self):
         import duckdb
@@ -361,7 +374,11 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 ReleaseValidationError,
                 "retained source manifest fingerprint changed",
             ):
-                validation.validate_staged_dbw_release(store, {})
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
 
     def test_retained_coverage_cannot_be_upgraded_by_candidate(self):
         store, manifest = _candidate()
@@ -379,7 +396,11 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 ReleaseValidationError,
                 "input differs from the live retained source",
             ):
-                validation.validate_staged_dbw_release(store, {})
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
 
     def test_dbw_has_a_canonical_release_root(self):
         self.assertIn("dbw", RELEASE_SOURCES)
