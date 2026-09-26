@@ -120,7 +120,12 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW modeled release is not bound to one retained Bronze snapshot"
         )
-    source_state = state.get("sources", {}).get(DBW_SOURCE_ID)
+    source_states = state.get("sources")
+    source_state = (
+        source_states.get(DBW_SOURCE_ID)
+        if isinstance(source_states, dict)
+        else None
+    )
     if (
         not isinstance(source_state, dict)
         or source_state.get("release_id") != retained_release_id
