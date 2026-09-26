@@ -194,7 +194,6 @@ class DBWReleaseValidationTests(unittest.TestCase):
                 store, {"manifest_file_id": "unused"}
             )
 
-        self.assertEqual(report["datasets"], verify.call_count * [report["datasets"][0]] if False else report["datasets"])
         self.assertEqual(verify.call_count, 11)
         self.assertEqual(report["observation_rows"], 879_999_727)
         self.assertEqual(
