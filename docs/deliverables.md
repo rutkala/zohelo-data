@@ -4,17 +4,30 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
-**BDL Actions migration code, awaiting reviewed merge and live preflight.** The
-portable ten-worker implementation is prepared on `feat/bdl-ten-wireguard-actions`:
-the main-only credential/network preflight validates ten full encrypted worker
-configs and ten distinct Playwright egress identities with BDL reachability. The
-manual ingestion path will restore the existing queue in resume mode without a
-reset, require ten localhost proxies, and dispatch a successor only after a
-bounded stop with saved checkpoint, released writer, and selectable work. This
-is code readiness, **not** a passed VPN preflight or a resumed ingestion. The
-owner's 26 September clarification supersedes the devcontainer/unpushed-work
-dependency in the older takeover note below; implementation starts fresh from
-GitHub main. No new source or downstream model is included.
+**BDL Actions migration merged; live preflight failed on missing secrets.**
+[PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
+`e674f303644dd777b4a2d29737da488aa9b43de0` at 22:48 CEST on 26 September
+after exact-head review and a full CI run of 785 tests (one skipped). The
+portable ten-worker implementation provides a main-only read-only route
+preflight and a separately manual, serialized resume workflow. It preserves the
+existing queue, prohibits reset and direct fallback, requires ten distinct
+Playwright egress identities with BDL reachability, and permits continuation
+only after a bounded stop with a saved checkpoint, released writer and
+selectable work.
+
+The automatic post-merge
+[read-only preflight](https://github.com/rutkala/zohelo-data/actions/runs/36270788465)
+installed its pinned dependencies, then failed before launching any proxy or
+browser because `ZOHELO_WORKER2` through `ZOHELO_WORKER10` were absent;
+`ZOHELO_WORKER1` was present. It performed no Drive mutation and started no
+ingestion. The concrete owner prerequisite is to add the complete contents of
+the nine supplied worker configuration files as repository Actions secrets
+named exactly `ZOHELO_WORKER2` through `ZOHELO_WORKER10`. After that, rerun
+the preflight. A successful route preflight is still not permission to start the
+writer: inspect the exact current durable lock and queue bytes, reconcile
+interrupted receipts, and complete a separate serialized ownership release
+before manually dispatching the resume workflow. No new source or downstream
+model is included.
 
 **Operational handover remains blocked by the recorded active lock.** A read-only
 26 September inspection found the last durable queue (modified 25 September
