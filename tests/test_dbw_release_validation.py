@@ -360,6 +360,25 @@ class DBWReleaseValidationTests(unittest.TestCase):
         self.assertEqual(report["min_date"], "1995-01-01")
         self.assertEqual(report["max_date"], "2025-01-01")
 
+    def test_candidate_cannot_select_another_retained_pointer(self):
+        store, manifest = _candidate()
+        with patch.object(
+            validation, "restore_release", return_value=manifest
+        ), patch.object(
+            validation,
+            "verify_local_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "pointer differs from canonical discovery",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="different-pointer",
+                )
+
     def test_changed_live_retained_manifest_is_rejected(self):
         store, manifest = _candidate()
         store.files["retained-manifest"] += b" "
