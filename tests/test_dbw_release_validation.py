@@ -1,0 +1,672 @@
+import hashlib
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+import dbw_release_validation as validation  # noqa: E402
+from dbw_retained_source import (  # noqa: E402
+    RETAINED_COVERAGE_STATUS,
+    RETAINED_LINEAGE_STATUS,
+    RETAINED_SOURCE_ID,
+    validate_native_bronze_tree,
+)
+from dbw_platform_contract import (  # noqa: E402
+    DBW_PLATFORM_DATASETS,
+    DBW_PLATFORM_DATE_COLUMNS,
+)
+from layout_resolution import (  # noqa: E402
+    RELEASE_SOURCES,
+    resolve_source_release_root,
+)
+from release_validation import ReleaseValidationError  # noqa: E402
+
+
+class _Store:
+    def __init__(self, files=None):
+        self.files = dict(files or {})
+        self.folders = {}
+        self.read_counts = {}
+
+    def read(self, file_id):
+        self.read_counts[file_id] = self.read_counts.get(file_id, 0) + 1
+        return self.files[file_id]
+
+    def find(self, name, parent_id):
+        return list(self.folders.get((parent_id, name), []))
+
+    def mkdir(self, name, parent_id):
+        key = (parent_id, name)
+        value = f"{parent_id}-{name}"
+        self.folders.setdefault(key, []).append(value)
+        return value
+
+
+def _entry(file_id, raw):
+    return {
+        "id": file_id,
+        "name": f"{file_id}.bin",
+        "size": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+
+
+def _candidate():
+    code_sha = "a" * 40
+    retained_release = "8c10d951-1b2d-42cd-8378-315cdc14e2fa"
+    inventory_sha256 = "b" * 64
+    audit_report_sha256 = "c" * 64
+    retained_pointer_id = "retained-pointer"
+    retained_manifest_id = "retained-manifest"
+    files = {}
+    datasets = []
+    catalogue_datasets = []
+    manifest_nodes = {}
+    catalog_nodes = {}
+    retained_rows = {
+        "observations": 879_999_727,
+        "dictionaries": 8_358_612,
+        "metadata": 1_531,
+        "taxonomy": 1_550,
+    }
+    modeled_sources = {
+        "bronze_dbw_dictionaries": "dictionaries",
+        "dbw_dictionaries": "dictionaries",
+        "bronze_dbw_indicators": "taxonomy",
+        "dbw_indicators": "taxonomy",
+        "dim_dbw_indicator": "taxonomy",
+        "bronze_dbw_metadata": "metadata",
+        "dbw_metadata": "metadata",
+        "bronze_dbw_observations": "observations",
+        "dbw_observations": "observations",
+        "fact_dbw_observations": "observations",
+    }
+    for index, (dataset_id, (layer, model_id)) in enumerate(
+        DBW_PLATFORM_DATASETS.items()
+    ):
+        raw = f"dataset-{index}".encode()
+        file_id = f"dataset-{index}"
+        files[file_id] = raw
+        table_name = dataset_id.removeprefix("bronze_")
+        date_column = DBW_PLATFORM_DATE_COLUMNS[dataset_id]
+        columns = [
+            {
+                "name": date_column or "identity",
+                "type": "DATE" if date_column else "BIGINT",
+            }
+        ]
+        rows = (
+            retained_rows[modeled_sources[dataset_id]]
+            if dataset_id in modeled_sources
+            else 1
+        )
+        dataset = {
+            "dataset_id": dataset_id,
+            "table_name": table_name,
+            "model_name": model_id.rsplit(".", 1)[-1],
+            "model_id": model_id,
+            "layer": layer,
+            "row_count": rows,
+            "date_column": date_column,
+            "min_date": "2000-01-01" if date_column else None,
+            "max_date": "2025-01-01" if date_column else None,
+            "columns": columns,
+            "files": [_entry(file_id, raw)],
+        }
+        datasets.append(dataset)
+        catalogue_datasets.append(
+            {
+                key: dataset[key]
+                for key in (
+                    "dataset_id",
+                    "table_name",
+                    "layer",
+                    "model_name",
+                    "row_count",
+                    "min_date",
+                    "max_date",
+                    "date_column",
+                    "columns",
+                )
+            }
+        )
+        manifest_nodes[model_id] = {
+            "schema": layer,
+            "alias": table_name,
+        }
+        catalog_nodes[model_id] = {
+            "metadata": {
+                "schema": layer,
+                "name": table_name,
+            }
+        }
+
+    retained_dataset_files = {
+        name: (
+            []
+            if name == "observations"
+            else [{
+                "id": f"retained-{name}",
+                "name": f"{name}.parquet",
+                "size": len(name.encode()),
+                "sha256": hashlib.sha256(name.encode()).hexdigest(),
+                "row_count": rows,
+            }]
+        )
+        for name, rows in retained_rows.items()
+    }
+    retained_index = {
+        "id": "retained-index",
+        "name": "indicator-index.json",
+        "size": 100,
+        "sha256": "d" * 64,
+    }
+    retained_document = {
+        "format_version": 2,
+        "kind": "retained_bronze_snapshot",
+        "source_id": RETAINED_SOURCE_ID,
+        "snapshot_id": retained_release,
+        "status": "validated",
+        "inventory_sha256": inventory_sha256,
+        "audit_report_sha256": audit_report_sha256,
+        "coverage_status": RETAINED_COVERAGE_STATUS,
+        "lineage_status": RETAINED_LINEAGE_STATUS,
+        "indicator_count": 1550,
+        "published_indicator_count": 1550,
+        "pending_indicator_count": 0,
+        "indicator_index": retained_index,
+        "datasets": [
+            {
+                "name": name,
+                "row_count": rows,
+                "files": retained_dataset_files[name],
+            }
+            for name, rows in retained_rows.items()
+        ],
+        "tests": {
+            "passed": True,
+            "rows_and_schemas_preserved": True,
+        },
+    }
+    retained_raw = json.dumps(
+        retained_document, sort_keys=True, separators=(",", ":")
+    ).encode()
+    pointer_document = {
+        "format_version": 1,
+        "source_id": RETAINED_SOURCE_ID,
+        "snapshot_id": retained_release,
+        "manifest_file_id": retained_manifest_id,
+        "manifest_sha256": hashlib.sha256(retained_raw).hexdigest(),
+        "manifest_size_bytes": len(retained_raw),
+    }
+    files[retained_manifest_id] = retained_raw
+    files[retained_pointer_id] = json.dumps(
+        pointer_document, sort_keys=True, separators=(",", ":")
+    ).encode()
+    retained_source = {
+        "source_id": RETAINED_SOURCE_ID,
+        "pointer_file_id": retained_pointer_id,
+        "snapshot_id": retained_release,
+        "manifest_file_id": retained_manifest_id,
+        "manifest_sha256": pointer_document["manifest_sha256"],
+        "manifest_size_bytes": pointer_document["manifest_size_bytes"],
+        "inventory_sha256": inventory_sha256,
+        "audit_report_sha256": audit_report_sha256,
+        "coverage_status": RETAINED_COVERAGE_STATUS,
+        "lineage_status": RETAINED_LINEAGE_STATUS,
+        "indicator_count": 1550,
+        "indicator_index": retained_index,
+        "dataset_rows": retained_rows,
+        "dataset_files": retained_dataset_files,
+    }
+
+    artifacts = {
+        "manifest.json": json.dumps({"nodes": manifest_nodes}).encode(),
+        "catalog.json": json.dumps({"nodes": catalog_nodes}).encode(),
+        "run_results.json": json.dumps({"results": [{"status": "success"}]}).encode(),
+        "business-catalog.json": json.dumps(
+            {
+                "format_version": 1,
+                "code_sha": code_sha,
+                "sources": [{
+                    "source_id": "gus_dbw",
+                    "retained_snapshot_id": retained_release,
+                    "coverage_status": RETAINED_COVERAGE_STATUS,
+                    "lineage_status": RETAINED_LINEAGE_STATUS,
+                }],
+                "datasets": catalogue_datasets,
+                "metrics": [],
+                "metrics_status": "awaiting_business_approval",
+                "lineage": {"nodes": [], "edges": []},
+            }
+        ).encode(),
+        "ingestion-state.json": json.dumps(
+            {
+                "format_version": 1,
+                "source_id": "gus_dbw",
+                "code_sha": code_sha,
+                "release_id": retained_release,
+                "status": "published_snapshot",
+                "sources": {
+                    "gus_dbw": {
+                        "status": "published_snapshot",
+                        "release_id": retained_release,
+                        "native_inventory_sha256": inventory_sha256,
+                        "retained_manifest_file_id": retained_manifest_id,
+                        "retained_manifest_sha256":
+                            pointer_document["manifest_sha256"],
+                        "coverage_status": RETAINED_COVERAGE_STATUS,
+                        "lineage_status": RETAINED_LINEAGE_STATUS,
+                    }
+                },
+            }
+        ).encode(),
+    }
+    artifact_entries = []
+    for index, (name, raw) in enumerate(artifacts.items()):
+        file_id = f"artifact-{index}"
+        files[file_id] = raw
+        value = _entry(file_id, raw)
+        value["name"] = name
+        artifact_entries.append(value)
+    manifest = {
+        "format_version": 2,
+        "release_id": "modeled-release",
+        "release_scope": "dbw_platform",
+        "code_sha": code_sha,
+        "datasets": datasets,
+        "artifacts": artifact_entries,
+        "inputs": [retained_source],
+    }
+    return _Store(files), manifest
+
+
+class DBWReleaseValidationTests(unittest.TestCase):
+    def test_complete_multilayer_release_is_read_back_and_validated(self):
+        store, manifest = _candidate()
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            side_effect=lambda _connection, dataset, paths, _retained: {
+                "dataset_id": dataset["dataset_id"],
+                "files": len(paths),
+            },
+        ) as verify:
+            report = validation.validate_staged_dbw_release(
+                store, {"manifest_file_id": "unused"},
+                retained_pointer_file_id="retained-pointer",
+            )
+
+        self.assertEqual(verify.call_count, 11)
+        self.assertTrue(
+            all(store.read_counts[f"dataset-{index}"] == 1 for index in range(11))
+        )
+        self.assertEqual(report["observation_rows"], 879_999_727)
+        self.assertEqual(
+            report["retained_release_id"],
+            "8c10d951-1b2d-42cd-8378-315cdc14e2fa",
+        )
+        self.assertEqual(
+            {item["dataset_id"] for item in report["datasets"]},
+            set(DBW_PLATFORM_DATASETS),
+        )
+
+    def test_observation_row_loss_is_rejected(self):
+        store, manifest = _candidate()
+        next(
+            item
+            for item in manifest["datasets"]
+            if item["dataset_id"] == "fact_dbw_observations"
+        )["row_count"] -= 1
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "Bronze, Silver and Gold observation row counts differ",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_common_observation_truncation_is_rejected(self):
+        store, manifest = _candidate()
+        for dataset in manifest["datasets"]:
+            if dataset["dataset_id"] in {
+                "bronze_dbw_observations",
+                "dbw_observations",
+                "fact_dbw_observations",
+            }:
+                dataset["row_count"] -= 1
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "modeled bronze_dbw_observations rows differ from retained",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_common_dictionary_truncation_is_rejected(self):
+        store, manifest = _candidate()
+        for dataset in manifest["datasets"]:
+            if dataset["dataset_id"] in {
+                "bronze_dbw_dictionaries",
+                "dbw_dictionaries",
+            }:
+                dataset["row_count"] -= 1
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "modeled bronze_dbw_dictionaries rows differ from retained",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_changed_remote_file_is_rejected_before_sql_acceptance(self):
+        store, manifest = _candidate()
+        store.files["dataset-0"] = b"changed"
+        with patch.object(validation, "read_release_manifest", return_value=manifest):
+            with self.assertRaisesRegex(
+                ReleaseValidationError, "fingerprint changed"
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_integer_period_year_bounds_use_iso_dates(self):
+        import duckdb
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "integer-years.parquet"
+            with duckdb.connect() as connection:
+                connection.execute(
+                    f"COPY (SELECT * FROM (VALUES (1995), (2025)) "
+                    f"AS years(period_year)) TO '{path}' (FORMAT PARQUET)"
+                )
+                report = validation.verify_local_dataset(
+                    connection,
+                    {
+                        "dataset_id": "dbw_observations",
+                        "row_count": 2,
+                        "date_column": "period_year",
+                        "min_date": "1995-01-01",
+                        "max_date": "2025-01-01",
+                        "columns": [
+                            {"name": "period_year", "type": "INTEGER"}
+                        ],
+                    },
+                    [path],
+                )
+
+        self.assertEqual(report["min_date"], "1995-01-01")
+        self.assertEqual(report["max_date"], "2025-01-01")
+
+    def test_candidate_cannot_select_another_retained_pointer(self):
+        store, manifest = _candidate()
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "pointer differs from canonical discovery",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="different-pointer",
+                )
+
+    def test_retained_pointer_drift_during_validation_is_rejected(self):
+        store, manifest = _candidate()
+
+        def verify(_connection, dataset, _paths, _retained):
+            if dataset["dataset_id"] == "mart_dbw_coverage":
+                store.files["retained-pointer"] = b"{}"
+            return {"dataset_id": dataset["dataset_id"]}
+
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            side_effect=verify,
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "retained source changed during modeled validation",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_changed_live_retained_manifest_is_rejected(self):
+        store, manifest = _candidate()
+        store.files["retained-manifest"] += b" "
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "retained source manifest fingerprint changed",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_retained_coverage_cannot_be_upgraded_by_candidate(self):
+        store, manifest = _candidate()
+        manifest["inputs"][0]["coverage_status"] = (
+            "complete_retained_inventory"
+        )
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "input differs from the live retained source",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_retained_payload_fingerprints_cannot_be_changed(self):
+        store, manifest = _candidate()
+        manifest["inputs"][0]["dataset_files"]["metadata"][0][
+            "sha256"
+        ] = "e" * 64
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "input differs from the live retained source",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_native_tree_must_match_reviewed_inventory_bytes(self):
+        release_id = "b" * 64
+        audit_sha = "c" * 64
+        payloads = {
+            "observations/part_1.parquet": b"observations",
+            "dictionaries/dict_1.parquet": b"dictionary-part",
+            "dictionaries/br_dbw_dictionaries.parquet": b"dictionaries",
+            "metadata/br_dbw_metadata.parquet": b"metadata",
+            "taxonomy/br_dbw_indicators.parquet": b"taxonomy",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "data"
+            release_root = (
+                data_root
+                / "02_bronze"
+                / "gus_dbw"
+                / "releases"
+                / release_id
+            )
+            objects = []
+            for relative, raw in payloads.items():
+                path = release_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                objects.append({
+                    "path": relative,
+                    "id": f"id-{len(objects)}",
+                    "name": path.name,
+                    "size": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "md5": "0" * 32,
+                })
+            report = {"inventory_sha256": release_id}
+            inventory = {
+                "inventory_sha256": release_id,
+                "objects": objects,
+            }
+            retained_manifest = {
+                "inventory_sha256": release_id,
+                "audit_report_sha256": audit_sha,
+            }
+            with patch(
+                "dbw_retained_source._reviewed_audit",
+                return_value=(report, inventory, audit_sha),
+            ):
+                result = validate_native_bronze_tree(
+                    data_root,
+                    release_id,
+                    Path(temporary) / "audit",
+                    retained_manifest=retained_manifest,
+                )
+                self.assertEqual(result["verified_files"], len(payloads))
+                self.assertEqual(
+                    result["verified_bytes"],
+                    sum(len(raw) for raw in payloads.values()),
+                )
+                (release_root / "metadata/br_dbw_metadata.parquet").write_bytes(
+                    b"metadatu"
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "native input digest changed"
+                ):
+                    validate_native_bronze_tree(
+                        data_root,
+                        release_id,
+                        Path(temporary) / "audit",
+                        retained_manifest=retained_manifest,
+                    )
+
+    def test_gold_coverage_mart_matches_retained_totals(self):
+        import duckdb
+
+        retained = {
+            "observations": 879_999_727,
+            "dictionaries": 8_358_612,
+            "metadata": 1_531,
+            "taxonomy": 1_550,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "coverage.parquet"
+            with duckdb.connect() as connection:
+                connection.execute(
+                    f"COPY (SELECT 1550::BIGINT AS total_indicators, "
+                    f"879999727::BIGINT AS total_observations) "
+                    f"TO '{path}' (FORMAT PARQUET)"
+                )
+                report = validation._verify_dbw_dataset(
+                    connection,
+                    {
+                        "dataset_id": "mart_dbw_coverage",
+                        "row_count": 1,
+                        "date_column": None,
+                        "min_date": None,
+                        "max_date": None,
+                        "columns": [
+                            {
+                                "name": "total_indicators",
+                                "type": "BIGINT",
+                            },
+                            {
+                                "name": "total_observations",
+                                "type": "BIGINT",
+                            },
+                        ],
+                    },
+                    [path],
+                    retained,
+                )
+
+        self.assertEqual(report["total_indicators"], 1_550)
+        self.assertEqual(report["total_observations"], 879_999_727)
+
+    def test_dbw_has_a_canonical_release_root(self):
+        self.assertIn("dbw", RELEASE_SOURCES)
+        store = _Store()
+        release_root, direct = resolve_source_release_root(
+            store, "root", "dbw", is_writer=True
+        )
+        self.assertTrue(direct)
+        self.assertEqual(release_root, "root-releases-dbw")
+        again, direct_again = resolve_source_release_root(
+            store, "root", "dbw", is_writer=True
+        )
+        self.assertEqual((again, direct_again), (release_root, True))
+
+
+if __name__ == "__main__":
+    unittest.main()

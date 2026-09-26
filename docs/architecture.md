@@ -149,6 +149,14 @@ explicit part for selections above 64 MiB. Snapshot identity is the audited reta
 audit report; native-to-Bronze lineage remains unresolved. This snapshot is independent of NBP
 release identity and the native dbt business catalogue.
 
+A modeled DBW build may consume the native 64-character release only after an
+Actions runner reconstructs the exact reviewed audit package. Before dbt, the builder
+authenticates the pinned audit/inventory hashes and verifies every local native path,
+size and SHA-256 against all 3,103 audited descriptors. Its release input preserves
+the retained UUID pointer, audit hash, indicator-index fingerprint and retained
+dataset-file descriptors. This bridge does not upgrade the retained coverage or
+lineage status and does not make a developer checkout an operational dependency.
+
 The retained DBW publisher alone additionally uses a non-expiring operational Git-ref
 claim acquired atomically before Drive namespace mutation. Explicit expected-SHA leases
 protect acquisition/release, and the reviewed audit hashes are enforced before either
