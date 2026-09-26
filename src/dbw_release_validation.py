@@ -8,6 +8,12 @@ import tempfile
 from typing import Any
 
 from dbw_platform_contract import DBW_PLATFORM_DATASETS
+from dbw_retained_source import (
+    RETAINED_COVERAGE_STATUS,
+    RETAINED_LINEAGE_STATUS,
+    RETAINED_SOURCE_ID,
+    validate_retained_source,
+)
 from release_protocol import restore_release
 from release_validation import ReleaseValidationError, verify_local_dataset
 
@@ -108,17 +114,20 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW ingestion evidence has invalid source identity or code SHA"
         )
-    retained_release_id = state.get("release_id")
     inputs = manifest.get("inputs")
-    if (
-        not isinstance(retained_release_id, str)
-        or not isinstance(inputs, list)
-        or len(inputs) != 1
-        or inputs[0].get("source_id") != DBW_SOURCE_ID
-        or inputs[0].get("release_id") != retained_release_id
-    ):
+    if not isinstance(inputs, list) or len(inputs) != 1:
         raise ReleaseValidationError(
-            "DBW modeled release is not bound to one retained Bronze snapshot"
+            "DBW modeled release must bind exactly one retained Bronze source"
+        )
+    try:
+        retained_manifest = validate_retained_source(store, inputs[0])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReleaseValidationError(str(exc)) from exc
+    retained_release_id = retained_manifest["snapshot_id"]
+    retained_inventory_sha256 = retained_manifest["inventory_sha256"]
+    if state.get("release_id") != retained_release_id:
+        raise ReleaseValidationError(
+            "DBW ingestion evidence differs from the retained snapshot"
         )
     source_states = state.get("sources")
     source_state = (
@@ -129,20 +138,36 @@ def validate_staged_dbw_release(
     if (
         not isinstance(source_state, dict)
         or source_state.get("release_id") != retained_release_id
-        or source_state.get("coverage_status") != "complete_retained_inventory"
+        or source_state.get("native_inventory_sha256")
+        != retained_inventory_sha256
+        or source_state.get("retained_manifest_file_id")
+        != inputs[0]["manifest_file_id"]
+        or source_state.get("retained_manifest_sha256")
+        != inputs[0]["manifest_sha256"]
+        or source_state.get("coverage_status")
+        != RETAINED_COVERAGE_STATUS
+        or source_state.get("lineage_status")
+        != RETAINED_LINEAGE_STATUS
     ):
         raise ReleaseValidationError(
-            "DBW evidence does not prove the complete dated retained inventory"
+            "DBW evidence differs from the authoritative retained source"
         )
 
     sources = catalogue.get("sources")
     if (
         not isinstance(sources, list)
         or len(sources) != 1
+        or not isinstance(sources[0], dict)
         or sources[0].get("source_id") != DBW_SOURCE_ID
+        or sources[0].get("retained_snapshot_id")
+        != retained_release_id
+        or sources[0].get("coverage_status")
+        != RETAINED_COVERAGE_STATUS
+        or sources[0].get("lineage_status")
+        != RETAINED_LINEAGE_STATUS
     ):
         raise ReleaseValidationError(
-            "business catalogue must contain exactly one DBW source"
+            "business catalogue does not preserve the retained DBW source"
         )
     if catalogue.get("code_sha") != code_sha:
         raise ReleaseValidationError(
