@@ -422,6 +422,31 @@ class DBWReleaseValidationTests(unittest.TestCase):
                     retained_pointer_file_id="different-pointer",
                 )
 
+    def test_retained_pointer_drift_during_validation_is_rejected(self):
+        store, manifest = _candidate()
+
+        def verify(_connection, dataset, _paths, _retained):
+            if dataset["dataset_id"] == "mart_dbw_coverage":
+                store.files["retained-pointer"] = b"{}"
+            return {"dataset_id": dataset["dataset_id"]}
+
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            side_effect=verify,
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "retained source changed during modeled validation",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
     def test_changed_live_retained_manifest_is_rejected(self):
         store, manifest = _candidate()
         store.files["retained-manifest"] += b" "
