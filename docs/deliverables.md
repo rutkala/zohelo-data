@@ -28,7 +28,7 @@ main-only manual read-only Actions workflow pins the deployed code and productio
 root and is prepared to check all 13 retained folders, deep BDL paths, a large
 archive link and one bounded preview in the actual portal. It has **not** run;
 no merge, deployment, authenticated live result or complete data coverage
-is claimed here. Local checks: 755 portal unit tests in 53 files, typecheck,
+is claimed here. Initial branch checks: 755 portal unit tests in 53 files, typecheck,
 lint (24 existing warnings), workflow policy and script syntax passed.
 The portal app compiled, but both local production-build attempts ended during
 Workbox service-worker generation (terser early exit). Local Playwright
@@ -36,6 +36,16 @@ could not launch because Chromium was absent and the browser CDN delivered
 an invalid 0 MiB archive; the new browser spec is included in the PR CI gate.
 The next acceptance steps are reviewed PR CI, main merge/deploy, then the
 manual authenticated family-by-family workflow receipt.
+An integration correction routes preview TEMP VIEW creation and removal through
+the SQL editor's dedicated serialized connection; closing an in-memory/OPFS
+session retires its temporary preview bookkeeping. The browser regression now
+queries a real small CSV preview through the editor, and catalogue-error browser
+assertions select their own alert despite independent native Landing errors.
+The correction's local checks pass 759 portal tests in 53 files, typecheck
+and lint (24 existing warnings). The initial PR CI built both deployment-base
+variants and ran 14 of 16 browser flows on one base; two catalogue-error
+assertions exposed by the new independent native alert are corrected here.
+The native CSV editor regression and complete browser matrix await refreshed CI.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as

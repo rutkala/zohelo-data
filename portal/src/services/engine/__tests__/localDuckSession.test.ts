@@ -79,6 +79,18 @@ const makeSession = (engine: ReturnType<typeof makeFakeEngine>, teardown = vi.fn
   });
 
 describe("LocalDuckSessionImpl — connection discipline", () => {
+  it("notifies temporary-resource owners after engine teardown, including OPFS switches", async () => {
+    const engine = makeFakeEngine();
+    const teardown = vi.fn(async () => { engine.events.push("db:teardown"); });
+    const session = makeSession(engine, teardown);
+    const observer = vi.fn(() => { engine.events.push("preview:retired"); });
+    session.onClose(observer);
+    await session.close();
+    await session.close();
+    expect(observer).toHaveBeenCalledTimes(1);
+    expect(engine.events).toEqual(["db:teardown", "preview:retired"]);
+  });
+
   it("runs statements on a dedicated connection, never the shared one", async () => {
     const engine = makeFakeEngine();
     const session = makeSession(engine);

@@ -1,5 +1,6 @@
 /** Metadata-only browser for the actual retained 01_landing tree. */
 import type * as duckdb from "@duckdb/duckdb-wasm";
+import { runQuery, type LocalDuckSession } from "@/services/engine";
 import { sqlEscapeIdentifier, sqlEscapeString } from "@/lib/sqlSanitize";
 import { DRIVE_ROOT } from "./auth";
 import {
@@ -160,20 +161,37 @@ export function nativeDriveLink(file: NativeLandingFile, token: string, action: 
 }
 
 export type NativePreviewFormat = "csv" | "json" | "jsonl" | "parquet";
-const activeNativePreviews = new WeakMap<object, { path: string; view: string; connection: duckdb.AsyncDuckDBConnection }>();
+const activeNativePreviews = new WeakMap<object, { path: string; view: string; session: LocalDuckSession; unsubscribe: () => void }>();
 const activeNativeEngines = new Set<duckdb.AsyncDuckDB>();
 const pendingNativeDisposals = new WeakMap<object, Promise<void>>();
+const retireNativePreview = (db: duckdb.AsyncDuckDB) => {
+  const active = activeNativePreviews.get(db);
+  active?.unsubscribe();
+  activeNativePreviews.delete(db);
+  activeNativeEngines.delete(db);
+};
+const runNativeDdl = async (session: LocalDuckSession, sql: string) => {
+  const result = await runQuery(session, sql);
+  if (result.error) throw new Error(result.error);
+};
 export function disposeNativePreview(db: duckdb.AsyncDuckDB): Promise<void> {
   const pending = pendingNativeDisposals.get(db);
   if (pending) return pending;
   const active = activeNativePreviews.get(db);
   if (!active) return Promise.resolve();
+  // A closed local engine has discarded its TEMP namespace and registered
+  // buffers. No SQL can be sent to it, and it must not block future browsing.
+  if (!active.session.isOpen) { retireNativePreview(db); return Promise.resolve(); }
   const task = (async () => {
     try {
-      await active.connection.query(`DROP VIEW IF EXISTS temp.${sqlEscapeIdentifier(active.view)};`);
+      await runNativeDdl(active.session, `DROP VIEW IF EXISTS temp.${sqlEscapeIdentifier(active.view)};`);
       await db.dropFile(active.path);
-      activeNativePreviews.delete(db);
-      activeNativeEngines.delete(db);
+      retireNativePreview(db);
+    } catch (error) {
+      // Closing an OPFS session destroys its temporary namespace and buffer.
+      // A concurrent close can invalidate DDL already queued by refresh.
+      if (!active.session.isOpen) { retireNativePreview(db); return; }
+      throw error;
     } finally {
       pendingNativeDisposals.delete(db);
     }
@@ -197,8 +215,7 @@ export function nativePreviewFormat(file: NativeLandingFile): NativePreviewForma
 
 /** Verify native bytes before creating a temporary, non-publication SQL view. */
 export async function previewNativeFile(
-  db: duckdb.AsyncDuckDB,
-  conn: duckdb.AsyncDuckDBConnection,
+  session: LocalDuckSession,
   selected: NativeLandingFile,
   folders: Readonly<Record<string, NativeLandingFolder>>,
   rootId: string,
@@ -206,6 +223,9 @@ export async function previewNativeFile(
   isCurrent: () => boolean,
   budget: DriveDownloadBudget
 ): Promise<string> {
+  const db = session.local.db;
+  if (!session.isOpen || typeof session.onClose !== "function")
+    throw new Error("Native Landing preview needs an open local session.");
   const before = await freshNativeFile(selected, folders, rootId, token, isCurrent);
   const format = nativePreviewFormat(before);
   if (!format) throw new Error("Preview requires a supported file of at most 8 MiB with a verifiable Drive SHA-256. Open in Drive instead.");
@@ -229,17 +249,23 @@ export async function previewNativeFile(
   const reader = format === "parquet" ? "read_parquet" : format === "csv" ? "read_csv_auto" : format === "jsonl" ? "read_ndjson_auto" : "read_json_auto";
   const target = `temp.${sqlEscapeIdentifier(view)}`;
   try {
-    await conn.query(`CREATE TEMP VIEW ${sqlEscapeIdentifier(view)} AS SELECT * FROM ${reader}('${sqlEscapeString(path)}');`);
+    await runNativeDdl(session, `CREATE TEMP VIEW ${sqlEscapeIdentifier(view)} AS SELECT * FROM ${reader}('${sqlEscapeString(path)}');`);
   } catch (error) {
+    // A failed streamed DDL result can still have created the TEMP view.
+    if (session.isOpen) await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
     await db.dropFile(path).catch(() => undefined);
     throw error;
   }
   if (!isCurrent()) {
-    await conn.query(`DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
-    await db.dropFile(path).catch(() => undefined);
+    if (session.isOpen) await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
+    if (session.isOpen) await db.dropFile(path).catch(() => undefined);
     throw new Error("Native Landing preview was superseded.");
   }
-  activeNativePreviews.set(db, { path, view, connection: conn });
+  const unsubscribe = session.onClose(() => {
+    if (activeNativePreviews.get(db)?.view === view) retireNativePreview(db);
+  });
+  if (!session.isOpen) throw new Error("Native Landing preview session closed.");
+  activeNativePreviews.set(db, { path, view, session, unsubscribe });
   activeNativeEngines.add(db);
   return target;
 }

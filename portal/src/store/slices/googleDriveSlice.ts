@@ -843,9 +843,10 @@ export const createGoogleDriveSlice: StateCreator<
       const root = get().nativeLandingRoot;
       const selected = get().nativeLandingChildren[folderId]?.files.find((file) => file.id === fileId);
       const session = get().currentSession;
-      const local = asLocalDuckSession(session)?.local;
+      const localSession = asLocalDuckSession(session);
+      const local = localSession?.local;
       const generation = nativeGeneration;
-      if (!token || !root || !selected || !local) {
+      if (!token || !root || !selected || !localSession || !local) {
         set({ nativeLandingActionError: "Sign in and start a local DuckDB session to preview this file." });
         return null;
       }
@@ -853,7 +854,7 @@ export const createGoogleDriveSlice: StateCreator<
         get().nativeLandingRoot === root && get().currentSession === session;
       set({ nativeLandingSelected: fileId, nativeLandingActionError: null });
       try {
-        const target = await previewNativeFile(local.db, local.connection, selected,
+        const target = await previewNativeFile(localSession, selected,
           get().nativeLandingFolders, root.id, token, current, budgetForEngine(local.db));
         if (!current()) return null;
         await get().fetchDatabasesAndTablesInfo();

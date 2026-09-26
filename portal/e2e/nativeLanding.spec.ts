@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { createHash } from "node:crypto";
 
 test("native Landing expands paginated nested folders without a publication and opens Drive-managed originals", async ({ page }) => {
   const folder = "application/vnd.google-apps.folder";
@@ -9,6 +10,13 @@ test("native Landing expands paginated nested folders without a publication and 
     version: "2", modifiedTime: "2026-09-26T01:00:00Z", size: "9000000000",
     webViewLink: "https://drive.google.com/file/d/huge-archive/view",
     webContentLink: "https://drive.google.com/uc?id=huge-archive&export=download",
+    capabilities: { canDownload: true } };
+  const csv = "marker,value\nNATIVE_PREVIEW_OK,7\n";
+  const small = { id: "small-csv", name: "sample.csv", mimeType: "text/csv", parents: ["deep"],
+    version: "3", modifiedTime: "2026-09-26T02:00:00Z", size: String(Buffer.byteLength(csv)),
+    sha256Checksum: createHash("sha256").update(csv).digest("hex"),
+    webViewLink: "https://drive.google.com/file/d/small-csv/view",
+    webContentLink: "https://drive.google.com/uc?id=small-csv&export=download",
     capabilities: { canDownload: true } };
   let mediaRequests = 0;
   await page.addInitScript(() => {
@@ -24,11 +32,13 @@ test("native Landing expands paginated nested folders without a publication and 
     const headers = { "access-control-allow-origin": "*" };
     if (url.searchParams.get("alt") === "media") {
       mediaRequests++;
-      return route.fulfill({ status: 403, headers });
+      return url.pathname.endsWith("/small-csv")
+        ? route.fulfill({ headers, contentType: "text/csv", body: csv })
+        : route.fulfill({ status: 403, headers });
     }
     const id = url.pathname.split("/").pop();
     if (id && id !== "files") {
-      const item = ({ landing: root, bdl: nested, deep: leaf, "huge-archive": archive } as Record<string, object>)[id];
+      const item = ({ landing: root, bdl: nested, deep: leaf, "huge-archive": archive, "small-csv": small } as Record<string, object>)[id];
       return route.fulfill({ status: item ? 200 : 404, headers, json: item ?? {} });
     }
     const q = url.searchParams.get("q") ?? "";
@@ -39,7 +49,7 @@ test("native Landing expands paginated nested folders without a publication and 
     else if (q.includes("'landing' in parents")) files = [nested];
     else if (q.includes("'bdl' in parents")) files = [leaf];
     else if (q.includes("'deep' in parents")) {
-      files = url.searchParams.has("pageToken") ? [archive] :
+      files = url.searchParams.has("pageToken") ? [archive, small] :
         Array.from({ length: 1000 }, (_, i) => ({ ...archive, id: `other-${i}`, name: "duplicate.unknown", size: "2", webViewLink: undefined, webContentLink: undefined, capabilities: { canDownload: false } }));
       if (!url.searchParams.has("pageToken")) nextPageToken = "continuation";
     }
@@ -63,6 +73,13 @@ test("native Landing expands paginated nested folders without a publication and 
   await expect.poll(() => page.evaluate(() => (window as Window & { __nativeAction?: string }).__nativeAction)).toBe(archive.webContentLink);
   await expect(archiveRow.getByRole("button", { name: "Preview in SQL" })).toHaveCount(0);
   expect(mediaRequests).toBe(0);
+  const previewRow = section.locator('[data-native-id="small-csv"]');
+  await previewRow.getByRole("button", { name: "Preview in SQL" }).click();
+  await expect(page.getByRole("tab", { name: "Native Landing/sample.csv" })).toBeVisible();
+  // This runs on the editor's dedicated connection, not the catalogue
+  // connection that registered the file. A cross-connection TEMP VIEW fails.
+  await expect(page.getByText("NATIVE_PREVIEW_OK", { exact: true }).first()).toBeVisible();
+  expect(mediaRequests).toBe(1);
   await page.getByTitle("Disconnect Google Drive").click();
   await expect(section).toHaveCount(0);
 });
