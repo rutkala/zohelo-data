@@ -150,7 +150,12 @@ def validate_staged_dbw_release(
                         path.write_bytes(raw)
                         paths.append(path)
                     reports.append(
-                        verify_local_dataset(connection, dataset, paths)
+                        _verify_dbw_dataset(
+                            connection,
+                            dataset,
+                            paths,
+                            retained_dataset_rows,
+                        )
                     )
                 finally:
                     for path in paths:
@@ -270,6 +275,34 @@ def validate_staged_dbw_release(
         "retained_release_id": retained_release_id,
         "observation_rows": next(iter(observation_rows.values())),
         "datasets": reports,
+    }
+
+
+def _verify_dbw_dataset(
+    connection: Any,
+    dataset: dict[str, Any],
+    paths: list[Path],
+    retained_dataset_rows: dict[str, int],
+) -> dict[str, Any]:
+    report = verify_local_dataset(connection, dataset, paths)
+    if dataset["dataset_id"] != "mart_dbw_coverage":
+        return report
+    result = connection.execute(
+        "SELECT total_indicators, total_observations "
+        "FROM release_validation_dataset"
+    ).fetchall()
+    expected = [(
+        retained_dataset_rows["taxonomy"],
+        retained_dataset_rows["observations"],
+    )]
+    if result != expected:
+        raise ReleaseValidationError(
+            "DBW coverage mart totals differ from retained source"
+        )
+    return {
+        **report,
+        "total_indicators": result[0][0],
+        "total_observations": result[0][1],
     }
 
 
