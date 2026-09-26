@@ -260,8 +260,8 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
-            side_effect=lambda _connection, dataset, paths: {
+            "_verify_dbw_dataset",
+            side_effect=lambda _connection, dataset, paths, _retained: {
                 "dataset_id": dataset["dataset_id"],
                 "files": len(paths),
             },
@@ -293,7 +293,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -319,7 +319,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -344,7 +344,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -404,7 +404,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -424,7 +424,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -446,7 +446,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             validation, "restore_release", return_value=manifest
         ), patch.object(
             validation,
-            "verify_local_dataset",
+            "_verify_dbw_dataset",
             return_value={"status": "verified"},
         ):
             with self.assertRaisesRegex(
@@ -458,6 +458,49 @@ class DBWReleaseValidationTests(unittest.TestCase):
                     {},
                     retained_pointer_file_id="retained-pointer",
                 )
+
+    def test_gold_coverage_mart_matches_retained_totals(self):
+        import duckdb
+
+        retained = {
+            "observations": 879_999_727,
+            "dictionaries": 8_358_612,
+            "metadata": 1_531,
+            "taxonomy": 1_550,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "coverage.parquet"
+            with duckdb.connect() as connection:
+                connection.execute(
+                    f"COPY (SELECT 1550::BIGINT AS total_indicators, "
+                    f"879999727::BIGINT AS total_observations) "
+                    f"TO '{path}' (FORMAT PARQUET)"
+                )
+                report = validation._verify_dbw_dataset(
+                    connection,
+                    {
+                        "dataset_id": "mart_dbw_coverage",
+                        "row_count": 1,
+                        "date_column": None,
+                        "min_date": None,
+                        "max_date": None,
+                        "columns": [
+                            {
+                                "name": "total_indicators",
+                                "type": "BIGINT",
+                            },
+                            {
+                                "name": "total_observations",
+                                "type": "BIGINT",
+                            },
+                        ],
+                    },
+                    [path],
+                    retained,
+                )
+
+        self.assertEqual(report["total_indicators"], 1_550)
+        self.assertEqual(report["total_observations"], 879_999_727)
 
     def test_dbw_has_a_canonical_release_root(self):
         self.assertIn("dbw", RELEASE_SOURCES)
