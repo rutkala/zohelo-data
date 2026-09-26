@@ -5,14 +5,16 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
 **Status precedence:** this takeover section and the 26 September current-status
-entries are authoritative. Every operational section dated 25 September or
-earlier is retained as historical evidence only. Its imperative words
-(`current`, `next`, `keep`, `continue`, `prohibit`, `reopen`) must not
-be executed unless the instruction is explicitly restated in the 26 September
-status. In particular, old local-PID/devcontainer continuation, “no Actions
-writer,” and superseded scheduled-workflow directions do not override the
-current GitHub Actions production path, missing-secret prerequisite, or
-serialized lock/queue handover gate.
+entries are authoritative for execution order, host/runtime choice and live
+status. Earlier dated local-PID/devcontainer continuation, “no Actions writer,”
+and superseded scheduled-workflow directions are historical and do not override
+the current GitHub Actions production path, missing-secret prerequisite or
+serialized lock/queue handover gate. This precedence rule does **not** retire
+durable safety invariants: non-expiring ownership claims and locks,
+cross-host serialization, exact approved hashes, immutable evidence and
+retention guarantees, fail-closed release guards, ADR constraints, and
+destructive-action prohibitions remain binding unless a later reviewed decision
+explicitly supersedes the specific invariant.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
