@@ -53,8 +53,8 @@ def verify_local_dataset(connection: Any, dataset: dict[str, Any], files: list[P
     observed = {
         "dataset_id": dataset["dataset_id"],
         "rows": count,
-        "min_date": first.isoformat() if first is not None else None,
-        "max_date": last.isoformat() if last is not None else None,
+        "min_date": _format_dataset_bound(first, date_column),
+        "max_date": _format_dataset_bound(last, date_column),
         "columns": columns,
     }
     expected = {
@@ -314,6 +314,25 @@ def _json_object(raw: bytes, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ReleaseValidationError(f"{label} must be a JSON object")
     return value
+
+
+def _format_dataset_bound(value: Any, column: Any) -> str | None:
+    """Normalize SQL bounds to the manifest's ISO-date representation."""
+    if value is None:
+        return None
+    formatter = getattr(value, "isoformat", None)
+    if callable(formatter):
+        return formatter()
+    if (
+        column == "period_year"
+        and isinstance(value, int)
+        and not isinstance(value, bool)
+        and 1 <= value <= 9999
+    ):
+        return f"{value:04d}-01-01"
+    raise ReleaseValidationError(
+        f"release date column {column!r} has unsupported boundary values"
+    )
 
 
 def _quote_identifier(value: Any) -> str:

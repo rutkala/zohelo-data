@@ -17,6 +17,10 @@ from dbw_platform_contract import (
     DBW_PLATFORM_DATE_COLUMNS,
     DBW_PLATFORM_MODEL_NAMES,
 )
+from dbw_retained_source import (
+    load_retained_source_descriptor,
+    validate_native_bronze_tree,
+)
 from runtime_metadata import _code_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -153,8 +157,29 @@ def _copy_relation(
     return paths
 
 
-def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
-    """Build all eleven DBW relations and return release-protocol inputs."""
+def build_candidate(
+    data_root: Path,
+    release_id: str,
+    workspace: Path,
+    *,
+    retained_pointer: Path,
+    retained_manifest: Path,
+    retained_pointer_file_id: str,
+    retained_audit_dir: Path,
+) -> dict:
+    """Build all eleven DBW relations from one verified retained snapshot."""
+    retained_source, retained_document = load_retained_source_descriptor(
+        retained_pointer,
+        retained_manifest,
+        pointer_file_id=retained_pointer_file_id,
+        expected_inventory_sha256=release_id,
+    )
+    native_validation = validate_native_bronze_tree(
+        data_root,
+        release_id,
+        retained_audit_dir,
+        retained_manifest=retained_document,
+    )
     database = workspace / "dbw.duckdb"
     target = workspace / "target"
     env = dict(os.environ)
@@ -182,7 +207,11 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
         "sources": [{
             "source_id": "gus_dbw", "name": "GUS DBW",
             "description": "Statistics Poland domain knowledge databases.",
-            "status": "published_snapshot", "checked_through": None,
+            "status": "published_snapshot",
+            "retained_snapshot_id": retained_source["snapshot_id"],
+            "coverage_status": retained_source["coverage_status"],
+            "lineage_status": retained_source["lineage_status"],
+            "checked_through": None,
             "latest_observation_date": None, "last_successful_ingestion_at": None,
             "last_attempt_at": None, "raw_response_count": 0,
         }],
@@ -192,11 +221,16 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
     (target / "ingestion-state.json").write_text(json.dumps({
         "format_version": 1, "source_id": "gus_dbw",
         "code_sha": code_sha,
-        "release_id": release_id, "status": "published_snapshot",
+        "release_id": retained_source["snapshot_id"],
+        "status": "published_snapshot",
         "sources": {"gus_dbw": {
             "status": "published_snapshot",
-            "release_id": release_id,
-            "coverage_status": "complete_retained_inventory",
+            "release_id": retained_source["snapshot_id"],
+            "native_inventory_sha256": retained_source["inventory_sha256"],
+            "retained_manifest_file_id": retained_source["manifest_file_id"],
+            "retained_manifest_sha256": retained_source["manifest_sha256"],
+            "coverage_status": retained_source["coverage_status"],
+            "lineage_status": retained_source["lineage_status"],
         }},
     }, sort_keys=True), encoding="utf-8")
     datasets = []
@@ -211,8 +245,20 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
                 rows, minimum, maximum = connection.execute(
                     f'SELECT count(*), min("{date_column}"), max("{date_column}") FROM {relation}'
                 ).fetchone()
-                min_date = str(minimum) if minimum is not None else None
-                max_date = str(maximum) if maximum is not None else None
+                if date_column == "period_year":
+                    min_date = (
+                        f"{int(minimum):04d}-01-01"
+                        if minimum is not None
+                        else None
+                    )
+                    max_date = (
+                        f"{int(maximum):04d}-01-01"
+                        if maximum is not None
+                        else None
+                    )
+                else:
+                    min_date = str(minimum) if minimum is not None else None
+                    max_date = str(maximum) if maximum is not None else None
             else:
                 rows = connection.execute(f"SELECT count(*) FROM {relation}").fetchone()[0]
                 min_date = max_date = None
@@ -245,19 +291,44 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
             for name in ("manifest.json", "catalog.json", "run_results.json",
                          "business-catalog.json", "ingestion-state.json")
         ],
-        "inputs": [{"source_id": "gus_dbw", "release_id": release_id}],
-        "measurements": {"release_id": release_id, "dataset_count": len(datasets)},
+        "inputs": [retained_source],
+        "measurements": {
+            "retained_snapshot_id": retained_source["snapshot_id"],
+            "native_inventory_sha256": retained_source["inventory_sha256"],
+            "native_audit_report_sha256": native_validation[
+                "audit_report_sha256"
+            ],
+            "native_verified_files": native_validation["verified_files"],
+            "native_verified_bytes": native_validation["verified_bytes"],
+            "dataset_count": len(datasets),
+        },
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True)
-    parser.add_argument("--release-id", required=True)
+    parser.add_argument(
+        "--release-id",
+        required=True,
+        help="Audited 64-character native inventory SHA-256",
+    )
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--retained-pointer", type=Path, required=True)
+    parser.add_argument("--retained-manifest", type=Path, required=True)
+    parser.add_argument("--retained-pointer-file-id", required=True)
+    parser.add_argument("--retained-audit-dir", type=Path, required=True)
     args = parser.parse_args()
     args.workspace.mkdir(parents=True, exist_ok=True)
-    print(json.dumps(build_candidate(args.data_root, args.release_id, args.workspace), indent=2))
+    print(json.dumps(build_candidate(
+        args.data_root,
+        args.release_id,
+        args.workspace,
+        retained_pointer=args.retained_pointer,
+        retained_manifest=args.retained_manifest,
+        retained_pointer_file_id=args.retained_pointer_file_id,
+        retained_audit_dir=args.retained_audit_dir,
+    ), indent=2))
 
 
 if __name__ == "__main__":

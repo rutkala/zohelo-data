@@ -16,7 +16,7 @@ CANONICAL_CONTROL_FOLDER = "06_control"
 CANONICAL_NBP_CONTROL_FOLDER = "nbp"
 CANONICAL_SOURCE_CAMPAIGNS_FOLDER = "source_campaigns"
 CANONICAL_SOURCES = ("nbp", "bdl", "wdi")
-RELEASE_SOURCES = (*CANONICAL_SOURCES, "eurostat")
+RELEASE_SOURCES = (*CANONICAL_SOURCES, "eurostat", "dbw")
 
 # Legacy layout constants
 LEGACY_NBP_CONTROL_FOLDER = "ingestion-control"
