@@ -1,4 +1,8 @@
 import { test, expect } from "@playwright/test";
+import { rm, writeFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+const BUILD_MARKER = fileURLToPath(new URL("../dist/portal-build.json", import.meta.url));
 
 test("public app information works without JavaScript, a profile or Google consent", async ({
   browser,
@@ -50,4 +54,35 @@ test("an installed service worker keeps policy URLs out of the workspace fallbac
   await page.getByRole("navigation").getByRole("link", { name: "Terms", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Terms of use");
   await expect(page.getByRole("dialog", { name: "Create Profile" })).toHaveCount(0);
+});
+
+
+test("an installed service worker leaves the deployment marker machine-readable", async ({
+  page,
+}) => {
+  const marker = {
+    git_commit: "a".repeat(40),
+    supported_release_formats: [1, 2],
+    supported_drive_layouts: ["canonical-release-roots-v1"],
+    supported_retained_bronze_formats: [1, 2],
+  };
+  await writeFile(BUILD_MARKER, JSON.stringify(marker) + "\n");
+  try {
+    await page.goto("./");
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.register(new URL("sw.js", location.href).href);
+      await navigator.serviceWorker.ready;
+    });
+    await page.reload();
+    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+
+    const response = await page.goto(
+      "./portal-build.json?verification=service-worker"
+    );
+    expect(response?.status()).toBe(200);
+    expect(await response?.json()).toEqual(marker);
+    await expect(page.getByRole("dialog", { name: "Create Profile" })).toHaveCount(0);
+  } finally {
+    await rm(BUILD_MARKER, { force: true });
+  }
 });
