@@ -76,6 +76,48 @@ def validate_staged_dbw_release(
             "staged DBW release does not contain every required modeled dataset"
         )
 
+    inputs = manifest.get("inputs")
+    if not isinstance(inputs, list) or len(inputs) != 1:
+        raise ReleaseValidationError(
+            "DBW modeled release must bind exactly one retained Bronze source"
+        )
+    try:
+        retained_manifest = validate_retained_source(
+            store,
+            inputs[0],
+            expected_pointer_file_id=retained_pointer_file_id,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReleaseValidationError(str(exc)) from exc
+    retained_release_id = retained_manifest["snapshot_id"]
+    retained_inventory_sha256 = retained_manifest["inventory_sha256"]
+    observation_rows = {
+        dataset_id: by_dataset[dataset_id]["row_count"]
+        for dataset_id in _OBSERVATION_DATASETS
+    }
+    if (
+        any(
+            not isinstance(rows, int)
+            or isinstance(rows, bool)
+            or rows <= 0
+            for rows in observation_rows.values()
+        )
+        or len(set(observation_rows.values())) != 1
+    ):
+        raise ReleaseValidationError(
+            "DBW Bronze, Silver and Gold observation row counts differ"
+        )
+    retained_dataset_rows = inputs[0]["dataset_rows"]
+    for dataset_id, retained_dataset in _RETAINED_ROW_DATASETS.items():
+        if (
+            by_dataset[dataset_id]["row_count"]
+            != retained_dataset_rows[retained_dataset]
+        ):
+            raise ReleaseValidationError(
+                f"DBW modeled {dataset_id} rows differ from retained "
+                f"{retained_dataset}"
+            )
+
     reports: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(
         prefix="zohelo-dbw-release-validation-"
@@ -129,21 +171,6 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW ingestion evidence has invalid source identity or code SHA"
         )
-    inputs = manifest.get("inputs")
-    if not isinstance(inputs, list) or len(inputs) != 1:
-        raise ReleaseValidationError(
-            "DBW modeled release must bind exactly one retained Bronze source"
-        )
-    try:
-        retained_manifest = validate_retained_source(
-            store,
-            inputs[0],
-            expected_pointer_file_id=retained_pointer_file_id,
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ReleaseValidationError(str(exc)) from exc
-    retained_release_id = retained_manifest["snapshot_id"]
-    retained_inventory_sha256 = retained_manifest["inventory_sha256"]
     if state.get("release_id") != retained_release_id:
         raise ReleaseValidationError(
             "DBW ingestion evidence differs from the retained snapshot"
@@ -229,32 +256,6 @@ def validate_staged_dbw_release(
                 f"dbt artifact relation differs for {model_id}"
             )
 
-    observation_rows = {
-        dataset_id: by_dataset[dataset_id]["row_count"]
-        for dataset_id in _OBSERVATION_DATASETS
-    }
-    if (
-        any(
-            not isinstance(rows, int)
-            or isinstance(rows, bool)
-            or rows <= 0
-            for rows in observation_rows.values()
-        )
-        or len(set(observation_rows.values())) != 1
-    ):
-        raise ReleaseValidationError(
-            "DBW Bronze, Silver and Gold observation row counts differ"
-        )
-    retained_dataset_rows = inputs[0]["dataset_rows"]
-    for dataset_id, retained_dataset in _RETAINED_ROW_DATASETS.items():
-        if (
-            by_dataset[dataset_id]["row_count"]
-            != retained_dataset_rows[retained_dataset]
-        ):
-            raise ReleaseValidationError(
-                f"DBW modeled {dataset_id} rows differ from retained "
-                f"{retained_dataset}"
-            )
     metrics = catalogue.get("metrics")
     if (
         catalogue.get("metrics_status") != "awaiting_business_approval"
