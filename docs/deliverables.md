@@ -24,8 +24,8 @@ rejects any unapproved semantic-metric claim. The validator deletes each tempora
 dataset after checking it, so fresh verification is bounded by one dataset rather
 than the whole release.
 
-This remains code and fixture delivery until review, CI and merge. It does not create
-`releases/dbw`, upload a candidate, move a pointer or establish live SQL acceptance.
+This guard does not create `releases/dbw`, upload a candidate, move a pointer or
+establish live SQL acceptance.
 The next production increment remains a source-sized serialized Actions publisher
 that can upload and release each bounded dataset without retaining three complete
 879-million-row exports simultaneously on the runner, followed by this independent
