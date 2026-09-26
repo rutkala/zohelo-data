@@ -22,9 +22,9 @@ DuckDB dataset verification, binds dbt catalogue/manifest relations and the exac
 retained snapshot, requires modeled observation, dictionary, metadata and taxonomy
 rows to equal all four retained-manifest cardinalities (including 879,999,727
 observations), verifies the Gold coverage mart's indicator and observation totals
-against the same evidence, and rejects any unapproved semantic-metric claim. The validator deletes each temporary
-dataset after checking it, so fresh verification is bounded by one dataset rather
-than the whole release.
+against the same evidence, and rejects any unapproved semantic-metric claim. The validator reads the pinned manifest without restoring all payloads twice and
+deletes each temporary dataset after checking it, so fresh verification is one
+Drive pass and a working set bounded by one dataset rather than the whole release.
 
 This guard does not create `releases/dbw`, upload a candidate, move a pointer or
 establish live SQL acceptance.
