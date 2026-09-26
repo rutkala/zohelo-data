@@ -19,9 +19,9 @@ The modeled-release path now admits a canonical `releases/dbw` root and has a
 source-specific staged validator. Before pointer promotion it requires exactly all
 eleven DBW datasets, reads back and fingerprints every immutable file, runs fresh
 DuckDB dataset verification, binds dbt catalogue/manifest relations and the exact
-retained snapshot, requires all three observation layers to equal the retained
-manifest's 879,999,727-row cardinality, and rejects any unapproved semantic-metric
-claim. The validator deletes each temporary
+retained snapshot, requires modeled observation, dictionary, metadata and taxonomy
+rows to equal all four retained-manifest cardinalities (including 879,999,727
+observations), and rejects any unapproved semantic-metric claim. The validator deletes each temporary
 dataset after checking it, so fresh verification is bounded by one dataset rather
 than the whole release.
 
