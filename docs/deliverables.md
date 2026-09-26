@@ -200,9 +200,12 @@ proxy option. A pure Node regression validates all ten routes and rejects malfor
 or remote proxy URLs. Real browser egress verification remains required before
 resuming the ten-route operation; prior environment settings alone are not proof.
 
-Validation so far: 27 focused recovery/receipt/proxy/monitor tests and 52 existing
-BDL Web tests pass; the pinned Python environment passes pip check. Full merge CI
-and actual resume/upload verification are still pending at this code handoff.
+The 24 September handoff had passed 27 focused
+recovery/receipt/proxy/monitor tests and 52 existing BDL Web tests, plus the pinned
+Python environment's pip check. PR #166 subsequently passed the full 785-test CI
+run at its exact head. The live ten-route preflight failed before route startup
+because nine worker secrets were missing, and actual resume/upload verification
+remains pending.
 An initial Copilot patch was reviewed and corrected by the lead; no implementation
 agent is continuing. All old workspaces, native payloads and checkpoints are retained.
 The last writer's exit cause is not independently established; earlier logs prove
