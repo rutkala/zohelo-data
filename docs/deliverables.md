@@ -16,36 +16,44 @@ retention guarantees, fail-closed release guards, ADR constraints, and
 destructive-action prohibitions remain binding unless a later reviewed decision
 explicitly supersedes the specific invariant.
 
-**Native Landing portal reader — branch code ready for review, not live.**
-The `feat/native-landing-access` implementation discovers the actual
-`01_landing` tree by authenticated Drive metadata regardless of modeled
-publication pointers. It exhausts folder pages, checks root/ancestor/file
-identity around listing and actions, offers fresh Google-managed view/download
-links where available, and limits disposable SHA-256-verified local previews to
-8 MiB CSV/JSON/JSONL/Parquet. It leaves large original archives on Drive and
-preserves the published SQL reader and DBW full-table guard. A separate
-main-only manual read-only Actions workflow pins the deployed code and production
-root and is prepared to check all 13 retained folders, deep BDL paths, a large
-archive link and one bounded preview in the actual portal. It has **not** run;
-no merge, deployment, authenticated live result or complete data coverage
-is claimed here. Initial branch checks: 755 portal unit tests in 53 files, typecheck,
-lint (24 existing warnings), workflow policy and script syntax passed.
-The portal app compiled, but both local production-build attempts ended during
-Workbox service-worker generation (terser early exit). Local Playwright
-could not launch because Chromium was absent and the browser CDN delivered
-an invalid 0 MiB archive; the new browser spec is included in the PR CI gate.
-The next acceptance steps are reviewed PR CI, main merge/deploy, then the
-manual authenticated family-by-family workflow receipt.
-An integration correction routes preview TEMP VIEW creation and removal through
-the SQL editor's dedicated serialized connection; closing an in-memory/OPFS
-session retires its temporary preview bookkeeping. The browser regression now
-queries a real small CSV preview through the editor, and catalogue-error browser
-assertions select their own alert despite independent native Landing errors.
-The correction's local checks pass 759 portal tests in 53 files, typecheck
-and lint (24 existing warnings). The initial PR CI built both deployment-base
-variants and ran 14 of 16 browser flows on one base; two catalogue-error
-assertions exposed by the new independent native alert are corrected here.
-The native CSV editor regression and complete browser matrix await refreshed CI.
+**Native Landing portal reader merged and deployed; authenticated production
+receipt remains open.** [PR #168](https://github.com/rutkala/zohelo-data/pull/168)
+merged to main as
+[`10addd1efabbaaddb3dec2f4615b8b72a710ab58`](https://github.com/rutkala/zohelo-data/commit/10addd1efabbaaddb3dec2f4615b8b72a710ab58)
+at 00:29 CEST on 27 September after exact-head review. The implementation
+discovers the actual `01_landing` tree by authenticated Drive metadata
+regardless of modeled publication pointers, exhausts folder pages, checks
+root/ancestor/file identity around listing and actions, and exposes exact file
+IDs with fresh Google-managed view/download links where available. Disposable
+local SQL previews remain limited to SHA-256-verified files no larger than 8 MiB
+in CSV/JSON/JSONL/Parquet; large original archives remain Drive-managed. The
+published SQL reader and DBW full-table guard are unchanged.
+
+The final review caught and corrected a production-verifier regression: CORS
+`OPTIONS` preflights are now allowed while every method other than `GET` and
+`OPTIONS` remains fail-closed; media-read authorization and counting apply
+only to actual `GET` requests. Exact-head
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36275586112)
+passed both deployment-base matrices, 53 test files / 759 tests and browser
+regressions. Exact-head
+[data-platform CI](https://github.com/rutkala/zohelo-data/actions/runs/36275586093)
+also passed its workflow-policy and full Python/dbt fixture checks.
+
+The main
+[Pages deployment](https://github.com/rutkala/zohelo-data/actions/runs/36276434256)
+built successfully, then its first deploy attempt timed out while requesting a
+GitHub OIDC token. A failed-job retry reused the preserved Pages artifact and
+GitHub reported the current build and deploy jobs successful, with deployment
+ID bound to `10addd1efabbaaddb3dec2f4615b8b72a710ab58` and environment URL
+`https://data.zohelo.com/` at 00:32 CEST. This is deployment evidence, not the
+authenticated data-access acceptance receipt. At 00:35 CEST a direct
+unauthenticated browser request for `portal-build.json` still resolved to the
+portal app shell rather than exposing the expected commit marker, so independent
+commit-level HTTP verification remains unresolved. The separate main-only
+manual read-only workflow has not been dispatched; its authenticated checks of
+all 13 retained folders, deep BDL paths, one large-archive link and one bounded
+preview therefore remain open. No Drive mutation, ingestion, new source
+completeness or DBW publication claim follows from this portal delivery.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
@@ -100,10 +108,13 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`e674f303644dd777b4a2d29737da488aa9b43de0`. The earlier inspection at
-`490ffbed` is historical: [PR #164](https://github.com/rutkala/zohelo-data/pull/164)
-merged as `8f69d2f` and is already an ancestor of current main, so it is no
-longer a pending integration gate. Recent NBP, WDI and Eurostat runs have
+`10addd1efabbaaddb3dec2f4615b8b72a710ab58`. The earlier inspection at
+`490ffbed` is historical: PRs
+[#164](https://github.com/rutkala/zohelo-data/pull/164),
+[#166](https://github.com/rutkala/zohelo-data/pull/166),
+[#167](https://github.com/rutkala/zohelo-data/pull/167), and
+[#168](https://github.com/rutkala/zohelo-data/pull/168) are already merged and
+are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
 
@@ -123,17 +134,18 @@ No running or queued BDL Action was found during this inspection. The 24 Septemb
 checkpoint figures below are historical and have not been refreshed from the
 devcontainer.
 
-**Portal cause confirmed in current code:** `landingCatalog.ts` resolves a fixed
-list of source publication pointers. `treeFromPublished` in `googleDriveSlice.ts`
-builds navigation from those snapshots and modeled releases; the separate
-`sourceInventory.ts` checks a fixed set of paths/depths and does not make their
-native files queryable. Consequently, existing Drive files can be absent from
-Landing navigation. `lakehouseBridge.ts` downloads and registers complete file
-buffers before SQL; simply publishing more parts or deleting the retained DBW
-selector guard does not establish scalable complete-table queries. Keep integrity
-checks and full snapshot membership while delivering a verified complete-table
-reader. The previously recorded tool-rejected reader approach remains a hold; do
-not reroute it under another tool or identity.
+**Historical portal diagnosis (native discovery resolved by PR #168):** before
+`10addd1ef`, `landingCatalog.ts` resolved a fixed list of source publication
+pointers, `treeFromPublished` in `googleDriveSlice.ts` built navigation from
+those snapshots and modeled releases, and `sourceInventory.ts` did not make
+arbitrary retained files queryable. PR #168 replaced that native-navigation
+constraint with authenticated exhaustive `01_landing` discovery. The separate
+complete-table scaling constraint remains: `lakehouseBridge.ts` downloads and
+registers complete file buffers before SQL, so simply publishing more parts or
+deleting the retained DBW selector guard does not establish scalable full-table
+queries. Keep integrity checks and full snapshot membership while delivering a
+verified complete-table reader. The previously recorded tool-rejected reader
+approach remains a hold; do not reroute it under another tool or identity.
 
 **Historical devcontainer note (superseded 26 September):** the earlier
 takeover could not inspect the offline devcontainer, but the owner's clarified
