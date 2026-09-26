@@ -85,11 +85,12 @@ try {
   let mediaRequests = 0;
   const guardDriveRequest = route => {
     const request = route.request();
-    if (request.method() !== 'GET') {
+    const method = request.method();
+    if (method !== 'GET' && method !== 'OPTIONS') {
       attemptedWrite = true;
       return route.abort('blockedbyclient');
     }
-    if (new URL(request.url()).searchParams.get('alt') === 'media') {
+    if (method === 'GET' && new URL(request.url()).searchParams.get('alt') === 'media') {
       if (stage !== 'bounded_preview' || !request.url().includes(`/${previewCandidate?.file?.id}?`))
         return route.abort('blockedbyclient');
       mediaRequests++;
