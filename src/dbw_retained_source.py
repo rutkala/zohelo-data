@@ -145,17 +145,28 @@ def _validate_source_bytes(
     datasets = manifest.get("datasets")
     if not isinstance(datasets, list):
         raise ValueError("DBW retained source datasets are invalid")
-    observation_rows = None
-    for dataset in datasets:
-        if isinstance(dataset, dict) and dataset.get("name") == "observations":
-            observation_rows = dataset.get("row_count")
-            break
+    dataset_rows = {
+        dataset.get("name"): dataset.get("row_count")
+        for dataset in datasets
+        if isinstance(dataset, dict)
+    }
+    expected_datasets = {
+        "observations", "dictionaries", "metadata", "taxonomy"
+    }
     if (
-        not isinstance(observation_rows, int)
-        or isinstance(observation_rows, bool)
-        or observation_rows <= 0
+        len(dataset_rows) != len(datasets)
+        or set(dataset_rows) != expected_datasets
+        or any(
+            not isinstance(rows, int)
+            or isinstance(rows, bool)
+            or rows <= 0
+            for rows in dataset_rows.values()
+        )
+        or dataset_rows["taxonomy"] != indicator_count
     ):
-        raise ValueError("DBW retained observations have no valid row count")
+        raise ValueError(
+            "DBW retained source dataset inventory is incomplete"
+        )
     descriptor = {
         "source_id": RETAINED_SOURCE_ID,
         "pointer_file_id": pointer_file_id,
@@ -167,7 +178,7 @@ def _validate_source_bytes(
         "coverage_status": RETAINED_COVERAGE_STATUS,
         "lineage_status": RETAINED_LINEAGE_STATUS,
         "indicator_count": indicator_count,
-        "observation_rows": observation_rows,
+        "dataset_rows": dataset_rows,
     }
     return descriptor, manifest
 
