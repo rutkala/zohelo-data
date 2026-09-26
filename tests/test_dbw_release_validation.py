@@ -64,7 +64,24 @@ def _candidate():
     catalogue_datasets = []
     manifest_nodes = {}
     catalog_nodes = {}
-    observation_rows = 879_999_727
+    retained_rows = {
+        "observations": 879_999_727,
+        "dictionaries": 8_358_612,
+        "metadata": 1_531,
+        "taxonomy": 1_550,
+    }
+    modeled_sources = {
+        "bronze_dbw_dictionaries": "dictionaries",
+        "dbw_dictionaries": "dictionaries",
+        "bronze_dbw_indicators": "taxonomy",
+        "dbw_indicators": "taxonomy",
+        "dim_dbw_indicator": "taxonomy",
+        "bronze_dbw_metadata": "metadata",
+        "dbw_metadata": "metadata",
+        "bronze_dbw_observations": "observations",
+        "dbw_observations": "observations",
+        "fact_dbw_observations": "observations",
+    }
     for index, (dataset_id, (layer, model_id)) in enumerate(
         DBW_PLATFORM_DATASETS.items()
     ):
@@ -80,13 +97,8 @@ def _candidate():
             }
         ]
         rows = (
-            observation_rows
-            if dataset_id
-            in {
-                "bronze_dbw_observations",
-                "dbw_observations",
-                "fact_dbw_observations",
-            }
+            retained_rows[modeled_sources[dataset_id]]
+            if dataset_id in modeled_sources
             else 1
         )
         dataset = {
@@ -143,7 +155,8 @@ def _candidate():
         "published_indicator_count": 1550,
         "pending_indicator_count": 0,
         "datasets": [
-            {"name": "observations", "row_count": observation_rows}
+            {"name": name, "row_count": rows}
+            for name, rows in retained_rows.items()
         ],
         "tests": {
             "passed": True,
@@ -176,7 +189,7 @@ def _candidate():
         "coverage_status": RETAINED_COVERAGE_STATUS,
         "lineage_status": RETAINED_LINEAGE_STATUS,
         "indicator_count": 1550,
-        "observation_rows": observation_rows,
+        "dataset_rows": retained_rows,
     }
 
     artifacts = {
@@ -311,7 +324,32 @@ class DBWReleaseValidationTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(
                 ReleaseValidationError,
-                "modeled observation rows differ from retained source",
+                "modeled bronze_dbw_observations rows differ from retained",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_common_dictionary_truncation_is_rejected(self):
+        store, manifest = _candidate()
+        for dataset in manifest["datasets"]:
+            if dataset["dataset_id"] in {
+                "bronze_dbw_dictionaries",
+                "dbw_dictionaries",
+            }:
+                dataset["row_count"] -= 1
+        with patch.object(
+            validation, "restore_release", return_value=manifest
+        ), patch.object(
+            validation,
+            "verify_local_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "modeled bronze_dbw_dictionaries rows differ from retained",
             ):
                 validation.validate_staged_dbw_release(
                     store,
