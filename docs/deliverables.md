@@ -56,14 +56,13 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 3 — Existing-source coverage | Every source already retained in the project Drive is discoverable in Landing and has its missing downstream stages completed. | Reconcile an exhaustive source-by-layer inventory to Drive, models and published query contracts; establish actual coverage and independent SQL/semantic checks. An unsupported format is shown explicitly rather than disappearing. Native discovery does not wait for modeling. |
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
-**Fresh GitHub inspection:** main was
-`490ffbed13b6903017aefafbc2a2a85b6c690f5d` (DBW bounded exports, PR #163).
-[PR #164](https://github.com/rutkala/zohelo-data/pull/164) was actively changing
-during this inspection and covers modeled-release validation and retained-source
-binding. Review/integrate that work before creating an overlapping publisher
-implementation; this takeover does not claim it merged or passed at its final head.
-Recent main NBP, WDI and Eurostat runs have succeeded, but workflow success alone
-does not establish full source or portal coverage.
+**Current GitHub baseline:** main is
+`e674f303644dd777b4a2d29737da488aa9b43de0`. The earlier inspection at
+`490ffbed` is historical: [PR #164](https://github.com/rutkala/zohelo-data/pull/164)
+merged as `8f69d2f` and is already an ancestor of current main, so it is no
+longer a pending integration gate. Recent NBP, WDI and Eurostat runs have
+succeeded, but workflow success alone does not establish full source or portal
+coverage.
 
 **Historical pre-merge BDL diagnosis (superseded by PR #166):** before
 `e674f303`, the scheduled workflow defaulted to three workers, installed no VPN
