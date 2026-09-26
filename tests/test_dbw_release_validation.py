@@ -14,6 +14,7 @@ from dbw_retained_source import (  # noqa: E402
     RETAINED_COVERAGE_STATUS,
     RETAINED_LINEAGE_STATUS,
     RETAINED_SOURCE_ID,
+    validate_native_bronze_tree,
 )
 from dbw_platform_contract import (  # noqa: E402
     DBW_PLATFORM_DATASETS,
@@ -59,6 +60,7 @@ def _candidate():
     code_sha = "a" * 40
     retained_release = "8c10d951-1b2d-42cd-8378-315cdc14e2fa"
     inventory_sha256 = "b" * 64
+    audit_report_sha256 = "c" * 64
     retained_pointer_id = "retained-pointer"
     retained_manifest_id = "retained-manifest"
     files = {}
@@ -144,6 +146,26 @@ def _candidate():
             }
         }
 
+    retained_dataset_files = {
+        name: (
+            []
+            if name == "observations"
+            else [{
+                "id": f"retained-{name}",
+                "name": f"{name}.parquet",
+                "size": len(name.encode()),
+                "sha256": hashlib.sha256(name.encode()).hexdigest(),
+                "row_count": rows,
+            }]
+        )
+        for name, rows in retained_rows.items()
+    }
+    retained_index = {
+        "id": "retained-index",
+        "name": "indicator-index.json",
+        "size": 100,
+        "sha256": "d" * 64,
+    }
     retained_document = {
         "format_version": 2,
         "kind": "retained_bronze_snapshot",
@@ -151,13 +173,19 @@ def _candidate():
         "snapshot_id": retained_release,
         "status": "validated",
         "inventory_sha256": inventory_sha256,
+        "audit_report_sha256": audit_report_sha256,
         "coverage_status": RETAINED_COVERAGE_STATUS,
         "lineage_status": RETAINED_LINEAGE_STATUS,
         "indicator_count": 1550,
         "published_indicator_count": 1550,
         "pending_indicator_count": 0,
+        "indicator_index": retained_index,
         "datasets": [
-            {"name": name, "row_count": rows}
+            {
+                "name": name,
+                "row_count": rows,
+                "files": retained_dataset_files[name],
+            }
             for name, rows in retained_rows.items()
         ],
         "tests": {
@@ -188,10 +216,13 @@ def _candidate():
         "manifest_sha256": pointer_document["manifest_sha256"],
         "manifest_size_bytes": pointer_document["manifest_size_bytes"],
         "inventory_sha256": inventory_sha256,
+        "audit_report_sha256": audit_report_sha256,
         "coverage_status": RETAINED_COVERAGE_STATUS,
         "lineage_status": RETAINED_LINEAGE_STATUS,
         "indicator_count": 1550,
+        "indicator_index": retained_index,
         "dataset_rows": retained_rows,
+        "dataset_files": retained_dataset_files,
     }
 
     artifacts = {
@@ -488,6 +519,97 @@ class DBWReleaseValidationTests(unittest.TestCase):
                     {},
                     retained_pointer_file_id="retained-pointer",
                 )
+
+    def test_retained_payload_fingerprints_cannot_be_changed(self):
+        store, manifest = _candidate()
+        manifest["inputs"][0]["dataset_files"]["metadata"][0][
+            "sha256"
+        ] = "e" * 64
+        with patch.object(
+            validation, "read_release_manifest", return_value=manifest
+        ), patch.object(
+            validation,
+            "_verify_dbw_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "input differs from the live retained source",
+            ):
+                validation.validate_staged_dbw_release(
+                    store,
+                    {},
+                    retained_pointer_file_id="retained-pointer",
+                )
+
+    def test_native_tree_must_match_reviewed_inventory_bytes(self):
+        release_id = "b" * 64
+        audit_sha = "c" * 64
+        payloads = {
+            "observations/part_1.parquet": b"observations",
+            "dictionaries/dict_1.parquet": b"dictionary-part",
+            "dictionaries/br_dbw_dictionaries.parquet": b"dictionaries",
+            "metadata/br_dbw_metadata.parquet": b"metadata",
+            "taxonomy/br_dbw_indicators.parquet": b"taxonomy",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary) / "data"
+            release_root = (
+                data_root
+                / "02_bronze"
+                / "gus_dbw"
+                / "releases"
+                / release_id
+            )
+            objects = []
+            for relative, raw in payloads.items():
+                path = release_root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+                objects.append({
+                    "path": relative,
+                    "id": f"id-{len(objects)}",
+                    "name": path.name,
+                    "size": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "md5": "0" * 32,
+                })
+            report = {"inventory_sha256": release_id}
+            inventory = {
+                "inventory_sha256": release_id,
+                "objects": objects,
+            }
+            retained_manifest = {
+                "inventory_sha256": release_id,
+                "audit_report_sha256": audit_sha,
+            }
+            with patch(
+                "dbw_retained_source._reviewed_audit",
+                return_value=(report, inventory, audit_sha),
+            ):
+                result = validate_native_bronze_tree(
+                    data_root,
+                    release_id,
+                    Path(temporary) / "audit",
+                    retained_manifest=retained_manifest,
+                )
+                self.assertEqual(result["verified_files"], len(payloads))
+                self.assertEqual(
+                    result["verified_bytes"],
+                    sum(len(raw) for raw in payloads.values()),
+                )
+                (release_root / "metadata/br_dbw_metadata.parquet").write_bytes(
+                    b"metadatu"
+                )
+                with self.assertRaisesRegex(
+                    ValueError, "native input digest changed"
+                ):
+                    validate_native_bronze_tree(
+                        data_root,
+                        release_id,
+                        Path(temporary) / "audit",
+                        retained_manifest=retained_manifest,
+                    )
 
     def test_gold_coverage_mart_matches_retained_totals(self):
         import duckdb
