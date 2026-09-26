@@ -17,7 +17,10 @@ from dbw_platform_contract import (
     DBW_PLATFORM_DATE_COLUMNS,
     DBW_PLATFORM_MODEL_NAMES,
 )
-from dbw_retained_source import load_retained_source_descriptor
+from dbw_retained_source import (
+    load_retained_source_descriptor,
+    validate_native_bronze_tree,
+)
 from runtime_metadata import _code_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -162,13 +165,20 @@ def build_candidate(
     retained_pointer: Path,
     retained_manifest: Path,
     retained_pointer_file_id: str,
+    retained_audit_dir: Path,
 ) -> dict:
     """Build all eleven DBW relations from one verified retained snapshot."""
-    retained_source, _retained_document = load_retained_source_descriptor(
+    retained_source, retained_document = load_retained_source_descriptor(
         retained_pointer,
         retained_manifest,
         pointer_file_id=retained_pointer_file_id,
         expected_inventory_sha256=release_id,
+    )
+    native_validation = validate_native_bronze_tree(
+        data_root,
+        release_id,
+        retained_audit_dir,
+        retained_manifest=retained_document,
     )
     database = workspace / "dbw.duckdb"
     target = workspace / "target"
@@ -285,6 +295,11 @@ def build_candidate(
         "measurements": {
             "retained_snapshot_id": retained_source["snapshot_id"],
             "native_inventory_sha256": retained_source["inventory_sha256"],
+            "native_audit_report_sha256": native_validation[
+                "audit_report_sha256"
+            ],
+            "native_verified_files": native_validation["verified_files"],
+            "native_verified_bytes": native_validation["verified_bytes"],
             "dataset_count": len(datasets),
         },
     }
@@ -302,6 +317,7 @@ def main() -> None:
     parser.add_argument("--retained-pointer", type=Path, required=True)
     parser.add_argument("--retained-manifest", type=Path, required=True)
     parser.add_argument("--retained-pointer-file-id", required=True)
+    parser.add_argument("--retained-audit-dir", type=Path, required=True)
     args = parser.parse_args()
     args.workspace.mkdir(parents=True, exist_ok=True)
     print(json.dumps(build_candidate(
@@ -311,6 +327,7 @@ def main() -> None:
         retained_pointer=args.retained_pointer,
         retained_manifest=args.retained_manifest,
         retained_pointer_file_id=args.retained_pointer_file_id,
+        retained_audit_dir=args.retained_audit_dir,
     ), indent=2))
 
 
