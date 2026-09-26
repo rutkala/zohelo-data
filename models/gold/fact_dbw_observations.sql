@@ -1,5 +1,5 @@
 {{ config(
-    materialized='table',
+    materialized=var('dbw_fact_materialization', 'table'),
     enabled=var('enable_gus_dbw', false)
 ) }}
 

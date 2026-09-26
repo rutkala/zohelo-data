@@ -7,10 +7,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import duckdb
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+import dbw_platform  # noqa: E402
 
 
 class TestDBWPlatformModels(unittest.TestCase):
@@ -199,6 +203,69 @@ class TestDBWPlatformModels(unittest.TestCase):
         con.close()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0], (1, 1, 2022, 2022))
+
+
+class TestDBWPlatformExports(unittest.TestCase):
+    def test_observation_exports_are_bounded_unique_and_row_complete(self):
+        with tempfile.TemporaryDirectory(prefix="zohelo-dbw-export-") as temporary:
+            root = Path(temporary)
+            with duckdb.connect() as connection:
+                connection.execute("""
+                    create table observations as
+                    select
+                        case when i % 2 = 0 then 101 else 202 end::bigint as indicator_id,
+                        i::bigint as source_row_number,
+                        md5(i::varchar) || md5((i * 17)::varchar) as payload
+                    from range(4000) source(i)
+                """)
+                with patch.object(
+                    dbw_platform, "MAX_RELEASE_PART_BYTES", 16 * 1024
+                ):
+                    paths = dbw_platform._copy_relation(
+                        connection,
+                        "observations",
+                        root / "bronze_dbw_observations",
+                        "bronze_dbw_observations",
+                        4000,
+                    )
+                self.assertGreater(len(paths), 2)
+                self.assertEqual(len(paths), len({path.name for path in paths}))
+                self.assertTrue(all(path.stat().st_size <= 16 * 1024 for path in paths))
+                rendered = ",".join(dbw_platform._quoted_path(path) for path in paths)
+                rows, distinct_rows, indicators = connection.execute(
+                    f"select count(*), count(distinct source_row_number), "
+                    f"count(distinct indicator_id) from read_parquet([{rendered}])"
+                ).fetchone()
+                self.assertEqual((rows, distinct_rows, indicators), (4000, 4000, 2))
+                columns = [
+                    row[0] for row in connection.execute(
+                        f"describe select * from read_parquet([{rendered}])"
+                    ).fetchall()
+                ]
+                self.assertEqual(
+                    columns, ["indicator_id", "source_row_number", "payload"]
+                )
+
+    def test_unpartitioned_oversize_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="zohelo-dbw-export-") as temporary:
+            root = Path(temporary)
+            with duckdb.connect() as connection:
+                connection.execute("""
+                    create table metadata as
+                    select i::bigint as indicator_id, md5(i::varchar) as value
+                    from range(1000) source(i)
+                """)
+                with patch.object(dbw_platform, "MAX_RELEASE_PART_BYTES", 512):
+                    with self.assertRaisesRegex(
+                        RuntimeError, "needs a reviewed partition key"
+                    ):
+                        dbw_platform._copy_relation(
+                            connection,
+                            "metadata",
+                            root / "bronze_dbw_metadata",
+                            "bronze_dbw_metadata",
+                            1000,
+                        )
 
 
 if __name__ == "__main__":

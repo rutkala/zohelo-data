@@ -4,6 +4,26 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### DBW modeled release bounded-export increment — 26 September 2026
+
+The DBW platform builder now supports unique, size-bounded Parquet parts for the
+three 879-million-row observation relations. It partitions by source indicator,
+recursively splits any oversized indicator file without sorting or deduplicating
+rows, verifies the complete exported row count, and retains the original indicator
+column in every part. The build can materialize its large Bronze and Gold relations
+as disposable views, avoiding two unnecessary full-size DuckDB copies on a cold
+runner. Focused regressions cover bounded multi-part export, exact row/indicator
+preservation, unique file names and fail-closed handling when an unpartitioned
+dataset exceeds the reviewed 120 MiB file limit.
+
+This is runner-capacity engineering only. It does not publish a DBW platform
+release, change the retained Bronze pointer, prove sufficient total runner disk,
+or establish current-provider completeness or native-to-Bronze lineage. The next
+accepted boundary remains a serialized Actions job that restores the exact reviewed
+Drive inputs in its own runner, publishes the complete eleven-dataset candidate,
+and verifies the canonical `releases/dbw/current-release.json` through an
+independent fresh SQL consumer before promotion is called complete.
+
 ### BDL checkpoint-save recovery and ten-proxy restart — 24 September 2026
 
 The owner requested BDL ingestion only: repair interruptions, clean stale runtime

@@ -5,9 +5,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
-import tempfile
 
 import duckdb
 
@@ -19,6 +20,137 @@ from dbw_platform_contract import (
 from runtime_metadata import _code_sha
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+MAX_RELEASE_PART_BYTES = 120 * 1024 * 1024
+PARTITION_DATASETS = {
+    "bronze_dbw_observations": "indicator_id",
+    "dbw_observations": "indicator_id",
+    "fact_dbw_observations": "indicator_key",
+}
+
+
+def _quoted_path(path: Path) -> str:
+    return "'" + str(path).replace("'", "''") + "'"
+
+
+def _copy_query(connection, query: str, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    connection.execute(
+        f"COPY ({query}) TO {_quoted_path(target)} "
+        "(FORMAT PARQUET, COMPRESSION ZSTD)"
+    )
+
+
+def _split_oversized_parquet(
+    connection, source: Path, stem: str, *, sequence: str = "0"
+) -> list[Path]:
+    """Split one oversized Parquet without dropping, sorting or deduplicating rows."""
+    if source.stat().st_size <= MAX_RELEASE_PART_BYTES:
+        return [source]
+    rows = int(connection.execute(
+        f"SELECT count(*) FROM read_parquet({_quoted_path(source)})"
+    ).fetchone()[0])
+    if rows < 2:
+        raise RuntimeError(
+            f"{source.name} exceeds the release part bound with only one row"
+        )
+    left_rows = rows // 2
+    left = source.with_name(f"{stem}-{sequence}0.parquet")
+    right = source.with_name(f"{stem}-{sequence}1.parquet")
+    try:
+        _copy_query(
+            connection,
+            f"SELECT * FROM read_parquet({_quoted_path(source)}) LIMIT {left_rows}",
+            left,
+        )
+        _copy_query(
+            connection,
+            f"SELECT * FROM read_parquet({_quoted_path(source)}) "
+            f"LIMIT {rows - left_rows} OFFSET {left_rows}",
+            right,
+        )
+    except BaseException:
+        left.unlink(missing_ok=True)
+        right.unlink(missing_ok=True)
+        raise
+    source.unlink()
+    return [
+        *_split_oversized_parquet(
+            connection, left, stem, sequence=sequence + "0"
+        ),
+        *_split_oversized_parquet(
+            connection, right, stem, sequence=sequence + "1"
+        ),
+    ]
+
+
+def _copy_relation(
+    connection,
+    relation: str,
+    output: Path,
+    dataset_id: str,
+    expected_rows: int,
+) -> list[Path]:
+    """Export one relation into unique, size-bounded Parquet parts."""
+    partition_column = PARTITION_DATASETS.get(dataset_id)
+    if partition_column is None:
+        target = output.with_suffix(".parquet")
+        _copy_query(connection, f"SELECT * FROM {relation}", target)
+        if target.stat().st_size > MAX_RELEASE_PART_BYTES:
+            target.unlink()
+            raise RuntimeError(
+                f"{dataset_id} exceeds the release part bound and needs a reviewed partition key"
+            )
+        paths = [target]
+    else:
+        staging = output.parent / f".{output.name}-partitioned"
+        if staging.exists() or staging.is_symlink():
+            raise RuntimeError(f"Fresh partition staging required for {dataset_id}")
+        staging.mkdir(parents=True)
+        produced: list[Path] = []
+        try:
+            # Partition on a duplicate key so the released Parquet keeps the
+            # original indicator column in every file.
+            connection.execute(
+                f'COPY (SELECT *, "{partition_column}" AS _zohelo_partition_key '
+                f"FROM {relation}) TO {_quoted_path(staging)} "
+                "(FORMAT PARQUET, COMPRESSION ZSTD, "
+                "PARTITION_BY (_zohelo_partition_key))"
+            )
+            raw_parts = sorted(staging.rglob("*.parquet"))
+            if not raw_parts:
+                raise RuntimeError(f"{dataset_id} export produced no Parquet files")
+            for number, source in enumerate(raw_parts):
+                match = re.fullmatch(
+                    r"_zohelo_partition_key=(-?[0-9]+)", source.parent.name
+                )
+                if match is None:
+                    raise RuntimeError(
+                        f"{dataset_id} produced an invalid partition identity"
+                    )
+                stem = f"{output.name}-{match.group(1)}-{number:04d}"
+                target = output.with_name(stem + ".parquet")
+                os.replace(source, target)
+                produced.extend(
+                    _split_oversized_parquet(connection, target, stem)
+                )
+            paths = sorted(produced)
+        except BaseException:
+            for path in output.parent.glob(f"{output.name}-*.parquet"):
+                path.unlink(missing_ok=True)
+            raise
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    if any(path.stat().st_size > MAX_RELEASE_PART_BYTES for path in paths):
+        raise RuntimeError(f"{dataset_id} export exceeded the release part bound")
+    files_sql = ",".join(_quoted_path(path) for path in paths)
+    copied_rows = int(connection.execute(
+        f"SELECT count(*) FROM read_parquet([{files_sql}])"
+    ).fetchone()[0])
+    if copied_rows != expected_rows:
+        raise RuntimeError(
+            f"{dataset_id} export row count changed: {copied_rows} != {expected_rows}"
+        )
+    return paths
 
 
 def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
@@ -38,7 +170,9 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
     common = [
         "--profiles-dir", str(REPO_ROOT), "--target-path", str(target),
         "--log-path", str(workspace / "logs"), "--threads", "1",
-        "--no-partial-parse", "--vars", '{"enable_gus_dbw": true}',
+        "--no-partial-parse", "--vars",
+        '{"enable_gus_dbw": true, "dbw_observations_materialization": "view", '
+        '"dbw_fact_materialization": "view"}',
     ]
     subprocess.run([*cli, "build", "--select", *models, *common], cwd=REPO_ROOT, env=env, check=True, timeout=1800)
     subprocess.run([*cli, "docs", "generate", "--no-compile", *common], cwd=REPO_ROOT, env=env, check=True, timeout=600)
@@ -70,9 +204,8 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
         for dataset_id, (layer, model_id) in DBW_PLATFORM_DATASETS.items():
             table_name = dataset_id.removeprefix("bronze_")
             relation = f'"{layer}"."{table_name}"'
-            output = workspace / layer / f"{dataset_id}.parquet"
+            output = workspace / layer / dataset_id
             output.parent.mkdir(parents=True, exist_ok=True)
-            connection.execute(f"COPY (SELECT * FROM {relation}) TO '{str(output).replace(chr(39), chr(39) * 2)}' (FORMAT PARQUET, COMPRESSION ZSTD)")
             date_column = DBW_PLATFORM_DATE_COLUMNS[dataset_id]
             if date_column:
                 rows, minimum, maximum = connection.execute(
@@ -85,10 +218,14 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
                 min_date = max_date = None
             if rows <= 0:
                 raise ValueError(f"Required DBW platform dataset is empty: {dataset_id}")
+            paths = _copy_relation(
+                connection, relation, output, dataset_id, int(rows)
+            )
             datasets.append({
                 "dataset_id": dataset_id, "layer": layer,
                 "table_name": table_name, "model_name": model_id.rsplit(".", 1)[-1],
-                "model_id": model_id, "path": str(output), "row_count": rows,
+                "model_id": model_id, "path": str(paths[0]),
+                "paths": [str(path) for path in paths], "row_count": rows,
                 "date_column": date_column, "min_date": min_date, "max_date": max_date,
                 "columns": [{"name": row[0], "type": row[1]} for row in connection.execute(f"DESCRIBE {relation}").fetchall()],
             })

@@ -1,4 +1,4 @@
-{{ config(materialized='table', alias='dbw_observations', enabled=var('enable_gus_dbw', false)) }}
+{{ config(materialized=var('dbw_observations_materialization', 'table'), alias='dbw_observations', enabled=var('enable_gus_dbw', false)) }}
 {{ assert_dbw_bronze_release() }}
 
 select
