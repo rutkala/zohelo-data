@@ -38,7 +38,10 @@ _OBSERVATION_DATASETS = (
 
 
 def validate_staged_dbw_release(
-    store: Any, pointer: dict[str, Any]
+    store: Any,
+    pointer: dict[str, Any],
+    *,
+    retained_pointer_file_id: str,
 ) -> dict[str, Any]:
     """Read back and query every staged DBW file before pointer promotion."""
     manifest = restore_release(store, pointer)
@@ -120,7 +123,11 @@ def validate_staged_dbw_release(
             "DBW modeled release must bind exactly one retained Bronze source"
         )
     try:
-        retained_manifest = validate_retained_source(store, inputs[0])
+        retained_manifest = validate_retained_source(
+            store,
+            inputs[0],
+            expected_pointer_file_id=retained_pointer_file_id,
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise ReleaseValidationError(str(exc)) from exc
     retained_release_id = retained_manifest["snapshot_id"]
