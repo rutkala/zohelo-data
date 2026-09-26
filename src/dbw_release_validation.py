@@ -14,7 +14,7 @@ from dbw_retained_source import (
     RETAINED_SOURCE_ID,
     validate_retained_source,
 )
-from release_protocol import restore_release
+from release_protocol import read_release_manifest
 from release_validation import ReleaseValidationError, verify_local_dataset
 
 
@@ -56,7 +56,7 @@ def validate_staged_dbw_release(
     retained_pointer_file_id: str,
 ) -> dict[str, Any]:
     """Read back and query every staged DBW file before pointer promotion."""
-    manifest = restore_release(store, pointer)
+    manifest = read_release_manifest(store, pointer)
     if manifest.get("release_scope") != "dbw_platform":
         raise ReleaseValidationError("staged release is not a DBW modeled release")
     datasets = manifest.get("datasets")
