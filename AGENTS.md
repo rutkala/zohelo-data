@@ -2,6 +2,21 @@
 
 Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
 
+**Current owner priority — 26 September 2026: finish existing sources.**
+
+- The owner has returned engineering coordination to the lead assistant and explicitly
+  paused new-source research/onboarding. Finish BDL's move to GitHub Actions with the
+  existing ten WireGuard routes, DBW whole-table and all-layer portal access, every
+  already-retained source's Landing-to-semantic delivery, and reconciliation of
+  existing repository/devcontainer work.
+- This instruction overrides older autonomous-expansion and dated wave-start
+  directions until the owner changes scope. Existing authorized source schedules
+  may continue; do not add providers, products or unrelated portal features.
+- Read the current takeover section in [docs/deliverables.md](docs/deliverables.md).
+  Keep one implementation owner, preserve other agents' unmerged/unpushed work and
+  active ingestion, and verify writer ownership before transferring BDL execution.
+  An inventory, green workflow, sample or merged model is not full-source acceptance.
+
 **Landing is native transfer only — all sources.**
 
 - Apply [ADR 0009](docs/decisions/0009-native-only-landing.md) to every current and future source, full loads and increments alike. Download and store the original file/response bytes in the provider's native format. Do not unpack archives, parse data, infer schemas, count records, validate business content, deduplicate observations, add provenance columns, convert to Parquet or run dbt in the ingestion step.
