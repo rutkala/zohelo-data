@@ -15,6 +15,14 @@ for current-provider coverage and `unresolved_native_to_bronze` lineage. The
 canonical `releases/` folder still has no `dbw` child; this readback proves the
 dated retained-Bronze boundary only, not a modeled DBW release.
 
+The builder now also fails before dbt if the local native tree is merely relabelled.
+It authenticates the exact reviewed audit report and 3,103-object descriptor
+inventory, then streams SHA-256 over every local observation, dictionary, metadata
+and taxonomy input and requires the complete path, size and digest set to match.
+The modeled input contract preserves that audit hash, the retained indicator-index
+fingerprint and every retained dataset-file descriptor; row-count equality alone
+is not accepted as source identity.
+
 The modeled-release path now admits a canonical `releases/dbw` root and has a
 source-specific staged validator. Before pointer promotion it requires exactly all
 eleven DBW datasets, reads back and fingerprints every immutable file, runs fresh
