@@ -2,9 +2,7 @@
 
 Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
-## Current status
-
-### Existing-source takeover and acceptance reset — 26 September 2026
+## Existing-source takeover and acceptance reset — 26 September 2026
 
 **Owner direction:** the lead assistant again coordinates this repository. Finish
 the sources and work already present; new-source research/onboarding and the dated
@@ -68,6 +66,8 @@ recover valid VPN profiles into encrypted Actions configuration without exposing
 values, and establish the writer handover. Do not infer that an offline connector
 means the ingestion process stopped. No new BDL writer or DBW publisher was
 launched by this takeover review.
+
+## Current status
 
 ### DBW modeled release bounded-export increment — 26 September 2026
 
