@@ -21,7 +21,8 @@ eleven DBW datasets, reads back and fingerprints every immutable file, runs fres
 DuckDB dataset verification, binds dbt catalogue/manifest relations and the exact
 retained snapshot, requires modeled observation, dictionary, metadata and taxonomy
 rows to equal all four retained-manifest cardinalities (including 879,999,727
-observations), and rejects any unapproved semantic-metric claim. The validator deletes each temporary
+observations), verifies the Gold coverage mart's indicator and observation totals
+against the same evidence, and rejects any unapproved semantic-metric claim. The validator deletes each temporary
 dataset after checking it, so fresh verification is bounded by one dataset rather
 than the whole release.
 
