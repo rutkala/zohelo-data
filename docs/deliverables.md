@@ -4,6 +4,33 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current status
 
+### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
+
+A fresh connected-Drive read at 20:41 CEST resolved retained snapshot
+`8c10d951-1b2d-42cd-8378-315cdc14e2fa` and its immutable manifest. The manifest is
+validated format 2 with all 1,550 indicators published, zero pending indicators,
+879,999,727 observation rows, 8,358,612 dictionary rows, 1,531 metadata rows and
+1,550 taxonomy rows. It still correctly declares `incomplete_retained_inventory`
+for current-provider coverage and `unresolved_native_to_bronze` lineage. The
+canonical `releases/` folder still has no `dbw` child; this readback proves the
+dated retained-Bronze boundary only, not a modeled DBW release.
+
+The modeled-release path now admits a canonical `releases/dbw` root and has a
+source-specific staged validator. Before pointer promotion it requires exactly all
+eleven DBW datasets, reads back and fingerprints every immutable file, runs fresh
+DuckDB dataset verification, binds dbt catalogue/manifest relations and the exact
+retained snapshot, requires equal Bronze/Silver/Gold observation row counts, and
+rejects any unapproved semantic-metric claim. The validator deletes each temporary
+dataset after checking it, so fresh verification is bounded by one dataset rather
+than the whole release.
+
+This remains code and fixture delivery until review, CI and merge. It does not create
+`releases/dbw`, upload a candidate, move a pointer or establish live SQL acceptance.
+The next production increment remains a source-sized serialized Actions publisher
+that can upload and release each bounded dataset without retaining three complete
+879-million-row exports simultaneously on the runner, followed by this independent
+fresh validator and authenticated portal SQL.
+
 ### DBW modeled release bounded-export increment — 26 September 2026
 
 The DBW platform builder now supports unique, size-bounded Parquet parts for the
