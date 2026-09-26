@@ -14,6 +14,11 @@ import {
   resolveReleaseCatalog,
   resolveSourceInventory,
   GoogleDriveAuthError,
+  resolveNativeLandingRoot,
+  listNativeFolder,
+  freshNativeFile,
+  nativeDriveLink,
+  disposeAllNativePreviews,
   type LandingSnapshotResolution,
 } from "@/services/googleDrive";
 
@@ -32,6 +37,11 @@ vi.mock("@/services/googleDrive", async (original) => ({
   resolveLandingCatalog: vi.fn(),
   resolveReleaseCatalog: vi.fn(),
   resolveSourceInventory: vi.fn(),
+  resolveNativeLandingRoot: vi.fn(),
+  listNativeFolder: vi.fn(),
+  freshNativeFile: vi.fn(),
+  nativeDriveLink: vi.fn(),
+  disposeAllNativePreviews: vi.fn().mockResolvedValue(undefined),
 }));
 
 const target = '"02_bronze"."rates"';
@@ -105,6 +115,44 @@ beforeEach(() => {
     fingerprint: "none",
   });
   vi.mocked(resolveSourceInventory).mockResolvedValue({ entries: [], drive_api_pages: 0 });
+});
+
+describe("native Landing request fencing", () => {
+  const root = { id: "landing", name: "01_landing", parentId: "project", parents: ["project"],
+    mimeType: "application/vnd.google-apps.folder" as const, version: "1", modifiedTime: "2026-09-26T00:00:00Z" };
+  const fileA = { id: "a", name: "a.zip", parentId: "landing", parents: ["landing"], version: "1" };
+  const fileB = { ...fileA, id: "b", name: "b.zip" };
+
+  it("does not restore a stale root after disconnect during preview disposal", async () => {
+    const store = makeStore();
+    let finish!: () => void;
+    vi.mocked(disposeAllNativePreviews).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
+    vi.mocked(listNativeFolder).mockResolvedValue([]);
+    const refresh = store.getState().refreshNativeLanding();
+    store.getState().disconnectGoogleDrive();
+    finish();
+    await refresh;
+    expect(store.getState().nativeLandingRoot).toBeNull();
+    expect(store.getState().nativeLandingChildren).toEqual({});
+    expect(resolveNativeLandingRoot).not.toHaveBeenCalled();
+  });
+
+  it("keeps the later file action when an earlier metadata request finishes last", async () => {
+    const store = makeStore();
+    store.setState({ nativeLandingRoot: root, nativeLandingFolders: { landing: root },
+      nativeLandingChildren: { landing: { files: [fileA, fileB], loaded: true, loading: false, error: null } } });
+    let finishA!: (value: typeof fileA) => void;
+    vi.mocked(freshNativeFile).mockImplementation(file =>
+      file.id === "a" ? new Promise(resolve => { finishA = resolve; }) : Promise.resolve(file));
+    vi.mocked(nativeDriveLink).mockImplementation(file => `https://drive.google.com/${file.id}`);
+    const first = store.getState().verifyNativeLandingFile("landing", "a");
+    const second = store.getState().verifyNativeLandingFile("landing", "b");
+    expect((await second)?.open).toBe("https://drive.google.com/b");
+    finishA(fileA);
+    expect(await first).toBeNull();
+    expect(store.getState().nativeLandingLinks?.fileId).toBe("b");
+  });
 });
 
 describe("Drive selection state", () => {

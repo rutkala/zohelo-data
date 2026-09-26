@@ -54,6 +54,7 @@ export class LocalDuckSessionImpl implements LocalDuckSession {
   private open = true;
   private execConnection: duckdb.AsyncDuckDBConnection | null = null;
   private queue: Promise<void> = Promise.resolve();
+  private readonly closeObservers = new Set<() => void>();
   private readonly teardown: LocalDuckSessionOptions["teardown"];
 
   constructor(options: LocalDuckSessionOptions) {
@@ -66,6 +67,12 @@ export class LocalDuckSessionImpl implements LocalDuckSession {
 
   get isOpen(): boolean {
     return this.open;
+  }
+
+  onClose(listener: () => void): () => void {
+    if (!this.open) { listener(); return () => undefined; }
+    this.closeObservers.add(listener);
+    return () => this.closeObservers.delete(listener);
   }
 
   execute(request: QueryRequest): QueryExecution {
@@ -141,11 +148,16 @@ export class LocalDuckSessionImpl implements LocalDuckSession {
     if (!this.open) return;
     this.open = false;
 
-    if (this.execConnection) {
-      await this.execConnection.close().catch(() => {});
-      this.execConnection = null;
+    try {
+      if (this.execConnection) {
+        await this.execConnection.close().catch(() => {});
+        this.execConnection = null;
+      }
+      await this.teardown(this.local.db, this.local.connection);
+    } finally {
+      for (const observer of this.closeObservers) observer();
+      this.closeObservers.clear();
     }
-    await this.teardown(this.local.db, this.local.connection);
   }
 
   /** Lazily opens the dedicated statement connection. */

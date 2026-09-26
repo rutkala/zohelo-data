@@ -25,6 +25,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { qualifyTable } from "@/lib/sqlSanitize";
 import { setSqlRelationDragData } from "@/lib/sqlTableActions";
 import { TableActions } from "./TableActions";
+import { isNativeFolder, nativePreviewFormat, NATIVE_PREVIEW_LIMIT_BYTES,
+  type NativeLandingFile } from "@/services/googleDrive";
 
 interface LakehouseExplorerProps {
   onSqlAction?: () => void;
@@ -41,6 +43,17 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
   const activeLakehouseLayer = useDuckStore((s) => s.activeLakehouseLayer);
+  const nativeRoot = useDuckStore((s) => s.nativeLandingRoot);
+  const nativeChildren = useDuckStore((s) => s.nativeLandingChildren);
+  const nativeLoading = useDuckStore((s) => s.nativeLandingLoading);
+  const nativeError = useDuckStore((s) => s.nativeLandingError);
+  const nativeSelected = useDuckStore((s) => s.nativeLandingSelected);
+  const nativeLinks = useDuckStore((s) => s.nativeLandingLinks);
+  const nativeActionError = useDuckStore((s) => s.nativeLandingActionError);
+  const loadNativeFolder = useDuckStore((s) => s.loadNativeLandingFolder);
+  const verifyNativeFile = useDuckStore((s) => s.verifyNativeLandingFile);
+  const previewNativeFile = useDuckStore((s) => s.previewNativeLandingFile);
+  const refreshNative = useDuckStore((s) => s.refreshNativeLanding);
 
   const signInWithGoogle = useDuckStore((s) => s.signInWithGoogle);
   const setManualGoogleToken = useDuckStore((s) => s.setManualGoogleToken);
@@ -57,6 +70,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const [manualToken, setManualToken] = useState("");
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  const [unavailableAction, setUnavailableAction] = useState<string | null>(null);
+  const [nativeOpen, setNativeOpen] = useState(true);
+  const [folderExpansion, setFolderExpansion] = useState<{ root: typeof nativeRoot; ids: ReadonlySet<string> }>(() => ({ root: null, ids: new Set() }));
+  const openFolders = folderExpansion.root === nativeRoot ? folderExpansion.ids : new Set<string>();
   const [dbwIndicatorSearch, setDbwIndicatorSearch] = useState("");
   const hasRetainedDbw = lakehouseLanding?.snapshots.some(
     ({ manifest }) => manifest.kind === "retained_bronze_snapshot"
@@ -129,6 +147,67 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
     if (isLakehouseLoading) return;
     const target = await selectLakehouseFile(layerName, tableName, fileId);
     await openPreview(target, `${layerName}/${tableName}/${fileName}`);
+  };
+
+  const handleNativeAction = async (file: NativeLandingFile, action: "open" | "download") => {
+    // Reserve the tab in the click's user activation; metadata reads are asynchronous.
+    const tab = window.open("about:blank", "_blank");
+    setPopupBlocked(!tab);
+    setUnavailableAction(null);
+    const links = await verifyNativeFile(file.parentId, file.id);
+    const link = links?.[action];
+    if (!link) { tab?.close(); if (links) setUnavailableAction(`${file.id}:${action}`); return; }
+    if (tab) { tab.opener = null; tab.location.replace(link); }
+    // Retry the action with popups permitted to recheck current Drive identity.
+  };
+
+  const renderNativeFolder = (folderId: string, depth = 0): React.ReactNode => {
+    const state = nativeChildren[folderId];
+    if (!state) return null;
+    return <div className="space-y-1 border-l pl-2" data-native-depth={depth}>
+      {state.loading && <div role="status" className="text-muted-foreground">Loading folder pages…</div>}
+      {state.error && <div role="alert" className="text-destructive">{state.error} <Button size="sm" variant="outline" onClick={() => loadNativeFolder(folderId)}>Retry</Button></div>}
+      {state.loaded && state.files.length === 0 && <div className="text-muted-foreground italic">Empty folder</div>}
+      {state.loaded && state.files.map((file) => {
+        const folder = isNativeFolder(file);
+        const expanded = openFolders.has(file.id);
+        const loadedChild = nativeChildren[file.id];
+        const preview = nativePreviewFormat(file);
+        const selected = nativeSelected === file.id;
+        return <div key={file.id} data-native-id={file.id} data-native-folder={folder ? "true" : "false"} className="rounded border border-border/60 p-1.5 min-w-0">
+          <div className="flex items-start gap-1">
+            {folder ? <button type="button" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${file.name}`}
+                className="flex items-center gap-1 text-left min-w-0" onClick={() => {
+                  setFolderExpansion(() => { const next = new Set(openFolders); if (next.has(file.id)) next.delete(file.id); else next.add(file.id); return { root: nativeRoot, ids: next }; });
+                  if (!loadedChild?.loaded && !loadedChild?.loading) void loadNativeFolder(file.id);
+                }}>
+                {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" /><span className="break-all">{file.name}</span>
+              </button> : <><FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /><span className="break-all font-medium">{file.name}</span></>}
+          </div>
+          <div className="ml-4 text-muted-foreground break-all">
+            {file.mimeType || "Unknown native format"}{file.size !== undefined ? ` · ${formatBytes(file.size)}` : ""}
+            {file.modifiedTime ? ` · ${new Date(file.modifiedTime).toLocaleString()}` : ""}
+            {file.version ? ` · version ${file.version}` : ""}
+            {file.sha256Checksum ? ` · SHA-256 ${file.sha256Checksum}` : file.md5Checksum ? ` · MD5 ${file.md5Checksum}` : ""}
+          </div>
+          <div className="ml-4 flex flex-wrap gap-1 mt-1">
+            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => void handleNativeAction(file, "open")}>Open in Drive</Button>
+            {file.capabilities?.canDownload &&
+              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => void handleNativeAction(file, "download")}>Download via Drive</Button>}
+            {!folder && preview && <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={async () => {
+              const target = await previewNativeFile(file.parentId, file.id);
+              await openPreview(target, `Native Landing/${file.name}`);
+            }}>Preview in SQL</Button>}
+          </div>
+          {!folder && !preview && <div className="ml-4 text-muted-foreground">Preview unavailable: requires CSV, JSON, JSONL or Parquet ≤ {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}, version, modified time, SHA-256 and download permission.</div>}
+          {selected && nativeActionError && <div role="alert" className="ml-4 text-destructive">{nativeActionError}</div>}
+          {selected && unavailableAction?.startsWith(`${file.id}:`) && <div role="alert" className="ml-4 text-destructive">Drive did not provide a safe {unavailableAction.endsWith(":download") ? "download" : "view"} link for this file.</div>}
+          {selected && nativeLinks?.fileId === file.id && <div className="ml-4 text-muted-foreground">{popupBlocked ? "Allow popups and retry the action to check fresh Drive links." : "Drive action verified. Download is managed by Google Drive."}</div>}
+          {folder && expanded && renderNativeFolder(file.id, depth + 1)}
+        </div>;
+      })}
+    </div>;
   };
 
   return (
@@ -398,6 +477,22 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
 
       {/* Lakehouse Medallion Layers Tree */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 text-xs">
+        {googleAuth.isAuthenticated && <section aria-label="Native Landing files" className="mb-2 rounded border border-amber-500/40 text-[11px]">
+          <div className="flex items-center gap-1 px-2 py-1 font-medium">
+            <button type="button" className="flex flex-1 items-center gap-1 text-left" aria-expanded={nativeOpen}
+              onClick={() => setNativeOpen((value) => !value)}>
+              {nativeOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Native Landing files
+            </button>
+            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => { setFolderExpansion({ root: null, ids: new Set() }); void refreshNative(); }}>Refresh</Button>
+          </div>
+          {nativeOpen && <div className="space-y-1 border-t p-2">
+            <p className="text-muted-foreground">Drive objects observed during this listing, independent of published SQL datasets. Refresh to check for new files. Browsing reads metadata only; originals open or download through Drive. Preview replaces the previous native SQL view in this local session, accepts supported files up to {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}, and is removed on refresh or disconnect.</p>
+            {nativeLoading && <div role="status">Finding Landing folder…</div>}
+            {nativeError && <div role="alert" className="text-destructive">{nativeError} <Button size="sm" variant="outline" onClick={() => void refreshNative()}>Retry</Button></div>}
+            {nativeRoot && <><div className="font-medium">{nativeRoot.name}</div>{renderNativeFolder(nativeRoot.id)}</>}
+          </div>}
+        </section>}
         {sourceInventory && (
           <div className="mb-1 rounded border border-border/60 text-[11px]">
             <button

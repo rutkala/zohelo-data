@@ -35,6 +35,8 @@ export interface LocalDuckSession extends DataSession {
     /** Shared connection. Long-running statements should use `execute()`. */
     readonly connection: duckdb.AsyncDuckDBConnection;
   };
+  /** Observe final teardown of this in-tab engine, including OPFS session switches. */
+  onClose(listener: () => void): () => void;
 }
 
 /** Narrows a session to its in-tab DuckDB form, or null when it is not one. */

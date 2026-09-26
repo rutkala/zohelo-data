@@ -569,8 +569,9 @@ test("reports a release artifact hash mismatch without embedding docs", async ({
   await page.goto("./");
   await ensureProfile(page);
   await openCatalogue(page);
-  await expect(page.locator('[role="alert"]:visible')).toContainText("Data catalogue unavailable");
-  await expect(page.locator('[role="alert"]:visible')).toContainText(
+  const catalogueAlert = page.getByRole("alert").filter({ hasText: "Data catalogue unavailable" });
+  await expect(catalogueAlert).toBeVisible();
+  await expect(catalogueAlert).toContainText(
     "catalog.json does not match its release SHA-256."
   );
   await expect(page.locator('iframe[title="Data catalogue — dbt Docs"]')).toHaveCount(0);
@@ -589,8 +590,9 @@ test("reports a missing generic viewer template", async ({ page }) => {
   await page.goto("./");
   await ensureProfile(page);
   await openCatalogue(page);
-  await expect(page.locator('[role="alert"]:visible')).toContainText("Data catalogue unavailable");
-  await expect(page.locator('[role="alert"]:visible')).toContainText(
+  const catalogueAlert = page.getByRole("alert").filter({ hasText: "Data catalogue unavailable" });
+  await expect(catalogueAlert).toBeVisible();
+  await expect(catalogueAlert).toContainText(
     "The catalogue viewer could not be loaded."
   );
   await expect(page.locator('iframe[title="Data catalogue — dbt Docs"]')).toHaveCount(0);

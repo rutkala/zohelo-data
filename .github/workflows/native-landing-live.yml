@@ -1,0 +1,50 @@
+name: Verify deployed native Landing access
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_deployed_sha:
+        description: 'Exact deployed portal Git SHA (40 lowercase hex digits)'
+        required: true
+        type: string
+      drive_root_id:
+        description: 'Explicit existing production zohelo-data Drive folder ID'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm --prefix portal ci --ignore-scripts --no-audit --no-fund
+      - working-directory: portal
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Verify deployed portal with authenticated metadata-only browser
+        env:
+          EXPECTED_DEPLOYED_SHA: ${{ inputs.expected_deployed_sha }}
+          DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: node portal/scripts/verify-native-landing-live.mjs "$RUNNER_TEMP/native-landing-result.json"
+      - name: Retain sanitized summary only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-landing-live-result
+          path: ${{ runner.temp }}/native-landing-result.json
+          if-no-files-found: ignore
+          retention-days: 14
