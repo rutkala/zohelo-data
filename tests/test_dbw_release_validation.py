@@ -288,6 +288,28 @@ class DBWReleaseValidationTests(unittest.TestCase):
             ):
                 validation.validate_staged_dbw_release(store, {})
 
+    def test_common_observation_truncation_is_rejected(self):
+        store, manifest = _candidate()
+        for dataset in manifest["datasets"]:
+            if dataset["dataset_id"] in {
+                "bronze_dbw_observations",
+                "dbw_observations",
+                "fact_dbw_observations",
+            }:
+                dataset["row_count"] -= 1
+        with patch.object(
+            validation, "restore_release", return_value=manifest
+        ), patch.object(
+            validation,
+            "verify_local_dataset",
+            return_value={"status": "verified"},
+        ):
+            with self.assertRaisesRegex(
+                ReleaseValidationError,
+                "modeled observation rows differ from retained source",
+            ):
+                validation.validate_staged_dbw_release(store, {})
+
     def test_changed_remote_file_is_rejected_before_sql_acceptance(self):
         store, manifest = _candidate()
         store.files["dataset-0"] = b"changed"
