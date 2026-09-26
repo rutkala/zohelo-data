@@ -269,7 +269,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             },
         ) as verify:
             report = validation.validate_staged_dbw_release(
-                store, {"manifest_file_id": "unused"}
+                store, {"manifest_file_id": "unused"},
                 retained_pointer_file_id="retained-pointer",
             )
 
