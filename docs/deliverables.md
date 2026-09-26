@@ -64,11 +64,23 @@ base-path jobs, including 759 unit/engine tests and browser regressions. The
 [main Pages deployment](https://github.com/rutkala/zohelo-data/actions/runs/36277679943)
 reported build and deploy success for
 `d249b28931889b52c00f483dc4047dcaa6231341` at 00:55 CEST, and its uploaded
-artifact included `portal-build.json`. A fresh read-only browser reached the
-deployed portal, but its automation client rejected direct `.json` navigation
-with `ERR_BLOCKED_BY_CLIENT`; independent live response-byte verification is
-therefore still not claimed. No ingestion, Drive mutation, new source
-completeness or DBW publication follows from either portal deployment.
+artifact included `portal-build.json`. A separate browser automation client
+rejected direct `.json` navigation with `ERR_BLOCKED_BY_CLIENT`; that
+client-local result was not treated as live response-byte acceptance.
+
+[PR #172](https://github.com/rutkala/zohelo-data/pull/172) added a bounded,
+read-only post-deploy verifier that rejects the prior HTML SPA fallback, stale
+commits, oversized or malformed responses and unreviewed capability changes.
+Exact-head validation passed 791 Python/dbt tests (one skipped), 759 portal
+unit/engine tests and 17 browser regressions for each base path. The
+[main deployment](https://github.com/rutkala/zohelo-data/actions/runs/36280887713)
+then built and deployed exact commit
+`da720abf70ceb86f4ccdf1cf5c09bfb33f64dba6`; at 01:56:41 CEST its independent
+fresh job read the custom-domain marker as JSON and verified the exact commit,
+release formats 1/2, canonical Drive layout and retained-Bronze formats 1/2.
+This closes commit-level live marker verification. No ingestion, Drive mutation,
+new source completeness, medallion completeness or DBW publication follows
+from these portal deployments.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
@@ -123,14 +135,16 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`d249b28931889b52c00f483dc4047dcaa6231341`. The earlier inspection at
+`da720abf70ceb86f4ccdf1cf5c09bfb33f64dba6`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
 [#167](https://github.com/rutkala/zohelo-data/pull/167),
 [#168](https://github.com/rutkala/zohelo-data/pull/168),
-[#169](https://github.com/rutkala/zohelo-data/pull/169), and
-[#170](https://github.com/rutkala/zohelo-data/pull/170) are already merged and
+[#169](https://github.com/rutkala/zohelo-data/pull/169),
+[#170](https://github.com/rutkala/zohelo-data/pull/170),
+[#171](https://github.com/rutkala/zohelo-data/pull/171), and
+[#172](https://github.com/rutkala/zohelo-data/pull/172) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
@@ -173,6 +187,28 @@ the exact durable lock and queue bytes still require a separate serialized
 handover before any writer starts.
 
 ## Current status
+
+### Eurostat scheduled continuation and progressive release — 27 September 2026
+
+The scheduled
+[Eurostat run](https://github.com/rutkala/zohelo-data/actions/runs/36277436928)
+completed successfully at 01:32 CEST without a duplicate writer. Its fresh
+Landing checks report 21,154 official catalogue distributions, 6,996 validated
+current distributions, 9,045 accepted distribution receipts, 27,073,219,156
+raw bytes, zero failed pending distribution tasks and a 0.3307175947811289
+current full-distribution coverage ratio. The remaining full-distribution task
+ledger contains 20,965 tasks. The independent API campaign published all 2,116
+accepted responses with zero publication backlog and 45 API tasks remaining.
+
+The same run passed 38 dbt checks and published progressive release
+`f02ca269-dd5f-49bc-a3d5-918f3f2ee97d`. A fresh Drive read confirmed its
+immutable release folder and expected Bronze, revision-history, Gold
+dimension/fact, coverage-mart, catalogue, semantic and release artifacts. Its
+coverage mart truthfully records three admitted/modelled datasets, admitted
+coverage 1.0, and `complete_official_catalogue=false`. This is progress, not
+complete Eurostat delivery: raw catalogue coverage remains 33.07%, and
+source-shaped downstream models for the full-distribution catalogue remain
+open.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
 
