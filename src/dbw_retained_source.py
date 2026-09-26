@@ -34,14 +34,23 @@ def load_retained_source_descriptor(
 
 
 def validate_retained_source(
-    store: Any, descriptor: Any
+    store: Any,
+    descriptor: Any,
+    *,
+    expected_pointer_file_id: str,
 ) -> dict[str, Any]:
     """Read the live retained pointer and immutable manifest, then match a descriptor."""
     if not isinstance(descriptor, dict):
         raise ValueError("DBW retained source descriptor must be an object")
     pointer_file_id = descriptor.get("pointer_file_id")
-    if not isinstance(pointer_file_id, str) or not pointer_file_id:
-        raise ValueError("DBW retained source pointer file ID is invalid")
+    if (
+        not isinstance(expected_pointer_file_id, str)
+        or not expected_pointer_file_id
+        or pointer_file_id != expected_pointer_file_id
+    ):
+        raise ValueError(
+            "DBW retained source pointer differs from canonical discovery"
+        )
     pointer_raw = store.read(pointer_file_id)
     if not isinstance(pointer_raw, bytes):
         raise ValueError("DBW retained source pointer is not bytes")
