@@ -30,8 +30,10 @@ class _Store:
     def __init__(self, files=None):
         self.files = dict(files or {})
         self.folders = {}
+        self.read_counts = {}
 
     def read(self, file_id):
+        self.read_counts[file_id] = self.read_counts.get(file_id, 0) + 1
         return self.files[file_id]
 
     def find(self, name, parent_id):
@@ -257,7 +259,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
     def test_complete_multilayer_release_is_read_back_and_validated(self):
         store, manifest = _candidate()
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -272,6 +274,9 @@ class DBWReleaseValidationTests(unittest.TestCase):
             )
 
         self.assertEqual(verify.call_count, 11)
+        self.assertTrue(
+            all(store.read_counts[f"dataset-{index}"] == 1 for index in range(11))
+        )
         self.assertEqual(report["observation_rows"], 879_999_727)
         self.assertEqual(
             report["retained_release_id"],
@@ -290,7 +295,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             if item["dataset_id"] == "fact_dbw_observations"
         )["row_count"] -= 1
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -316,7 +321,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             }:
                 dataset["row_count"] -= 1
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -341,7 +346,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             }:
                 dataset["row_count"] -= 1
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -360,7 +365,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
     def test_changed_remote_file_is_rejected_before_sql_acceptance(self):
         store, manifest = _candidate()
         store.files["dataset-0"] = b"changed"
-        with patch.object(validation, "restore_release", return_value=manifest):
+        with patch.object(validation, "read_release_manifest", return_value=manifest):
             with self.assertRaisesRegex(
                 ReleaseValidationError, "fingerprint changed"
             ):
@@ -401,7 +406,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
     def test_candidate_cannot_select_another_retained_pointer(self):
         store, manifest = _candidate()
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -421,7 +426,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
         store, manifest = _candidate()
         store.files["retained-manifest"] += b" "
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
@@ -443,7 +448,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
             "complete_retained_inventory"
         )
         with patch.object(
-            validation, "restore_release", return_value=manifest
+            validation, "read_release_manifest", return_value=manifest
         ), patch.object(
             validation,
             "_verify_dbw_dataset",
