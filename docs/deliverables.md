@@ -2,6 +2,71 @@
 
 Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
+## Existing-source takeover and acceptance reset — 26 September 2026
+
+**Owner direction:** the lead assistant again coordinates this repository. Finish
+the sources and work already present; new-source research/onboarding and the dated
+wave-expansion schedule are paused. This supersedes older expansion priorities,
+including the proposed 28 September–4 October new-source starts below. Preserve
+existing scheduled ingestion, retained bytes, checkpoints, unpublished work and
+approved architecture/cost boundaries. This is a priority change, not data acceptance.
+
+| Priority | Required outcome | Evidence required before Done |
+| --- | --- | --- |
+| 1 — BDL execution | Resume the existing native Web bulk campaign in GitHub Actions using all ten existing WireGuard routes, across bounded runs. | Reconcile the live local writer and last durable checkpoint; prove an exclusive handover, ten distinct browser egress routes, graceful checkpointed shutdown and fresh-run resume. No reset, direct fallback or replacement source/API bulk load. |
+| 2 — DBW usability | Complete retained DBW data is queryable as logical tables across Bronze, Silver and Gold, with Landing discovery and source-grounded semantic definitions. | Publish/verify the full modeled release and exercise authenticated portal LIMIT, exact counts, multi-indicator filters and joins without requiring physical-part or single-indicator selection. Retain unresolved provider-completeness and lineage labels until evidenced. |
+| 3 — Existing-source coverage | Every source already retained in the project Drive is discoverable in Landing and has its missing downstream stages completed. | Reconcile an exhaustive source-by-layer inventory to Drive, models and published query contracts; establish actual coverage and independent SQL/semantic checks. An unsupported format is shown explicitly rather than disappearing. Native discovery does not wait for modeling. |
+| 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
+
+**Fresh GitHub inspection:** main was
+`490ffbed13b6903017aefafbc2a2a85b6c690f5d` (DBW bounded exports, PR #163).
+[PR #164](https://github.com/rutkala/zohelo-data/pull/164) was actively changing
+during this inspection and covers modeled-release validation and retained-source
+binding. Review/integrate that work before creating an overlapping publisher
+implementation; this takeover does not claim it merged or passed at its final head.
+Recent main NBP, WDI and Eurostat runs have succeeded, but workflow success alone
+does not establish full source or portal coverage.
+
+**BDL migration defects confirmed in current code:** the existing
+`.github/workflows/bdl-web-bootstrap.yml` defaults to three workers, installs no
+VPN routes and omits `--require-proxy-count`. The cluster/config helper is tied
+to `/workspaces/zohelo-data` and needs a portable runtime directory plus cleanup
+limited to processes owned by that run. Its continuation step dispatches whenever
+`load_complete=false`; a successful `pass_complete` with terminal failures can
+therefore trigger successive runs with no selectable work. Continue automatically
+only after an explicit bounded stop with resumable work and a verified checkpoint;
+terminal failures/control errors must stop and expose a concrete recovery task.
+Actions serialization alone does not exclude a local writer, and heartbeat age
+alone is insufficient evidence for takeover.
+
+The [worker-one VPN smoke run](https://github.com/rutkala/zohelo-data/actions/runs/36194984214)
+failed during wireproxy startup because a configuration value was not valid
+base64; egress and BDL checks did not run. Its branch is a one-worker smoke test, not a ten-worker migration.
+No running or queued BDL Action was found during this inspection. The 24 September
+checkpoint figures below are historical and have not been refreshed from the
+devcontainer.
+
+**Portal cause confirmed in current code:** `landingCatalog.ts` resolves a fixed
+list of source publication pointers. `treeFromPublished` in `googleDriveSlice.ts`
+builds navigation from those snapshots and modeled releases; the separate
+`sourceInventory.ts` checks a fixed set of paths/depths and does not make their
+native files queryable. Consequently, existing Drive files can be absent from
+Landing navigation. `lakehouseBridge.ts` downloads and registers complete file
+buffers before SQL; simply publishing more parts or deleting the retained DBW
+selector guard does not establish scalable complete-table queries. Keep integrity
+checks and full snapshot membership while delivering a verified complete-table
+reader. The previously recorded tool-rejected reader approach remains a hold; do
+not reroute it under another tool or identity.
+
+**Concrete access blocker:** the connected devcontainer device was offline, last
+seen 24 September at 22:26 UTC. No live local Git/process/checkpoint/VPN inspection
+was possible. Reconnect the existing Remote Desktop Commander service in that
+devcontainer without rebuilding or restarting ingestion. Then inspect it read-only,
+recover valid VPN profiles into encrypted Actions configuration without exposing
+values, and establish the writer handover. Do not infer that an offline connector
+means the ingestion process stopped. No new BDL writer or DBW publisher was
+launched by this takeover review.
+
 ## Current status
 
 ### DBW modeled release bounded-export increment — 26 September 2026
