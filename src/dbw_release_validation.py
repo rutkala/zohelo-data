@@ -35,6 +35,18 @@ _OBSERVATION_DATASETS = (
     "dbw_observations",
     "fact_dbw_observations",
 )
+_RETAINED_ROW_DATASETS = {
+    "bronze_dbw_dictionaries": "dictionaries",
+    "dbw_dictionaries": "dictionaries",
+    "bronze_dbw_indicators": "taxonomy",
+    "dbw_indicators": "taxonomy",
+    "dim_dbw_indicator": "taxonomy",
+    "bronze_dbw_metadata": "metadata",
+    "dbw_metadata": "metadata",
+    "bronze_dbw_observations": "observations",
+    "dbw_observations": "observations",
+    "fact_dbw_observations": "observations",
+}
 
 
 def validate_staged_dbw_release(
@@ -233,13 +245,16 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW Bronze, Silver and Gold observation row counts differ"
         )
-    if (
-        next(iter(observation_rows.values()))
-        != inputs[0]["observation_rows"]
-    ):
-        raise ReleaseValidationError(
-            "DBW modeled observation rows differ from retained source"
-        )
+    retained_dataset_rows = inputs[0]["dataset_rows"]
+    for dataset_id, retained_dataset in _RETAINED_ROW_DATASETS.items():
+        if (
+            by_dataset[dataset_id]["row_count"]
+            != retained_dataset_rows[retained_dataset]
+        ):
+            raise ReleaseValidationError(
+                f"DBW modeled {dataset_id} rows differ from retained "
+                f"{retained_dataset}"
+            )
     metrics = catalogue.get("metrics")
     if (
         catalogue.get("metrics_status") != "awaiting_business_approval"
