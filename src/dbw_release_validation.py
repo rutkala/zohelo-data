@@ -226,6 +226,13 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW Bronze, Silver and Gold observation row counts differ"
         )
+    if (
+        next(iter(observation_rows.values()))
+        != inputs[0]["observation_rows"]
+    ):
+        raise ReleaseValidationError(
+            "DBW modeled observation rows differ from retained source"
+        )
     metrics = catalogue.get("metrics")
     if (
         catalogue.get("metrics_status") != "awaiting_business_approval"
