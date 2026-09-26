@@ -108,10 +108,13 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`e674f303644dd777b4a2d29737da488aa9b43de0`. The earlier inspection at
-`490ffbed` is historical: [PR #164](https://github.com/rutkala/zohelo-data/pull/164)
-merged as `8f69d2f` and is already an ancestor of current main, so it is no
-longer a pending integration gate. Recent NBP, WDI and Eurostat runs have
+`10addd1efabbaaddb3dec2f4615b8b72a710ab58`. The earlier inspection at
+`490ffbed` is historical: PRs
+[#164](https://github.com/rutkala/zohelo-data/pull/164),
+[#166](https://github.com/rutkala/zohelo-data/pull/166),
+[#167](https://github.com/rutkala/zohelo-data/pull/167), and
+[#168](https://github.com/rutkala/zohelo-data/pull/168) are already merged and
+are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
 
@@ -131,17 +134,18 @@ No running or queued BDL Action was found during this inspection. The 24 Septemb
 checkpoint figures below are historical and have not been refreshed from the
 devcontainer.
 
-**Portal cause confirmed in current code:** `landingCatalog.ts` resolves a fixed
-list of source publication pointers. `treeFromPublished` in `googleDriveSlice.ts`
-builds navigation from those snapshots and modeled releases; the separate
-`sourceInventory.ts` checks a fixed set of paths/depths and does not make their
-native files queryable. Consequently, existing Drive files can be absent from
-Landing navigation. `lakehouseBridge.ts` downloads and registers complete file
-buffers before SQL; simply publishing more parts or deleting the retained DBW
-selector guard does not establish scalable complete-table queries. Keep integrity
-checks and full snapshot membership while delivering a verified complete-table
-reader. The previously recorded tool-rejected reader approach remains a hold; do
-not reroute it under another tool or identity.
+**Historical portal diagnosis (native discovery resolved by PR #168):** before
+`10addd1ef`, `landingCatalog.ts` resolved a fixed list of source publication
+pointers, `treeFromPublished` in `googleDriveSlice.ts` built navigation from
+those snapshots and modeled releases, and `sourceInventory.ts` did not make
+arbitrary retained files queryable. PR #168 replaced that native-navigation
+constraint with authenticated exhaustive `01_landing` discovery. The separate
+complete-table scaling constraint remains: `lakehouseBridge.ts` downloads and
+registers complete file buffers before SQL, so simply publishing more parts or
+deleting the retained DBW selector guard does not establish scalable full-table
+queries. Keep integrity checks and full snapshot membership while delivering a
+verified complete-table reader. The previously recorded tool-rejected reader
+approach remains a hold; do not reroute it under another tool or identity.
 
 **Historical devcontainer note (superseded 26 September):** the earlier
 takeover could not inspect the offline devcontainer, but the owner's clarified
