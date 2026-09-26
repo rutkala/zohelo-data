@@ -269,6 +269,16 @@ def validate_staged_dbw_release(
         raise ReleaseValidationError(
             "DBW release must not claim unapproved semantic metrics"
         )
+    try:
+        validate_retained_source(
+            store,
+            inputs[0],
+            expected_pointer_file_id=retained_pointer_file_id,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReleaseValidationError(
+            "DBW retained source changed during modeled validation"
+        ) from exc
     return {
         "release_id": manifest["release_id"],
         "format_version": manifest["format_version"],
