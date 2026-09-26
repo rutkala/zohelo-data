@@ -211,8 +211,20 @@ def build_candidate(data_root: Path, release_id: str, workspace: Path) -> dict:
                 rows, minimum, maximum = connection.execute(
                     f'SELECT count(*), min("{date_column}"), max("{date_column}") FROM {relation}'
                 ).fetchone()
-                min_date = str(minimum) if minimum is not None else None
-                max_date = str(maximum) if maximum is not None else None
+                if date_column == "period_year":
+                    min_date = (
+                        f"{int(minimum):04d}-01-01"
+                        if minimum is not None
+                        else None
+                    )
+                    max_date = (
+                        f"{int(maximum):04d}-01-01"
+                        if maximum is not None
+                        else None
+                    )
+                else:
+                    min_date = str(minimum) if minimum is not None else None
+                    max_date = str(maximum) if maximum is not None else None
             else:
                 rows = connection.execute(f"SELECT count(*) FROM {relation}").fetchone()[0]
                 min_date = max_date = None
