@@ -65,17 +65,14 @@ implementation; this takeover does not claim it merged or passed at its final he
 Recent main NBP, WDI and Eurostat runs have succeeded, but workflow success alone
 does not establish full source or portal coverage.
 
-**BDL migration defects confirmed in current code:** the existing
-`.github/workflows/bdl-web-bootstrap.yml` defaults to three workers, installs no
-VPN routes and omits `--require-proxy-count`. The cluster/config helper is tied
-to `/workspaces/zohelo-data` and needs a portable runtime directory plus cleanup
-limited to processes owned by that run. Its continuation step dispatches whenever
-`load_complete=false`; a successful `pass_complete` with terminal failures can
-therefore trigger successive runs with no selectable work. Continue automatically
-only after an explicit bounded stop with resumable work and a verified checkpoint;
-terminal failures/control errors must stop and expose a concrete recovery task.
-Actions serialization alone does not exclude a local writer, and heartbeat age
-alone is insufficient evidence for takeover.
+**Historical pre-merge BDL diagnosis (superseded by PR #166):** before
+`e674f303`, the scheduled workflow defaulted to three workers, installed no VPN
+routes, omitted `--require-proxy-count`, depended on a fixed devcontainer path
+and could dispatch successors without selectable work. PR #166 replaced that
+path with the portable ten-route preflight and bounded resume workflow described
+above. Its Actions serialization still does not prove ownership of a separate
+writer, so the exact durable lock/queue reconciliation and explicit release gate
+remain current.
 
 The [worker-one VPN smoke run](https://github.com/rutkala/zohelo-data/actions/runs/36194984214)
 failed during wireproxy startup because a configuration value was not valid
@@ -96,14 +93,13 @@ checks and full snapshot membership while delivering a verified complete-table
 reader. The previously recorded tool-rejected reader approach remains a hold; do
 not reroute it under another tool or identity.
 
-**Concrete access blocker:** the connected devcontainer device was offline, last
-seen 24 September at 22:26 UTC. No live local Git/process/checkpoint/VPN inspection
-was possible. Reconnect the existing Remote Desktop Commander service in that
-devcontainer without rebuilding or restarting ingestion. Then inspect it read-only,
-recover valid VPN profiles into encrypted Actions configuration without exposing
-values, and establish the writer handover. Do not infer that an offline connector
-means the ingestion process stopped. No new BDL writer or DBW publisher was
-launched by this takeover review.
+**Historical devcontainer note (superseded 26 September):** the earlier
+takeover could not inspect the offline devcontainer, but the owner's clarified
+architecture does not require reconnecting it for routine production. GitHub
+Actions is now the production path. The current operational blocker is the nine
+missing repository secrets recorded above; after a passed ten-route preflight,
+the exact durable lock and queue bytes still require a separate serialized
+handover before any writer starts.
 
 ## Current status
 
