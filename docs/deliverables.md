@@ -16,8 +16,8 @@ retention guarantees, fail-closed release guards, ADR constraints, and
 destructive-action prohibitions remain binding unless a later reviewed decision
 explicitly supersedes the specific invariant.
 
-**Native Landing portal reader merged and deployed; authenticated production
-receipt remains open.** [PR #168](https://github.com/rutkala/zohelo-data/pull/168)
+**Native Landing portal reader deployed; authenticated production receipt
+accepted.** [PR #168](https://github.com/rutkala/zohelo-data/pull/168)
 merged to main as
 [`10addd1efabbaaddb3dec2f4615b8b72a710ab58`](https://github.com/rutkala/zohelo-data/commit/10addd1efabbaaddb3dec2f4615b8b72a710ab58)
 at 00:29 CEST on 27 September after exact-head review. The implementation
@@ -30,7 +30,7 @@ in CSV/JSON/JSONL/Parquet; large original archives remain Drive-managed. The
 published SQL reader and DBW full-table guard are unchanged.
 
 The final review caught and corrected a production-verifier regression: CORS
-`OPTIONS` preflights are now allowed while every method other than `GET` and
+`OPTIONS` preflights are allowed while every method other than `GET` and
 `OPTIONS` remains fail-closed; media-read authorization and counting apply
 only to actual `GET` requests. Exact-head
 [portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36275586112)
@@ -43,17 +43,32 @@ The main
 [Pages deployment](https://github.com/rutkala/zohelo-data/actions/runs/36276434256)
 built successfully, then its first deploy attempt timed out while requesting a
 GitHub OIDC token. A failed-job retry reused the preserved Pages artifact and
-GitHub reported the current build and deploy jobs successful, with deployment
-ID bound to `10addd1efabbaaddb3dec2f4615b8b72a710ab58` and environment URL
-`https://data.zohelo.com/` at 00:32 CEST. This is deployment evidence, not the
-authenticated data-access acceptance receipt. At 00:35 CEST a direct
-unauthenticated browser request for `portal-build.json` still resolved to the
-portal app shell rather than exposing the expected commit marker, so independent
-commit-level HTTP verification remains unresolved. The separate main-only
-manual read-only workflow has not been dispatched; its authenticated checks of
-all 13 retained folders, deep BDL paths, one large-archive link and one bounded
-preview therefore remain open. No Drive mutation, ingestion, new source
-completeness or DBW publication claim follows from this portal delivery.
+GitHub reported build and deploy success for exact commit
+`10addd1efabbaaddb3dec2f4615b8b72a710ab58` at 00:32 CEST.
+
+The separate main-only
+[authenticated native-Landing verification](https://github.com/rutkala/zohelo-data/actions/runs/36276966225)
+then completed successfully at 00:43 CEST against that exact deployed commit.
+The read-only receipt exhausted all 13 source folders across 10 source families,
+visited 66 metadata pages, probed one file in every source folder and four BDL
+levels, checked 13 managed download links, exercised one bounded preview, and
+verified one 21,378,254,323-byte ZIP link. It made no Drive mutation. This closes
+the deployed native-Landing access acceptance boundary; it does **not** establish
+source completeness, modeled medallion coverage, DBW publication or live SQL.
+
+[PR #170](https://github.com/rutkala/zohelo-data/pull/170) added
+`portal-build.json` to the service worker's navigation-fallback denylist and
+a production-build browser regression that activates the worker and requires
+exact JSON through a cache-busted navigation. Exact-head CI passed both portal
+base-path jobs, including 759 unit/engine tests and browser regressions. The
+[main Pages deployment](https://github.com/rutkala/zohelo-data/actions/runs/36277679943)
+reported build and deploy success for
+`d249b28931889b52c00f483dc4047dcaa6231341` at 00:55 CEST, and its uploaded
+artifact included `portal-build.json`. A fresh read-only browser reached the
+deployed portal, but its automation client rejected direct `.json` navigation
+with `ERR_BLOCKED_BY_CLIENT`; independent live response-byte verification is
+therefore still not claimed. No ingestion, Drive mutation, new source
+completeness or DBW publication follows from either portal deployment.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
@@ -108,12 +123,14 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`10addd1efabbaaddb3dec2f4615b8b72a710ab58`. The earlier inspection at
+`d249b28931889b52c00f483dc4047dcaa6231341`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
-[#167](https://github.com/rutkala/zohelo-data/pull/167), and
-[#168](https://github.com/rutkala/zohelo-data/pull/168) are already merged and
+[#167](https://github.com/rutkala/zohelo-data/pull/167),
+[#168](https://github.com/rutkala/zohelo-data/pull/168),
+[#169](https://github.com/rutkala/zohelo-data/pull/169), and
+[#170](https://github.com/rutkala/zohelo-data/pull/170) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
