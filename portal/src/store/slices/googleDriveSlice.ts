@@ -18,6 +18,13 @@ import {
   resolveLayerFolderId,
   resolveReleaseCatalog,
   resolveSourceInventory,
+  resolveNativeLandingRoot,
+  listNativeFolder,
+  isNativeFolder,
+  freshNativeFile,
+  nativeDriveLink,
+  previewNativeFile,
+  disposeAllNativePreviews,
   isGoogleDriveAuthError,
   setStoredToken,
   type LakehouseLayer,
@@ -25,6 +32,7 @@ import {
   type LandingCatalogResolution,
   type LandingSourceId,
   type PublishedDataset,
+  type NativeLandingFile,
   type ReleaseCatalogResolution,
 } from "@/services/googleDrive";
 import type { DuckStoreState, GoogleDriveSlice } from "../types";
@@ -120,9 +128,20 @@ const handleDriveAuthFailure = (
 ): boolean => {
   if (!isGoogleDriveAuthError(error) || get().googleAuth.token !== token) return false;
   clearStoredTokenIfCurrent(token);
+  void disposeAllNativePreviews().catch(() => {
+    set({ lakehouseStatusMessage: "Could not remove a local native preview. Start a fresh DuckDB session." });
+  });
   set({
     googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: error.message },
     lakehouseStatusMessage: "Google Drive authorization expired or was revoked. Sign in again.",
+    nativeLandingRoot: null,
+    nativeLandingFolders: {},
+    nativeLandingChildren: {},
+    nativeLandingLinks: null,
+    nativeLandingSelected: null,
+    nativeLandingActionError: null,
+    nativeLandingError: error.message,
+    nativeLandingLoading: false,
   });
   return true;
 };
@@ -229,6 +248,8 @@ export const createGoogleDriveSlice: StateCreator<
   GoogleDriveSlice
 > = (set, get) => {
   let refreshGeneration = 0;
+  let nativeGeneration = 0;
+  let nativeActionSequence = 0;
   let busy = false;
   // DuckDB views survive disconnect; record their release per engine, not globally.
   const loadedReleaseFingerprints = new WeakMap<object, string>();
@@ -644,6 +665,14 @@ export const createGoogleDriveSlice: StateCreator<
     lakehouseLanding: null,
     lakehouseSourceInventory: null,
     isSourceInventoryLoading: false,
+    nativeLandingRoot: null,
+    nativeLandingFolders: {},
+    nativeLandingChildren: {},
+    nativeLandingLoading: false,
+    nativeLandingError: null,
+    nativeLandingSelected: null,
+    nativeLandingLinks: null,
+    nativeLandingActionError: null,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
     activeLakehouseDataset: null,
@@ -656,6 +685,7 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: "Requesting Google Sign-In authorization...",
         });
         const nextToken = await requestGoogleAccessToken({ promptConsent });
+        nativeGeneration += 1;
         set({
           googleAuth: {
             token: nextToken,
@@ -683,6 +713,7 @@ export const createGoogleDriveSlice: StateCreator<
         return false;
       }
       setStoredToken(trimmed);
+      nativeGeneration += 1;
       set({
         googleAuth: { token: trimmed, isAuthenticated: true, authSource: "manual", error: null },
       });
@@ -695,6 +726,12 @@ export const createGoogleDriveSlice: StateCreator<
     },
 
     disconnectGoogleDrive: () => {
+      nativeGeneration += 1;
+      nativeActionSequence += 1;
+      void disposeAllNativePreviews().catch(() => {
+        set({ lakehouseStatusMessage: "Could not remove a local native preview. Start a fresh DuckDB session." });
+      });
+      refreshGeneration += 1;
       clearStoredToken();
       set({
         googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: null },
@@ -703,6 +740,14 @@ export const createGoogleDriveSlice: StateCreator<
         lakehouseLanding: null,
         lakehouseSourceInventory: null,
         isSourceInventoryLoading: false,
+        nativeLandingRoot: null,
+        nativeLandingFolders: {},
+        nativeLandingChildren: {},
+        nativeLandingLoading: false,
+        nativeLandingError: null,
+        nativeLandingSelected: null,
+        nativeLandingLinks: null,
+        nativeLandingActionError: null,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
         isLakehouseLoading: false,
@@ -710,7 +755,121 @@ export const createGoogleDriveSlice: StateCreator<
       });
     },
 
+    refreshNativeLanding: async () => {
+      const token = get().googleAuth.token;
+      const generation = ++nativeGeneration;
+      nativeActionSequence += 1;
+      set({ nativeLandingRoot: null, nativeLandingFolders: {}, nativeLandingChildren: {},
+        nativeLandingSelected: null, nativeLandingLinks: null, nativeLandingActionError: null,
+        nativeLandingError: null, nativeLandingLoading: !!token });
+      if (!token) return;
+      const current = () => generation === nativeGeneration && get().googleAuth.token === token;
+      try {
+        await disposeAllNativePreviews();
+        if (!current()) return;
+        const root = await resolveNativeLandingRoot(token);
+        if (!current()) return;
+        set({ nativeLandingRoot: root, nativeLandingFolders: { [root.id]: root }, nativeLandingLoading: false });
+        await get().loadNativeLandingFolder(root.id);
+      } catch (error) {
+        if (!current()) return;
+        handleDriveAuthFailure(set, get, token, error);
+        if (current()) set({ nativeLandingError: messageOf(error), nativeLandingLoading: false });
+      }
+    },
+
+    loadNativeLandingFolder: async (folderId) => {
+      const token = get().googleAuth.token;
+      const root = get().nativeLandingRoot;
+      const folders = get().nativeLandingFolders;
+      const folder = folders[folderId];
+      const generation = nativeGeneration;
+      if (!token || !root || !folder || get().nativeLandingChildren[folderId]?.loading) return;
+      const current = () => generation === nativeGeneration && get().googleAuth.token === token &&
+        get().nativeLandingRoot === root;
+      set({ nativeLandingChildren: { ...get().nativeLandingChildren,
+        [folderId]: { files: [], loaded: false, loading: true, error: null } } });
+      try {
+        const files = await listNativeFolder(folder, folders, root.id, token, current);
+        if (!current()) return;
+        const newFolders = { ...get().nativeLandingFolders };
+        for (const file of files) {
+          if (isNativeFolder(file)) newFolders[file.id] = file;
+        }
+        set({ nativeLandingFolders: newFolders, nativeLandingChildren: {
+          ...get().nativeLandingChildren, [folderId]: { files, loaded: true, loading: false, error: null }
+        } });
+      } catch (error) {
+        if (!current()) return;
+        handleDriveAuthFailure(set, get, token, error);
+        if (current()) set({ nativeLandingChildren: { ...get().nativeLandingChildren,
+          [folderId]: { files: [], loaded: false, loading: false, error: messageOf(error) } } });
+      }
+    },
+
+    verifyNativeLandingFile: async (folderId, fileId) => {
+      const token = get().googleAuth.token;
+      const root = get().nativeLandingRoot;
+      const folderState = get().nativeLandingChildren[folderId];
+      const selected: NativeLandingFile | undefined = folderState?.loaded
+        ? folderState.files.find((file) => file.id === fileId) : undefined;
+      const generation = nativeGeneration;
+      const sequence = ++nativeActionSequence;
+      if (!token || !root || !selected) return null;
+      const current = () => generation === nativeGeneration && sequence === nativeActionSequence &&
+        get().googleAuth.token === token && get().nativeLandingRoot === root;
+      set({ nativeLandingSelected: fileId, nativeLandingLinks: null, nativeLandingActionError: null });
+      try {
+        const fresh = await freshNativeFile(selected, get().nativeLandingFolders, root.id, token, current);
+        if (!current()) return null;
+        const links = { open: (() => { try { return nativeDriveLink(fresh, token, "open"); } catch { return null; } })(),
+          download: fresh.capabilities?.canDownload === true
+            ? (() => { try { return nativeDriveLink(fresh, token, "download"); } catch { return null; } })()
+            : null };
+        if (!links.open && !links.download) throw new Error("Drive did not provide a safe link for this file.");
+        set({ nativeLandingLinks: { fileId, ...links } });
+        return links;
+      } catch (error) {
+        if (!current()) return null;
+        handleDriveAuthFailure(set, get, token, error);
+        if (current()) set({ nativeLandingActionError: messageOf(error) });
+        return null;
+      }
+    },
+
+    previewNativeLandingFile: async (folderId, fileId) => {
+      const sequence = ++nativeActionSequence;
+      const token = get().googleAuth.token;
+      const root = get().nativeLandingRoot;
+      const selected = get().nativeLandingChildren[folderId]?.files.find((file) => file.id === fileId);
+      const session = get().currentSession;
+      const local = asLocalDuckSession(session)?.local;
+      const generation = nativeGeneration;
+      if (!token || !root || !selected || !local) {
+        set({ nativeLandingActionError: "Sign in and start a local DuckDB session to preview this file." });
+        return null;
+      }
+      const current = () => generation === nativeGeneration && sequence === nativeActionSequence && get().googleAuth.token === token &&
+        get().nativeLandingRoot === root && get().currentSession === session;
+      set({ nativeLandingSelected: fileId, nativeLandingActionError: null });
+      try {
+        const target = await previewNativeFile(local.db, local.connection, selected,
+          get().nativeLandingFolders, root.id, token, current, budgetForEngine(local.db));
+        if (!current()) return null;
+        await get().fetchDatabasesAndTablesInfo();
+        return current() ? target : null;
+      } catch (error) {
+        if (!current()) return null;
+        handleDriveAuthFailure(set, get, token, error);
+        if (current()) set({ nativeLandingActionError: messageOf(error) });
+        return null;
+      }
+    },
+
     refreshLakehouseCatalog: async () => {
+      // Independent physical browsing must begin even if a publication pointer
+      // is missing, malformed, or the published catalogue refuses to resolve.
+      if (get().googleAuth.token) void get().refreshNativeLanding();
       if (busy) return;
       const activeToken = get().googleAuth.token;
       const activeSession = get().currentSession;

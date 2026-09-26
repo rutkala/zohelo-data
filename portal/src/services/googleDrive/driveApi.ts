@@ -56,7 +56,52 @@ export interface DriveFileMetadata {
   version?: string;
   md5Checksum?: string;
   sha256Checksum?: string;
+  parents?: string[];
+  trashed?: boolean;
+  webViewLink?: string;
+  webContentLink?: string;
+  capabilities?: { canDownload?: boolean };
+  shortcutDetails?: { targetId?: string; targetMimeType?: string };
 }
+
+const NATIVE_FIELDS = "id,name,mimeType,size,modifiedTime,version,md5Checksum,sha256Checksum,parents,trashed,webViewLink,webContentLink,capabilities(canDownload),shortcutDetails(targetId,targetMimeType)";
+
+const nativeMetadata = (item: DriveFileMetadata & { size?: string | number }): DriveFileMetadata => {
+  if (!item || typeof item.id !== "string" || typeof item.name !== "string") {
+    throw new Error("Drive returned invalid native file metadata.");
+  }
+  const size = item.size === undefined ? undefined : Number(item.size);
+  if (size !== undefined && (!Number.isSafeInteger(size) || size < 0)) {
+    throw new Error("Drive returned an invalid native file size.");
+  }
+  return { ...item, size };
+};
+
+/** One explicitly paginated folder page. Never silently turn an API failure into an empty folder. */
+export const listNativeChildrenPage = async (
+  folderId: string, token: string, pageToken?: string
+): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
+  const query = `'${folderId.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' in parents and trashed=false`;
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("q", query);
+  url.searchParams.set("fields", `nextPageToken,files(${NATIVE_FIELDS})`);
+  url.searchParams.set("pageSize", "1000");
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+  const payload = await (await driveRequest(url.toString(), token)).json();
+  if (!Array.isArray(payload?.files) ||
+      (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string")) {
+    throw new Error("Drive returned an incomplete native folder page.");
+  }
+  return { files: payload.files.map(nativeMetadata), nextPageToken: payload.nextPageToken || null };
+};
+
+/** Fresh metadata by ID, including current parent and original Drive-managed links. */
+export const getNativeFileMetadata = async (
+  fileId: string, token: string
+): Promise<DriveFileMetadata> => {
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(NATIVE_FIELDS)}`;
+  return nativeMetadata(await (await driveRequest(url, token)).json());
+};
 
 const listFilesForQuery = async (
   query: string,
@@ -286,6 +331,9 @@ export const fetchDriveFileBuffer = async (
     throw new Error(`Drive download exceeds its declared ${maxBytes} byte limit.`);
   }
   if (!response.body) {
+    if (maxBytes !== undefined && (!length || !Number.isSafeInteger(Number(length)) || Number(length) > maxBytes)) {
+      throw new Error("Drive did not provide a bounded stream or a safe content length.");
+    }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
       throw new Error(`Drive download exceeds its declared ${maxBytes} byte limit.`);
