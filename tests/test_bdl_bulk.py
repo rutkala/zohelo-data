@@ -242,11 +242,13 @@ class BdlBulkWorkflowTests(unittest.TestCase):
         self.assertEqual({"workflow_dispatch"}, set(workflow["on"]))
         self.assertEqual("zohelo-pipeline-gus_bdl", workflow["concurrency"]["group"])
         self.assertEqual("false", workflow["concurrency"]["cancel-in-progress"])
+        self.assertEqual("max", workflow["concurrency"]["queue"])
         self.assertEqual({"ingest_web_history"}, set(workflow["jobs"]))
         job = workflow["jobs"]["ingest_web_history"]
         self.assertIn("refs/heads/main", job["if"])
         self.assertNotIn("needs", job)
-        self.assertEqual("330", job["timeout-minutes"])
+        self.assertEqual("350", job["timeout-minutes"])
+        self.assertNotIn("reset_web_bulk", path.read_text(encoding="utf-8"))
         upload = next(
             step for step in job["steps"] if step.get("name") == "Upload sanitized ingestion evidence"
         )
@@ -260,11 +262,30 @@ class BdlBulkWorkflowTests(unittest.TestCase):
             self.assertNotIn("dbt build", command)
         ingestion = next(
             step for step in job["steps"]
-            if step.get("name") == "Ingest BDL historical data through authenticated Web UI"
+            if step.get("name") == "Verify routes then restore durable checkpoint and ingest native exports"
         )
+        self.assertIn("scripts/multi_vpn_manager.py", ingestion["run"])
         self.assertIn("src/bdl_web_adaptive.py", ingestion["run"])
+        self.assertIn("--mode resume", ingestion["run"])
+        self.assertIn("--max-seconds @BDL_BUDGET@", ingestion["run"])
+        self.assertIn("--concurrency 10", ingestion["run"])
+        self.assertIn("--require-proxy-count 10", ingestion["run"])
+        self.assertEqual({f"ZOHELO_WORKER{i}" for i in range(1, 11)},
+                         {name for name in ingestion["env"] if name.startswith("ZOHELO_WORKER")})
+        decision = next(step for step in job["steps"] if step.get("name") == "Decide safe continuation")
+        self.assertIn("scripts/bdl_continuation.py", decision["run"])
         self.assertNotIn("src/bdl_web_bootstrap.py", ingestion["run"])
         self.assertFalse((ROOT / ".github/workflows/source-gus-bdl.yml").exists())
+
+        preflight = yaml.load((ROOT / ".github/workflows/bdl-web-preflight.yml").read_text(),
+                              Loader=yaml.BaseLoader)
+        self.assertEqual({"workflow_dispatch", "push"}, set(preflight["on"]))
+        self.assertEqual(workflow["concurrency"], preflight["concurrency"])
+        probe = preflight["jobs"]["verify_routes"]
+        self.assertIn("refs/heads/main", probe["if"])
+        self.assertEqual({"contents": "read"}, preflight["permissions"])
+        self.assertIn("--preflight", probe["steps"][-1]["run"])
+        self.assertNotIn("GOOGLE_OAUTH_REFRESH_TOKEN", probe["steps"][-1]["env"])
 
     def test_worker_hashes_download_as_stream(self):
         worker = (ROOT / "portal" / "scripts" / "bdl-web-bulk-worker.mjs").read_text(
