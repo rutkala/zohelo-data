@@ -169,6 +169,35 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
             ):
                 release._read_optional_current_release(store)
 
+    def test_fresh_consumer_validates_the_pointer_whose_identity_was_checked(self):
+        store = object()
+        pointer = {
+            "release_id": "00000000-0000-0000-0000-000000000001",
+            "manifest_file_id": "manifest-id",
+        }
+        manifest = {
+            "release_id": pointer["release_id"],
+            "release_scope": release.DBW_RELEASE_SCOPE,
+        }
+        report = {"release_id": pointer["release_id"]}
+        with mock.patch.object(
+            release, "_current_pointer", return_value=pointer
+        ) as current, mock.patch.object(
+            release, "read_release_manifest", return_value=manifest
+        ) as read, mock.patch.object(
+            release, "validate_staged_dbw_release", return_value=report
+        ) as validate:
+            self.assertIs(
+                release._validate_expected_current_release(
+                    store, pointer["release_id"]
+                ),
+                report,
+            )
+
+        current.assert_called_once_with(store)
+        read.assert_called_once_with(store, pointer)
+        self.assertIs(validate.call_args.args[1], pointer)
+
     def test_fresh_consumer_rejects_another_workflows_current_release(self):
         manifest = {"release_id": "00000000-0000-0000-0000-000000000001"}
         release._require_expected_release(manifest, manifest["release_id"])
