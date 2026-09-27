@@ -133,7 +133,7 @@ def validate_native_bronze_tree(
         verified_bytes += path.stat().st_size
     actual_paths = {
         path.relative_to(release_root).as_posix()
-        for folder in ("observations", "dictionaries", "taxonomy", "metadata")
+        for folder in ("receipts", "observations", "dictionaries", "taxonomy", "metadata")
         for path in (release_root / folder).rglob("*")
         if path.is_file()
     }
