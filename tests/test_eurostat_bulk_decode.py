@@ -75,6 +75,14 @@ class EurostatBulkDecodeTests(unittest.TestCase):
             },
         )
 
+    def _rewrite_receipt(self, receipt: dict[str, object], mutate) -> None:
+        accepted = json.loads(receipt["path"].read_text())
+        mutate(accepted)
+        receipt["path"].write_text(json.dumps(accepted, sort_keys=True), encoding="utf-8")
+        raw = receipt["path"].read_bytes()
+        receipt["sha256"] = sha256(raw).hexdigest()
+        receipt["size_bytes"] = len(raw)
+
     def test_decodes_every_cell_with_complete_key_and_lossless_value_text(self):
         source, receipt = self._source(
             (
@@ -182,6 +190,78 @@ class EurostatBulkDecodeTests(unittest.TestCase):
         receipt["path"].write_text(json.dumps(accepted, sort_keys=True), encoding="utf-8")
         with self.assertRaisesRegex(EurostatBulkDecodeError, "immutable descriptor"):
             self._decode(source, receipt, self.root / "drifted.parquet")
+
+    def test_partition_rows_keep_official_and_leaf_identity(self):
+        source, receipt = self._source(b"freq,geo\\TIME_PERIOD\t2025 \nA,PL\t7\n")
+
+        def partition(accepted):
+            accepted["distribution"].update({
+                "dataset_id": "demo_test::partition::leaf-1",
+                "original_dataset_id": "demo_test",
+                "partition_id": "partition:leaf-1",
+                "partition_selection": {"geo": ["PL"]},
+            })
+
+        self._rewrite_receipt(receipt, partition)
+        report = self._decode(source, receipt)
+        self.assertEqual(report["dataset_id"], "demo_test")
+        self.assertEqual(report["distribution_id"], "demo_test::partition::leaf-1")
+        self.assertEqual(report["partition_id"], "partition:leaf-1")
+        with duckdb.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT dataset_id, distribution_id, partition_id,
+                       partition_selection_json
+                FROM read_parquet(?)
+                """,
+                [str(self.root / "bronze.parquet")],
+            ).fetchone()
+        self.assertEqual(row, (
+            "demo_test", "demo_test::partition::leaf-1", "partition:leaf-1",
+            '{"geo":["PL"]}',
+        ))
+
+    def test_accepted_empty_partition_emits_typed_empty_result(self):
+        source, receipt = self._source(b"placeholder")
+        protocol = b"<Fault><faultstring>NO_RESULTS</faultstring></Fault>"
+        source.write_bytes(protocol)
+
+        def empty_partition(accepted):
+            digest = sha256(protocol).hexdigest()
+            accepted["distribution"].update({
+                "dataset_id": "demo_test::partition::empty-leaf",
+                "original_dataset_id": "demo_test",
+                "partition_id": "partition:empty-leaf",
+                "partition_selection": {"geo": ["ZZ"]},
+            })
+            accepted["raw"].update({
+                "name": f"raw-{digest}.bin",
+                "sha256": digest,
+                "md5": md5(protocol, usedforsecurity=False).hexdigest(),
+                "size_bytes": len(protocol),
+            })
+            accepted["inspection"] = {
+                "status": "complete",
+                "empty_partition": True,
+                "protocol_inspection": {"status": "no_results"},
+            }
+
+        self._rewrite_receipt(receipt, empty_partition)
+        report = self._decode(source, receipt)
+        self.assertTrue(report["empty_partition"])
+        self.assertEqual(report["observation_cells"], 0)
+        self.assertEqual(report["periods"], 0)
+        with duckdb.connect() as connection:
+            description = connection.execute(
+                "DESCRIBE SELECT * FROM read_parquet(?)",
+                [str(self.root / "bronze.parquet")],
+            ).fetchall()
+            count = connection.execute(
+                "SELECT count(*) FROM read_parquet(?)",
+                [str(self.root / "bronze.parquet")],
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+        self.assertIn("partition_id", {row[0] for row in description})
 
 
 if __name__ == "__main__":

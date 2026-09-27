@@ -32,6 +32,9 @@ _BATCH_ROWS = 10_000
 
 BRONZE_COLUMNS = (
     ("dataset_id", "VARCHAR"),
+    ("distribution_id", "VARCHAR"),
+    ("partition_id", "VARCHAR"),
+    ("partition_selection_json", "VARCHAR"),
     ("period_key", "VARCHAR"),
     ("freq_code", "VARCHAR"),
     ("unit_code", "VARCHAR"),
@@ -80,11 +83,7 @@ def decode_full_distribution(
         descriptor=receipt_descriptor,
     )
     dataset_id = identity["dataset_id"]
-    retrieved_at_utc = identity["retrieved_at_utc"]
-    raw_sha256 = identity["raw_sha256"]
-    raw_file_id = identity["raw_file_id"]
-    source_version = identity["source_version"]
-    if _file_sha256(source) != raw_sha256:
+    if _file_sha256(source) != identity["raw_sha256"]:
         raise EurostatBulkDecodeError("Eurostat distribution SHA-256 does not match its receipt")
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +93,9 @@ def decode_full_distribution(
 
     measurements = {
         "dataset_id": dataset_id,
+        "distribution_id": identity["distribution_id"],
+        "partition_id": identity["partition_id"],
+        "empty_partition": identity["empty_partition"],
         "source_rows": 0,
         "observation_cells": 0,
         "missing_cells": 0,
@@ -110,84 +112,8 @@ def decode_full_distribution(
                 f'"{name}" {kind}' for name, kind in BRONZE_COLUMNS
             )
             connection.execute(f"CREATE TABLE bronze ({definitions})")
-            with gzip.open(
-                source, "rt", encoding="utf-8-sig", errors="strict", newline=""
-            ) as stream:
-                reader = csv.reader(stream, delimiter="\t")
-                try:
-                    header = next(reader)
-                except StopIteration:
-                    raise EurostatBulkDecodeError("Eurostat TSV is empty") from None
-                dimension_names, periods = _parse_header(header)
-                measurements["periods"] = len(periods)
-                batch: list[tuple[Any, ...]] = []
-                placeholders = ",".join("?" for _ in BRONZE_COLUMNS)
-                for line_number, row in enumerate(reader, start=2):
-                    if len(row) != len(header):
-                        raise EurostatBulkDecodeError(
-                            f"Eurostat TSV row {line_number} has {len(row)} fields; "
-                            f"expected {len(header)}"
-                        )
-                    dimension_codes = [part.strip() for part in row[0].split(",")]
-                    if len(dimension_codes) != len(dimension_names) or any(
-                        not code for code in dimension_codes
-                    ):
-                        raise EurostatBulkDecodeError(
-                            f"Eurostat TSV row {line_number} has an invalid series key"
-                        )
-                    series_dimensions = dict(zip(dimension_names, dimension_codes))
-                    measurements["source_rows"] += 1
-                    for period_position, (period, cell) in enumerate(
-                        zip(periods, row[1:]), start=1
-                    ):
-                        dimensions = {**series_dimensions, "time": period}
-                        key_json = json.dumps(
-                            dimensions,
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                            sort_keys=True,
-                        )
-                        parsed = _parse_cell(cell, line_number, period)
-                        if parsed[3]:
-                            measurements["missing_cells"] += 1
-                            measurements[f"{parsed[4]}_cells"] += 1
-                        if parsed[2] is not None:
-                            measurements["flagged_cells"] += 1
-                        batch.append(
-                            (
-                                dataset_id,
-                                period,
-                                series_dimensions.get("freq"),
-                                series_dimensions.get("unit"),
-                                series_dimensions.get("geo"),
-                                key_json,
-                                sha256(key_json.encode("utf-8")).hexdigest(),
-                                parsed[0],
-                                parsed[1],
-                                parsed[2],
-                                parsed[3],
-                                parsed[4],
-                                source_version,
-                                retrieved_at_utc,
-                                raw_sha256,
-                                raw_file_id,
-                                identity["receipt_sha256"],
-                                identity["receipt_file_id"],
-                                identity["receipt_size_bytes"],
-                                line_number,
-                                period_position,
-                            )
-                        )
-                        measurements["observation_cells"] += 1
-                        if len(batch) >= _BATCH_ROWS:
-                            connection.executemany(
-                                f"INSERT INTO bronze VALUES ({placeholders})", batch
-                            )
-                            batch.clear()
-                if batch:
-                    connection.executemany(
-                        f"INSERT INTO bronze VALUES ({placeholders})", batch
-                    )
+            if not identity["empty_partition"]:
+                _load_observations(connection, source, identity, measurements)
 
             duplicate = connection.execute(
                 """
@@ -221,6 +147,96 @@ def decode_full_distribution(
             output.unlink()
 
     return measurements
+
+
+def _load_observations(
+    connection: duckdb.DuckDBPyConnection,
+    source: Path,
+    identity: Mapping[str, Any],
+    measurements: dict[str, Any],
+) -> None:
+    """Decode the native TSV body after receipt and raw identity are accepted."""
+    with gzip.open(
+        source, "rt", encoding="utf-8-sig", errors="strict", newline=""
+    ) as stream:
+        reader = csv.reader(stream, delimiter="\t")
+        try:
+            header = next(reader)
+        except StopIteration:
+            raise EurostatBulkDecodeError("Eurostat TSV is empty") from None
+        dimension_names, periods = _parse_header(header)
+        measurements["periods"] = len(periods)
+        batch: list[tuple[Any, ...]] = []
+        placeholders = ",".join("?" for _ in BRONZE_COLUMNS)
+        for line_number, row in enumerate(reader, start=2):
+            if len(row) != len(header):
+                raise EurostatBulkDecodeError(
+                    f"Eurostat TSV row {line_number} has {len(row)} fields; "
+                    f"expected {len(header)}"
+                )
+            dimension_codes = [part.strip() for part in row[0].split(",")]
+            if len(dimension_codes) != len(dimension_names) or any(
+                not code for code in dimension_codes
+            ):
+                raise EurostatBulkDecodeError(
+                    f"Eurostat TSV row {line_number} has an invalid series key"
+                )
+            series_dimensions = dict(zip(dimension_names, dimension_codes))
+            measurements["source_rows"] += 1
+            for period_position, (period, cell) in enumerate(
+                zip(periods, row[1:]), start=1
+            ):
+                dimensions = {**series_dimensions, "time": period}
+                key_json = json.dumps(
+                    dimensions,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                parsed = _parse_cell(cell, line_number, period)
+                if parsed[3]:
+                    measurements["missing_cells"] += 1
+                    measurements[f"{parsed[4]}_cells"] += 1
+                if parsed[2] is not None:
+                    measurements["flagged_cells"] += 1
+                batch.append(
+                    (
+                        identity["dataset_id"],
+                        identity["distribution_id"],
+                        identity["partition_id"],
+                        identity["partition_selection_json"],
+                        period,
+                        series_dimensions.get("freq"),
+                        series_dimensions.get("unit"),
+                        series_dimensions.get("geo"),
+                        key_json,
+                        sha256(key_json.encode("utf-8")).hexdigest(),
+                        parsed[0],
+                        parsed[1],
+                        parsed[2],
+                        parsed[3],
+                        parsed[4],
+                        identity["source_version"],
+                        identity["retrieved_at_utc"],
+                        identity["raw_sha256"],
+                        identity["raw_file_id"],
+                        identity["receipt_sha256"],
+                        identity["receipt_file_id"],
+                        identity["receipt_size_bytes"],
+                        line_number,
+                        period_position,
+                    )
+                )
+                measurements["observation_cells"] += 1
+                if len(batch) >= _BATCH_ROWS:
+                    connection.executemany(
+                        f"INSERT INTO bronze VALUES ({placeholders})", batch
+                    )
+                    batch.clear()
+        if batch:
+            connection.executemany(
+                f"INSERT INTO bronze VALUES ({placeholders})", batch
+            )
 
 
 def _parse_header(header: list[str]) -> tuple[list[str], list[str]]:
@@ -321,9 +337,40 @@ def _validated_receipt_identity(
         raise EurostatBulkDecodeError("Eurostat receipt is missing distribution or raw metadata")
     if not isinstance(inspection, dict) or inspection.get("status") != "complete":
         raise EurostatBulkDecodeError("Eurostat receipt inspection is not complete")
-    dataset_id = distribution.get("dataset_id")
-    if not _bounded_text(dataset_id, 2048):
+    distribution_id = distribution.get("dataset_id")
+    if not _bounded_text(distribution_id, 2048):
         raise EurostatBulkDecodeError("Eurostat dataset identity is invalid")
+    original_dataset_id = distribution.get("original_dataset_id")
+    partition_id = distribution.get("partition_id")
+    partition_selection = distribution.get("partition_selection")
+    partitioned = original_dataset_id is not None or partition_id is not None
+    if partitioned:
+        if (
+            not _bounded_text(original_dataset_id, 2048)
+            or not _bounded_text(partition_id, 2048)
+            or not isinstance(partition_selection, dict)
+        ):
+            raise EurostatBulkDecodeError("Eurostat partition identity is invalid")
+        dataset_id = original_dataset_id
+        partition_selection_json = json.dumps(
+            partition_selection,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    else:
+        dataset_id = distribution_id
+        partition_id = None
+        if partition_selection is not None:
+            raise EurostatBulkDecodeError(
+                "unpartitioned Eurostat receipt has a partition selection"
+            )
+        partition_selection_json = None
+    empty_partition = inspection.get("empty_partition") is True
+    if empty_partition and not partitioned:
+        raise EurostatBulkDecodeError(
+            "only an accepted constrained Eurostat partition may be empty"
+        )
     if distribution.get("kind") != "eurostat_tsv_gzip":
         raise EurostatBulkDecodeError("Eurostat receipt is not a TSV.GZ data distribution")
     url = distribution.get("url")
@@ -361,6 +408,10 @@ def _validated_receipt_identity(
         raise EurostatBulkDecodeError("Eurostat retrieval timestamp must be UTC")
     return {
         "dataset_id": dataset_id,
+        "distribution_id": distribution_id,
+        "partition_id": partition_id,
+        "partition_selection_json": partition_selection_json,
+        "empty_partition": empty_partition,
         "source_version": source_version,
         "retrieved_at_utc": retrieved_at_utc,
         "raw_sha256": raw_sha256,

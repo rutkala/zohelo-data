@@ -287,9 +287,12 @@ status flags, `:` versus empty missing states, source positions and Drive receip
 identity, and produces a fresh typed Parquet relation. Duplicate complete keys,
 malformed source rows, receipt drift, invalid/non-finite numbers and an existing
 output path fail closed; failed attempts remove only their own incomplete output.
-Five focused fixture tests cover ordinary, flagged and missing cells, typed empty
-datasets, immutable receipt/provenance binding, hash/key/value failures and overwrite
-protection.
+Partition leaves retain the official dataset separately from their immutable leaf
+identity and selection; accepted constrained `no_results` leaves produce typed empty
+relations rather than entering the GZIP parser. Seven focused fixture tests cover
+ordinary, flagged and missing cells, typed empty datasets, immutable
+receipt/provenance binding, partition identity, accepted empty leaves,
+hash/key/value failures and overwrite protection.
 
 This is code and fixture evidence only. No production file was downloaded or
 decoded, no Drive object or release pointer changed, and the current progressive
