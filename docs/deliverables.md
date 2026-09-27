@@ -4,14 +4,30 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current priority: one usable Landing browser — 27 September 2026
 
-**Owner accepted the layout; scan optimization deployed, cold latency remains.**
+**Owner accepted the layout and manual refresh; cold-query optimization active.**
 The owner confirmed the Landing presentation and reported that **Query file
-metadata** for GUS BDL was still scanning. They expect newly ingested files to
-be available immediately and suggested an object inventory with metadata and
-virtual folders. Completed uploads are directly discoverable without a SQL
-publication gate, but open listings and generated SQL tables are currently
-cached until refresh. Automatic visibility in an already-open portal remains
-an unmet freshness expectation; this increment does not claim push updates.
+metadata** for GUS BDL was still scanning. They initially asked about immediate
+file availability and suggested an object inventory with metadata and virtual
+folders, then explicitly accepted the existing manual-refresh behavior and
+prioritized faster metadata queries. Completed uploads are directly discoverable
+without a SQL publication gate; open listings and generated SQL tables remain
+cached until refresh. Automatic visibility is outside the current increment.
+
+The next scoped optimization increases the bounded known-parent batch from 25
+to at most 100, measures the fully encoded request URL, requests only the fields
+used by each scan phase, and adds bounded scanner-specific retry/backoff. Eight
+workers are an experiment to validate against the live BDL baseline below.
+The complete-scan, source-membership, cancellation and authentication cleanup
+rules remain in force. No persistent cross-login cache, ingestion changes or
+shared metadata publisher are included. The live verifier separates scan, SQL
+publication and displayed-query timings with approximately one-second phase
+sampling. Implementation and independent review are complete; CI, deployment
+and a new full BDL production measurement are pending. The 2,503-folder fixture
+drops from 310 to 92 list requests; this alone does not establish the resulting
+user wait. A local packaged DuckDB WASM benchmark of 26,666 metadata-shaped rows
+took 1,793 ms using existing 100-row inserts versus 1,525 ms with 500-row inserts.
+SQL insertion is unchanged because that small local gain does not address the
+measured 448-second cold query.
 
 The scoped performance change groups known-parent Drive searches, separates
 folder discovery from flat file-metadata reads, and rechecks the folder graph
@@ -43,7 +59,7 @@ link. The [sanitized receipt](audits/2026-09-27-landing-metadata-performance.jso
 preserves the exact measurements.
 
 This verifies the deployed scan and SQL reuse, not satisfactory first-use
-latency, automatic freshness or full provider-data coverage. **The first BDL
+latency or full provider-data coverage. **The first BDL
 query is still too slow for interactive use.** No old complete BDL wall-time
 baseline was measured, so no percentage speedup is claimed. The current browser
 session must still discover Drive's folder tree; batching does not remove that
@@ -51,9 +67,10 @@ work. A durable file inventory maintained incrementally would avoid rebuilding
 it per session and could support fresher views. Its update/reconciliation design
 (additions, moves, deletions and permission changes) remains a separate scoped
 architecture decision. No shared inventory service, updater or new ingestion
-pipeline was introduced, and no background engineering task is implied.
+pipeline was introduced. The active follow-up above focuses on cheaper cold
+queries while keeping the now-accepted manual-refresh behavior.
 
-The deep/wide fixture contains 2,503 folders within one source. The new scanner
+The PR #186 deep/wide fixture contains 2,503 folders within one source. That scanner
 uses 310 batched list pages, four identity reads and two project lookups, with
 zero payload reads. This establishes bounded request reduction in a fixture;
 it does not supply a before/after BDL wall-time measurement.

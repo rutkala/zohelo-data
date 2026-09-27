@@ -13,6 +13,14 @@ export class GoogleDriveAuthError extends Error {
   }
 }
 
+/** Preserve the existing error text while allowing scanner-only bounded retries. */
+export class GoogleDriveApiError extends Error {
+  constructor(message: string, readonly status: number, readonly reason: string | null) {
+    super(message);
+    this.name = "GoogleDriveApiError";
+  }
+}
+
 export const isGoogleDriveAuthError = (error: unknown): error is GoogleDriveAuthError =>
   error instanceof GoogleDriveAuthError;
 
@@ -40,8 +48,15 @@ export const driveRequest = async (url: string, token: string, signal?: AbortSig
         "Google Drive authorization expired or was revoked. Sign in again."
       );
     }
-    throw new Error(
-      `Google Drive API error (${response.status}): ${errorBody || response.statusText}`
+    let reason: string | null = null;
+    try {
+      const parsed = JSON.parse(errorBody);
+      const value = parsed?.error?.errors?.[0]?.reason ?? parsed?.error?.status;
+      if (typeof value === "string") reason = value;
+    } catch { /* Non-JSON errors retain the existing message. */ }
+    throw new GoogleDriveApiError(
+      `Google Drive API error (${response.status}): ${errorBody || response.statusText}`,
+      response.status, reason
     );
   }
 
@@ -68,6 +83,14 @@ export interface DriveFileMetadata {
 
 const NATIVE_FIELDS =
   "id,name,mimeType,size,createdTime,modifiedTime,version,md5Checksum,sha256Checksum,parents,trashed,webViewLink,webContentLink,capabilities(canDownload),shortcutDetails(targetId,targetMimeType)";
+
+export const NATIVE_METADATA_PARENT_BATCH = 100;
+export const NATIVE_METADATA_PLAN_URL_LIMIT = 6000;
+export const NATIVE_METADATA_URL_LIMIT = 7800;
+export class NativeMetadataUrlTooLongError extends Error {}
+const NATIVE_METADATA_FOLDER_FIELDS = "id,name,mimeType,parents,trashed,version,modifiedTime";
+const NATIVE_METADATA_FILE_FIELDS =
+  "id,name,mimeType,size,createdTime,modifiedTime,parents,trashed,webViewLink,sha256Checksum";
 
 const nativeMetadata = (
   item: DriveFileMetadata & { size?: string | number }
@@ -105,21 +128,59 @@ export const listNativeChildrenPage = async (
 };
 
 /** Scanner-only batched parent search. Keep interactive folder navigation unchanged. */
-export const listNativeMetadataBatchPage = async (
-  parentIds: readonly string[], kind: "folders" | "files", token: string, pageToken?: string,
-  signal?: AbortSignal
-): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
-  if (!parentIds.length || parentIds.length > 25) throw new Error("Invalid Landing metadata parent batch.");
+export const buildNativeMetadataBatchUrl = (
+  parentIds: readonly string[], kind: "folders" | "files", pageToken?: string
+): string => {
+  if (!parentIds.length || parentIds.length > NATIVE_METADATA_PARENT_BATCH)
+    throw new Error("Invalid Landing metadata parent batch.");
   const parents = parentIds.map((id) => `'${id.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' in parents`).join(" or ");
   const mime = kind === "folders" ? "=" : "!=";
   const q = `(${parents}) and mimeType ${mime} 'application/vnd.google-apps.folder' and trashed=false`;
   const url = new URL("https://www.googleapis.com/drive/v3/files");
   url.searchParams.set("q", q);
-  url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${NATIVE_FIELDS})`);
+  const fields = kind === "folders" ? NATIVE_METADATA_FOLDER_FIELDS : NATIVE_METADATA_FILE_FIELDS;
+  url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${fields})`);
   url.searchParams.set("pageSize", "1000");
   if (pageToken) url.searchParams.set("pageToken", pageToken);
-  if (url.toString().length > 3500) throw new Error("Landing metadata parent batch URL exceeds 3500 characters.");
-  const payload = await (await driveRequest(url.toString(), token, signal)).json();
+  const encoded = url.toString();
+  if (encoded.length > NATIVE_METADATA_URL_LIMIT)
+    throw new NativeMetadataUrlTooLongError(
+      "Drive metadata request URL exceeds the 7800-character limit. No incomplete table was published."
+    );
+  return encoded;
+};
+
+/** Retry only transient scanner requests, with one abortable deadline per page. */
+const scannerPage = async (url: string, token: string, signal?: AbortSignal): Promise<Response> => {
+  const deadline = AbortSignal.timeout(90000);
+  const active = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (active.aborted) throw active.reason;
+    try { return await driveRequest(url, token, active); }
+    catch (error) {
+      const transient = error instanceof GoogleDriveApiError && (
+        error.status === 429 || error.status >= 500 ||
+        (error.status === 403 && ["rateLimitExceeded", "userRateLimitExceeded",
+          "RATE_LIMIT_EXCEEDED"].includes(error.reason ?? ""))
+      );
+      if (!transient || attempt === 3 || active.aborted) throw error;
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => { active.removeEventListener("abort", abort); resolve(); },
+          250 * 2 ** attempt + Math.floor(Math.random() * 250));
+        const abort = () => { clearTimeout(timer); reject(active.reason); };
+        active.addEventListener("abort", abort, { once: true });
+      });
+    }
+  }
+  throw new Error("Landing metadata request exceeded the retry limit.");
+};
+
+export const listNativeMetadataBatchPage = async (
+  parentIds: readonly string[], kind: "folders" | "files", token: string, pageToken?: string,
+  signal?: AbortSignal
+): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
+  const url = buildNativeMetadataBatchUrl(parentIds, kind, pageToken);
+  const payload = await (await scannerPage(url, token, signal)).json();
   if (payload?.incompleteSearch === true) throw new Error("Drive returned an incomplete Landing metadata search.");
   if (!Array.isArray(payload?.files) ||
       (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string") ||

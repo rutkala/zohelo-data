@@ -44,11 +44,14 @@ a BDL performance claim. A shallow navigation check or NBP metadata query does
 not establish that result.
 
 Completed uploads do not wait for SQL publication. Open folder listings and
-completed SQL inventories currently remain cached until a user refresh.
-The owner's desired immediate visibility is not an implemented push or polling
-guarantee. A persistent inventory maintained during ingestion or through Drive
-change reconciliation would be a separate architecture increment; batching
-the browser scan does not establish that behavior.
+completed SQL inventories remain cached until a user refresh. The owner
+subsequently accepted this manual-refresh behavior and prioritized metadata
+query performance. Retain the refresh and authentication/session invalidation
+rules while optimizing source-scoped requests. A cross-login cache or persistent
+inventory maintained during ingestion or through Drive change reconciliation
+would be a separate architecture increment; neither is required by the current
+scope. Do not weaken descendant-membership or permission checks merely to reuse
+a previously built inventory.
 
 ## Compatibility
 

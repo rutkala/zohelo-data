@@ -5,7 +5,8 @@ Shared instructions for coding work in this repository. Run commands from the re
 **Current owner priority — 27 September 2026: portal Landing only.**
 
 - The owner has accepted the current Landing layout. The follow-up is metadata
-  performance, especially a complete GUS BDL scan, and clear file freshness.
+  performance, especially a complete GUS BDL scan. The owner subsequently
+  accepted the existing manual-refresh behavior and prioritized query speed.
   Preserve the accepted single file browser. Measure BDL itself before claiming
   its metadata performance is accepted; an NBP query is not a BDL performance
   receipt. Explain that completed uploads are discoverable directly, while open
@@ -13,7 +14,11 @@ Shared instructions for coding work in this repository. Run commands from the re
 - The complete live BDL measurement is now recorded in `docs/deliverables.md`:
   26,666 files in 9,064 folders took 448.268 seconds on first use and 1.338
   seconds for a repeated query in the same session. The batched scanner is
-  deployed, but first-use latency and automatic freshness are not solved.
+  deployed, but first-use latency is still too high. Automatic freshness is
+  outside this increment following the owner's manual-refresh clarification.
+  Optimize bounded source-scoped requests and measure scanner and SQL costs;
+  preserve refresh and authentication/session invalidation. Do not add a
+  cross-login inventory cache as an incidental performance change.
   A shared incremental metadata inventory remains a design option, not an
   implemented component or an implicit authorization to add another publisher.
 - The owner clarified that Landing SQL represents file metadata: one table per

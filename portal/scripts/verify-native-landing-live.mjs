@@ -50,6 +50,7 @@ const result = {
 };
 let browser;
 let stage = "oauth";
+const metadataHttpStatuses = {};
 try {
   const auth = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -153,6 +154,7 @@ try {
   let mediaRequests = 0;
   let metadataDriveRequests = 0;
   let metadataListRequests = 0;
+  let metadataSuccessfulListResponses = 0;
   let metadataMediaAttempts = 0;
   const guardDriveRequest = (route) => {
     const request = route.request();
@@ -179,6 +181,15 @@ try {
   await context.route("https://www.googleapis.com/drive/**", guardDriveRequest);
   await context.route("https://www.googleapis.com/upload/drive/**", guardDriveRequest);
   const page = await context.newPage();
+  page.on("response", (response) => {
+    if (stage !== "metadata_sql" || !response.url().startsWith("https://www.googleapis.com/drive/")) return;
+    const code = String(response.status());
+    metadataHttpStatuses[code] = (metadataHttpStatuses[code] || 0) + 1;
+    const url = new URL(response.url());
+    if (response.ok() && url.pathname.endsWith("/files") &&
+        /^\(.+ in parents(?: or .+ in parents)*\) and mimeType (?:=|!=)/.test(url.searchParams.get("q") || ""))
+      metadataSuccessfulListResponses++;
+  });
   page.setDefaultTimeout(120000);
   stage = "load_live_portal";
   await page.goto(origin, { waitUntil: "domcontentloaded" });
@@ -301,17 +312,61 @@ try {
   await revealActions(metadataRow, metadataSource);
   const mediaBeforeMetadata = mediaRequests;
   const started = performance.now();
+  let preparingAt = null;
+  let publishedAt = null;
+  let lastProgressLog = 0;
+  let lastPhase = null;
+  const phaseStartedAt = {};
+  const metadataTabs = page.getByRole("tab", {
+    name: `Landing/${metadataSource.name} file metadata`, exact: true,
+  });
+  const metadataFailure = (category) => {
+    result.failed_reason = category;
+    throw new Error(category);
+  };
+  const waitMetadataResult = async (tabIndex, deadline, label) => {
+    const tab = metadataTabs.nth(tabIndex);
+    while (performance.now() < deadline) {
+      if (!await section.count()) metadataFailure("landing_auth_lost");
+      if (await section.locator('div[role="alert"].px-2.text-destructive').count())
+        metadataFailure("landing_metadata_error");
+      if (await page.getByText("Query Error", { exact: true }).count())
+        metadataFailure("metadata_sql_error");
+      const phaseText = (await metadataRow.getByRole("status").allTextContents()).join(" ")
+        .replace(/\s+/g, " ");
+      const phase = phaseText.match(/(Finding folders|Reading file metadata|Checking folders|Preparing SQL|Cancelling): ([\d,]+) folders, ([\d,]+) files, ([\d,]+) Drive list pages/);
+      if (phase) {
+        if (phaseStartedAt[phase[1]] === undefined) phaseStartedAt[phase[1]] = performance.now();
+        result.metadata_progress = { phase: phase[1], folders: Number(phase[2].replaceAll(",", "")),
+          files: Number(phase[3].replaceAll(",", "")),
+          list_pages: Number(phase[4].replaceAll(",", "")) };
+        if (phase[1] === "Preparing SQL" && preparingAt === null)
+          preparingAt = performance.now();
+        if (phase[1] !== lastPhase || performance.now() - lastProgressLog > 30000) {
+          console.log(JSON.stringify({ stage: "metadata_sql", event: "progress",
+            ...result.metadata_progress, drive_requests: metadataDriveRequests,
+            elapsed_ms: Math.round(performance.now() - started) }));
+          lastPhase = phase[1];
+          lastProgressLog = performance.now();
+        }
+      }
+      if (publishedAt === null && await page.getByRole("status")
+        .filter({ hasText: /^Scanned \d+ original file/ }).count())
+        publishedAt = performance.now();
+      if (await tab.count() && await tab.getAttribute("aria-selected") === "true" &&
+          await page.getByRole("columnheader", { name: "relative_path" }).count() &&
+          await page.locator("table:visible tbody tr").count()) return;
+      await page.waitForTimeout(1000);
+    }
+    metadataFailure(`${label}_timeout`);
+  };
   await metadataRow.getByRole("button", { name: "Query file metadata" }).click();
-  await page
-    .getByRole("tab", { name: `Landing/${metadataSource.name} file metadata` })
-    .waitFor({ timeout: 1200000 });
-  await page.getByRole("columnheader", { name: "relative_path" }).first().waitFor({ timeout: 1200000 });
-  await page.locator("table:visible tbody tr").first().waitFor({ timeout: 1200000 });
+  await waitMetadataResult(0, started + 1200000, "cold_metadata");
   const coldMs = Math.round(performance.now() - started);
   const completed = await page.getByRole("status").filter({ hasText: /^Scanned \d+ original file/ }).textContent();
   const summary = completed?.match(/Scanned (\d+) original file\(s\) across (\d+) folders \((\d+) Drive list pages\)/);
   if (!summary || Number(summary[1]) < 1 || Number(summary[2]) < 2 ||
-      Number(summary[3]) !== metadataListRequests)
+      Number(summary[3]) !== metadataSuccessfulListResponses)
     throw new Error("BDL metadata scan did not report complete folder and page counts");
   const countEditor = page.locator(".monaco-editor .view-lines:visible").first();
   await countEditor.click();
@@ -328,18 +383,9 @@ try {
   const coldRequests = metadataDriveRequests;
   const coldListRequests = metadataListRequests;
   const warmStart = performance.now();
-  const existingMetadataTabs = await page.getByRole("tab", {
-    name: `Landing/${metadataSource.name} file metadata`, exact: true,
-  }).count();
+  const existingMetadataTabs = await metadataTabs.count();
   await metadataRow.getByRole("button", { name: "Query file metadata" }).click();
-  const warmTab = page.getByRole("tab", {
-    name: `Landing/${metadataSource.name} file metadata`, exact: true,
-  }).nth(existingMetadataTabs);
-  await warmTab.waitFor({ state: "visible" });
-  if (await warmTab.getAttribute("aria-selected") !== "true")
-    throw new Error("Warm metadata query did not activate its new SQL tab");
-  await page.getByRole("columnheader", { name: "relative_path" }).first().waitFor();
-  await page.locator("table:visible tbody tr").first().waitFor();
+  await waitMetadataResult(existingMetadataTabs, warmStart + 120000, "warm_metadata");
   const warmMs = Math.round(performance.now() - warmStart);
   if (metadataDriveRequests !== coldRequests || metadataMediaAttempts !== 0 ||
       await page.getByText("Query Error", { exact: true }).count())
@@ -347,11 +393,31 @@ try {
   result.bdl_metadata = {
     files: Number(summary[1]), folders: Number(summary[2]),
     scan_list_pages: Number(summary[3]), cold_drive_requests: coldRequests,
-    cold_list_requests: coldListRequests, warm_drive_requests: metadataDriveRequests - coldRequests,
+    cold_list_requests: coldListRequests,
+    cold_successful_list_responses: metadataSuccessfulListResponses,
+    cold_list_retries: coldListRequests - metadataSuccessfulListResponses,
+    warm_drive_requests: metadataDriveRequests - coldRequests,
     cold_scan_and_query_ms: coldMs, warm_query_ms: warmMs,
+    sampled_phase_timing_resolution_ms: 1000,
+    sampled_folder_discovery_ms: phaseStartedAt["Reading file metadata"] === undefined ||
+      phaseStartedAt["Finding folders"] === undefined ? null :
+      Math.round(phaseStartedAt["Reading file metadata"] - phaseStartedAt["Finding folders"]),
+    sampled_file_listing_ms: phaseStartedAt["Checking folders"] === undefined ||
+      phaseStartedAt["Reading file metadata"] === undefined ? null :
+      Math.round(phaseStartedAt["Checking folders"] - phaseStartedAt["Reading file metadata"]),
+    sampled_folder_verification_ms: phaseStartedAt["Preparing SQL"] === undefined ||
+      phaseStartedAt["Checking folders"] === undefined ? null :
+      Math.round(phaseStartedAt["Preparing SQL"] - phaseStartedAt["Checking folders"]),
+    sampled_scanner_ms: preparingAt === null ? null : Math.round(preparingAt - started),
+    sampled_sql_publication_ms: preparingAt === null || publishedAt === null ? null :
+      Math.round(publishedAt - preparingAt),
+    sampled_first_preview_ms: publishedAt === null ? null :
+      Math.max(0, Math.round(started + coldMs - publishedAt)),
+    http_status_counts: metadataHttpStatuses,
     attempted_payload_reads: metadataMediaAttempts,
   };
   result.metadata_sql_checks = 1;
+  stage = "bdl_native_depth";
   // BDL's retained bulk folders are several levels deep. A source-root file
   // cannot stand in for this navigation check.
   const bdl = sources.find((f) => f.name === "gus_bdl");
@@ -432,6 +498,8 @@ try {
   result.metadata_pages = apiCalls;
 } catch {
   result.failed_stage = stage;
+  result.failed_reason ??= "unexpected_error";
+  if (stage === "metadata_sql") result.metadata_http_status_counts = metadataHttpStatuses;
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
