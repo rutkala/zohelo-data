@@ -16,6 +16,31 @@ The catalogue includes the five published daily metric definitions and their lin
 
 Project status and owner questions are kept in [the delivery plan](deliverables.md). Send a question ID and your answer in chat; the assistant maintains that record.
 
+## Landing: original files
+
+In the data explorer, expand **Landing**, then a source folder. This is the one
+place to browse the original files currently held in Drive, including sources
+that do not yet have published SQL tables. The tree follows actual folders and
+loads their contents when opened. **Refresh Landing** checks for new files.
+
+Select a file, or use its **⋮** button, for **Open in Drive**, **Download via
+Drive** where permitted, and **Preview in SQL** for supported small files. Folder
+**⋮** buttons expose the same Drive actions. Technical metadata is under **File
+details**. Duplicate folder or file names remain separate Drive objects.
+
+Preview accepts verified CSV, JSON, JSONL and Parquet up to 8 MiB. Larger archives
+open or download through Drive. A preview replaces the previous preview in the
+current browser session and is cleared on refresh or disconnect. Browsing a
+folder lists stored files; it does not establish that a source has been fully
+ingested.
+
+**File indexes (SQL)** is a collapsed advanced area inside Landing. It retains
+the published response and archive tables for existing SQL queries, which can
+cover fewer files than the native folders. The former **Native Landing files**,
+**Files on Drive**, and separate **01_landing** navigation entries have been
+combined into Landing. The retained DBW indicator search is inside expanded
+**02_bronze**.
+
 ## SQL
 
 **Browser workspace** (previously labeled `memory`) is the temporary DuckDB database running in your browser. It holds tables loaded for your queries; Google Drive keeps the durable data. You do not need to manage this workspace or preload tables to join them.
@@ -47,12 +72,12 @@ LIMIT 10;
 
 See [joining NBP v2 tables](sql-joins.md) for the released-table names and join keys.
 
-Validated source snapshots appear independently under `01_landing` as
+Validated source snapshots appear under **Landing → File indexes (SQL)** as
 `world_bank_wdi_responses`, `gus_bdl_responses`, and `eurostat_responses` when each source has
 published data. These transport tables do not change the NBP release manifest or its dbt catalogue.
 Each row is one accepted HTTP response with request and retrieval metadata; `payload_utf8` contains
 the exact source JSON or text. Use these rows to inspect and query newly collected source data while
-Bronze, Silver, Gold, and governed definitions are still source-specific future work.
+downstream modeling continues independently. The SQL schema remains `01_landing`.
 
 ```sql
 SELECT task_id, retrieved_at_utc, record_count, payload_utf8

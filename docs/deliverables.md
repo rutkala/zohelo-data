@@ -2,6 +2,32 @@
 
 Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
+## Current priority: one usable Landing browser — 27 September 2026
+
+The owner has narrowed active engineering to the portal, one layer at a time,
+starting with Landing. Their phone screenshots show three overlapping entry
+points: “Native Landing files”, “Files on Drive”, and `01_landing` with generated
+response/distribution tables. The earlier authenticated access receipt proves
+file access, but does not establish a satisfactory navigation experience.
+
+Acceptance for this correction is one **Landing** entry showing source folders
+and their original files, compact readable rows on phones and desktops, and
+working open/download/eligible preview actions. Technical indexes must not
+appear as a competing Landing folder. DBW's Bronze-specific selector belongs
+inside Bronze. Keep existing SQL references compatible and retain all source
+files and read-only verification behavior.
+
+The implementation uses one native Landing tree with compact rows and optional
+file actions/details, retains SQL indexes inside Landing, and places DBW search
+inside expanded Bronze. The retired inventory panel no longer triggers its
+unused background Drive scans. Local validation passed 759 portal tests,
+typechecking and lint; independent review corrected legacy SQL-index discovery
+before finding no remaining blocker. The local build compiled the application
+but stopped in Workbox service-worker generation, so the clean Actions build
+and mobile/desktop browser checks remain required. Merge, deployment and current
+live UI verification are pending. This priority supersedes the engineering
+queue below. Existing authorized schedules remain separate.
+
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
 **Status precedence:** this takeover section and the 26 September current-status

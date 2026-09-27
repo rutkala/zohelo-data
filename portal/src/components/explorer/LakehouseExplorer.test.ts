@@ -1,13 +1,46 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { LakehouseLayer, LandingCatalogResolution } from "@/services/googleDrive";
 import LakehouseExplorer from "./LakehouseExplorer";
 
 const state = {
+  tabs: [],
+  activeTabId: null,
   googleAuth: { token: "token", isAuthenticated: true, authSource: "manual", error: null },
-  lakehouseCatalog: [],
+  lakehouseCatalog: [] as LakehouseLayer[],
   lakehouseRelease: null,
-  lakehouseLanding: null,
+  lakehouseLanding: null as LandingCatalogResolution | null,
+  nativeLandingRoot: { id: "landing", name: "01_landing" },
+  nativeLandingChildren: {
+    landing: {
+      loaded: true,
+      loading: false,
+      error: null,
+      files: [
+        {
+          id: "bdl-one",
+          name: "gus_bdl",
+          parentId: "landing",
+          mimeType: "application/vnd.google-apps.folder",
+          version: "7",
+        },
+        {
+          id: "bdl-two",
+          name: "gus_bdl",
+          parentId: "landing",
+          mimeType: "application/vnd.google-apps.folder",
+          version: "8",
+        },
+        {
+          id: "unknown",
+          name: "new_source",
+          parentId: "landing",
+          mimeType: "application/vnd.google-apps.folder",
+        },
+      ],
+    },
+  },
   lakehouseSourceInventory: {
     drive_api_pages: 2,
     entries: [
@@ -51,13 +84,79 @@ vi.mock("@/store", () => ({
   }),
 }));
 
-describe("Files on Drive panel", () => {
-  it("starts collapsed so the query catalogue remains visible", () => {
+beforeEach(() => {
+  state.lakehouseCatalog = [
+    {
+      type: "layer",
+      name: "01_landing",
+      id: "landing-index",
+      expanded: true,
+      loaded: true,
+      children: [
+        {
+          type: "table",
+          name: "world_bank_wdi_responses",
+          id: "index",
+          layer: "01_landing",
+          expanded: false,
+          loaded: true,
+          children: [],
+        },
+      ],
+    },
+    { type: "layer", name: "02_bronze", id: "bronze", expanded: false, loaded: true, children: [] },
+  ];
+  state.lakehouseLanding = {
+    snapshots: [{ manifest: { kind: "retained_bronze_snapshot", indicators: [] } }],
+  } as unknown as LandingCatalogResolution;
+});
+
+describe("one Landing entry", () => {
+  it("shows every native source as a compact row, including duplicate names and unknown providers", () => {
     const html = renderToStaticMarkup(createElement(LakehouseExplorer));
 
-    expect(html).toContain("Files on Drive");
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain("GUS TERYT");
-    expect(html).not.toContain("3 files");
+    expect(html.match(/aria-label="Landing"/g)).toHaveLength(1);
+    expect(html).not.toContain("Native Landing files");
+    expect(html).not.toContain("Files on Drive");
+    expect(html).not.toContain(">01_landing</span>");
+    expect(html).toContain('data-native-id="bdl-one"');
+    expect(html).toContain('data-native-id="bdl-two"');
+    expect(html).toContain('data-native-id="unknown"');
+    expect(html).toContain("GUS BDL");
+    expect(html).toContain("new_source");
+    expect(html).not.toContain("application/vnd.google-apps.folder");
+    expect(html).not.toContain("Open in Drive");
+    expect(html).not.toContain("Download via Drive");
+  });
+
+  it("keeps existing SQL indexes in a closed details area inside Landing", () => {
+    const html = renderToStaticMarkup(createElement(LakehouseExplorer));
+    expect(html).toContain("File indexes (SQL)");
+    expect(html).toContain("Actions for world_bank_wdi_responses");
+    expect(html).not.toMatch(/<details[^>]*open/);
+    expect(html.indexOf("File indexes (SQL)")).toBeLessThan(html.indexOf("</section>"));
+  });
+
+  it("keeps unloaded legacy SQL indexes reachable inside Landing", () => {
+    state.lakehouseCatalog[0] = {
+      ...state.lakehouseCatalog[0],
+      loaded: false,
+      expanded: false,
+      children: [],
+    };
+    const html = renderToStaticMarkup(createElement(LakehouseExplorer));
+    expect(html).toContain("File indexes (SQL)");
+    expect(html).toContain("Load file indexes");
+  });
+
+  it("shows DBW search only inside expanded Bronze, after Landing", () => {
+    const collapsedHtml = renderToStaticMarkup(createElement(LakehouseExplorer));
+    expect(collapsedHtml).not.toContain("Search DBW indicator");
+    expect(collapsedHtml).toMatch(/<button[^>]*aria-label="02_bronze" aria-expanded="false"/);
+    state.lakehouseCatalog[1].expanded = true;
+    const html = renderToStaticMarkup(createElement(LakehouseExplorer));
+    expect(html).toContain("Search DBW indicator name or ID");
+    expect(html).toMatch(/<button[^>]*aria-label="02_bronze" aria-expanded="true"/);
+    expect(html.indexOf("Search DBW indicator")).toBeGreaterThan(html.indexOf(">02_bronze</span>"));
   });
 });

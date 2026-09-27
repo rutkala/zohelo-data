@@ -17,7 +17,6 @@ import {
   resolvePublishedTableReferences,
   resolveLayerFolderId,
   resolveReleaseCatalog,
-  resolveSourceInventory,
   resolveNativeLandingRoot,
   listNativeFolder,
   isNativeFolder,
@@ -114,10 +113,10 @@ const publishedDatasets = (
 ];
 
 const landingStatus = (landing: LandingCatalogResolution) => {
-  const available = `${landing.snapshots.length} Landing source snapshot(s)`;
+  const available = `${landing.snapshots.length} published file-index snapshot(s)`;
   if (landing.issues.length === 0) return available;
   const errors = landing.issues.map((issue) => `${issue.source_id}: ${issue.message}`).join("; ");
-  return `${available}. Landing metadata error — ${errors}`;
+  return `${available}. File-index metadata error — ${errors}`;
 };
 
 const handleDriveAuthFailure = (
@@ -984,33 +983,7 @@ export const createGoogleDriveSlice: StateCreator<
             lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
           });
         }
-        const inventoryIsCurrent = () =>
-          activeGeneration === refreshGeneration &&
-          get().googleAuth.token === activeToken &&
-          get().currentSession === activeSession;
-        set({ isSourceInventoryLoading: true });
-        void resolveSourceInventory(activeToken, inventoryIsCurrent)
-          .then((sourceInventory) => {
-            if (inventoryIsCurrent()) set({ lakehouseSourceInventory: sourceInventory });
-          })
-          .catch((error) => {
-            if (!inventoryIsCurrent()) return;
-            const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
-            if (!authFailure) {
-              set({
-                lakehouseSourceInventory: {
-                  entries: [],
-                  drive_api_pages: 0,
-                  error: messageOf(error),
-                },
-              });
-            }
-          })
-          .finally(() => {
-            if (inventoryIsCurrent()) set({ isSourceInventoryLoading: false });
-          });
       } catch (error) {
-        if (activeGeneration === refreshGeneration) set({ isSourceInventoryLoading: false });
         const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
         if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure

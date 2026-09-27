@@ -40,6 +40,8 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
     const q = url.searchParams.get("q") ?? "";
     let files: { id: string; name: string; mimeType?: string; size?: string }[] = [];
     if (q.includes("name='zohelo-data'")) files = [{ id: "fixture-root", name: "zohelo-data" }];
+    else if (q.includes("name='01_landing'")) files = [{ id: "fixture-landing", name: "01_landing" }];
+    else if (q.includes("'fixture-landing' in parents")) files = [{ id: "good-folder", name: "legacy_responses" }];
     else if (q.includes("name='02_bronze'")) files = [{ id: "fixture-bronze", name: "02_bronze" }];
     else if (q.includes("'fixture-bronze' in parents"))
       files = [
@@ -93,6 +95,15 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
   await expect(page.getByText("2.46", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Drive Demo Mode", { exact: true })).toHaveCount(0);
+
+  // Legacy tables are discovered lazily, including from the advanced Landing area.
+  const landing = page.getByRole("region", { name: "Landing", exact: true });
+  await expect(landing.getByText("legacy_responses", { exact: true })).toHaveCount(0);
+  await landing.getByText("File indexes (SQL)", { exact: true }).click();
+  await landing.getByText("legacy_responses", { exact: true }).click();
+  await expect(page.getByRole("tab", { name: "01_landing/legacy_responses", exact: true }))
+    .toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
 });
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -362,6 +373,8 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
   await expect(
     dataExplorer.getByRole("link", { name: "GitHub encrypted secrets" })
   ).toHaveAttribute("href", "https://github.com/rutkala/zohelo-data/settings/secrets/actions");
+  await expect(dataExplorer.getByText(/one accepted source response per row/i)).toBeHidden();
+  await dataExplorer.getByText("File indexes (SQL)", { exact: true }).click();
   await expect(dataExplorer.getByText(/one accepted source response per row/i)).toBeVisible();
 
   await expect(dataExplorer.getByRole("button", { name: "Business catalogue" })).toHaveCount(0);
@@ -485,6 +498,16 @@ test("DBW v2 loads original Bronze files without a publication copy", async ({ p
   await profile.getByRole("button", { name: "Create Profile", exact: true }).click();
   await expect(profile).toBeHidden();
   await expect(page.getByText("br_dbw_indicators", { exact: true })).toBeVisible({ timeout: 60000 });
+  const bronze = page.getByRole("button", { name: "02_bronze", exact: true });
+  const indicatorSearch = page.getByPlaceholder("Search DBW indicator name or ID");
+  await expect(bronze).toHaveAttribute("aria-expanded", "true");
+  await bronze.focus();
+  await page.keyboard.press("Enter");
+  await expect(bronze).toHaveAttribute("aria-expanded", "false");
+  await expect(indicatorSearch).toBeHidden();
+  await page.keyboard.press("Space");
+  await expect(bronze).toHaveAttribute("aria-expanded", "true");
+  await expect(indicatorSearch).toBeVisible();
   await page.getByRole("button", { name: "New SQL query", exact: true }).click();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.click();
