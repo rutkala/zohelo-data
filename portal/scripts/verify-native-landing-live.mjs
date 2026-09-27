@@ -109,8 +109,14 @@ try {
     await profile.getByPlaceholder('Profile name').fill('Landing acceptance');
     await profile.getByRole('button', { name: 'Create Profile', exact: true }).click();
   }
-  const section = page.getByRole('region', { name: 'Native Landing files' });
-  await section.getByText('01_landing', { exact: true }).waitFor();
+  const section = page.getByRole('region', { name: 'Landing', exact: true });
+  await section.locator('[data-native-depth="0"]').waitFor();
+  if (await section.count() !== 1 || await page.getByText('Files on Drive', { exact: true }).count() ||
+      await page.getByText('01_landing', { exact: true }).count()) throw new Error('Landing navigation is duplicated');
+  async function revealActions(row, file) {
+    const actions = row.getByRole('button', { name: `Actions for ${file.name}`, exact: true });
+    if (await actions.getAttribute('aria-expanded') !== 'true') await actions.click();
+  }
   stage = 'probe_source_folders';
   async function representative(folder, seen = new Set(), depth = 1, minimumDepth = 1) {
     if (seen.has(folder.id)) throw new Error('Drive folder cycle');
@@ -149,6 +155,7 @@ try {
         const fileRow = row.locator(`[data-native-id="${file.id}"]`).first();
         await fileRow.waitFor();
         if (!(await fileRow.innerText()).includes(file.name)) throw new Error('Native filename mismatch');
+        await revealActions(fileRow, file);
         await fileRow.getByRole('button', { name: 'Open in Drive' }).click();
         await page.waitForFunction(() => !!window.__nativeLink);
         const opened = await page.evaluate(() => { const value = window.__nativeLink; window.__nativeLink = null; return value; });
@@ -196,6 +203,7 @@ try {
     if (await expand.count()) await expand.click();
   }
   const archiveRow = largeRow.locator(`[data-native-id="${largeCandidate.file.id}"]`).first();
+  await revealActions(archiveRow, largeCandidate.file);
   await archiveRow.getByRole('button', { name: 'Download via Drive' }).click();
   await page.waitForFunction(() => !!window.__nativeLink);
   const largeLink = await page.evaluate(() => { const value = window.__nativeLink; window.__nativeLink = null; return value; });
@@ -213,8 +221,9 @@ try {
       if (await expand.count()) await expand.click();
     }
     const fileRow = previewRow.locator(`[data-native-id="${previewCandidate.file.id}"]`).first();
+    await revealActions(fileRow, previewCandidate.file);
     await fileRow.getByRole('button', { name: 'Preview in SQL' }).click();
-    await page.getByRole('tab', { name: `Native Landing/${previewCandidate.file.name}` }).waitFor();
+    await page.getByRole('tab', { name: `Landing/${previewCandidate.file.name}` }).waitFor();
     await page.getByRole('tab', { name: 'Table', exact: true }).waitFor();
     await page.locator('table:visible tbody tr').first().waitFor({ timeout: 180000 });
     if (await page.getByText('Query Error', { exact: true }).count()) throw new Error('Live preview SQL failed');

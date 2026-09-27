@@ -2,7 +2,20 @@
 
 Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
 
-**Current owner priority — 26 September 2026: finish existing sources.**
+**Current owner priority — 27 September 2026: portal Landing only.**
+
+- The owner rejected the confusing combination of “Native Landing files”, “Files
+  on Drive”, and a separate `01_landing` SQL tree. Work layer by layer, starting
+  with one clear Landing browser for source folders and original files.
+- This priority supersedes the broader engineering queue below. Do not advance
+  ingestion, Bronze/Silver/Gold/semantic delivery or source research during this
+  task. Existing authorized schedules are not changed by this UI correction.
+- Preserve original files, existing SQL compatibility, and verified read-only
+  access. Acceptance requires a usable mobile and desktop experience, one
+  Landing entry, and deployed behavior; technical access checks alone do not
+  establish that the owner's portal needs are satisfied.
+
+**Previous broader priority — 26 September 2026: finish existing sources.**
 
 **BDL host clarification — 26 September:** proceed from reviewed GitHub main;
 assume no available devcontainer and no unpushed work for this BDL migration.

@@ -17,7 +17,6 @@ import {
   resolvePublishedTableReferences,
   resolveLayerFolderId,
   resolveReleaseCatalog,
-  resolveSourceInventory,
   resolveNativeLandingRoot,
   listNativeFolder,
   isNativeFolder,
@@ -984,33 +983,7 @@ export const createGoogleDriveSlice: StateCreator<
             lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
           });
         }
-        const inventoryIsCurrent = () =>
-          activeGeneration === refreshGeneration &&
-          get().googleAuth.token === activeToken &&
-          get().currentSession === activeSession;
-        set({ isSourceInventoryLoading: true });
-        void resolveSourceInventory(activeToken, inventoryIsCurrent)
-          .then((sourceInventory) => {
-            if (inventoryIsCurrent()) set({ lakehouseSourceInventory: sourceInventory });
-          })
-          .catch((error) => {
-            if (!inventoryIsCurrent()) return;
-            const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
-            if (!authFailure) {
-              set({
-                lakehouseSourceInventory: {
-                  entries: [],
-                  drive_api_pages: 0,
-                  error: messageOf(error),
-                },
-              });
-            }
-          })
-          .finally(() => {
-            if (inventoryIsCurrent()) set({ isSourceInventoryLoading: false });
-          });
       } catch (error) {
-        if (activeGeneration === refreshGeneration) set({ isSourceInventoryLoading: false });
         const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
         if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure
