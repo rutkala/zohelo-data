@@ -6,10 +6,14 @@ import { NATIVE_METADATA_COMMENT } from "@/lib/nativeMetadataOwnership";
 import { DRIVE_ROOT } from "./auth";
 import {
   fetchDriveFileBuffer,
+  buildNativeMetadataBatchUrl,
   findFoldersByName,
   getNativeFileMetadata,
   listNativeChildrenPage,
   listNativeMetadataBatchPage,
+  NATIVE_METADATA_PARENT_BATCH,
+  NATIVE_METADATA_PLAN_URL_LIMIT,
+  NativeMetadataUrlTooLongError,
   type DriveFileMetadata,
 } from "./driveApi";
 import { DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
@@ -69,22 +73,30 @@ export interface NativeMetadataProgress {
   startedAtMs: number;
 }
 
-export const NATIVE_METADATA_PARENT_BATCH = 25;
-export const NATIVE_METADATA_WORKERS = 4;
+export { NATIVE_METADATA_PARENT_BATCH } from "./driveApi";
+export const NATIVE_METADATA_WORKERS = 8;
 
-const parentBatches = (ids: readonly string[]): string[][] => {
+const parentBatches = (ids: readonly string[], kind: "folders" | "files"): string[][] => {
   const batches: string[][] = [];
   let batch: string[] = [];
+  const fits = (candidate: readonly string[]) => {
+    try { return buildNativeMetadataBatchUrl(candidate, kind).length <= NATIVE_METADATA_PLAN_URL_LIMIT; }
+    catch (error) {
+      if (error instanceof NativeMetadataUrlTooLongError) return false;
+      throw error;
+    }
+  };
   for (const id of ids) {
-    // Leave ample space for fields, MIME filter and encoded URL delimiters.
-    if (encodeURIComponent(id).length > 1500)
-      throw new Error("Drive folder ID exceeds the Landing metadata query limit.");
     const candidate = [...batch, id];
-    const length = candidate.reduce((sum, value) => sum + encodeURIComponent(value).length + 35, 0);
-    if (batch.length && (candidate.length > NATIVE_METADATA_PARENT_BATCH || length > 2000)) {
+    const tooLong = candidate.length <= NATIVE_METADATA_PARENT_BATCH && !fits(candidate);
+    if (batch.length && (candidate.length > NATIVE_METADATA_PARENT_BATCH || tooLong)) {
       batches.push(batch);
       batch = [id];
-    } else batch = candidate;
+      if (!fits(batch))
+        throw new Error("Drive folder ID exceeds the Landing metadata query budget.");
+    } else if (tooLong)
+      throw new Error("Drive folder ID exceeds the Landing metadata query budget.");
+    else batch = candidate;
   }
   if (batch.length) batches.push(batch);
   return batches;
@@ -126,10 +138,10 @@ export async function scanNativeSourceMetadata(
       throw new Error("Landing folder changed during metadata scan. Refresh and retry.");
     ensureCurrent();
   };
-  /** Four workers, complete pagination per batch, globally unique IDs per phase. */
+  /** Eight workers, complete pagination per batch, globally unique IDs per phase. */
   const collect = async (parentIds: readonly string[], kind: "folders" | "files",
     handle: (item: DriveFileMetadata, parentId: string) => void) => {
-    const batches = parentBatches(parentIds);
+    const batches = parentBatches(parentIds, kind);
     const seenIds = new Set<string>();
     let cursor = 0;
     const worker = async () => {

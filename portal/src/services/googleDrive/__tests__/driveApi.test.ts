@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { clearStoredToken, setStoredToken } from "../auth";
-import { GoogleDriveAuthError, driveRequest, listNativeMetadataBatchPage } from "../driveApi";
+import { buildNativeMetadataBatchUrl, GoogleDriveAuthError, driveRequest,
+  listNativeMetadataBatchPage } from "../driveApi";
 
 describe("batched native metadata listing", () => {
   it("groups bounded parents, filters MIME, requests complete pages and passes abort signal", async () => {
@@ -14,7 +15,10 @@ describe("batched native metadata listing", () => {
     expect(url.searchParams.get("pageSize")).toBe("1000");
     expect(url.searchParams.get("fields")).toContain("incompleteSearch");
     expect(url.searchParams.get("pageToken")).toBe("previous");
-    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+    const activeSignal = fetchMock.mock.calls[0][1].signal as AbortSignal;
+    expect(activeSignal.aborted).toBe(false);
+    controller.abort();
+    expect(activeSignal.aborted).toBe(false); // Forwarding listener was removed on completion.
   });
 
   it("rejects incomplete searches and malformed pages without fabricating completeness", async () => {
@@ -23,8 +27,128 @@ describe("batched native metadata listing", () => {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload))));
       await expect(listNativeMetadataBatchPage(["a"], "folders", "token")).rejects.toThrow("incomplete");
     }
-    await expect(listNativeMetadataBatchPage(Array.from({ length: 26 }, (_, i) => String(i)),
+    await expect(listNativeMetadataBatchPage(Array.from({ length: 101 }, (_, i) => String(i)),
       "files", "token")).rejects.toThrow("parent batch");
+  });
+
+  it("uses minimal scanner fields and bounds the actual encoded URL including continuation token", () => {
+    const ids = Array.from({ length: 100 }, (_, i) => `${i}`.padEnd(33, "x"));
+    const folder = new URL(buildNativeMetadataBatchUrl(ids, "folders", "p".repeat(200)));
+    const file = new URL(buildNativeMetadataBatchUrl(ids, "files", "p".repeat(200)));
+    expect(file.toString().length).toBeLessThan(7800);
+    expect(folder.searchParams.get("fields")).toContain("version,modifiedTime");
+    expect(folder.searchParams.get("fields")).not.toContain("webViewLink");
+    expect(file.searchParams.get("fields")).toContain("webViewLink,sha256Checksum");
+    expect(file.searchParams.get("fields")).not.toContain("webContentLink");
+    expect(file.searchParams.get("fields")).not.toContain("capabilities");
+    expect(new URL(buildNativeMetadataBatchUrl(["a'\\b"], "folders")).searchParams.get("q"))
+      .toContain("'a\\'\\\\b' in parents");
+    expect(() => buildNativeMetadataBatchUrl(ids, "files", "p".repeat(2200)))
+      .toThrow("7800-character limit");
+  });
+
+  it("retries rate-limited scanner pages and never retries ordinary permission denial", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const rate = new Response(JSON.stringify({ error: { errors: [{ reason: "userRateLimitExceeded" }] } }),
+      { status: 403 });
+    const fetchMock = vi.fn().mockResolvedValueOnce(rate)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [] })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(listNativeMetadataBatchPage(["a"], "files", "token"))
+      .resolves.toEqual({ files: [], nextPageToken: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    fetchMock.mockClear().mockResolvedValue(new Response(JSON.stringify({ error: {
+      errors: [{ reason: "insufficientFilePermissions" }] } }), { status: 403 }));
+    await expect(listNativeMetadataBatchPage(["a"], "files", "token"))
+      .rejects.toThrow("403");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("aborts immediately during a backoff without another Drive request", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue(new Response("busy", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const task = listNativeMetadataBatchPage(["a"], "files", "token", undefined,
+      controller.signal);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    controller.abort();
+    await expect(task).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("stops after four attempts on persistent server errors", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("busy", { status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const task = listNativeMetadataBatchPage(["a"], "folders", "token");
+      const rejected = expect(task).rejects.toThrow("503");
+      await vi.advanceTimersByTimeAsync(250 + 500 + 1000);
+      await rejected;
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("works without AbortSignal.any/timeout and aborts during an unfinished JSON body", async () => {
+    const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")!;
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout")!;
+    Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined });
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: undefined });
+    const caller = new AbortController();
+    let bodyStarted!: () => void;
+    const body = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async (_url, options: RequestInit) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("body aborted")),
+          { once: true });
+        bodyStarted();
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const task = listNativeMetadataBatchPage(["a"], "files", "token", undefined, caller.signal);
+      await body;
+      caller.abort();
+      await expect(task).rejects.toThrow("cancelled");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(AbortSignal, "any", anyDescriptor);
+      Object.defineProperty(AbortSignal, "timeout", timeoutDescriptor);
+    }
+  });
+
+  it("enforces the total 90-second deadline while the JSON body remains open", async () => {
+    vi.useFakeTimers();
+    let bodyStarted!: () => void;
+    const body = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async (_url, options: RequestInit) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("body aborted")),
+          { once: true });
+        bodyStarted();
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const task = listNativeMetadataBatchPage(["a"], "folders", "token");
+      const rejected = expect(task).rejects.toThrow("timed out after 90 seconds");
+      await body;
+      await vi.advanceTimersByTimeAsync(90000);
+      await rejected;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

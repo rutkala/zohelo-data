@@ -20,6 +20,7 @@ import {
   getNativeFileMetadata,
   listNativeChildrenPage,
   listNativeMetadataBatchPage,
+  buildNativeMetadataBatchUrl,
   fetchDriveFileBuffer,
 } from "../driveApi";
 import { DriveDownloadBudget } from "../releaseCatalog";
@@ -197,10 +198,45 @@ describe("physical Landing discovery", () => {
     const result = await scanNativeSourceMetadata(child, root, "token", () => true);
     expect(result).toEqual([]);
     expect(all.length - 2).toBeGreaterThan(2500);
-    expect(listNativeMetadataBatchPage).toHaveBeenCalledTimes(310);
+    expect(listNativeMetadataBatchPage).toHaveBeenCalledTimes(92);
     expect(getNativeFileMetadata).toHaveBeenCalledTimes(4);
     expect(findFoldersByName).toHaveBeenCalledTimes(2);
     expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
+  });
+
+  it("packs long parent IDs by their actual encoded URL before any listing", async () => {
+    const nested = Array.from({ length: 180 }, (_, index) => ({ ...child,
+      id: `folder-${index}`.padEnd(88, "x"), name: `folder-${index}`,
+      parentId: child.id, parents: [child.id] }));
+    vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (ids, kind) => ({
+      files: kind === "folders" && ids.includes(child.id) ? nested : [], nextPageToken: null,
+    }));
+    await scanNativeSourceMetadata(child, root, "token", () => true);
+    const longBatches = vi.mocked(listNativeMetadataBatchPage).mock.calls
+      .filter(([ids]) => ids.some((id) => id.length === 88));
+    expect(longBatches.length).toBeGreaterThan(3);
+    for (const [ids, kind] of longBatches) {
+      expect(ids.length).toBeLessThan(100);
+      expect(buildNativeMetadataBatchUrl(ids, kind).length).toBeLessThanOrEqual(6000);
+    }
+  });
+
+  it("splits a candidate beyond the hard URL limit when each folder fits alone", async () => {
+    const nested = Array.from({ length: 70 }, (_, index) => ({ ...child,
+      id: `folder-${index}`.padEnd(60, "x"), name: `folder-${index}`,
+      parentId: child.id, parents: [child.id] }));
+    nested.push({ ...child, id: "L".repeat(2000), name: "long",
+      parentId: child.id, parents: [child.id] });
+    expect(buildNativeMetadataBatchUrl(nested.slice(0, -1).map((item) => item.id), "folders").length)
+      .toBeLessThanOrEqual(6000);
+    expect(() => buildNativeMetadataBatchUrl(nested.map((item) => item.id), "folders"))
+      .toThrow("7800-character limit");
+    vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (ids, kind) => ({
+      files: kind === "folders" && ids.includes(child.id) ? nested : [], nextPageToken: null,
+    }));
+    await expect(scanNativeSourceMetadata(child, root, "token", () => true)).resolves.toEqual([]);
+    for (const [ids, kind] of vi.mocked(listNativeMetadataBatchPage).mock.calls)
+      expect(buildNativeMetadataBatchUrl(ids, kind).length).toBeLessThanOrEqual(6000);
   });
 
   it("fails a broken nested page before any SQL relation is published", async () => {
