@@ -194,7 +194,7 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`20221f3214ded967a6bc296632c092f7e7a7fb86`. The earlier inspection at
+`a7bd9b183ec5ed7c7b01f81976c771917aca9914`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
@@ -208,7 +208,8 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 [#174](https://github.com/rutkala/zohelo-data/pull/174),
 [#175](https://github.com/rutkala/zohelo-data/pull/175), and
 [#176](https://github.com/rutkala/zohelo-data/pull/176), and
-[#177](https://github.com/rutkala/zohelo-data/pull/177) are already merged and
+[#177](https://github.com/rutkala/zohelo-data/pull/177), and
+[#178](https://github.com/rutkala/zohelo-data/pull/178) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
@@ -276,6 +277,15 @@ source-shaped downstream models for the full-distribution catalogue remain
 open.
 
 ### Eurostat full-distribution Bronze decoder — 27 September 2026
+
+[PR #178](https://github.com/rutkala/zohelo-data/pull/178) merged to main as
+[`a7bd9b183ec5ed7c7b01f81976c771917aca9914`](https://github.com/rutkala/zohelo-data/commit/a7bd9b183ec5ed7c7b01f81976c771917aca9914)
+at 06:24 CEST after exact-head review and successful
+[data-platform CI](https://github.com/rutkala/zohelo-data/actions/runs/36293523378).
+Review findings were corrected before merge: caller-supplied provenance was
+replaced by immutable receipt/descriptor binding; accepted empty partition
+leaves no longer enter the GZIP parser; and official dataset identity is retained
+separately from immutable leaf identity and selection.
 
 The repository now has a local, non-publishing downstream decoder for one
 receipt-bound official Eurostat `.tsv.gz` distribution. It verifies the immutable
