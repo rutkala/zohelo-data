@@ -53,6 +53,16 @@ Published physical files belong to immutable release folders under `releases/<so
 
 The publisher saves validated ingestion progress after each request. It builds all tables from pinned inputs, runs dbt tests and native MetricFlow acceptance queries, uploads a candidate, then verifies the uploaded Parquet and its provenance before changing `current-release.json`. Consumers pin the release once. Post-publication fresh reads and cold replay are additional evidence; their failure is not an automatic rollback.
 
+Eurostat full-distribution Bronze is an independently resumable stage rather than
+part of native intake. A serialized Actions job pins the exact accepted-receipt
+prefix, restores and decodes until either 64 native distributions or the bounded
+40-minute session is reached, writes
+content-addressed Parquet under `02_bronze/eurostat/full_distributions`, and advances
+its separate `eurostat_bulk_bronze` checkpoint only after output-byte verification.
+A dependent fresh runner verifies the exact upstream prefix and newest immutable
+output. The checkpoint preserves every accepted revision and partition; it is not a
+modeled release pointer and never upgrades incomplete official-catalogue coverage.
+
 Drive provides no database transaction or compare-and-swap for this protocol. Production operations use the unified Actions concurrency group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`, along with rigorous pointer and state drift detection. Do not run another production writer outside that route. An ambiguous update response stops rather than claiming success. Retained-release promotion checks the expected current release and validates the target before switching.
 
 `checked_through`, `latest_observation_date` and release identity describe different facts. Rebuild means recovery from retained input, not historical time travel; a regressive cutoff is rejected. `full` is a compatibility name for resumable catch-up, not a forced redownload of every historical interval.

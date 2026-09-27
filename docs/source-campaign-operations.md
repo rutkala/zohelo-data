@@ -82,6 +82,15 @@ budgets are not hard wall-clock deadlines. The workflow has a 60-minute outer ti
 capacity, no-due-work and source failures stop collection without spinning or resetting
 provider history.
 
+After successful Eurostat Landing, the same workflow runs a separately checkpointed
+full-distribution Bronze batch inside the shared production-data concurrency group. It
+restores no more than 64 accepted TSV distributions (or the 40-minute session budget)
+and never calls the provider. A second fresh runner executes
+`python src/eurostat_bulk_bronze.py --verify-current`; this verifies the exact
+Landing receipt prefix and newest output bytes, not every historical output or complete
+catalogue coverage. A held publication-owner record after an interrupted process is
+not age-expired: inspect the exact owner and checkpoint before explicit recovery.
+
 The schedule is a wake-up frequency, not a promise that each complete provider job finishes
 within its scheduling interval. Each provider has one active writer and, under the default GitHub
 concurrency queue, one pending job; a newer scheduled job can replace that pending job without
