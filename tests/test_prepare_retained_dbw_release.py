@@ -3,6 +3,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -116,6 +117,12 @@ class PrepareRetainedDbwTests(unittest.TestCase):
         fresh = {**report, "run_id": "fresh-fixture"}
         def restore_fixture(_storage, output, **kwargs):
             output.mkdir()
+            shutil.copytree(fixture / "verified-cache", output / "verified-cache")
+            for item in inventory["objects"]:
+                path = output / "verified-cache" / item["path"]
+                if not path.exists():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"x")
             (output / "descriptor-inventory.json").write_text(json.dumps(inventory))
             (output / "audit-report.json").write_text(json.dumps(fresh))
             (output / "run-status.json").write_text(json.dumps({"run_id": "fresh-fixture"}))
