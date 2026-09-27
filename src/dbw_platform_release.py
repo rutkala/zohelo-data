@@ -123,6 +123,25 @@ def _read_optional_current_release(store: DriveReleaseStore) -> dict | None:
     return read_current_release_manifest(store, store.root_id)
 
 
+def _validate_expected_current_release(
+    store: DriveReleaseStore,
+    expected_release_id: str | None,
+) -> dict:
+    """Validate the same immutable pointer whose release identity was checked."""
+    pointer = _current_pointer(store)
+    manifest = read_release_manifest(store, pointer)
+    if manifest.get("release_scope") != DBW_RELEASE_SCOPE:
+        raise ReleaseProtocolError(
+            "Current DBW pointer does not identify a modeled DBW release"
+        )
+    _require_expected_release(manifest, expected_release_id)
+    return validate_staged_dbw_release(
+        store,
+        pointer,
+        retained_pointer_file_id=RETAINED_POINTER_FILE_ID,
+    )
+
+
 def run(
     *,
     drive_root_id: str,
@@ -152,18 +171,8 @@ def run(
                 storage, root_id, "dbw", is_writer=False
             )
             release_store = DriveReleaseStore(storage, release_root)
-            manifest = read_current_release_manifest(
-                release_store, release_store.root_id
-            )
-            if manifest.get("release_scope") != DBW_RELEASE_SCOPE:
-                raise ReleaseProtocolError(
-                    "Current DBW pointer does not identify a modeled DBW release"
-                )
-            _require_expected_release(manifest, expected_release_id)
-            report = validate_staged_dbw_release(
-                release_store,
-                _current_pointer(release_store),
-                retained_pointer_file_id=RETAINED_POINTER_FILE_ID,
+            report = _validate_expected_current_release(
+                release_store, expected_release_id
             )
             return {
                 "status": "fresh_dbw_modeled_release_verified",
