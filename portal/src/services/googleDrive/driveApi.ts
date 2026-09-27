@@ -150,29 +150,50 @@ export const buildNativeMetadataBatchUrl = (
   return encoded;
 };
 
-/** Retry only transient scanner requests, with one abortable deadline per page. */
-const scannerPage = async (url: string, token: string, signal?: AbortSignal): Promise<Response> => {
-  const deadline = AbortSignal.timeout(90000);
-  const active = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (active.aborted) throw active.reason;
-    try { return await driveRequest(url, token, active); }
-    catch (error) {
-      const transient = error instanceof GoogleDriveApiError && (
-        error.status === 429 || error.status >= 500 ||
-        (error.status === 403 && ["rateLimitExceeded", "userRateLimitExceeded",
-          "RATE_LIMIT_EXCEEDED"].includes(error.reason ?? ""))
-      );
-      if (!transient || attempt === 3 || active.aborted) throw error;
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => { active.removeEventListener("abort", abort); resolve(); },
-          250 * 2 ** attempt + Math.floor(Math.random() * 250));
-        const abort = () => { clearTimeout(timer); reject(active.reason); };
-        active.addEventListener("abort", abort, { once: true });
-      });
+/** Retry only transient scanner requests; the same deadline covers response headers and body. */
+type NativeMetadataPagePayload = {
+  files?: unknown;
+  nextPageToken?: unknown;
+  incompleteSearch?: unknown;
+} | null;
+const scannerPage = async (
+  url: string, token: string, signal?: AbortSignal
+): Promise<NativeMetadataPagePayload> => {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, { once: true });
+  const deadline = setTimeout(cancel, 90000);
+  const active = controller.signal;
+  const abortError = () => new Error(signal?.aborted
+    ? "Landing metadata request was cancelled."
+    : "Landing metadata page timed out after 90 seconds.");
+  try {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (active.aborted) throw abortError();
+      try { return await (await driveRequest(url, token, active)).json() as NativeMetadataPagePayload; }
+      catch (error) {
+        if (active.aborted) throw abortError();
+        const transient = error instanceof GoogleDriveApiError && (
+          error.status === 429 || error.status >= 500 ||
+          (error.status === 403 && ["rateLimitExceeded", "userRateLimitExceeded",
+            "RATE_LIMIT_EXCEEDED"].includes(error.reason ?? ""))
+        );
+        if (!transient || attempt === 3) throw error;
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => { active.removeEventListener("abort", abort); resolve(); },
+            250 * 2 ** attempt + Math.floor(Math.random() * 250));
+          const abort = () => { clearTimeout(timer); reject(abortError()); };
+          active.addEventListener("abort", abort, { once: true });
+          if (active.aborted) abort();
+        });
+      }
     }
+    throw new Error("Landing metadata request exceeded the retry limit.");
+  } finally {
+    clearTimeout(deadline);
+    signal?.removeEventListener("abort", cancel);
   }
-  throw new Error("Landing metadata request exceeded the retry limit.");
 };
 
 export const listNativeMetadataBatchPage = async (
@@ -180,7 +201,7 @@ export const listNativeMetadataBatchPage = async (
   signal?: AbortSignal
 ): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
   const url = buildNativeMetadataBatchUrl(parentIds, kind, pageToken);
-  const payload = await (await scannerPage(url, token, signal)).json();
+  const payload = await scannerPage(url, token, signal);
   if (payload?.incompleteSearch === true) throw new Error("Drive returned an incomplete Landing metadata search.");
   if (!Array.isArray(payload?.files) ||
       (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string") ||

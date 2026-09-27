@@ -18,7 +18,7 @@ describe("batched native metadata listing", () => {
     const activeSignal = fetchMock.mock.calls[0][1].signal as AbortSignal;
     expect(activeSignal.aborted).toBe(false);
     controller.abort();
-    expect(activeSignal.aborted).toBe(true);
+    expect(activeSignal.aborted).toBe(false); // Forwarding listener was removed on completion.
   });
 
   it("rejects incomplete searches and malformed pages without fabricating completeness", async () => {
@@ -93,6 +93,61 @@ describe("batched native metadata listing", () => {
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
+    }
+  });
+
+  it("works without AbortSignal.any/timeout and aborts during an unfinished JSON body", async () => {
+    const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any")!;
+    const timeoutDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "timeout")!;
+    Object.defineProperty(AbortSignal, "any", { configurable: true, value: undefined });
+    Object.defineProperty(AbortSignal, "timeout", { configurable: true, value: undefined });
+    const caller = new AbortController();
+    let bodyStarted!: () => void;
+    const body = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async (_url, options: RequestInit) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("body aborted")),
+          { once: true });
+        bodyStarted();
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const task = listNativeMetadataBatchPage(["a"], "files", "token", undefined, caller.signal);
+      await body;
+      caller.abort();
+      await expect(task).rejects.toThrow("cancelled");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(AbortSignal, "any", anyDescriptor);
+      Object.defineProperty(AbortSignal, "timeout", timeoutDescriptor);
+    }
+  });
+
+  it("enforces the total 90-second deadline while the JSON body remains open", async () => {
+    vi.useFakeTimers();
+    let bodyStarted!: () => void;
+    const body = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async (_url, options: RequestInit) => ({
+      ok: true,
+      json: () => new Promise((_resolve, reject) => {
+        options.signal?.addEventListener("abort", () => reject(new Error("body aborted")),
+          { once: true });
+        bodyStarted();
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const task = listNativeMetadataBatchPage(["a"], "folders", "token");
+      const rejected = expect(task).rejects.toThrow("timed out after 90 seconds");
+      await body;
+      await vi.advanceTimersByTimeAsync(90000);
+      await rejected;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
