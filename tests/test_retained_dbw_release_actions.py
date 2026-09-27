@@ -30,8 +30,18 @@ class PreparationTests(unittest.TestCase):
         report["run_id"] = "fresh-independent-run"
         if mismatch:
             report[mismatch] = "changed"
+        cache_payload = b"reviewed-receipt"
+        inventory_document = {
+            "objects": [{
+                "path": "receipts/1.json",
+                "size": len(cache_payload),
+            }]
+        }
         def audit(storage, package, **kwargs):
             package.mkdir(parents=True)
+            cache = package / "verified-cache" / "receipts"
+            cache.mkdir(parents=True)
+            (cache / "1.json").write_bytes(cache_payload)
             (package / "audit-report.json").write_text(json.dumps(report))
             (package / "run-status.json").write_text(json.dumps({"run_id": report["run_id"]}))
             return report
@@ -44,7 +54,12 @@ class PreparationTests(unittest.TestCase):
              patch.object(prepare.audit, "validate_inventory", return_value=({}, set())), \
              patch.object(prepare.audit, "inventory_document", return_value=inventory), \
              patch.object(prepare.audit, "audit_retained_dbw", side_effect=audit) as restore, \
-             patch.object(prepare, "validate_audit", side_effect=ValueError("invalid package") if validator_error else None) as validate:
+             patch.object(
+                 prepare,
+                 "validate_audit",
+                 return_value=(report, inventory_document, "f" * 64),
+                 side_effect=ValueError("invalid package") if validator_error else None,
+             ) as validate:
             if changed_inventory:
                 with self.assertRaisesRegex(prepare.PreparationError, "inventory differs"):
                     prepare.prepare(object(), self.output)
