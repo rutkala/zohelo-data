@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from bdl_platform_contract import BDL_PLATFORM_DATASETS, BDL_PLATFORM_DATE_COLUMNS  # noqa: E402
 from release_protocol import (  # noqa: E402
+    PlatformReleaseWriter,
     ReleaseProtocolError,
     publish_release,
     promote_retained_release,
@@ -172,6 +173,86 @@ class ReleaseProtocolTests(unittest.TestCase):
         self.assertEqual(1, store.read_counts["current-release.json"])
         self.assertEqual(1, store.read_counts["release.json"])
         self.assertFalse(any(name.endswith(".parquet") for name in store.read_counts))
+
+    def test_platform_writer_uploads_one_dataset_at_a_time(self):
+        store = MemoryStore()
+        candidate = self._platform_candidate()
+        writer = PlatformReleaseWriter(
+            store,
+            "root",
+            release_scope=candidate["release_scope"],
+            code_sha=candidate["code_sha"],
+            inputs=candidate["inputs"],
+            release_id=candidate["release_id"],
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
+        local_paths = []
+        for dataset in candidate["datasets"]:
+            path = Path(dataset["path"])
+            local_paths.append(path)
+            writer.add_dataset(dataset)
+            path.unlink()
+            self.assertFalse(path.exists())
+
+        result = writer.finalize(
+            artifacts=candidate["artifacts"],
+            measurements=candidate["measurements"],
+        )
+
+        self.assertTrue(all(not path.exists() for path in local_paths))
+        restored = restore_current_release(store, "root")
+        self.assertEqual(restored["release_id"], result["release_id"])
+        self.assertEqual(
+            {item["dataset_id"] for item in restored["datasets"]},
+            {item["dataset_id"] for item in candidate["datasets"]},
+        )
+
+    def test_platform_writer_never_promotes_incomplete_dataset_set(self):
+        store = MemoryStore()
+        candidate = self._platform_candidate()
+        writer = PlatformReleaseWriter(
+            store,
+            "root",
+            release_scope=candidate["release_scope"],
+            code_sha=candidate["code_sha"],
+            inputs=candidate["inputs"],
+            release_id=candidate["release_id"],
+            pre_promote_validator=lambda _store, _pointer: None,
+        )
+        writer.add_dataset(candidate["datasets"][0])
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "incomplete datasets"):
+            writer.finalize(
+                artifacts=candidate["artifacts"],
+                measurements=candidate["measurements"],
+            )
+
+        self.assertEqual(store.find("current-release.json", "root"), [])
+
+    def test_platform_writer_keeps_current_pointer_when_staged_validation_fails(self):
+        store = MemoryStore()
+        candidate = self._platform_candidate()
+        writer = PlatformReleaseWriter(
+            store,
+            "root",
+            release_scope=candidate["release_scope"],
+            code_sha=candidate["code_sha"],
+            inputs=candidate["inputs"],
+            release_id=candidate["release_id"],
+            pre_promote_validator=lambda _store, _pointer: (_ for _ in ()).throw(
+                ValueError("invalid staged bytes")
+            ),
+        )
+        for dataset in candidate["datasets"]:
+            writer.add_dataset(dataset)
+
+        with self.assertRaisesRegex(ReleaseProtocolError, "failed pre-promotion"):
+            writer.finalize(
+                artifacts=candidate["artifacts"],
+                measurements=candidate["measurements"],
+            )
+
+        self.assertEqual(store.find("current-release.json", "root"), [])
 
     def _platform_candidate(self):
         specifications = {

@@ -157,6 +157,17 @@ the retained UUID pointer, audit hash, indicator-index fingerprint and retained
 dataset-file descriptors. This bridge does not upgrade the retained coverage or
 lineage status and does not make a developer checkout an operational dependency.
 
+The modeled DBW publisher is a manual, main-only Actions operation in the shared
+production concurrency group. Input restoration, dbt build, staged SQL/content
+validation and pointer promotion run in one job so the reconstructed native tree is
+never passed through an Actions artifact. Each complete bounded Parquet dataset is
+validated and uploaded before its disposable local parts are removed; promotion is
+impossible until all eleven Bronze, Silver and Gold contracts and the required dbt
+artifacts are present. A dependent fresh runner then restores and queries the current
+release read-only. Workflow success is release evidence only after both jobs pass; it
+does not change the retained snapshot's incomplete-coverage or unresolved-lineage
+labels.
+
 The retained DBW publisher alone additionally uses a non-expiring operational Git-ref
 claim acquired atomically before Drive namespace mutation. Explicit expected-SHA leases
 protect acquisition/release, and the reviewed audit hashes are enforced before either

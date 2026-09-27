@@ -169,6 +169,284 @@ class ReleaseProtocolError(RuntimeError):
     """The candidate is invalid or could not be safely made current."""
 
 
+class PlatformReleaseWriter:
+    """Incrementally stage one platform release without retaining every export.
+
+    The writer is lazy: constructing it performs no remote operation.  The first
+    dataset upload validates the existing pointer and creates an immutable release
+    folder.  Callers may therefore validate/build their source before any remote
+    write, upload one bounded dataset, remove its local files, and continue.
+    """
+
+    def __init__(
+        self,
+        store: ReleaseStore,
+        root_id: str,
+        *,
+        release_scope: str,
+        code_sha: str,
+        inputs: list[dict[str, Any]],
+        release_id: str | None = None,
+        pre_promote_validator: Callable[[ReleaseStore, dict[str, Any]], Any],
+        before_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+        after_pointer_write: Callable[[ReleaseStore, dict[str, Any]], Any] | None = None,
+        direct_releases: bool = False,
+    ) -> None:
+        if release_scope not in PLATFORM_RELEASES:
+            raise ReleaseProtocolError("streamed publication requires a registered platform scope")
+        if not isinstance(code_sha, str) or not _CODE_SHA_RE.fullmatch(code_sha):
+            raise ReleaseProtocolError("code_sha must be a 40-character lowercase hexadecimal Git SHA")
+        if not isinstance(inputs, list) or len(inputs) > _MAX_ITEMS:
+            raise ReleaseProtocolError("inputs must be a bounded list")
+        if not callable(pre_promote_validator):
+            raise ReleaseProtocolError("platform publication requires staged content validation")
+        self.store = store
+        self.root_id = _require_id(root_id, "root_id")
+        self.release_scope = release_scope
+        self.code_sha = code_sha
+        self.inputs = json.loads(_bounded_json(inputs, "inputs"))
+        self.release_id = str(uuid4()) if release_id is None else _parse_release_id(release_id)
+        self.pre_promote_validator = pre_promote_validator
+        self.before_pointer_write = before_pointer_write
+        self.after_pointer_write = after_pointer_write
+        self.direct_releases = direct_releases
+        self._previous: dict[str, Any] | None = None
+        self._release_folder_id: str | None = None
+        self._published: dict[str, dict[str, Any]] = {}
+        self._names: set[str] = {"release.json"}
+        self._table_names: set[tuple[str, str]] = set()
+        self._finished = False
+
+    def _start(self) -> None:
+        if self._release_folder_id is not None:
+            return
+        previous = _read_pointer(self.store, self.root_id)
+        if previous is not None:
+            previous_manifest = restore_release(self.store, previous["value"])
+            if previous_manifest.get("release_scope") != self.release_scope:
+                raise ReleaseProtocolError(
+                    "current platform release scope differs from streamed candidate"
+                )
+        if self.direct_releases:
+            container = self.root_id
+        else:
+            releases = self.store.find("releases", self.root_id)
+            if len(releases) > 1:
+                raise ReleaseProtocolError("ambiguous releases folders under publication root")
+            container = releases[0] if releases else self.store.mkdir("releases", self.root_id)
+            container = _require_id(container, "releases folder id")
+        if self.store.find(self.release_id, container):
+            raise ReleaseProtocolError(f"release folder already exists: {self.release_id}")
+        self._release_folder_id = _require_id(
+            self.store.mkdir(self.release_id, container), "release folder id"
+        )
+        self._previous = previous
+
+    def add_dataset(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Validate and upload one complete bounded dataset."""
+        if self._finished:
+            raise ReleaseProtocolError("streamed platform release is already finalized")
+        if not isinstance(raw, dict):
+            raise ReleaseProtocolError("each dataset must be an object")
+        dataset_id = raw.get("dataset_id")
+        spec = PLATFORM_RELEASES[self.release_scope]
+        dataset_specs = spec["datasets"]
+        if not isinstance(dataset_id, str) or dataset_id not in dataset_specs:
+            raise ReleaseProtocolError("streamed platform dataset ID is invalid")
+        if dataset_id in self._published:
+            raise ReleaseProtocolError(f"duplicate streamed dataset {dataset_id}")
+        layer, model_id = dataset_specs[dataset_id]
+        if raw.get("layer") != layer or raw.get("model_id") != model_id:
+            raise ReleaseProtocolError(f"{dataset_id} has invalid layer or model identity")
+        model_name = model_id.rsplit(".", 1)[-1]
+        if raw.get("model_name") != model_name:
+            raise ReleaseProtocolError(f"{dataset_id} must identify model_name {model_name}")
+        table_name = raw.get("table_name")
+        table_key = (layer, table_name) if isinstance(table_name, str) else None
+        if (
+            not isinstance(table_name, str)
+            or not _TABLE_NAME_RE.fullmatch(table_name)
+            or table_key in self._table_names
+        ):
+            raise ReleaseProtocolError(f"{dataset_id} has an invalid or duplicate table_name")
+        rows = raw.get("row_count")
+        allows_zero = dataset_id in spec["allow_zero_rows"]
+        if (
+            not isinstance(rows, int)
+            or isinstance(rows, bool)
+            or rows < 0
+            or (rows == 0 and not allows_zero)
+        ):
+            raise ReleaseProtocolError(f"{dataset_id} has an invalid row_count")
+        _validate_platform_dates(
+            dataset_id, raw, rows, spec["date_columns"], spec["allow_zero_rows"]
+        )
+        columns = _validate_columns(raw.get("columns"), dataset_id)
+        date_column = _validate_platform_date_column(
+            dataset_id, raw.get("date_column"), columns, spec["date_columns"]
+        )
+        paths = raw.get("paths")
+        if paths is None:
+            paths = [raw.get("path")]
+        if not isinstance(paths, list) or not paths or len(paths) > _MAX_ITEMS:
+            raise ReleaseProtocolError(f"dataset {dataset_id} must contain bounded files")
+        uploads = []
+        for index, path in enumerate(paths):
+            descriptor = _local_file_descriptor(path, f"dataset {dataset_id} file {index + 1}")
+            source_name = _safe_filename(Path(path).name, f"dataset {dataset_id} filename")
+            upload_name = _safe_filename(
+                f"{dataset_id}--{source_name}", f"dataset {dataset_id} upload filename"
+            )
+            if upload_name in self._names:
+                raise ReleaseProtocolError(f"duplicate candidate filename {upload_name}")
+            self._names.add(upload_name)
+            uploads.append({**descriptor, "upload_name": upload_name})
+
+        self._start()
+        files = []
+        for upload in uploads:
+            data = _read_local_file(
+                upload["path"], f"dataset upload {upload['upload_name']}"
+            )
+            if len(data) != upload["size"] or _sha256(data) != upload["sha256"]:
+                raise ReleaseProtocolError(
+                    f"dataset upload {upload['upload_name']} changed after validation"
+                )
+            file_id = _upload_verified(
+                self.store, self._release_folder_id, upload["upload_name"], data
+            )
+            files.append({
+                "id": file_id,
+                "name": upload["upload_name"],
+                "size": upload["size"],
+                "sha256": upload["sha256"],
+            })
+        metadata = {
+            "dataset_id": dataset_id,
+            "layer": layer,
+            "model_name": model_name,
+            "model_id": model_id,
+            "table_name": table_name,
+            "row_count": rows,
+            "date_column": date_column,
+            "min_date": raw.get("min_date"),
+            "max_date": raw.get("max_date"),
+            "columns": columns,
+            "files": files,
+        }
+        self._published[dataset_id] = metadata
+        self._table_names.add(table_key)
+        return metadata
+
+    def finalize(
+        self,
+        *,
+        artifacts: list[dict[str, Any]],
+        measurements: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Upload artifacts, validate the complete staged release, and promote."""
+        if self._finished:
+            raise ReleaseProtocolError("streamed platform release is already finalized")
+        spec = PLATFORM_RELEASES[self.release_scope]
+        expected = set(spec["datasets"])
+        if set(self._published) != expected:
+            raise ReleaseProtocolError(
+                "streamed platform release has incomplete datasets; "
+                f"missing={sorted(expected - set(self._published))}, "
+                f"extra={sorted(set(self._published) - expected)}"
+            )
+        if not isinstance(measurements, dict):
+            raise ReleaseProtocolError("measurements must be an object")
+        measurements = json.loads(_bounded_json(measurements, "measurements"))
+        validated_artifacts = _validate_platform_artifact_candidates(
+            artifacts,
+            required_artifacts=spec["required_artifacts"],
+            dataset_specs=spec["datasets"],
+            code_sha=self.code_sha,
+            reserved_names=self._names,
+            label=spec["label"],
+        )
+        self._start()
+        published_artifacts = []
+        for artifact in validated_artifacts:
+            file_id = _upload_verified(
+                self.store,
+                self._release_folder_id,
+                artifact["name"],
+                artifact["data"],
+            )
+            published_artifacts.append({
+                "id": file_id,
+                "name": artifact["name"],
+                "size": len(artifact["data"]),
+                "sha256": _sha256(artifact["data"]),
+            })
+        manifest = {
+            "format_version": 2,
+            "release_id": self.release_id,
+            "release_scope": self.release_scope,
+            "status": "validated",
+            "created_at_utc": _utc_now(),
+            "code_sha": self.code_sha,
+            "datasets": [self._published[key] for key in sorted(self._published)],
+            "artifacts": published_artifacts,
+            "inputs": self.inputs,
+            "measurements": measurements,
+            "tests": {"passed": True},
+        }
+        manifest_bytes = _json_bytes(manifest)
+        manifest_file_id = _upload_verified(
+            self.store, self._release_folder_id, "release.json", manifest_bytes
+        )
+        staged_pointer = {
+            "format_version": 1,
+            "release_id": self.release_id,
+            "manifest_file_id": manifest_file_id,
+            "manifest_sha256": _sha256(manifest_bytes),
+            "updated_at_utc": _utc_now(),
+        }
+        if self._previous is not None:
+            staged_pointer["previous_manifest_file_id"] = self._previous["value"]["manifest_file_id"]
+        try:
+            self.pre_promote_validator(self.store, dict(staged_pointer))
+        except Exception as exc:
+            raise ReleaseProtocolError(
+                "staged release failed pre-promotion validation; current release retained"
+            ) from exc
+        current = _read_pointer(self.store, self.root_id)
+        current_raw = current["raw"] if current is not None else None
+        previous_raw = self._previous["raw"] if self._previous is not None else None
+        if current_raw != previous_raw:
+            raise ReleaseProtocolError("current-release pointer changed during candidate upload")
+        if self.before_pointer_write is not None:
+            try:
+                self.before_pointer_write(self.store, dict(staged_pointer))
+            except Exception as exc:
+                raise ReleaseProtocolError(
+                    "pre-pointer publication hook failed; current release retained"
+                ) from exc
+        staged_pointer["updated_at_utc"] = _utc_now()
+        pointer_file_id = _write_pointer(
+            self.store, self.root_id, self._previous, _json_bytes(staged_pointer)
+        )
+        if self.after_pointer_write is not None:
+            try:
+                self.after_pointer_write(self.store, dict(staged_pointer))
+            except Exception as exc:
+                raise ReleaseProtocolError(
+                    "current-release pointer was promoted and read back, but post-pointer publication hook failed"
+                ) from exc
+        self._finished = True
+        return {
+            "release_id": self.release_id,
+            "release_folder_id": self._release_folder_id,
+            "manifest_file_id": manifest_file_id,
+            "manifest_sha256": staged_pointer["manifest_sha256"],
+            "pointer_file_id": pointer_file_id,
+            "manifest": manifest,
+        }
+
+
 def publish_release(
     store: ReleaseStore,
     root_id: str,
@@ -794,31 +1072,59 @@ def _validate_platform_candidate(**kwargs: Any) -> dict[str, Any]:
         }
         validated_datasets.append({"metadata": metadata, "uploads": uploads})
 
-    artifact_by_name: dict[str, dict[str, Any]] = {}
-    for raw in artifacts:
-        if not isinstance(raw, dict):
-            raise ReleaseProtocolError("each artifact must be an object")
-        name = _safe_filename(raw.get("name"), "artifact name")
-        if name in artifact_by_name or name in names:
-            raise ReleaseProtocolError(f"duplicate or reserved candidate filename {name}")
-        artifact_by_name[name] = raw
-        names.add(name)
-    missing = sorted(required_artifacts - set(artifact_by_name))
-    if missing:
-        raise ReleaseProtocolError(f"{label} release artifacts are missing required files: {missing}")
-    validated_artifacts = [
-        {"name": name, "data": _read_local_file(raw.get("path"), f"artifact {name}")}
-        for name, raw in sorted(artifact_by_name.items())
-    ]
-    artifact_data = {item["name"]: item["data"] for item in validated_artifacts}
-    _validate_platform_artifacts(artifact_data, code_sha)
-    _validate_platform_run_results(artifact_data["run_results.json"], dataset_specs)
+    validated_artifacts = _validate_platform_artifact_candidates(
+        artifacts,
+        required_artifacts=required_artifacts,
+        dataset_specs=dataset_specs,
+        code_sha=code_sha,
+        reserved_names=names,
+        label=label,
+    )
     return {
         "release_id": release_id, "release_scope": scope, "format_version": 2,
         "datasets": validated_datasets, "artifacts": validated_artifacts,
         "inputs": json.loads(_bounded_json(inputs, "inputs")),
         "measurements": json.loads(_bounded_json(measurements, "measurements")), "code_sha": code_sha,
     }
+
+
+def _validate_platform_artifact_candidates(
+    artifacts: Any,
+    *,
+    required_artifacts: set[str] | frozenset[str],
+    dataset_specs: dict[str, tuple[str, str]],
+    code_sha: str,
+    reserved_names: set[str],
+    label: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(artifacts, list) or len(artifacts) > _MAX_ITEMS:
+        raise ReleaseProtocolError("artifacts must be a bounded list")
+    by_name: dict[str, dict[str, Any]] = {}
+    for raw in artifacts:
+        if not isinstance(raw, dict):
+            raise ReleaseProtocolError("each artifact must be an object")
+        name = _safe_filename(raw.get("name"), "artifact name")
+        if name in by_name or name in reserved_names:
+            raise ReleaseProtocolError(
+                f"duplicate or reserved candidate filename {name}"
+            )
+        by_name[name] = raw
+    missing = sorted(required_artifacts - set(by_name))
+    if missing:
+        raise ReleaseProtocolError(
+            f"{label} release artifacts are missing required files: {missing}"
+        )
+    result = [
+        {
+            "name": name,
+            "data": _read_local_file(raw.get("path"), f"artifact {name}"),
+        }
+        for name, raw in sorted(by_name.items())
+    ]
+    data = {item["name"]: item["data"] for item in result}
+    _validate_platform_artifacts(data, code_sha)
+    _validate_platform_run_results(data["run_results.json"], dataset_specs)
+    return result
 
 
 def _validate_platform_dates(

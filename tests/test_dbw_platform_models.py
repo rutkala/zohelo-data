@@ -206,6 +206,34 @@ class TestDBWPlatformModels(unittest.TestCase):
 
 
 class TestDBWPlatformExports(unittest.TestCase):
+    def test_streamed_dataset_is_removed_only_after_sink_accepts_it(self):
+        with tempfile.TemporaryDirectory(prefix="zohelo-dbw-stream-") as temporary:
+            path = Path(temporary) / "part.parquet"
+            path.write_bytes(b"bounded-part")
+            observed = []
+
+            def accept(dataset):
+                self.assertTrue(path.exists())
+                observed.append(dataset["dataset_id"])
+
+            dbw_platform._deliver_dataset(
+                {"dataset_id": "bronze_dbw_observations"}, [path], accept
+            )
+            self.assertEqual(observed, ["bronze_dbw_observations"])
+            self.assertFalse(path.exists())
+
+    def test_rejected_streamed_dataset_preserves_local_evidence(self):
+        with tempfile.TemporaryDirectory(prefix="zohelo-dbw-stream-") as temporary:
+            path = Path(temporary) / "part.parquet"
+            path.write_bytes(b"bounded-part")
+
+            def reject(_dataset):
+                raise RuntimeError("upload rejected")
+
+            with self.assertRaisesRegex(RuntimeError, "upload rejected"):
+                dbw_platform._deliver_dataset({}, [path], reject)
+            self.assertEqual(path.read_bytes(), b"bounded-part")
+
     def test_observation_exports_are_bounded_unique_and_row_complete(self):
         with tempfile.TemporaryDirectory(prefix="zohelo-dbw-export-") as temporary:
             root = Path(temporary)
