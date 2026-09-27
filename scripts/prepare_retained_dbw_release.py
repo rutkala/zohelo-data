@@ -6,7 +6,9 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,6 +45,50 @@ def reviewed_report(path: Path = BASELINE) -> tuple[bytes, dict]:
             or any(field not in report for field in SOURCE_FIELDS)):
         raise PreparationError("Reviewed audit report identity is invalid")
     return raw, report
+
+
+def materialize_native_tree(audit_dir: Path, data_root: Path, inventory: dict) -> dict:
+    """Hard-link every reviewed object into one immutable modeled-input tree."""
+    data_root = data_root.absolute()
+    if data_root.exists() or data_root.is_symlink():
+        raise PreparationError("Use a new data root for each restore")
+    objects = inventory.get("objects")
+    if not isinstance(objects, list) or not objects:
+        raise PreparationError("Reviewed descriptor inventory is empty")
+    release_root = (
+        data_root / "02_bronze" / "gus_dbw" / "releases"
+        / REVIEWED_INVENTORY_SHA256
+    )
+    cache = audit_dir / "verified-cache"
+    linked = 0
+    total_bytes = 0
+    try:
+        for item in objects:
+            relative = Path(item["path"])
+            source = cache / relative
+            target = release_root / relative
+            if (
+                source.is_symlink()
+                or not source.is_file()
+                or source.stat().st_size != item["size"]
+            ):
+                raise PreparationError(
+                    f"Verified cache object is absent or changed: {relative.as_posix()}"
+                )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.link(source, target)
+            linked += 1
+            total_bytes += item["size"]
+    except Exception:
+        shutil.rmtree(data_root, ignore_errors=True)
+        raise
+    return {
+        "data_root": str(data_root),
+        "release_root": str(release_root),
+        "materialized_objects": linked,
+        "materialized_bytes": total_bytes,
+        "materialization": "hard_links_to_verified_cache",
+    }
 
 
 def prepare(storage, output: Path, *, baseline: Path = BASELINE) -> dict:
@@ -87,12 +133,18 @@ def prepare(storage, output: Path, *, baseline: Path = BASELINE) -> dict:
             "kind": "restored_reviewed_audit", "restore_run_id": fresh["run_id"],
             "updated_at_utc": datetime.now(timezone.utc).isoformat(),
         })
-        validate_audit(package, require_reviewed_snapshot=True)
+        _accepted, inventory, _audit_sha = validate_audit(
+            package, require_reviewed_snapshot=True
+        )
+        materialized = materialize_native_tree(
+            package, output / "data-root", inventory
+        )
         receipt.update(
             status="verified", restore_run_id=fresh["run_id"],
             verified_objects=fresh["remote_object_count"],
             verified_bytes=fresh["remote_total_bytes"],
             measured_parquet_rows=fresh["measured_parquet_rows"], package="audit",
+            **materialized,
         )
     except Exception:
         receipt["status"] = "failed"

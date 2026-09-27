@@ -546,6 +546,7 @@ class DBWReleaseValidationTests(unittest.TestCase):
         release_id = "b" * 64
         audit_sha = "c" * 64
         payloads = {
+            "receipts/1.json": b"{\"indicator_id\": 1}",
             "observations/part_1.parquet": b"observations",
             "dictionaries/dict_1.parquet": b"dictionary-part",
             "dictionaries/br_dbw_dictionaries.parquet": b"dictionaries",
