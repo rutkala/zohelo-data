@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { createRequire } from "node:module";
 import { resultToJSON } from "../resultParser";
+import { cleanupOwnedNativeMetadataTables, NATIVE_METADATA_COMMENT } from "@/lib/nativeMetadataOwnership";
 
 /**
  * End-to-end regression tests running the exact repro queries from #13 and
@@ -35,6 +36,19 @@ beforeAll(async () => {
 const run = (sql: string) => resultToJSON(conn.query(sql));
 
 describe("real-engine coercion regressions", () => {
+  it("marks and cleans only owned Landing metadata despite a saved dependent view", async () => {
+    conn.query('CREATE SCHEMA IF NOT EXISTS "01_landing"');
+    conn.query('CREATE TABLE "01_landing"."owned_files" AS SELECT 1 AS file_id');
+    conn.query(`COMMENT ON TABLE "01_landing"."owned_files" IS '${NATIVE_METADATA_COMMENT}'`);
+    conn.query('CREATE TABLE "01_landing"."user_files" AS SELECT 2 AS file_id');
+    conn.query('CREATE VIEW saved_metadata AS SELECT * FROM "01_landing"."owned_files"');
+    expect(run("SELECT table_name FROM duckdb_tables() WHERE schema_name = '01_landing' AND comment = 'zohelo-native-landing-file-metadata:v1'").data.map(row => row.table_name)).toEqual(["owned_files"]);
+    await cleanupOwnedNativeMetadataTables(conn);
+    expect(run('SELECT file_id FROM "01_landing"."user_files"').data[0].file_id).toBe(2);
+    expect(run("SELECT table_name FROM duckdb_tables() WHERE schema_name = '01_landing' AND table_name = 'owned_files'").data).toEqual([]);
+    expect(() => run("SELECT * FROM saved_metadata")).toThrow("owned_files does not exist");
+    conn.query("DROP VIEW saved_metadata");
+  });
   it("SELECT 2.1 returns 2.1 — not NULL, not 21 (#13)", () => {
     const result = run("SELECT 2.1 AS v, 'Hello World' AS s");
     expect(result.error).toBeUndefined();

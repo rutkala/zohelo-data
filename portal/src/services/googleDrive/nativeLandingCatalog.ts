@@ -2,30 +2,246 @@
 import type * as duckdb from "@duckdb/duckdb-wasm";
 import { runQuery, type LocalDuckSession } from "@/services/engine";
 import { sqlEscapeIdentifier, sqlEscapeString } from "@/lib/sqlSanitize";
+import { NATIVE_METADATA_COMMENT } from "@/lib/nativeMetadataOwnership";
 import { DRIVE_ROOT } from "./auth";
 import {
-  fetchDriveFileBuffer, findFoldersByName, getNativeFileMetadata,
-  listNativeChildrenPage, type DriveFileMetadata,
+  fetchDriveFileBuffer,
+  findFoldersByName,
+  getNativeFileMetadata,
+  listNativeChildrenPage,
+  type DriveFileMetadata,
 } from "./driveApi";
 import { DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
 
 export const NATIVE_FOLDER_MIME = "application/vnd.google-apps.folder";
 export const NATIVE_SHORTCUT_MIME = "application/vnd.google-apps.shortcut";
 export const NATIVE_PREVIEW_LIMIT_BYTES = 8 * 1024 * 1024;
+export const NATIVE_METADATA_MAX_FILES = 100000;
+export const NATIVE_METADATA_MAX_FOLDERS = 20000;
 export type NativeLandingFile = DriveFileMetadata & { parentId: string };
 export type NativeLandingFolder = NativeLandingFile & { mimeType: typeof NATIVE_FOLDER_MIME };
 
 export const isNativeFolder = (file: NativeLandingFile): file is NativeLandingFolder =>
   file.mimeType === NATIVE_FOLDER_MIME;
 
+/** A stable, SQL-safe relation name. Duplicate Drive folder names stay distinct. */
+export function nativeMetadataNames(folders: readonly NativeLandingFolder[]): Map<string, string> {
+  const bases = folders
+    .map((folder) => ({ folder, base: `${folder.name}_files` }))
+    .sort((a, b) => a.folder.id.localeCompare(b.folder.id));
+  const counts = new Map<string, number>();
+  for (const { base } of bases)
+    counts.set(base.toLowerCase(), (counts.get(base.toLowerCase()) ?? 0) + 1);
+  const used = new Set<string>();
+  return new Map(
+    bases.map(({ folder, base }) => {
+      const candidate = (counts.get(base.toLowerCase()) ?? 0) > 1 ? `${base}__${folder.id}` : base;
+      let name = candidate;
+      for (let suffix = 2; used.has(name.toLowerCase()); suffix++) name = `${candidate}__${suffix}`;
+      used.add(name.toLowerCase());
+      return [folder.id, name];
+    })
+  );
+}
+
+export interface NativeMetadataRow {
+  file_id: string;
+  source_folder_id: string;
+  source_folder: string;
+  relative_path: string;
+  file_name: string;
+  parent_folder_id: string;
+  size_bytes: number | null;
+  mime_type: string | null;
+  created_at_utc: string | null;
+  modified_at_utc: string | null;
+  metadata_refreshed_at_utc: string;
+  drive_url: string | null;
+  sha256_checksum: string | null;
+}
+
+/** Complete metadata-only recursion. A failed page/limit/cancellation never returns partial rows. */
+export async function scanNativeSourceMetadata(
+  source: NativeLandingFolder,
+  root: NativeLandingFolder,
+  token: string,
+  isCurrent: () => boolean
+): Promise<NativeMetadataRow[]> {
+  if (source.id === root.id || source.parentId !== root.id)
+    throw new Error("Landing metadata source must be an immediate folder under 01_landing.");
+  const folders: Record<string, NativeLandingFolder> = { [root.id]: root, [source.id]: source };
+  const queue: Array<{ folder: NativeLandingFolder; prefix: string }> = [
+    { folder: source, prefix: "" },
+  ];
+  const seen = new Set<string>([source.id]);
+  const files = new Set<string>();
+  const rows: NativeMetadataRow[] = [];
+  const scanned = new Date().toISOString();
+  // Source scans validate direct membership in O(folders), rather than using
+  // interactive browsing's whole-ancestor verification twice per folder.
+  const verifyMember = async (folder: NativeLandingFolder) => {
+    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+    const fresh = await getNativeFileMetadata(folder.id, token);
+    if (!isCurrent() || fresh.trashed || fresh.id !== folder.id || fresh.name !== folder.name ||
+        fresh.mimeType !== NATIVE_FOLDER_MIME || !fresh.parents?.includes(folder.parentId) ||
+        fresh.version !== folder.version || fresh.modifiedTime !== folder.modifiedTime)
+      throw new Error("Landing folder changed during metadata scan. Refresh and retry.");
+  };
+  await verifyProjectParent(root.parentId, token, isCurrent);
+  await verifyMember(root);
+  for (let index = 0; index < queue.length; index++) {
+    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+    if (seen.size > NATIVE_METADATA_MAX_FOLDERS)
+      throw new Error(
+        `Source folder exceeds the ${NATIVE_METADATA_MAX_FOLDERS}-folder metadata scan limit.`
+      );
+    const { folder, prefix } = queue[index];
+    await verifyMember(folder);
+    const children: NativeLandingFile[] = [];
+    const ids = new Set<string>();
+    const seenPages = new Set<string>();
+    let next: string | null = null;
+    do {
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      const page = await listNativeChildrenPage(folder.id, token, next ?? undefined);
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      for (const item of page.files) {
+        if (item.trashed || !item.parents?.includes(folder.id) || ids.has(item.id))
+          throw new Error("Landing folder membership changed during metadata scan.");
+        ids.add(item.id);
+        children.push({ ...item, parentId: folder.id });
+      }
+      next = page.nextPageToken;
+      if (next && seenPages.has(next)) throw new Error("Drive repeated a native folder page token.");
+      if (next) seenPages.add(next);
+    } while (next);
+    await verifyMember(folder);
+    for (const file of children) {
+      if (isNativeFolder(file)) {
+        if (seen.has(file.id)) throw new Error("Landing folder appears twice in the source tree.");
+        seen.add(file.id);
+        folders[file.id] = file;
+        queue.push({ folder: file, prefix: `${prefix}${file.name}/` });
+      } else if (file.mimeType !== NATIVE_SHORTCUT_MIME) {
+        if (files.has(file.id)) throw new Error("Landing file appears twice in the source tree.");
+        files.add(file.id);
+        if (rows.length >= NATIVE_METADATA_MAX_FILES)
+          throw new Error(
+            `Source folder exceeds the ${NATIVE_METADATA_MAX_FILES}-file metadata scan limit.`
+          );
+        rows.push({
+          file_id: file.id,
+          source_folder_id: source.id,
+          source_folder: source.name,
+          relative_path: `${prefix}${file.name}`,
+          file_name: file.name,
+          parent_folder_id: folder.id,
+          size_bytes: file.size ?? null,
+          mime_type: file.mimeType ?? null,
+          created_at_utc: file.createdTime ?? null,
+          modified_at_utc: file.modifiedTime ?? null,
+          metadata_refreshed_at_utc: scanned,
+          drive_url: safeDriveLink(file.webViewLink, token),
+          sha256_checksum: file.sha256Checksum ?? null,
+        });
+      }
+    }
+  }
+  // Recheck every direct parent edge after the entire traversal: a folder
+  // moved after its earlier page would otherwise leave a plausible partial tree.
+  const finalFolders = Object.values(folders);
+  for (let index = 0; index < finalFolders.length; index += 4)
+    await Promise.all(finalFolders.slice(index, index + 4).map(verifyMember));
+  await verifyProjectParent(root.parentId, token, isCurrent);
+  if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+  return rows;
+}
+
+const metadataColumns = [
+  "file_id",
+  "source_folder_id",
+  "source_folder",
+  "relative_path",
+  "file_name",
+  "parent_folder_id",
+  "size_bytes",
+  "mime_type",
+  "created_at_utc",
+  "modified_at_utc",
+  "metadata_refreshed_at_utc",
+  "drive_url",
+  "sha256_checksum",
+] as const;
+const metadataLiteral = (value: string | number | null) =>
+  value === null
+    ? "NULL"
+    : typeof value === "number"
+      ? String(value)
+      : `'${sqlEscapeString(value)}'`;
+
+/** Publish the completed inventory atomically into this browser's local DuckDB session. */
+export async function publishNativeMetadata(
+  session: LocalDuckSession,
+  tableName: string,
+  rows: readonly NativeMetadataRow[],
+  isCurrent: () => boolean
+): Promise<string> {
+  const target = `${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(tableName)}`;
+  const staging = sqlEscapeIdentifier(`native_metadata_${crypto.randomUUID().replace(/-/g, "")}`);
+  if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+  await runNativeDdl(session, `CREATE SCHEMA IF NOT EXISTS ${sqlEscapeIdentifier("01_landing")};`);
+  await runNativeDdl(
+    session,
+    `CREATE TEMP TABLE ${staging} (
+    file_id VARCHAR, source_folder_id VARCHAR, source_folder VARCHAR, relative_path VARCHAR,
+    file_name VARCHAR, parent_folder_id VARCHAR, size_bytes BIGINT, mime_type VARCHAR,
+    created_at_utc TIMESTAMP, modified_at_utc TIMESTAMP, metadata_refreshed_at_utc TIMESTAMP,
+    drive_url VARCHAR, sha256_checksum VARCHAR
+  );`
+  );
+  try {
+    for (let i = 0; i < rows.length; i += 100) {
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      const values = rows
+        .slice(i, i + 100)
+        .map((row) => `(${metadataColumns.map((key) => metadataLiteral(row[key])).join(",")})`)
+        .join(",");
+      await runNativeDdl(session, `INSERT INTO ${staging} VALUES ${values};`);
+    }
+    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+    await runNativeDdl(session, "BEGIN TRANSACTION;");
+    try {
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      await runNativeDdl(session, `CREATE OR REPLACE TABLE ${target} AS SELECT * FROM ${staging};`);
+      await runNativeDdl(
+        session,
+        `COMMENT ON TABLE ${target} IS '${sqlEscapeString(NATIVE_METADATA_COMMENT)}';`
+      );
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      await runNativeDdl(session, "COMMIT;");
+    } catch (error) {
+      await runNativeDdl(session, "ROLLBACK;").catch(() => undefined);
+      throw error;
+    }
+    return target;
+  } finally {
+    if (session.isOpen)
+      await runNativeDdl(session, `DROP TABLE IF EXISTS ${staging};`).catch(() => undefined);
+  }
+}
+
 export async function resolveNativeLandingRoot(token: string): Promise<NativeLandingFolder> {
   const projects = await findFoldersByName(DRIVE_ROOT, "root", token);
   if (projects.length !== 1) throw new Error(`Project folder '${DRIVE_ROOT}' must be unambiguous.`);
   const roots = await findFoldersByName("01_landing", projects[0].id, token);
-  if (roots.length !== 1) throw new Error("Native Landing folder '01_landing' must be unambiguous.");
+  if (roots.length !== 1)
+    throw new Error("Native Landing folder '01_landing' must be unambiguous.");
   const fresh = await getNativeFileMetadata(roots[0].id, token);
-  if (fresh.mimeType !== NATIVE_FOLDER_MIME || fresh.trashed ||
-      !fresh.parents?.includes(projects[0].id)) {
+  if (
+    fresh.mimeType !== NATIVE_FOLDER_MIME ||
+    fresh.trashed ||
+    !fresh.parents?.includes(projects[0].id)
+  ) {
     throw new Error("Native Landing root changed during discovery.");
   }
   return { ...fresh, parentId: projects[0].id, mimeType: NATIVE_FOLDER_MIME };
@@ -74,15 +290,24 @@ async function verifyNativeFolder(
     return;
   }
   const fresh = await getNativeFileMetadata(rootId, token);
-  if (!isCurrent() || fresh.trashed || fresh.mimeType !== NATIVE_FOLDER_MIME ||
-      !fresh.parents?.includes(folder.parentId) || fresh.version !== folder.version ||
-      fresh.modifiedTime !== folder.modifiedTime) {
+  if (
+    !isCurrent() ||
+    fresh.trashed ||
+    fresh.mimeType !== NATIVE_FOLDER_MIME ||
+    !fresh.parents?.includes(folder.parentId) ||
+    fresh.version !== folder.version ||
+    fresh.modifiedTime !== folder.modifiedTime
+  ) {
     throw new Error("Native Landing root changed. Refresh before browsing it.");
   }
   await verifyProjectParent(folder.parentId, token, isCurrent);
 }
 
-async function verifyProjectParent(projectId: string, token: string, isCurrent: () => boolean): Promise<void> {
+async function verifyProjectParent(
+  projectId: string,
+  token: string,
+  isCurrent: () => boolean
+): Promise<void> {
   const matches = await findFoldersByName(DRIVE_ROOT, "root", token);
   if (!isCurrent() || matches.length !== 1 || matches[0].id !== projectId) {
     throw new Error("Native Landing project location changed. Refresh before browsing it.");
@@ -93,11 +318,20 @@ export function safeDriveLink(link: string | undefined, token: string): string |
   if (!link) return null;
   try {
     const url = new URL(link);
-    if (url.protocol !== "https:" || url.username || url.password || url.port ||
-        !["drive.google.com", "drive.usercontent.google.com", "docs.google.com"].includes(url.hostname) ||
-        (token && decodeURIComponent(url.toString()).includes(token))) return null;
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      !["drive.google.com", "drive.usercontent.google.com", "docs.google.com"].includes(
+        url.hostname
+      ) ||
+      (token && decodeURIComponent(url.toString()).includes(token))
+    )
+      return null;
     for (const name of url.searchParams.keys()) {
-      if (/^(?:access_token|oauth_token|id_token|token|code|key|authorization)$/i.test(name)) return null;
+      if (/^(?:access_token|oauth_token|id_token|token|code|key|authorization)$/i.test(name))
+        return null;
     }
     return url.toString();
   } catch {
@@ -121,36 +355,56 @@ export async function freshNativeFile(
     const selectedFolder = folders[expectedId];
     if (!selectedFolder) throw new Error("Native Landing ancestor is not in the loaded tree.");
     const fresh = await getNativeFileMetadata(expectedId, token);
-    if (!isCurrent() || fresh.trashed || fresh.mimeType !== NATIVE_FOLDER_MIME ||
-        !fresh.parents?.includes(selectedFolder.parentId) ||
-        fresh.version !== selectedFolder.version || fresh.modifiedTime !== selectedFolder.modifiedTime) {
+    if (
+      !isCurrent() ||
+      fresh.trashed ||
+      fresh.mimeType !== NATIVE_FOLDER_MIME ||
+      !fresh.parents?.includes(selectedFolder.parentId) ||
+      fresh.version !== selectedFolder.version ||
+      fresh.modifiedTime !== selectedFolder.modifiedTime
+    ) {
       throw new Error("Native Landing ancestor changed. Refresh before opening this file.");
     }
     expectedId = selectedFolder.parentId;
   }
   const freshRoot = await getNativeFileMetadata(landingRootId, token);
-  if (!isCurrent() || freshRoot.trashed || freshRoot.mimeType !== NATIVE_FOLDER_MIME ||
-      freshRoot.version !== folders[landingRootId]?.version ||
-      freshRoot.modifiedTime !== folders[landingRootId]?.modifiedTime ||
-      !freshRoot.parents?.includes(folders[landingRootId]?.parentId)) {
+  if (
+    !isCurrent() ||
+    freshRoot.trashed ||
+    freshRoot.mimeType !== NATIVE_FOLDER_MIME ||
+    freshRoot.version !== folders[landingRootId]?.version ||
+    freshRoot.modifiedTime !== folders[landingRootId]?.modifiedTime ||
+    !freshRoot.parents?.includes(folders[landingRootId]?.parentId)
+  ) {
     throw new Error("Native Landing root changed. Refresh before opening this file.");
   }
   await verifyProjectParent(folders[landingRootId].parentId, token, isCurrent);
   const fresh = await getNativeFileMetadata(selected.id, token);
-  if (!isCurrent() || fresh.trashed || !fresh.parents?.includes(selected.parentId) ||
-      fresh.id !== selected.id || fresh.name !== selected.name ||
-      fresh.size !== selected.size || fresh.version !== selected.version ||
-      fresh.modifiedTime !== selected.modifiedTime ||
-      fresh.sha256Checksum !== selected.sha256Checksum ||
-      fresh.md5Checksum !== selected.md5Checksum) {
+  if (
+    !isCurrent() ||
+    fresh.trashed ||
+    !fresh.parents?.includes(selected.parentId) ||
+    fresh.id !== selected.id ||
+    fresh.name !== selected.name ||
+    fresh.size !== selected.size ||
+    fresh.version !== selected.version ||
+    fresh.modifiedTime !== selected.modifiedTime ||
+    fresh.sha256Checksum !== selected.sha256Checksum ||
+    fresh.md5Checksum !== selected.md5Checksum
+  ) {
     throw new Error("Native Landing file changed. Refresh before opening it.");
   }
   return { ...fresh, parentId: selected.parentId };
 }
 
-export function nativeDriveLink(file: NativeLandingFile, token: string, action: "open" | "download"): string {
+export function nativeDriveLink(
+  file: NativeLandingFile,
+  token: string,
+  action: "open" | "download"
+): string {
   if (action === "download") {
-    if (file.capabilities?.canDownload !== true) throw new Error("Drive does not permit this file to be downloaded.");
+    if (file.capabilities?.canDownload !== true)
+      throw new Error("Drive does not permit this file to be downloaded.");
     const download = safeDriveLink(file.webContentLink, token);
     if (!download) throw new Error("Drive did not provide a safe managed download link.");
     return download;
@@ -161,7 +415,10 @@ export function nativeDriveLink(file: NativeLandingFile, token: string, action: 
 }
 
 export type NativePreviewFormat = "csv" | "json" | "jsonl" | "parquet";
-const activeNativePreviews = new WeakMap<object, { path: string; view: string; session: LocalDuckSession; unsubscribe: () => void }>();
+const activeNativePreviews = new WeakMap<
+  object,
+  { path: string; view: string; session: LocalDuckSession; unsubscribe: () => void }
+>();
 const activeNativeEngines = new Set<duckdb.AsyncDuckDB>();
 const pendingNativeDisposals = new WeakMap<object, Promise<void>>();
 const retireNativePreview = (db: duckdb.AsyncDuckDB) => {
@@ -181,16 +438,25 @@ export function disposeNativePreview(db: duckdb.AsyncDuckDB): Promise<void> {
   if (!active) return Promise.resolve();
   // A closed local engine has discarded its TEMP namespace and registered
   // buffers. No SQL can be sent to it, and it must not block future browsing.
-  if (!active.session.isOpen) { retireNativePreview(db); return Promise.resolve(); }
+  if (!active.session.isOpen) {
+    retireNativePreview(db);
+    return Promise.resolve();
+  }
   const task = (async () => {
     try {
-      await runNativeDdl(active.session, `DROP VIEW IF EXISTS temp.${sqlEscapeIdentifier(active.view)};`);
+      await runNativeDdl(
+        active.session,
+        `DROP VIEW IF EXISTS temp.${sqlEscapeIdentifier(active.view)};`
+      );
       await db.dropFile(active.path);
       retireNativePreview(db);
     } catch (error) {
       // Closing an OPFS session destroys its temporary namespace and buffer.
       // A concurrent close can invalidate DDL already queued by refresh.
-      if (!active.session.isOpen) { retireNativePreview(db); return; }
+      if (!active.session.isOpen) {
+        retireNativePreview(db);
+        return;
+      }
       throw error;
     } finally {
       pendingNativeDisposals.delete(db);
@@ -203,13 +469,22 @@ export async function disposeAllNativePreviews(): Promise<void> {
   await Promise.all([...activeNativeEngines].map(disposeNativePreview));
 }
 export function nativePreviewFormat(file: NativeLandingFile): NativePreviewFormat | null {
-  if (file.mimeType === NATIVE_FOLDER_MIME || file.mimeType === NATIVE_SHORTCUT_MIME ||
-      file.capabilities?.canDownload !== true || !file.size || file.size > NATIVE_PREVIEW_LIMIT_BYTES ||
-      !file.version || !file.modifiedTime || !Number.isFinite(Date.parse(file.modifiedTime)) ||
-      !/^[a-fA-F0-9]{64}$/.test(file.sha256Checksum ?? "")) return null;
+  if (
+    file.mimeType === NATIVE_FOLDER_MIME ||
+    file.mimeType === NATIVE_SHORTCUT_MIME ||
+    file.capabilities?.canDownload !== true ||
+    !file.size ||
+    file.size > NATIVE_PREVIEW_LIMIT_BYTES ||
+    !file.version ||
+    !file.modifiedTime ||
+    !Number.isFinite(Date.parse(file.modifiedTime)) ||
+    !/^[a-fA-F0-9]{64}$/.test(file.sha256Checksum ?? "")
+  )
+    return null;
   const parts = file.name.toLowerCase().split(".");
   const suffix = parts[parts.length - 1];
-  if (suffix === "csv" || suffix === "json" || suffix === "jsonl" || suffix === "parquet") return suffix;
+  if (suffix === "csv" || suffix === "json" || suffix === "jsonl" || suffix === "parquet")
+    return suffix;
   return null;
 }
 
@@ -228,17 +503,27 @@ export async function previewNativeFile(
     throw new Error("Native Landing preview needs an open local session.");
   const before = await freshNativeFile(selected, folders, rootId, token, isCurrent);
   const format = nativePreviewFormat(before);
-  if (!format) throw new Error("Preview requires a supported file of at most 8 MiB with a verifiable Drive SHA-256. Open in Drive instead.");
+  if (!format)
+    throw new Error(
+      "Preview requires a supported file of at most 8 MiB with a verifiable Drive SHA-256. Open in Drive instead."
+    );
   budget.reserve(before.size!, before.name);
   const bytes = await fetchDriveFileBuffer(before.id, token, NATIVE_PREVIEW_LIMIT_BYTES);
   if (!isCurrent()) throw new Error("Native Landing preview was superseded.");
   budget.consume(bytes.byteLength, before.name);
-  if (bytes.byteLength !== before.size || (await sha256Hex(bytes)).toLowerCase() !== before.sha256Checksum!.toLowerCase()) {
+  if (
+    bytes.byteLength !== before.size ||
+    (await sha256Hex(bytes)).toLowerCase() !== before.sha256Checksum!.toLowerCase()
+  ) {
     throw new Error("Native Landing bytes do not match Drive metadata.");
   }
   const after = await freshNativeFile(selected, folders, rootId, token, isCurrent);
-  if (after.version !== before.version || after.modifiedTime !== before.modifiedTime ||
-      after.size !== before.size || after.sha256Checksum !== before.sha256Checksum) {
+  if (
+    after.version !== before.version ||
+    after.modifiedTime !== before.modifiedTime ||
+    after.size !== before.size ||
+    after.sha256Checksum !== before.sha256Checksum
+  ) {
     throw new Error("Native Landing file changed during preview.");
   }
   const view = `native_preview_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -246,18 +531,30 @@ export async function previewNativeFile(
   await disposeNativePreview(db);
   if (!isCurrent()) throw new Error("Native Landing preview was superseded.");
   await db.registerFileBuffer(path, bytes);
-  const reader = format === "parquet" ? "read_parquet" : format === "csv" ? "read_csv_auto" : format === "jsonl" ? "read_ndjson_auto" : "read_json_auto";
+  const reader =
+    format === "parquet"
+      ? "read_parquet"
+      : format === "csv"
+        ? "read_csv_auto"
+        : format === "jsonl"
+          ? "read_ndjson_auto"
+          : "read_json_auto";
   const target = `temp.${sqlEscapeIdentifier(view)}`;
   try {
-    await runNativeDdl(session, `CREATE TEMP VIEW ${sqlEscapeIdentifier(view)} AS SELECT * FROM ${reader}('${sqlEscapeString(path)}');`);
+    await runNativeDdl(
+      session,
+      `CREATE TEMP VIEW ${sqlEscapeIdentifier(view)} AS SELECT * FROM ${reader}('${sqlEscapeString(path)}');`
+    );
   } catch (error) {
     // A failed streamed DDL result can still have created the TEMP view.
-    if (session.isOpen) await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
+    if (session.isOpen)
+      await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
     await db.dropFile(path).catch(() => undefined);
     throw error;
   }
   if (!isCurrent()) {
-    if (session.isOpen) await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
+    if (session.isOpen)
+      await runNativeDdl(session, `DROP VIEW IF EXISTS ${target};`).catch(() => undefined);
     if (session.isOpen) await db.dropFile(path).catch(() => undefined);
     throw new Error("Native Landing preview was superseded.");
   }

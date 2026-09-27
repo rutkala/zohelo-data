@@ -4,6 +4,12 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Current owner priority — 27 September 2026: portal Landing only.**
 
+- The owner clarified that Landing SQL represents file metadata: one table per
+  actual source folder, one row per file, including nested files and paths,
+  timestamps and other technical metadata. Apply
+  [ADR 0011](docs/decisions/0011-landing-file-metadata.md). Present the original
+  files as the primary browser; replace the legacy response/archive-index UI
+  with metadata access while preserving existing direct SQL compatibility.
 - The owner rejected the confusing combination of “Native Landing files”, “Files
   on Drive”, and a separate `01_landing` SQL tree. Work layer by layer, starting
   with one clear Landing browser for source folders and original files.

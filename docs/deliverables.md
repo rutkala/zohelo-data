@@ -4,6 +4,40 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current priority: one usable Landing browser — 27 September 2026
 
+**Owner clarification: SQL describes files.** The owner clarified that Landing
+must show original files and that its SQL tables should contain file metadata:
+one table per source folder, one row per file, with paths, timestamps and other
+technical information. [ADR 0011](decisions/0011-landing-file-metadata.md) records
+this boundary. The legacy response/archive indexes are not the requested SQL
+representation. The scoped portal change replaces that UI with metadata tables
+discovered from actual Drive source folders, including their nested files, while
+preserving stored artifacts and existing direct SQL compatibility.
+
+The implementation adds **Query file metadata** to each top-level source folder.
+Its browser-local table contains nested file paths, stable Drive IDs, sizes,
+formats, available checksums and separate Drive/scan timestamps. Metadata reads
+do not download source payloads. Source scans fail explicitly above 100,000 files
+or 20,000 folders, rather than returning a partial table. These bounds exceed the
+recorded existing source inventories; no arbitrary future-source capacity is
+claimed. Refresh/logout cleanup is awaited by SQL preparation, including queries
+through local views, and cleanup failure prevents stale results in that engine.
+
+Review added an exact ownership marker for generated tables and cleanup before a
+saved OPFS database is reopened for SQL or introspection. Unmarked user tables
+remain intact. Metadata scans now validate direct folder membership and perform
+a final consistency check, avoiding repeated ancestry walks for nested sources.
+The 254-folder fixture requires 253 listings, 761 metadata reads and two project
+lookups, with no payload downloads.
+
+The latest review fixes passed 104 focused scanner, store, OPFS lifecycle and
+packaged DuckDB engine tests, type checking and lint (24 existing warnings).
+Both deployment-base CI jobs passed production builds and all browser tests
+before these final review fixes; exact-head CI and deployment remain gates. The
+read-only live verifier includes a source metadata SQL query and requires zero
+payload reads for that scan, alongside its existing raw-file checks. This entry
+is not a deployment or live acceptance claim. No ingestion or downstream-layer
+work is included.
+
 The owner has narrowed active engineering to the portal, one layer at a time,
 starting with Landing. Their phone screenshots show three overlapping entry
 points: “Native Landing files”, “Files on Drive”, and `01_landing` with generated

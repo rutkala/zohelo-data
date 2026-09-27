@@ -34,9 +34,25 @@ current browser session and is cleared on refresh or disconnect. Browsing a
 folder lists stored files; it does not establish that a source has been fully
 ingested.
 
-**File indexes (SQL)** is a collapsed advanced area inside Landing. It retains
-the published response and archive tables for existing SQL queries, which can
-cover fewer files than the native folders. The former **Native Landing files**,
+Select a top-level source folder and choose **Query file metadata** to scan its
+entire nested folder tree into a browser-local SQL table. Each row describes one
+original file; no file contents are downloaded. The table is named after the
+actual source folder, for example `"01_landing"."gus_bdl_files"`. Duplicate
+folder names get distinct names with their Drive IDs. Its columns are
+`file_id`, `source_folder_id`, `source_folder`, `relative_path`, `file_name`,
+`parent_folder_id`, `size_bytes`, `mime_type`, `created_at_utc`,
+`modified_at_utc`, `metadata_refreshed_at_utc`, `drive_url`, and
+`sha256_checksum`. Missing Drive values are SQL NULL. Creation and modification
+times are Drive timestamps; the metadata refresh time is when your browser
+started the scan, not a source-provider refresh date. Drive shortcuts are not
+original files and are excluded. A failed or over-limit scan creates no new
+table; scans are limited to 100,000 files and 20,000 folders per source. Refresh
+or disconnect clears these temporary tables. A source scan can take time for a
+large tree.
+
+You can also type a qualified SQL SELECT against the displayed table name.
+The portal scans referenced source tables on demand, including joins, without
+depending on published release pointers. The former **Native Landing files**,
 **Files on Drive**, and separate **01_landing** navigation entries have been
 combined into Landing. The retained DBW indicator search is inside expanded
 **02_bronze**.
@@ -72,7 +88,7 @@ LIMIT 10;
 
 See [joining NBP v2 tables](sql-joins.md) for the released-table names and join keys.
 
-Validated source snapshots appear under **Landing → File indexes (SQL)** as
+Older validated source snapshots remain available to existing direct SQL as
 `world_bank_wdi_responses`, `gus_bdl_responses`, and `eurostat_responses` when each source has
 published data. These transport tables do not change the NBP release manifest or its dbt catalogue.
 Each row is one accepted HTTP response with request and retrieval metadata; `payload_utf8` contains
