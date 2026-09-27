@@ -110,8 +110,9 @@ This is implementation and test evidence only. The workflow has not been
 dispatched, `releases/dbw/current-release.json` has not been created, and there is
 no live modeled DBW, fresh consumer, portal SQL or source-completeness acceptance.
 The next boundary is the explicitly confirmed serialized production run and
-authenticated portal queries; the merge does not clear the separately recorded
-production-launch safeguard hold. A fresh authenticated Drive read at
+authenticated portal queries. No production dispatch was attempted as part of
+this merge, and no previously denied operation was replayed or rerouted. A fresh
+authenticated Drive read at
 approximately 05:00 CEST still found retained snapshot
 `8c10d951-1b2d-42cd-8378-315cdc14e2fa` and manifest SHA-256
 `2e3770b25ef49704353e7cec02cf006f7733021b371fd7c0200009064fab4208`.
