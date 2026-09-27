@@ -34,9 +34,18 @@ class PrepareRetainedDbwTests(unittest.TestCase):
         self.observed = {"inventory_sha256": M.REVIEWED_INVENTORY_SHA256,
                          "object_count": self.baseline["remote_object_count"],
                          "total_bytes": self.baseline["remote_total_bytes"]}
+        self.cache_payload = b"reviewed-receipt"
+        self.inventory = {
+            "objects": [{
+                "path": "receipts/1.json",
+                "size": len(self.cache_payload),
+            }]
+        }
         def audit_fixture(_storage, path, **kwargs):
             path.mkdir(parents=True)
-            (path / "verified-cache").mkdir()
+            cache = path / "verified-cache" / "receipts"
+            cache.mkdir(parents=True)
+            (cache / "1.json").write_bytes(self.cache_payload)
             (path / "audit-report.json").write_text(json.dumps(self.fresh))
             (path / "run-status.json").write_text(json.dumps({
                 "run_id": "fresh-restore", "status": "complete"}))
@@ -45,7 +54,14 @@ class PrepareRetainedDbwTests(unittest.TestCase):
                    patch.object(M.audit, "validate_inventory", return_value=({}, set())),
                    patch.object(M.audit, "inventory_document", return_value=self.observed),
                    patch.object(M.audit, "audit_retained_dbw", side_effect=audit_fixture),
-                   patch.object(M, "validate_audit")]
+                   patch.object(
+                       M, "validate_audit",
+                       return_value=(
+                           self.baseline,
+                           self.inventory,
+                           M.REVIEWED_AUDIT_REPORT_SHA256,
+                       ),
+                   )]
         self.mocks = [self.enterContext(patcher) for patcher in patches]
 
     def test_checked_in_baseline_is_still_exactly_reviewed(self):
@@ -58,6 +74,19 @@ class PrepareRetainedDbwTests(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
         self.assertFalse(result["publication_performed"])
         self.assertEqual((self.output / "audit/audit-report.json").read_bytes(), self.raw)
+        materialized = (
+            self.output / "data-root" / "02_bronze" / "gus_dbw" / "releases"
+            / M.REVIEWED_INVENTORY_SHA256 / "receipts" / "1.json"
+        )
+        self.assertEqual(materialized.read_bytes(), self.cache_payload)
+        self.assertEqual(
+            materialized.stat().st_ino,
+            (self.output / "audit/verified-cache/receipts/1.json").stat().st_ino,
+        )
+        self.assertEqual(result["materialized_objects"], 1)
+        self.assertEqual(
+            result["materialization"], "hard_links_to_verified_cache"
+        )
         fresh = json.loads((self.output / "fresh-audit-report.json").read_text())
         self.assertEqual(fresh["run_id"], "fresh-restore")
         status = json.loads((self.output / "audit/run-status.json").read_text())
