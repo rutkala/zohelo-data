@@ -20,7 +20,16 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
         value = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(set(value["on"]), {"workflow_dispatch"})
         self.assertEqual(value["permissions"], {"contents": "read"})
+        validation = value["jobs"]["validate_dispatch"]
+        validation_text = str(validation)
+        self.assertNotIn("if", validation)
+        self.assertIn("refs/heads/main", validation_text)
+        self.assertIn("REQUESTED_CODE_SHA", validation_text)
+        self.assertIn("publish-reviewed-dbw", validation_text)
+        self.assertIn("exit 1", validation_text)
         publish = value["jobs"]["prepare_build_validate_and_publish"]
+        self.assertEqual(publish["needs"], "validate_dispatch")
+        self.assertIn("needs.validate_dispatch.result == 'success'", publish["if"])
         self.assertIn("github.ref == 'refs/heads/main'", publish["if"])
         self.assertIn("inputs.code_sha == github.sha", publish["if"])
         self.assertEqual(
@@ -51,6 +60,27 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
             str(verify),
         )
         self.assertNotIn("ZOHELO_ALLOW_PRODUCTION_WRITES", str(verify))
+
+    def test_drive_credentials_are_scoped_to_execution_steps(self):
+        value = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        jobs = value["jobs"]
+        publish = jobs["prepare_build_validate_and_publish"]
+        verify = jobs["verify_fresh_consumer"]
+        self.assertNotIn("env", publish)
+        self.assertNotIn("env", verify)
+
+        publish_steps = publish["steps"]
+        verify_steps = verify["steps"]
+        for step in [*publish_steps[:-1], *verify_steps[:-1]]:
+            self.assertNotIn("GOOGLE_OAUTH_CLIENT_SECRET", str(step))
+            self.assertNotIn("GOOGLE_OAUTH_REFRESH_TOKEN", str(step))
+
+        publish_env = publish_steps[-1]["env"]
+        verify_env = verify_steps[-1]["env"]
+        self.assertEqual(publish_env["ZOHELO_ALLOW_PRODUCTION_WRITES"], "true")
+        self.assertIn("secrets.GOOGLE_OAUTH_REFRESH_TOKEN", str(publish_env))
+        self.assertIn("secrets.GOOGLE_OAUTH_REFRESH_TOKEN", str(verify_env))
+        self.assertNotIn("ZOHELO_ALLOW_PRODUCTION_WRITES", verify_env)
 
     def test_workflow_never_uploads_the_restored_cache_as_an_artifact(self):
         text = WORKFLOW.read_text()
