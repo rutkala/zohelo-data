@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Zohelo-data is a personal data platform for exploring datasets and running SQL, with Google Drive storage and a DuckDB-powered web workspace."
+    />
+    <title>About Zohelo-data</title>
+    <link rel="stylesheet" href="platform-info.css" />
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Zohelo-data information">
+        <a href="about.html" aria-current="page">About Zohelo-data</a>
+        <a href="privacy.html">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="./">Open workspace</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Zohelo-data</p>
+      <h1>A workspace for understanding data.</h1>
+      <p class="lead">
+        Explore datasets, write SQL and view results in a web interface. Google Drive holds the
+        platform's durable data; DuckDB powers its analytical queries.
+      </p>
+      <a class="button" href="./">Open the data workspace</a>
+
+      <h2>What the platform does</h2>
+      <p>
+        Zohelo-data brings together data ingestion, stored datasets, transformations and analysis.
+        The current working example explores existing exchange-rate data from the National Bank of
+        Poland (NBP). Completing gold-price processing, governed metrics and the business catalogue
+        is ongoing work.
+      </p>
+      <p>
+        The current version is a personal pilot for the platform owner. Public information about the
+        application is available here without creating a profile or granting Google access.
+      </p>
+
+      <h2>Why it connects to Google Drive</h2>
+      <p>
+        When you choose Google sign-in, the portal requests read-only Drive access to find the
+        <code>zohelo-data</code> folders and download selected datasets for analysis. That Google
+        permission covers Drive broadly; the catalogue directs its browsing to the platform folders.
+      </p>
+      <p>
+        Separate background jobs use the owner's authorization to save ingested data and publish
+        transformed files to Drive. They use their own stored credentials. Signing into the portal
+        does not configure those jobs.
+      </p>
+      <p>
+        The Google consent screen may identify this project as
+        <strong>zohelo-data-ingestor</strong>; the web client is named
+        <strong>zohelo-data-portal</strong>.
+      </p>
+
+      <h2>Your data and your choices</h2>
+      <p>
+        Local queries run in your browser. Profiles, SQL history and other workspace settings can
+        stay on your device. Optional remote AI, database connections and sharing features can send
+        information outside the browser when used.
+      </p>
+      <p>
+        Read the <a href="privacy.html">privacy policy</a> for access, storage, sharing and deletion
+        details, and the <a href="terms.html">terms of use</a> for the current pilot.
+      </p>
+
+      <h2>Project and contact</h2>
+      <p>
+        The project is maintained by <a href="https://github.com/rutkala">rutkala on GitHub</a>. The
+        <a href="https://github.com/rutkala/zohelo-data">source repository</a> contains the
+        implementation and development plans. The web workspace is based on
+        <a href="https://github.com/caioricciuti/duck-ui">Duck-UI</a>, with its original attribution
+        and licence retained.
+      </p>
+    </main>
+    <footer>Zohelo-data · Personal data platform · Updated 6 September 2026</footer>
+  </body>
+</html>

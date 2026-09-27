@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: stg_imgw_stations
+    description: "Silver conformed model of IMGW meteorological stations"
+    columns:
+      - name: station_code
+        description: "Primary key identifier of IMGW meteorological station"
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_imgw_synoptic_daily
+    description: "Silver conformed model of IMGW daily synoptic meteorological observations"
+    columns:
+      - name: station_code
+        description: "Identifier of IMGW station"
+        data_tests:
+          - not_null
+      - name: observation_date
+        description: "Date of observation"
+        data_tests:
+          - not_null
+
+  - name: dim_weather_station
+    description: "Gold conformed dimension for IMGW weather stations"
+    columns:
+      - name: station_key
+        description: "Surrogate primary key of weather station"
+        data_tests:
+          - not_null
+          - unique
+      - name: station_code
+        description: "Natural station code"
+        data_tests:
+          - not_null
+
+  - name: fact_daily_weather
+    description: "Gold fact table of daily synoptic weather observations"
+    columns:
+      - name: weather_observation_key
+        description: "Surrogate primary key of daily weather observation"
+        data_tests:
+          - not_null
+          - unique
+      - name: station_key
+        description: "Foreign key to dim_weather_station"
+        data_tests:
+          - not_null
+      - name: observation_date
+        description: "Observation date"
+        data_tests:
+          - not_null
+
+  - name: mart_weather_daily_summary
+    description: "Gold analytics mart summarizing daily weather observations with calculated indicators"
+    columns:
+      - name: station_key
+        description: "Foreign key to dim_weather_station"
+        data_tests:
+          - not_null
+      - name: observation_date
+        description: "Date of observation"
+        data_tests:
+          - not_null

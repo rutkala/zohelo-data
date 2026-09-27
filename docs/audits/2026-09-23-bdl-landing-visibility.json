@@ -1,0 +1,81 @@
+{
+  "format_version": 1,
+  "scope": "BDL Landing visibility diagnosis",
+  "checkpoint_observed_at_utc": "2026-09-22T22:48:22Z",
+  "read_only_data_diagnostics": true,
+  "data_or_runtime_mutations": false,
+  "runtime": {
+    "pid": 383069,
+    "concurrency": 10,
+    "code_sha": "5097e7eab3e6e328b3be74d6ee0de4fe837b710e"
+  },
+  "drive_checkpoint": {
+    "sha256": "0ad1176cefb7eae63c654c9c2e7e0eee4ff596b14a8109bbc1409a7ec1a95f1c",
+    "stable_size_and_checksums_verified": true,
+    "native_files_reported": 3328,
+    "native_bytes_reported": 1068939192,
+    "known_subgroups": 2420,
+    "selection_complete_subgroups": 1899,
+    "remaining_subgroups": 521,
+    "blocked_selections": 63,
+    "in_flight_count": 10,
+    "writer_status": "active",
+    "heartbeat_utc": "2026-09-22T22:48:14.611521Z"
+  },
+  "earlier_checkpoint": {
+    "observed_at_utc": "2026-09-22T20:11:07Z",
+    "native_files_reported": 3065,
+    "native_bytes_reported": 912180857
+  },
+  "checkpoint_delta": {
+    "files": 263,
+    "bytes": 156758335
+  },
+  "independent_drive_file_metadata": {
+    "id": "14CVsYCKpzbGd6xjAa-gbW9XnplPytCDx",
+    "name": "NARO_2889_CREL_20260923004330.zip",
+    "mime_type": "application/zip",
+    "size": 89434,
+    "created_time_utc": "2026-09-22T22:47:33.233Z",
+    "modified_time_utc": "2026-09-22T22:47:33.233Z",
+    "parent_id": "1J_XhxZXjjP8HF1Id_gKs_z-ZKMf1wWKQ",
+    "web_view_link": "https://drive.google.com/file/d/14CVsYCKpzbGd6xjAa-gbW9XnplPytCDx/view"
+  },
+  "verified_parent_chain": [
+    {
+      "name": "01_landing",
+      "id": "18WYAR4yOf-fIRuXJe5IWs1K_L2f64YnM",
+      "parent_id": "1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf"
+    },
+    {
+      "name": "gus_bdl",
+      "id": "1OEBh1g1pa56uGJmboO6KWQtuJMmaQ90I",
+      "parent_id": "18WYAR4yOf-fIRuXJe5IWs1K_L2f64YnM"
+    },
+    {
+      "name": "web_bulk",
+      "id": "1Cja7YI29yw0Cv3masjsRUmQc8CaV7ix6",
+      "parent_id": "1OEBh1g1pa56uGJmboO6KWQtuJMmaQ90I",
+      "modified_time_utc": "2026-09-12T16:06:56.973Z"
+    },
+    {
+      "name": "P2889",
+      "id": "1-U00X_0xgpXaXv6_jwzJ0R09iYuJlE_7",
+      "parent_id": "1Cja7YI29yw0Cv3masjsRUmQc8CaV7ix6",
+      "modified_time_utc": "2026-09-17T02:18:04.905Z"
+    },
+    {
+      "name": "0f4dd34309878d2ad27e91eb484e53ef0ec6385f4ad0cf18cc6114f4f4a60885",
+      "id": "1J_XhxZXjjP8HF1Id_gKs_z-ZKMf1wWKQ",
+      "parent_id": "1-U00X_0xgpXaXv6_jwzJ0R09iYuJlE_7",
+      "created_time_utc": "2026-09-22T22:47:31.248Z"
+    }
+  ],
+  "limits": [
+    "No new full-byte audit or archive parsing performed.",
+    "Individual plan payload terminal check was blocked and not retried.",
+    "Actual user Drive view not reproduced.",
+    "Earlier reporting gap cause unresolved.",
+    "DBW execution hold unchanged."
+  ]
+}

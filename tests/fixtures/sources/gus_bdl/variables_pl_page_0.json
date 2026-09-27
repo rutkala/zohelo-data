@@ -1,0 +1,27 @@
+{
+  "totalRecords": 21,
+  "page": 0,
+  "pageSize": 20,
+  "links": {
+    "self": "https://bdl.stat.gov.pl/api/v1/variables?format=json&lang=pl&page=0&page-size=20",
+    "next": "https://bdl.stat.gov.pl/api/v1/variables?format=json&lang=pl&page=1&page-size=20"
+  },
+  "results": [
+    {
+      "id": 72305,
+      "subjectId": "P2425",
+      "n1": "ogółem",
+      "level": 6,
+      "measureUnitId": 26,
+      "measureUnitName": "osoba"
+    },
+    {
+      "id": 72306,
+      "subjectId": "P2425",
+      "n1": "mężczyźni",
+      "level": 6,
+      "measureUnitId": 26,
+      "measureUnitName": "osoba"
+    }
+  ]
+}

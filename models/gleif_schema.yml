@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: stg_gleif_entities
+    description: "Staging view of GLEIF Level 1 Golden Copy entity reference records with national registration identifiers."
+    columns:
+      - name: lei
+        description: "20-character ISO 17442 Legal Entity Identifier."
+        tests:
+          - not_null
+      - name: legal_name
+        description: "Official registered legal name of the entity."
+        tests:
+          - not_null
+      - name: legal_country
+        description: "ISO 3166-1 country of legal incorporation."
+      - name: entity_status
+        description: "Operational status: ACTIVE or INACTIVE."
+      - name: validation_authority_id
+        description: "Registration authority code (e.g. RA000484 for Polish KRS, RA000654 for Polish REGON)."
+      - name: validation_authority_entity_id
+        description: "National registry identifier (KRS or REGON number)."
+
+  - name: stg_gleif_relationships
+    description: "Staging view of GLEIF Level 2 Golden Copy corporate parent-child relationships."
+    columns:
+      - name: child_lei
+        description: "LEI of the subsidiary or managed fund."
+        tests:
+          - not_null
+      - name: parent_lei
+        description: "LEI of the parent entity."
+        tests:
+          - not_null
+      - name: relationship_type
+        description: "Direct consolidation, ultimate consolidation, or fund manager link."
+
+  - name: dim_corporate_entity
+    description: "Gold dimension model unifying global corporate entities, parent-subsidiary hierarchies, and Polish national registries."
+    columns:
+      - name: lei
+        description: "Primary key: ISO 17442 Legal Entity Identifier."
+        tests:
+          - not_null
+          - unique
+      - name: legal_name
+        description: "Official legal name."
+        tests:
+          - not_null
+      - name: national_registry_type
+        description: "Identifies whether entity is cross-walked to KRS, REGON, or international registry."

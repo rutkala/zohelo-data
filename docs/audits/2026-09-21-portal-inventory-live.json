@@ -1,0 +1,9 @@
+{
+  "observed_at_utc": "2026-09-21T21:38:48.660Z",
+  "url": "https://data.zohelo.com/",
+  "status": "inventory_rendered",
+  "authentication": "existing_owner_oauth_access_token_in_disposable_browser_session",
+  "drive_read_requests": 151,
+  "blocked_drive_writes": 0,
+  "inventory_text": "Files on Drive\n7\nRetained physical files. Query access requires an explicit published data contract.\nGUS BDL Web\nin_progress\nLanding: 2,322 files · 592.6 MiB · latest 9/21/2026, 9:38:50 PM · 1085/2420 catalogued subgroups complete · checkpoint reported\nGUS DBW\nretained\nLanding: 12,816 files · 7.54 GiB · latest 9/20/2026, 9:32:14 AM\nBronze: 1,553 files · 4.47 GiB · latest 9/21/2026, 3:19:48 AM\nGUS TERYT\nretained\nLanding: 3 files · 11.1 MiB · latest 9/20/2026, 7:21:53 PM\nBronze: 3 files · 5.39 MiB · latest 9/20/2026, 7:23:32 PM\nGUGiK PRG\nretained\nLanding: 2 files · 360.5 MiB · latest 9/20/2026, 7:28:49 PM\nBronze: 4 files · 119.3 MiB · latest 9/20/2026, 7:30:44 PM\nGLEIF\nretained\nLanding: 3 files · 563.2 MiB · latest 9/20/2026, 11:26:03 PM\nBronze: 3 files · 228.7 MiB · latest 9/20/2026, 11:33:28 PM\nMF VAT White List\nretained\nLanding: 1 files · 235.7 MiB · latest 9/20/2026, 7:56:47 PM\nBronze: 3 files · 236.0 MiB · latest 9/21/2026, 4:09:04 AM\nIMGW-PIB\nabsent\nLanding: 0 files · 0 B\nBronze: 0 files · 0 B"
+}

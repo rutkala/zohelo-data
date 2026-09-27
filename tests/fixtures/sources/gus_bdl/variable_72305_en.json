@@ -1,0 +1,10 @@
+{
+  "id": 72305,
+  "subjectId": "P2425",
+  "n1": "total",
+  "level": 6,
+  "measureUnitId": 26,
+  "measureUnitName": "person",
+  "description": "Population as of 31 December.",
+  "years": [1995, 2024, 2025]
+}

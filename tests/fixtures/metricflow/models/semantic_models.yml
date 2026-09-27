@@ -1,0 +1,33 @@
+version: 2
+
+semantic_models:
+  - name: fixture
+    description: Technical MetricFlow compatibility relation only.
+    model: ref('fixture_daily_values')
+    defaults:
+      agg_time_dimension: metric_date
+    entities:
+      - name: fixture
+        type: primary
+        expr: fixture_id
+    dimensions:
+      - name: metric_date
+        type: time
+        expr: metric_date
+        type_params:
+          time_granularity: day
+      - name: category
+        type: categorical
+        expr: category
+    measures:
+      - name: fixture_value_sum
+        description: Sum of synthetic decimal values.
+        agg: sum
+        expr: value
+
+metrics:
+  - name: fixture_value_total
+    description: Technical compatibility metric only; not an approved business metric.
+    type: simple
+    type_params:
+      measure: fixture_value_sum

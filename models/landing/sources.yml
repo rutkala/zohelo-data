@@ -1,0 +1,67 @@
+version: 2
+
+sources:
+  - name: landing
+    schema: 01_landing
+    description: "Immutable verified NBP request envelopes in the 01_landing storage layer. Landing data is an input boundary, not a dbt-produced model."
+    tables:
+      - name: nbp_batches
+        description: "Recorded NBP API responses with batch and request provenance; supplied locally through ZOHELO_NBP_BATCHES_PATH. body_json retains the exact API response bytes as a string."
+        meta:
+          formatter: template
+          external_location: "read_json('{{ env_var('ZOHELO_NBP_BATCHES_PATH', '/tmp/zohelo_data/01_landing/nbp_batches/*.jsonl') }}', format = 'newline_delimited', columns = {'source_id': 'VARCHAR', 'batch_id': 'VARCHAR', 'ingestion_sequence': 'BIGINT', 'requested_start_date': 'VARCHAR', 'requested_end_date': 'VARCHAR', 'retrieved_at_utc': 'VARCHAR', 'response_sha256': 'VARCHAR', 'raw_file_id': 'VARCHAR', 'body_json': 'VARCHAR'})"
+      - name: gus_bdl_responses
+        description: "Accepted GUS BDL Landing response envelopes published from the source campaign. One row is one accepted HTTP response; payload_utf8 retains the exact JSON body as text."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_GUS_BDL_RESPONSES_PATH', '/tmp/zohelo_data/01_landing/gus_bdl/*.parquet') }}', union_by_name = true, filename = true)"
+      - name: eurostat_decoded_observations
+        description: "Structurally decoded cells from every accepted Eurostat JSON-stat Landing envelope; complete native dimensional keys, missing cells, status flags and response provenance are preserved."
+        meta:
+          formatter: template
+          external_location: "read_parquet('{{ env_var('ZOHELO_EUROSTAT_DECODED_PATH', '/tmp/zohelo_data/01_landing/eurostat/decoded-observations.parquet') }}', union_by_name = true)"
+      - name: eurostat_full_source_coverage
+        description: "Fresh durable full-distribution campaign coverage used only for accountability in the progressive modeled release."
+        meta:
+          formatter: template
+          external_location: "read_json_auto('{{ env_var('ZOHELO_EUROSTAT_FULL_COVERAGE_PATH', '/tmp/zohelo_data/01_landing/eurostat/full-source-coverage.json') }}')"
+
+  - name: wdi_bulk
+    schema: 01_landing
+    description: "Checksum-pinned members of the complete official World Development Indicators CSV archive. Paths point only to disposable, freshly verified extraction files."
+    tables:
+      - name: country
+        description: "Complete WDICountry.csv member."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_COUNTRY_CSV', '/tmp/zohelo_data/01_landing/wdi/WDICountry.csv') }}', header = true, all_varchar = true)"
+      - name: country_series
+        description: "Complete WDIcountry-series.csv member."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_COUNTRY_SERIES_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIcountry-series.csv') }}', header = true, all_varchar = true)"
+      - name: data
+        description: "Complete WDICSV.csv member; the Bronze model normalizes every populated annual value without filtering economies, aggregates, indicators or years."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_DATA_CSV', '/tmp/zohelo_data/01_landing/wdi/WDICSV.csv') }}', header = true, all_varchar = true)"
+      - name: footnote
+        description: "Complete WDIfootnote.csv member."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_FOOTNOTE_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIfootnote.csv') }}', header = true, all_varchar = true)"
+      - name: series
+        description: "Complete WDISeries.csv member."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_SERIES_CSV', '/tmp/zohelo_data/01_landing/wdi/WDISeries.csv') }}', header = true, all_varchar = true)"
+      - name: series_time
+        description: "Complete WDIseries-time.csv member."
+        meta:
+          formatter: template
+          external_location: "read_csv('{{ env_var('ZOHELO_WDI_SERIES_TIME_CSV', '/tmp/zohelo_data/01_landing/wdi/WDIseries-time.csv') }}', header = true, all_varchar = true)"
+      - name: archive_evidence
+        description: "Release-build evidence for the exact verified archive, its six-member contract, retrieval time and raw checksum."
+        meta:
+          formatter: template
+          external_location: "read_json_auto('{{ env_var('ZOHELO_WDI_ARCHIVE_EVIDENCE', '/tmp/zohelo_data/01_landing/wdi/archive-evidence.json') }}')"

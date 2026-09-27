@@ -1,0 +1,71 @@
+version: 2
+
+models:
+  - name: stg_gios_stations
+    description: "Staging view of GIOŚ air quality monitoring station metadata and WGS-84 coordinates."
+    columns:
+      - name: station_code
+        description: "Official GIOŚ station identifier code."
+        tests:
+          - not_null
+      - name: station_name
+        description: "Display name of the monitoring station."
+        tests:
+          - not_null
+
+  - name: stg_gios_sensors
+    description: "Staging view of GIOŚ automated and manual air quality sensor identifiers and measured pollutants."
+    columns:
+      - name: sensor_code
+        description: "Official GIOŚ sensor identifier code."
+        tests:
+          - not_null
+      - name: station_code
+        description: "Parent station identifier."
+        tests:
+          - not_null
+
+  - name: stg_gios_measurements
+    description: "Cleansed hourly and daily air quality concentration measurements across Poland."
+    columns:
+      - name: station_code
+        description: "Monitoring station identifier."
+        tests:
+          - not_null
+      - name: pollutant
+        description: "Measured air pollutant parameter (PM10, PM2.5, NO2, SO2, CO, O3, C6H6)."
+        tests:
+          - not_null
+      - name: measurement_timestamp
+        description: "Observation timestamp in UTC."
+        tests:
+          - not_null
+      - name: value
+        description: "Measured concentration value in ug/m3 or mg/m3."
+        tests:
+          - not_null
+
+  - name: dim_air_quality_station
+    description: "Conformed dimension table of air quality monitoring stations with active sensor counts."
+    columns:
+      - name: station_code
+        description: "Primary key: GIOŚ monitoring station code."
+        tests:
+          - not_null
+          - unique
+
+  - name: fact_daily_air_quality
+    description: "Daily aggregated air quality observation facts (average, min, max, count) by station and pollutant."
+    columns:
+      - name: observation_date
+        description: "Calendar observation date."
+        tests:
+          - not_null
+      - name: station_code
+        description: "Station identifier."
+        tests:
+          - not_null
+      - name: pollutant
+        description: "Air quality pollutant code."
+        tests:
+          - not_null

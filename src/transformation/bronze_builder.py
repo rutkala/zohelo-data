@@ -1,0 +1,174 @@
+"""Legacy Bronze helpers retained for compatibility tests."""
+
+if __name__ == "__main__":
+    raise SystemExit(
+        "This legacy bronze transformer is retired. "
+        "Use: python src/nbp_platform.py --mode <incremental|full|rebuild>"
+    )
+
+import os
+import sys
+import duckdb
+from datetime import datetime, timezone
+from io import BytesIO
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
+
+# Ensure Python locates storage_manager from src
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from storage_manager import StorageManager
+
+
+def _get_zone_id(storage: StorageManager, zone_name: str) -> str:
+    """Resolves the Google Drive folder ID for a given zone."""
+    return storage.resolve_zone(zone_name, create=True)
+
+
+def _list_files_recursively(drive_service, folder_id: str, subfolder_name: str = "") -> list:
+    """Returns all non-folder files under a given Drive folder (recursive).
+
+    Each entry is a tuple of (file_item_dict, subfolder_name) where
+    ``subfolder_name`` is the name of the immediate child subfolder of the
+    root landing folder that contains the file (empty string when the file
+    sits directly in the root).
+    """
+    results = []
+    page_token = None
+    while True:
+        query = f"'{folder_id}' in parents and trashed=false"
+        response = drive_service.files().list(
+            q=query,
+            spaces="drive",
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageToken=page_token,
+        ).execute()
+        for item in response.get("files", []):
+            if item["mimeType"] == "application/vnd.google-apps.folder":
+                # The first level of recursion establishes the subfolder name.
+                child_subfolder = item["name"] if not subfolder_name else subfolder_name
+                results.extend(_list_files_recursively(drive_service, item["id"], child_subfolder))
+            else:
+                item["source_parent_id"] = folder_id
+                results.append((item, subfolder_name))
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+    return results
+
+
+def _download_file(drive_service, file_id: str, local_path: str):
+    """Downloads a Drive file to a local path."""
+    request = drive_service.files().get_media(fileId=file_id)
+    with open(local_path, "wb") as fh:
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+
+
+def _upload_file(drive_service, local_path: str, filename: str, parent_id: str):
+    """Uploads a local file to a Drive folder."""
+    file_metadata = {"name": filename, "parents": [parent_id]}
+    media = MediaFileUpload(local_path, mimetype="application/octet-stream", resumable=True)
+    drive_service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+
+def _move_file(drive_service, file_id: str, source_parent_id: str, dest_parent_id: str):
+    """Moves a Drive file from one folder to another."""
+    drive_service.files().update(
+        fileId=file_id,
+        addParents=dest_parent_id,
+        removeParents=source_parent_id,
+        fields="id, parents",
+    ).execute()
+
+
+def process_bronze():
+    print("🥉 Starting Bronze Layer transformation...")
+    storage = StorageManager(backend="gdrive", allow_interactive_auth=False)
+    from drive_release_store import DriveReleaseStore
+    release_finder = DriveReleaseStore(storage, root_id)
+    if release_finder.find("ingestion-control", root_id) or release_finder.find("06_control", root_id):
+        raise RuntimeError("Verified ingestion is active. Use src/nbp_platform.py; legacy archival is disabled.")
+    storage.authorize_writes()
+    drive = storage.drive_service
+    con = duckdb.connect(":memory:")
+
+    landing_id = _get_zone_id(storage, "01_landing")
+    bronze_id = _get_zone_id(storage, "02_bronze")
+    archive_id = _get_zone_id(storage, "05_archive")
+
+    files = _list_files_recursively(drive, landing_id)
+    if not files:
+        print("ℹ️  No files found in 01_landing. Nothing to process.")
+        return
+
+    print(f"📂 Found {len(files)} file(s) in 01_landing.")
+    success_count = 0
+    fail_count = 0
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    for file_item, subfolder_name in files:
+        file_id = file_item["id"]
+        file_name = file_item["name"]
+        stem = os.path.splitext(file_name)[0]
+
+        # Include file_id in temp path to avoid collisions when files share the same stem
+        local_json = f"/tmp/{file_id}_{stem}.json"
+        local_parquet = f"/tmp/{file_id}_{stem}.parquet"
+
+        # Guard: ensure constructed paths stay within /tmp and contain no quotes
+        # (DuckDB COPY does not accept parameterised output paths)
+        if not local_parquet.startswith("/tmp/") or "'" in local_parquet or '"' in local_parquet:
+            print(f"  ❌ Skipping {file_name}: unsafe temp path derived from file metadata.")
+            fail_count += 1
+            continue
+
+        try:
+            # Download JSON from Drive to local disk
+            print(f"  ⬇️  Downloading {file_name}...")
+            _download_file(drive, file_id, local_json)
+
+            # Convert JSON → Parquet via DuckDB
+            # Note: DuckDB COPY does not support parameterised output paths;
+            # local_parquet is a controlled /tmp path so interpolation is safe.
+            print(f"  🔄 Converting {file_name} to Parquet...")
+            con.execute(
+                f"COPY (SELECT * FROM read_json_auto(?)) TO '{local_parquet}' (FORMAT PARQUET, COMPRESSION ZSTD)",
+                [local_json],
+            )
+
+            # Resolve destination folder in 02_bronze (preserving subfolder structure)
+            parquet_name = f"{stem}.parquet"
+            if subfolder_name:
+                dest_bronze_id = storage.get_or_create_nested_folder([subfolder_name], root_id=bronze_id)
+            else:
+                dest_bronze_id = bronze_id
+            print(f"  ⬆️  Uploading {parquet_name} to 02_bronze/{subfolder_name or ''}...")
+            _upload_file(drive, local_parquet, parquet_name, dest_bronze_id)
+
+            # Resolve destination folder in 05_archive (date + subfolder partitioning)
+            archive_segments = [today, subfolder_name] if subfolder_name else [today]
+            dest_archive_id = storage.get_or_create_nested_folder(archive_segments, root_id=archive_id)
+            print(f"  📦 Archiving {file_name} to 05_archive/{'/'.join(archive_segments)}/...")
+            _move_file(drive, file_id, file_item["source_parent_id"], dest_archive_id)
+
+            success_count += 1
+            print(f"  ✅ {file_name} processed successfully.")
+
+        except Exception as exc:
+            fail_count += 1
+            print(f"  ❌ Failed to process {file_name}: {exc}")
+
+        finally:
+            # Clean up local temp files
+            for path in (local_json, local_parquet):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    print(
+        f"\n🏁 Bronze Layer complete. "
+        f"Success: {success_count} | Failed: {fail_count}"
+    )
+    if fail_count > 0:
+        sys.exit(1)

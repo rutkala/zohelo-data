@@ -1,0 +1,677 @@
+/**
+ * Google Drive Lakehouse Explorer Component
+ * Integrates Medallion Architecture (landing, bronze, silver, gold, archive)
+ * with DuckDB-WASM in-browser execution.
+ */
+import { useState } from "react";
+import {
+  ChevronRight,
+  ChevronDown,
+  Folder,
+  FileSpreadsheet,
+  RefreshCw,
+  Key,
+  LogIn,
+  LogOut,
+  Layers,
+  Loader2,
+  Table as TableIcon,
+} from "lucide-react";
+import { useDuckStore } from "@/store";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { qualifyTable } from "@/lib/sqlSanitize";
+import { setSqlRelationDragData } from "@/lib/sqlTableActions";
+import { TableActions } from "./TableActions";
+import { isNativeFolder, nativePreviewFormat, NATIVE_PREVIEW_LIMIT_BYTES,
+  type NativeLandingFile } from "@/services/googleDrive";
+
+interface LakehouseExplorerProps {
+  onSqlAction?: () => void;
+}
+
+export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProps) {
+  const googleAuth = useDuckStore((s) => s.googleAuth);
+  const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
+  const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
+  const lakehouseLanding = useDuckStore((s) => s.lakehouseLanding);
+  const sourceInventory = useDuckStore((s) => s.lakehouseSourceInventory);
+  const isSourceInventoryLoading = useDuckStore((s) => s.isSourceInventoryLoading);
+  const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
+  const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
+  const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
+  const activeLakehouseLayer = useDuckStore((s) => s.activeLakehouseLayer);
+  const nativeRoot = useDuckStore((s) => s.nativeLandingRoot);
+  const nativeChildren = useDuckStore((s) => s.nativeLandingChildren);
+  const nativeLoading = useDuckStore((s) => s.nativeLandingLoading);
+  const nativeError = useDuckStore((s) => s.nativeLandingError);
+  const nativeSelected = useDuckStore((s) => s.nativeLandingSelected);
+  const nativeLinks = useDuckStore((s) => s.nativeLandingLinks);
+  const nativeActionError = useDuckStore((s) => s.nativeLandingActionError);
+  const loadNativeFolder = useDuckStore((s) => s.loadNativeLandingFolder);
+  const verifyNativeFile = useDuckStore((s) => s.verifyNativeLandingFile);
+  const previewNativeFile = useDuckStore((s) => s.previewNativeLandingFile);
+  const refreshNative = useDuckStore((s) => s.refreshNativeLanding);
+
+  const signInWithGoogle = useDuckStore((s) => s.signInWithGoogle);
+  const setManualGoogleToken = useDuckStore((s) => s.setManualGoogleToken);
+  const disconnectGoogleDrive = useDuckStore((s) => s.disconnectGoogleDrive);
+  const refreshLakehouseCatalog = useDuckStore((s) => s.refreshLakehouseCatalog);
+  const toggleLakehouseLayer = useDuckStore((s) => s.toggleLakehouseLayer);
+  const toggleLakehouseTable = useDuckStore((s) => s.toggleLakehouseTable);
+  const selectLakehouseDataset = useDuckStore((s) => s.selectLakehouseDataset);
+  const selectLakehouseFile = useDuckStore((s) => s.selectLakehouseFile);
+
+  const createTab = useDuckStore((s) => s.createTab);
+  const executeQuery = useDuckStore((s) => s.executeQuery);
+
+  const [manualToken, setManualToken] = useState("");
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
+  const [unavailableAction, setUnavailableAction] = useState<string | null>(null);
+  const [nativeOpen, setNativeOpen] = useState(true);
+  const [folderExpansion, setFolderExpansion] = useState<{ root: typeof nativeRoot; ids: ReadonlySet<string> }>(() => ({ root: null, ids: new Set() }));
+  const openFolders = folderExpansion.root === nativeRoot ? folderExpansion.ids : new Set<string>();
+  const [dbwIndicatorSearch, setDbwIndicatorSearch] = useState("");
+  const hasRetainedDbw = lakehouseLanding?.snapshots.some(
+    ({ manifest }) => manifest.kind === "retained_bronze_snapshot"
+  );
+  const retainedDbw = lakehouseLanding?.snapshots.find(
+    ({ manifest }) => manifest.kind === "retained_bronze_snapshot"
+  );
+  const dbwIndicators = retainedDbw?.manifest.kind === "retained_bronze_snapshot"
+    ? retainedDbw.manifest.indicators
+    : [];
+  const dbwSearchTerm = dbwIndicatorSearch.trim().toLocaleLowerCase();
+  const matchingDbwIndicators = dbwSearchTerm
+    ? dbwIndicators.filter((indicator) =>
+        `${indicator.indicator_id} ${indicator.indicator_name} ${indicator.indicator_name_en} ${indicator.taxonomy_path}`
+          .toLocaleLowerCase().includes(dbwSearchTerm)
+      ).sort((left, right) => {
+        const exact = Number(dbwSearchTerm);
+        if (Number.isInteger(exact) && left.indicator_id === exact) return -1;
+        if (Number.isInteger(exact) && right.indicator_id === exact) return 1;
+        return left.indicator_id - right.indicator_id;
+      })
+    : [];
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KiB", "MiB", "GiB", "TiB"];
+    let value = bytes / 1024;
+    let unit = units[0];
+    for (let index = 1; value >= 1024 && index < units.length; index += 1) {
+      value /= 1024;
+      unit = units[index];
+    }
+    return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
+  };
+  const baseUrl = import.meta.env.BASE_URL === "./" ? "/" : (import.meta.env.BASE_URL ?? "/");
+  const privacyUrl = `${baseUrl.replace(/\/$/, "")}/privacy.html`;
+  const sourceAccessGuideUrl =
+    "https://github.com/rutkala/zohelo-data/blob/main/docs/source-accounts.md";
+  const encryptedSecretsUrl = "https://github.com/rutkala/zohelo-data/settings/secrets/actions";
+
+  const handleApplyManualToken = async () => {
+    if (!manualToken.trim()) return;
+    const ok = await setManualGoogleToken(manualToken.trim());
+    if (ok) {
+      setManualToken("");
+      setPopoverOpen(false);
+    }
+  };
+
+  const openPreview = async (target: string | null, title: string) => {
+    if (!target) return;
+    const sql = `SELECT * FROM ${target} LIMIT 50;`;
+    // Keep existing SQL drafts and their results together.
+    createTab("sql", sql, title);
+    const tabId = useDuckStore.getState().activeTabId;
+    if (tabId) await executeQuery(sql, tabId);
+  };
+
+  const handleSelectDataset = async (layerName: string, tableName: string) => {
+    if (isLakehouseLoading) return;
+    const target = await selectLakehouseDataset(layerName, tableName);
+    await openPreview(target, `${layerName}/${tableName}`);
+  };
+
+  const handleSelectFile = async (
+    layerName: string,
+    tableName: string,
+    fileName: string,
+    fileId: string
+  ) => {
+    if (isLakehouseLoading) return;
+    const target = await selectLakehouseFile(layerName, tableName, fileId);
+    await openPreview(target, `${layerName}/${tableName}/${fileName}`);
+  };
+
+  const handleNativeAction = async (file: NativeLandingFile, action: "open" | "download") => {
+    // Reserve the tab in the click's user activation; metadata reads are asynchronous.
+    const tab = window.open("about:blank", "_blank");
+    setPopupBlocked(!tab);
+    setUnavailableAction(null);
+    const links = await verifyNativeFile(file.parentId, file.id);
+    const link = links?.[action];
+    if (!link) { tab?.close(); if (links) setUnavailableAction(`${file.id}:${action}`); return; }
+    if (tab) { tab.opener = null; tab.location.replace(link); }
+    // Retry the action with popups permitted to recheck current Drive identity.
+  };
+
+  const renderNativeFolder = (folderId: string, depth = 0): React.ReactNode => {
+    const state = nativeChildren[folderId];
+    if (!state) return null;
+    return <div className="space-y-1 border-l pl-2" data-native-depth={depth}>
+      {state.loading && <div role="status" className="text-muted-foreground">Loading folder pages…</div>}
+      {state.error && <div role="alert" className="text-destructive">{state.error} <Button size="sm" variant="outline" onClick={() => loadNativeFolder(folderId)}>Retry</Button></div>}
+      {state.loaded && state.files.length === 0 && <div className="text-muted-foreground italic">Empty folder</div>}
+      {state.loaded && state.files.map((file) => {
+        const folder = isNativeFolder(file);
+        const expanded = openFolders.has(file.id);
+        const loadedChild = nativeChildren[file.id];
+        const preview = nativePreviewFormat(file);
+        const selected = nativeSelected === file.id;
+        return <div key={file.id} data-native-id={file.id} data-native-folder={folder ? "true" : "false"} className="rounded border border-border/60 p-1.5 min-w-0">
+          <div className="flex items-start gap-1">
+            {folder ? <button type="button" aria-expanded={expanded} aria-label={`${expanded ? "Collapse" : "Expand"} ${file.name}`}
+                className="flex items-center gap-1 text-left min-w-0" onClick={() => {
+                  setFolderExpansion(() => { const next = new Set(openFolders); if (next.has(file.id)) next.delete(file.id); else next.add(file.id); return { root: nativeRoot, ids: next }; });
+                  if (!loadedChild?.loaded && !loadedChild?.loading) void loadNativeFolder(file.id);
+                }}>
+                {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+                <Folder className="h-3.5 w-3.5 shrink-0 text-amber-500" /><span className="break-all">{file.name}</span>
+              </button> : <><FileSpreadsheet className="h-3.5 w-3.5 shrink-0" /><span className="break-all font-medium">{file.name}</span></>}
+          </div>
+          <div className="ml-4 text-muted-foreground break-all">
+            {file.mimeType || "Unknown native format"}{file.size !== undefined ? ` · ${formatBytes(file.size)}` : ""}
+            {file.modifiedTime ? ` · ${new Date(file.modifiedTime).toLocaleString()}` : ""}
+            {file.version ? ` · version ${file.version}` : ""}
+            {file.sha256Checksum ? ` · SHA-256 ${file.sha256Checksum}` : file.md5Checksum ? ` · MD5 ${file.md5Checksum}` : ""}
+          </div>
+          <div className="ml-4 flex flex-wrap gap-1 mt-1">
+            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => void handleNativeAction(file, "open")}>Open in Drive</Button>
+            {file.capabilities?.canDownload &&
+              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => void handleNativeAction(file, "download")}>Download via Drive</Button>}
+            {!folder && preview && <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={async () => {
+              const target = await previewNativeFile(file.parentId, file.id);
+              await openPreview(target, `Native Landing/${file.name}`);
+            }}>Preview in SQL</Button>}
+          </div>
+          {!folder && !preview && <div className="ml-4 text-muted-foreground">Preview unavailable: requires CSV, JSON, JSONL or Parquet ≤ {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}, version, modified time, SHA-256 and download permission.</div>}
+          {selected && nativeActionError && <div role="alert" className="ml-4 text-destructive">{nativeActionError}</div>}
+          {selected && unavailableAction?.startsWith(`${file.id}:`) && <div role="alert" className="ml-4 text-destructive">Drive did not provide a safe {unavailableAction.endsWith(":download") ? "download" : "view"} link for this file.</div>}
+          {selected && nativeLinks?.fileId === file.id && <div className="ml-4 text-muted-foreground">{popupBlocked ? "Allow popups and retry the action to check fresh Drive links." : "Drive action verified. Download is managed by Google Drive."}</div>}
+          {folder && expanded && renderNativeFolder(file.id, depth + 1)}
+        </div>;
+      })}
+    </div>;
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-card text-card-foreground border-b pb-2">
+      {/* Lakehouse Header */}
+      <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/40">
+        <div className="flex items-center gap-2">
+          <Layers className="h-4 w-4 text-amber-500" />
+          <span className="text-xs font-semibold uppercase tracking-wider">
+            Lakehouse (Google Drive)
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1">
+          {/* Refresh button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => refreshLakehouseCatalog().catch(() => undefined)}
+            disabled={isLakehouseLoading}
+            title="Refresh Google Drive Lakehouse"
+          >
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${isLakehouseLoading ? "animate-spin text-amber-500" : ""}`}
+            />
+          </Button>
+
+          {/* Manual Token Popover */}
+          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="Set Manual Google Access Token"
+              >
+                <Key className="h-3.5 w-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-3" align="end">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs font-medium">
+                  <Key className="h-3.5 w-3.5 text-amber-500" />
+                  <span>Manual Google Access Token</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Paste a temporary Google OAuth 2.0 access token to authenticate Drive queries.
+                </p>
+                <Input
+                  type="password"
+                  placeholder="ya29.a0AfH6..."
+                  value={manualToken}
+                  onChange={(e) => setManualToken(e.target.value)}
+                  className="h-8 text-xs font-mono"
+                />
+                <div className="flex justify-end gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => setPopoverOpen(false)}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white"
+                    onClick={handleApplyManualToken}
+                  >
+                    Apply Token
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+
+          {/* Auth Action */}
+          {googleAuth.isAuthenticated ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              onClick={disconnectGoogleDrive}
+              title="Disconnect Google Drive"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] px-2 border-amber-500/40 text-amber-500 hover:bg-amber-500/10 gap-1"
+              onClick={() => signInWithGoogle(true)}
+              disabled={isLakehouseLoading}
+            >
+              <LogIn className="h-3 w-3" />
+              Sign in
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex items-center gap-1">
+        <span>Google sign-in uses read-only Google Drive access.</span>
+        <a
+          href={privacyUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          Privacy
+        </a>
+      </div>
+
+      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+        <span>Source access:</span>
+        <a
+          href={sourceAccessGuideUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          setup guide
+        </a>
+        <span aria-hidden="true">·</span>
+        <a
+          href={encryptedSecretsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          GitHub encrypted secrets
+        </a>
+      </div>
+
+      {/* Auth Status & Notification Pill */}
+      <div className="px-3 py-1.5 bg-muted/20 border-b flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-1.5 truncate">
+          {googleAuth.isAuthenticated ? (
+            <>
+              <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+              <span className="text-emerald-600 dark:text-emerald-400 font-medium truncate">
+                Drive Connected ({googleAuth.authSource === "manual" ? "Manual" : "OAuth"})
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
+              <span className="text-muted-foreground truncate">Google Drive not connected</span>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1 min-w-0">
+          {lakehouseRelease?.kind === "release" &&
+            (lakehouseRelease.releases ?? [lakehouseRelease]).map((rel) => (
+              <Badge
+                key={rel.manifest.release_id}
+                variant="secondary"
+                className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
+                title={`${rel.manifest.release_id} / ${rel.manifest.release_scope} / ${rel.manifest.status}`}
+              >
+                {rel.manifest.release_id} / {rel.manifest.release_scope} / {rel.manifest.status}
+              </Badge>
+            ))}
+          {lakehouseRelease?.kind === "legacy" && (
+            <Badge variant="secondary" className="text-[10px] h-4 font-mono px-1.5 shrink-0">
+              legacy / unversioned
+            </Badge>
+          )}
+          {(lakehouseLanding?.snapshots.filter(({ manifest }) => manifest.kind === "landing_snapshot").length ?? 0) > 0 && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
+              title="Independently validated source Landing snapshots"
+            >
+              Landing {lakehouseLanding?.snapshots.filter(({ manifest }) => manifest.kind === "landing_snapshot").length}
+            </Badge>
+          )}
+          {activeLakehouseDataset && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
+              title="Active Layer Dataset"
+            >
+              {activeLakehouseDataset}
+            </Badge>
+          )}
+        </div>
+      </div>
+
+      {/* Status or Progress Feedback */}
+      {lakehouseStatusMessage && (
+        <div
+          role="status"
+          className="px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px] flex items-center gap-1.5 border-b"
+        >
+          {isLakehouseLoading && <Loader2 className="h-3 w-3 animate-spin shrink-0" />}
+          <span className="break-words min-w-0">{lakehouseStatusMessage}</span>
+        </div>
+      )}
+
+      {lakehouseLanding?.snapshots.some(({ manifest }) => manifest.kind === "landing_snapshot") && (
+        <div className="px-3 py-1 text-[11px] text-muted-foreground border-b">
+          Response tables contain one accepted source response per row. Inspect{" "}
+          <code className="font-mono text-[10px]">payload_utf8</code> for the original source JSON
+          or text. Distribution tables list downloaded archives, their versions, sizes and Drive
+          file IDs.
+        </div>
+      )}
+
+      {hasRetainedDbw && (
+        <div className="space-y-1 border-b px-3 py-2 text-[11px]">
+          <div className="font-medium">Dated retained DBW Bronze snapshot</div>
+          <div className="text-muted-foreground">
+            Search the audited Polish or English taxonomy, then select one published indicator
+            or an explicit part. Pending indicators remain visible while publication advances.
+          </div>
+          <Input
+            value={dbwIndicatorSearch}
+            onChange={(event) => setDbwIndicatorSearch(event.target.value)}
+            placeholder="Search DBW indicator name or ID"
+            className="h-7 text-xs"
+          />
+          <div className="text-muted-foreground">
+            {dbwSearchTerm
+              ? `${matchingDbwIndicators.length.toLocaleString()} of ${dbwIndicators.length.toLocaleString()} indicators match; showing the first 50.`
+              : `${dbwIndicators.length.toLocaleString()} indicators indexed. Enter a name or ID to choose one.`}
+          </div>
+          {dbwSearchTerm && (
+            <div className="max-h-48 space-y-1 overflow-y-auto">
+              {matchingDbwIndicators.slice(0, 50).map((indicator) => {
+                const base = `br_dbw_observations__indicator_${indicator.indicator_id}`;
+                const total = indicator.parts.reduce((sum, part) => sum + (part.size ?? 0), 0);
+                const large = total > 64 * 1024 * 1024;
+                return (
+                  <div key={indicator.indicator_id} className="rounded border px-2 py-1">
+                    <div className="font-medium">
+                      {indicator.indicator_id} · {indicator.indicator_name_en || indicator.indicator_name}
+                    </div>
+                    <div className="text-muted-foreground">{indicator.taxonomy_path}</div>
+                    {indicator.status === "pending" ? (
+                      <div className="text-amber-600">Pending query-fragment publication</div>
+                    ) : large ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {indicator.parts.map((part, index) => (
+                          <Button key={part.id} size="sm" variant="outline" className="h-6 px-2 text-[10px]"
+                            onClick={() => handleSelectDataset("02_bronze", `${base}__part_${index + 1}`)}>
+                            Part {index + 1}/{indicator.parts.length} · {formatBytes(part.size ?? 0)}
+                          </Button>
+                        ))}
+                      </div>
+                    ) : (
+                      <Button size="sm" variant="outline" className="mt-1 h-6 px-2 text-[10px]"
+                        onClick={() => handleSelectDataset("02_bronze", base)}>
+                        Load selected indicator · {formatBytes(total)}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Lakehouse Medallion Layers Tree */}
+      <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 text-xs">
+        {googleAuth.isAuthenticated && <section aria-label="Native Landing files" className="mb-2 rounded border border-amber-500/40 text-[11px]">
+          <div className="flex items-center gap-1 px-2 py-1 font-medium">
+            <button type="button" className="flex flex-1 items-center gap-1 text-left" aria-expanded={nativeOpen}
+              onClick={() => setNativeOpen((value) => !value)}>
+              {nativeOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Native Landing files
+            </button>
+            <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => { setFolderExpansion({ root: null, ids: new Set() }); void refreshNative(); }}>Refresh</Button>
+          </div>
+          {nativeOpen && <div className="space-y-1 border-t p-2">
+            <p className="text-muted-foreground">Drive objects observed during this listing, independent of published SQL datasets. Refresh to check for new files. Browsing reads metadata only; originals open or download through Drive. Preview replaces the previous native SQL view in this local session, accepts supported files up to {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}, and is removed on refresh or disconnect.</p>
+            {nativeLoading && <div role="status">Finding Landing folder…</div>}
+            {nativeError && <div role="alert" className="text-destructive">{nativeError} <Button size="sm" variant="outline" onClick={() => void refreshNative()}>Retry</Button></div>}
+            {nativeRoot && <><div className="font-medium">{nativeRoot.name}</div>{renderNativeFolder(nativeRoot.id)}</>}
+          </div>}
+        </section>}
+        {sourceInventory && (
+          <div className="mb-1 rounded border border-border/60 text-[11px]">
+            <button
+              type="button"
+              className="flex w-full items-center gap-1 px-2 py-1 text-left font-medium hover:bg-muted/70"
+              onClick={() => setInventoryOpen((open) => !open)}
+              aria-expanded={inventoryOpen}
+            >
+              {inventoryOpen ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              Files on Drive
+              {isSourceInventoryLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+              <span className="ml-auto text-muted-foreground">
+                {sourceInventory.entries.length}
+              </span>
+            </button>
+            {inventoryOpen && (
+              <div className="space-y-1 border-t px-2 py-1">
+                <div className="text-muted-foreground">
+                  Retained physical files. Query access requires an explicit published data
+                  contract.
+                </div>
+                {sourceInventory.error && (
+                  <div className="text-destructive">{sourceInventory.error}</div>
+                )}
+                {sourceInventory.entries.map((entry) => (
+                  <div key={entry.source_id} className="rounded border border-border/60 px-2 py-1">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-medium">{entry.label}</span>
+                      <span className="text-muted-foreground">{entry.state}</span>
+                    </div>
+                    {entry.error ? (
+                      <div className="text-destructive">{entry.error}</div>
+                    ) : (
+                      <>
+                        {entry.message && (
+                          <div className="text-muted-foreground">{entry.message}</div>
+                        )}
+                        {entry.stages.map((stage) => (
+                          <div key={stage.stage} className="text-muted-foreground">
+                            {stage.stage}: {stage.file_count.toLocaleString()} files ·{" "}
+                            {formatBytes(stage.byte_count)}
+                            {stage.latest_modified_time
+                              ? ` · latest ${new Date(stage.latest_modified_time).toLocaleString()}`
+                              : ""}
+                            {stage.selection_total_count !== undefined
+                              ? ` · ${stage.selection_complete_count}/${stage.selection_total_count} catalogued subgroups complete`
+                              : ""}
+                            {stage.basis === "mutable_checkpoint" ? " · checkpoint reported" : ""}
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {lakehouseCatalog.map((layer) => (
+          <div key={layer.name} className="select-none">
+            {/* Layer Row */}
+            <div
+              className={`flex items-center gap-1.5 py-1 px-1.5 rounded hover:bg-muted/70 cursor-pointer ${
+                layer.expanded ? "font-medium" : "text-muted-foreground"
+              }`}
+              onClick={() => toggleLakehouseLayer(layer.name)}
+            >
+              {layer.expanded ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              )}
+              <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+              <span className="truncate">{layer.name}</span>
+              {layer.children.length > 0 && (
+                <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                  {layer.children.filter((table) => !table.name.startsWith("br_dbw_observations__indicator_")).length}
+                </span>
+              )}
+            </div>
+
+            {/* Datasets / Tables in Layer */}
+            {layer.expanded && (
+              <div className="ml-3 pl-2 border-l border-border/60 space-y-0.5 mt-0.5">
+                {layer.children.length === 0 ? (
+                  <div className="py-1 px-2 text-[11px] text-muted-foreground italic">
+                    {layer.loaded ? "No datasets found" : "Click to expand & load…"}
+                  </div>
+                ) : (
+                  layer.children
+                    .filter((table) => {
+                      return !table.name.startsWith("br_dbw_observations__indicator_");
+                    })
+                    .map((table) => {
+                    const isActive =
+                      table.name === activeLakehouseDataset && layer.name === activeLakehouseLayer;
+                    const relation = qualifyTable(undefined, layer.name, table.name);
+                    return (
+                      <div key={table.name} className="space-y-0.5">
+                        {/* Table / Dataset Row */}
+                        <div
+                          className={`flex items-center gap-1.5 py-1 px-1.5 rounded cursor-pointer group ${
+                            isActive
+                              ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
+                              : "hover:bg-muted/60 text-foreground"
+                          }`}
+                          draggable
+                          onDragStart={(event) =>
+                            setSqlRelationDragData(event.dataTransfer, relation)
+                          }
+                        >
+                          <button
+                            type="button"
+                            className="shrink-0 rounded p-0.5 hover:bg-muted"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleLakehouseTable(layer.name, table.name);
+                            }}
+                          >
+                            {table.expanded ? (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                            )}
+                          </button>
+
+                          <div
+                            className="flex min-w-0 flex-1 items-center gap-1.5"
+                            onClick={() => handleSelectDataset(layer.name, table.name)}
+                          >
+                            <TableIcon className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                            <span className="truncate text-[11px]" title={`${table.label ?? table.name} · SQL: ${table.name}`}>
+                              {table.label ?? table.name}
+                            </span>
+                          </div>
+
+                          <TableActions
+                            relation={relation}
+                            displayName={table.name}
+                            onSqlAction={onSqlAction}
+                          />
+                        </div>
+
+                        {/* Files in Dataset */}
+                        {table.expanded && table.children && (
+                          <div className="ml-4 pl-2 border-l border-border/40 space-y-0.5">
+                            {table.children.length === 0 ? (
+                              <div className="py-0.5 px-2 text-[10px] text-muted-foreground italic">
+                                No data files
+                              </div>
+                            ) : (
+                              table.children.map((file) => (
+                                <div
+                                  key={file.id}
+                                  className="flex items-center gap-1.5 py-0.5 px-1.5 rounded hover:bg-muted/40 cursor-pointer text-[11px] text-muted-foreground hover:text-foreground"
+                                  onClick={() =>
+                                    handleSelectFile(layer.name, table.name, file.name, file.id)
+                                  }
+                                >
+                                  <FileSpreadsheet className="h-3 w-3 text-emerald-500 shrink-0" />
+                                  <span className="truncate font-mono">{file.name}</span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

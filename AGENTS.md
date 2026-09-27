@@ -1,0 +1,168 @@
+# AGENTS.md
+
+Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
+
+**Current owner priority — 26 September 2026: finish existing sources.**
+
+**BDL host clarification — 26 September:** proceed from reviewed GitHub main;
+assume no available devcontainer and no unpushed work for this BDL migration.
+The main-only ten-route preflight is read-only and runs after the reviewed merge.
+Actual ingestion is a later manual dispatch after verifying exclusive Drive writer
+ownership. Do not treat heartbeat age alone as permission to take over a lock.
+
+- The owner has returned engineering coordination to the lead assistant and explicitly
+  paused new-source research/onboarding. Finish BDL's move to GitHub Actions with the
+  existing ten WireGuard routes, DBW whole-table and all-layer portal access, every
+  already-retained source's Landing-to-semantic delivery, and reconciliation of
+  existing repository/devcontainer work.
+- This instruction overrides older autonomous-expansion and dated wave-start
+  directions until the owner changes scope. Existing authorized source schedules
+  may continue; do not add providers, products or unrelated portal features.
+- Read the current takeover section in [docs/deliverables.md](docs/deliverables.md).
+  Keep one implementation owner, preserve other agents' unmerged/unpushed work and
+  active ingestion, and verify writer ownership before transferring BDL execution.
+  An inventory, green workflow, sample or merged model is not full-source acceptance.
+
+**Landing is native transfer only — all sources.**
+
+- Apply [ADR 0009](docs/decisions/0009-native-only-landing.md) to every current and future source, full loads and increments alike. Download and store the original file/response bytes in the provider's native format. Do not unpack archives, parse data, infer schemas, count records, validate business content, deduplicate observations, add provenance columns, convert to Parquet or run dbt in the ingestion step.
+- Only authentication, source navigation/discovery/pagination, quotas, bounded transfer/retries, byte integrity and small resumable control records belong in ingestion. Keep technical metadata separate from native payloads. Do not make data processing or portal queryability a prerequisite for receiving the next file.
+- Parsing/conversion/validation are separate downstream Landing-to-Bronze work with independent failures and checkpoints. Report files/bytes and native-transfer completion, not unmeasured row counts or full validated data coverage. Preserve successful native downloads for downstream replay.
+- This owner decision overrides conflicting older ingestion instructions below. Apply it to existing adapters without claiming they have all been migrated merely because this rule is documented. Keep the rollout and remaining work in `docs/deliverables.md`.
+
+**Own the technical handoff.**
+
+- The owner's initial goal and boundaries authorize the work within them. Own the complete goal and every necessary deliverable; proceed autonomously through routine design, implementation, branches, pull requests, checks, merge, deployment and production verification. Ask only when a consequential business choice, missing credential or boundary change is required.
+- Do not silently narrow scope, treat an intermediate as the requested outcome, or stop because one implementation increment works. If completion is not yet possible, record the verified progress, remaining work and either the active continuation or a concrete blocker in [docs/deliverables.md](docs/deliverables.md).
+- Creating a branch or passing tests is not the same as updating `main` or the live portal. State which of these has actually happened, and finish the authorized delivery or name the concrete blocker.
+- Mark work **Done** only when the user's outcome is validated, the change is merged and deployed where applicable, and claimed data coverage is established by actual collection and coverage evidence. Code, a workflow, a successful sample, or a running backfill is an intermediate state when more of the authorized outcome remains.
+- After each successful pull request merge into `main`, delete the feature branch on `origin` and prune local tracking branches and worktrees to keep the repository clean.
+- Keep owner-facing updates short and in plain language. Ask one necessary business question at a time. If an owner action is unavoidable, give one clear next step.
+- Do not imply that work continues after a reply unless a specific background task has actually been started.
+
+**Start with the task and repository context.**
+
+- Read [README.md](README.md) and [docs/architecture.md](docs/architecture.md). The architecture document describes the current design and implemented boundaries; it is not a request to implement every possible extension.
+- Read [docs/deliverables.md](docs/deliverables.md) for the approved work programme and [the foundation audit](docs/audits/2026-09-06-foundation.md) for verified gaps. The new NBP release includes ingestion repair and the business catalogue; the earlier demonstration's ingestion deferral is historical.
+- Apply [the NBP revision decision](docs/decisions/0001-nbp-corrections.md): current validated values for normal analysis, retained raw versions and detected-change records. No comparison UI is currently required. Do not call an observed source change an officially announced correction without evidence.
+- Apply the accepted [portal and catalogue boundaries](docs/decisions/0002-portal-catalogue-and-project-boundaries.md): one release-bound native dbt catalogue, ordinary SQL editing, and project tracking only in the canonical delivery record.
+- Follow the assigned task and explicitly accepted architecture decisions. Keep changes scoped, preserve unrelated work, and state assumptions in the pull request. Record a newly agreed architectural choice in an ADR when the task resolves one.
+- Use this file as the common guide for GitHub agents and Codespaces work. For a tool that does not load it automatically, include “Read AGENTS.md and docs/architecture.md before editing” in its task prompt.
+- Keep Claude/Gemini/Copilot entrypoints as pointers to this guide, not competing instruction sets. Repository instructions guide agents; executable checks and reviewed evidence establish correctness.
+- Separate observed facts, technical inferences and unresolved business decisions. Verify uncertain technical behavior against code, fixtures or current primary documentation. Ask the owner only for a consequential business choice; do not invent metric definitions, revision policy, availability promises or a new paid service.
+- Research each source's official terminology and prepare sourced business definitions before asking the owner about analytical use cases official docs cannot settle. Keep unresolved business questions, their stable IDs, researched options, and recorded answers in [docs/deliverables.md](docs/deliverables.md), the single project-status record. The owner may answer an ID in chat; update that record after an explicit decision.
+- Keep the portal data-first: its single native dbt catalogue shows published release data, lineage, and approved metric definitions only. Do not put project-management or owner-review flows in the portal or catalogue. Keep proposed definitions visibly distinct from approved, executable metrics, and describe a current portal change as awaiting validation and main deployment until both have occurred.
+- Apply an evidence-led improvement loop to every solution, including the portal: observe real use, correctness, coverage, failures and operating cost; reprioritize the remaining authorized work toward usefulness and owner satisfaction; then validate the next increment. Preserve operation by a human without AI, cost and secret boundaries, reuse terms, production serialization, and [the one canonical GitHub status record](docs/deliverables.md). This loop governs active authorized work and does not imply unbounded background activity.
+- Apply the owner-approved [delegation and cost policy](docs/collaboration.md#delegation-and-cost-policy): use GitHub Copilot Pro or Codespace AGY first for implementation; internal agents are a justified fallback. Keep one active engineering task and one implementation owner. The lead plans, defines architecture and acceptance, reviews, integrates and communicates. Choose lighter internal models explicitly when needed, preserve the personal-Gemini-only boundary, and report actual dispatch and results without claiming unmeasured savings.
+
+**Repository map.**
+
+| Path | What belongs here |
+| --- | --- |
+| `config/sources.yaml` | Source definitions |
+| `config/storage.yaml`, `src/storage_manager.py` | Storage configuration, Drive authentication and addressing; some runtime settings are currently hardcoded |
+| `src/ingestion/` | Extraction and ingestion code |
+| `src/transformation/` | Retired Bronze/Silver compatibility helpers; use the consolidated platform runner for current orchestration and publication |
+| `models/`, `dbt_project.yml`, `profiles.yml` | dbt SQL, model metadata and local DuckDB configuration |
+| `portal/` | React/TypeScript/Vite portal with browser DuckDB WASM |
+| `tests/` | Python unittest tests; current storage authentication tests mock Google clients |
+| `.github/workflows/`, `.devcontainer/` | Batch/deployment workflows and development setup |
+
+**Respect data and component boundaries.**
+
+- Google Drive holds authoritative durable platform data; working DuckDB databases and downloaded files are disposable local compute state. Git holds code and definitions. Keep new transformation logic in dbt within the current medallion design, with Python handling extraction, transfer and publication.
+- Document dataset grain, keys, units and correction/deduplication behavior when changing models. Use dbt `source()` and `ref()` for real dependencies where supported by the implemented source boundary. Add relevant data tests with model behavior changes.
+- NBP MetricFlow definitions, source-defined daily metrics, and the grain-enforcing native query backend are implemented and covered by local acceptance tests. The dated v2 release has historical live proof from 7 September 2026; keep any new live publication and semantic verification distinct until the current run is recorded in [docs/deliverables.md](docs/deliverables.md). The intermediate immutable v1 silver snapshot is retained as a historical baseline. The current production path is the consolidated `NBP data platform` workflow and `python src/nbp_platform.py --mode ...` entrypoint. Read the delivery record for release-specific fresh-process restore, SQL, semantic-query and raw-replay proof. When implementing release publication, validate candidates before switching consumers and preserve the previous complete release.
+- Keep browser DuckDB work bounded. Dynamic MetricFlow execution requires a native runtime; a static portal build does not provide it. Keep failures and demo data distinguishable.
+- Inspect effective runtime configuration before integration work. `StorageManager` reads `config/storage.yaml`; explicit constructor arguments and `ZOHELO_DRIVE_ROOT_NAME` / `ZOHELO_DRIVE_ROOT_ID` can select another root. Resolve zones through the storage manager. Outside Actions, writes to `zohelo-data` require an explicit production-write opt-in; read-only diagnostics remain available. See the development guide.
+
+**Setup and checks.**
+
+Use an isolated Python 3.12 environment and Node from `.node-version`. These runtime files are shared with CI; the devcontainer Node feature must match. Python's complete resolved dependency set is pinned in `requirements.txt`; direct dependencies are listed in `requirements.in`. See [docs/development.md](docs/development.md) for setup and update instructions. Opening Codespaces starts the local preview only. Container creation installs the owner-requested pinned Codex CLI; agent startup and installation of other optional AI tools remain explicit.
+
+Install only the dependencies needed for the assigned work:
+
+```bash
+python -m pip install -r requirements.txt
+npm --prefix portal ci --ignore-scripts --no-audit --no-fund
+```
+
+Choose checks for the affected component:
+
+| Change | Check |
+| --- | --- |
+| Python storage/ingestion/orchestration and dbt changes | `bash scripts/check-data.sh`; for the merged platform flow also inspect [NBP platform operations](docs/nbp-platform-operations.md) and use the bounded entrypoint only with an explicitly selected Drive root |
+| dbt project/model definitions | `dbt parse --profiles-dir .` |
+| Local NBP Table A and its gold mart | `dbt build --profiles-dir . --select +mart_exchange_rates_daily`, after preparing the local inputs described below |
+| Portal logic or UI | `npm --prefix portal run lint`, `npm --prefix portal test`, and `npm --prefix portal run build` |
+| Documentation/instructions only | Check referenced paths, commands, links and the diff; application test suites are not required |
+
+`bash scripts/check-data.sh` exercises all-four NBP dbt fixtures, expected rows, identical replay, conflicting legacy values, docs artifacts and missing-input failures. It also checks mocked authorization/storage boundaries and immutable silver publication/failure recovery, including a fresh Parquet consumer. A standalone synthetic MetricFlow fixture checks the local CLI/runtime independently of NBP definitions; NBP semantic acceptance is covered by the platform's native query checks. Keep standalone dbt fixtures under `tests/fixtures/`, excluded from root dbt discovery through `.dbtignore`; the production-manifest regression must remain green. Live-release proof is separate from these fixture and local checks; do not claim full platform coverage from this command.
+
+For ad hoc dbt execution, set `ZOHELO_DATA_ROOT` to local fixtures and `ZOHELO_DUCKDB_PATH` to a disposable database. Legacy Silver compatibility models expect nested NBP Parquet under `02_bronze/nbp_exchange_rates_table_{a,b,c}/*.parquet`; verified release builds instead supply Landing JSONL through `ZOHELO_NBP_BATCHES_PATH`. dbt creates quoted physical schemas `02_bronze`, `03_silver` and `04_gold`, so direct DuckDB checks must use schema-qualified published relations such as `"03_silver"."nbp_exchange_rates_table_a"`. Parsing alone does not validate data results. MetricFlow fixtures use the selected Python interpreter, disable dbt usage tracking, and run the unmodified CLI behind a Linux/libseccomp network-denial filter. Fail closed if isolation is unavailable; never substitute an updater monkeypatch or silently enable network calls.
+
+The portal also exposes `typecheck`, `format:check`, and `test:e2e` scripts. Use additional checks when relevant, and inspect `portal/playwright.config.ts` and browser prerequisites before running end-to-end tests.
+
+**Keep routine validation local.**
+
+- Use mocks or fixtures for Drive interactions. Direct execution of `src/storage_manager.py` creates Drive folders; supported production ingestion/publication entrypoints write remote data. Retired transformation CLIs reject direct execution. The consolidated platform runner publishes a verified immutable release and changes only a current-release pointer; it retains legacy files and prior releases. These entrypoints are not smoke tests. The merged production path is documented in [NBP platform operations](docs/nbp-platform-operations.md); see [silver publication](docs/nbp-silver-publication.md) for the historical v1 baseline.
+- For an explicitly requested live authorization check, use `python scripts/check_google_access.py` in the relevant runtime. It performs only authentication and metadata reads, prints fixed status codes/presence booleans and never starts interactive consent. A pass does not prove uploads or another runtime's access. See [Google authorization](docs/google-authorization.md); never retrieve secret values into chat to debug them.
+- For an explicitly requested live upload test, use `python scripts/check_google_upload.py --allow-write-test`. It uploads one small marked file under the existing platform root, checks the bytes and cleans up only its own file. Inspect all three verification flags and any cleanup failure; this does not validate the production publisher. The upload workflow is manual or explicitly opted in through a reviewed merge as described in the authorization guide. Routine CI uses its in-memory fixtures only.
+- Run remote ingestion, backfills, publication or deployment only when that operation is part of the authorized task. A development Drive root must be demonstrably enforced by the invoked code; a folder convention alone is insufficient.
+- Keep credentials and downloaded datasets out of Git and PR output. Never put OAuth refresh tokens, client secrets or service-account private keys in the portal bundle. Keep generated databases, `target/`, `logs/`, `node_modules/` and build output out of changes.
+- Report the commands actually run, their outcomes, skipped checks and missing prerequisites. Explain behavior changes and relevant recovery/consumer impacts in the PR. Update this guide when a task changes the documented workflow.
+
+Instruction discovery references: [Codex](https://learn.chatgpt.com/docs/agent-configuration/agents-md), [GitHub Copilot](https://docs.github.com/en/copilot/how-tos/copilot-on-github/customize-copilot/add-repository-instructions).
+
+## Audit handoff and source-defined semantics
+
+- Scope is zohelo-data/data.zohelo.com; the zohelo ChatGPT project is an umbrella, not another deployment target. Read docs/collaboration.md when starting a fresh chat.
+- Source-defined daily NBP metrics do not require another owner methodology question. Optional derived/period metrics remain separate decisions. Use scripts/query_metrics.py to enforce the documented grain; raw mf commands can bypass it.
+- Use config/nbp-platform.yaml for effective ingestion policy; config/sources.yaml contains provider metadata. Legacy transformation CLIs are retired.
+- Published candidates must pass remote Parquet/provenance checks before pointer promotion. Production rollback/promotion uses the serialized Actions operation and an expected-current release identity.
+
+## Autonomous source expansion
+
+- Apply accepted ADR 0004 and `docs/source-expansion-plan.md`: source-by-source owner selection
+  is no longer a gate. Continue all feasible scope; ask only for concrete consequential prerequisites.
+- `src/source_campaign.py` and `config/source-campaigns.yaml` operate the first WDI/BDL/Eurostat
+  Landing campaigns through the serialized main-branch Actions workflow. Read
+  `docs/source-campaign-operations.md` before changing or running them.
+- Candidate category mappings are not verified dataset/ingested coverage. Keep research snapshots
+  distinct from runtime receipts and new-source Landing distinct from published NBP medallion data.
+- Validate taxonomy/coverage with `python scripts/check-source-coverage.py`. Preserve independent
+  provider quotas, resumability and NBP pointer boundaries; do not raise capacity caps blindly.
+
+## Agile data access and source credentials
+
+- Apply ADR 0005: start authorized collection during delivery, publish verified Landing increments
+  between consecutive batches, and make them available in the portal without waiting for the
+  entire Silver/Gold/semantic programme. One response-envelope row is not one business fact.
+- Preserve per-source Landing snapshot identity/hash checks alongside the pinned NBP release.
+  Keep published dbt business catalogue/semantic claims separate from raw response tables.
+- Research free-account benefits during onboarding and provide exact secret names/setup steps.
+  Use encrypted Actions repository secrets; never put API keys in browser configuration, Git,
+  logs or durable request descriptors. BDL authentication is a transport-only header.
+- Free account identity/email verification remains a concrete owner step when not supplied;
+  do not invent personal details or claim a key/account exists before it does. Paid service
+  subscriptions and card-backed trials require the concrete business decision.
+
+## Complete selected-source coverage
+
+- Apply ADR 0006: a selected source product means its full available datasets, dimensions,
+  geographies, history and accompanying metadata. Starter slices and permanent cumulative
+  task/raw ceilings are not complete source delivery. Prefer official complete distributions;
+  otherwise use resumable batches that continue toward catalogue and page exhaustion.
+- `src/full_source_campaign.py` collects full WDI/Eurostat distributions after the recent API
+  batch within the same serialized provider job and quota ledger. Large raw objects are
+  streamed, remotely hash-verified and indexed; do not load archives into browser memory.
+- Campaign state v2 shards preserve v1 receipts, ordering, quotas and pointers on migration.
+  Batch/object limits protect execution; measured catalogue coverage establishes completion.
+- Report full raw archives separately from typed models and semantic definitions. Preserve
+  the distinction between selected source products and every product of their providers.
+
+## Drive layout migration
+- Use the serialized main-branch migrate-drive-layout.yml workflow. A successful plan artifact
+  is the authorization source for apply, resume, and rollback; preserve its run ID and canonical
+  SHA-256. Never bypass plan provenance, cutover guards, durable journal recovery, or pending
+  navigation verification.

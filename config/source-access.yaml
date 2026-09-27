@@ -1,0 +1,309 @@
+schema_version: 1
+verified_on: 2026-09-08
+
+# This registry records account and secret prerequisites. It is not an ingestion
+# allowlist and does not mean that every source below has an implemented adapter.
+# Official provider ceilings are recorded only where the linked primary source
+# states a number; runtime budgets should retain headroom below those ceilings.
+secret_store:
+  kind: github_actions_repository_secrets
+  url: https://github.com/rutkala/zohelo-data/settings/secrets/actions
+
+sources:
+  - source_id: gus_bdl
+    research_id: AR-001
+    inventory_id: PLS-001
+    provider: Statistics Poland (GUS)
+    product: Bank Danych Lokalnych (BDL)
+    account_class: free_account_increases_limit
+    runtime_support: connected
+    account_url: https://bdl.stat.gov.pl/api/v1/client?showInFrame=yes&theme=Default
+    docs_url: https://api.stat.gov.pl/Home/BdlApi?lang=en
+    free_benefit: Raises all four documented request ceilings and supplies a personal API client key.
+    numeric_quota:
+      anonymous:
+        requests_per_second: 5
+        requests_per_15_minutes: 100
+        requests_per_12_hours: 1000
+        requests_per_7_days: 10000
+      registered:
+        requests_per_second: 10
+        requests_per_15_minutes: 500
+        requests_per_12_hours: 5000
+        requests_per_7_days: 50000
+    credentials:
+      - secret_name: GUS_BDL_API_KEY
+        required_for: registered_limits
+        transport: http_header
+        header: X-ClientId
+    registration_notes: A valid contact email is required because the generated key is sent there; no separate email-confirmation click is documented.
+
+  - source_id: gus_dbw
+    research_id: AR-002
+    inventory_id: PLS-002
+    provider: Statistics Poland (GUS)
+    product: Dziedzinowe Bazy Wiedzy (DBW)
+    account_class: free_account_increases_limit
+    runtime_support: future_adapter
+    account_url: https://api.stat.gov.pl/Home/DBWApi?lang=en
+    docs_url: https://api-dbw.stat.gov.pl/apidocs/index.html?urls.primaryName=API+DBW+%28en%29
+    free_benefit: Raises all four documented request ceilings and supplies an API client key.
+    numeric_quota:
+      anonymous:
+        requests_per_second: 5
+        requests_per_15_minutes: 100
+        requests_per_12_hours: 1000
+        requests_per_7_days: 10000
+      registered:
+        requests_per_second: 10
+        requests_per_15_minutes: 500
+        requests_per_12_hours: 5000
+        requests_per_7_days: 50000
+    credentials:
+      - secret_name: GUS_DBW_API_KEY
+        required_for: registered_limits
+        transport: adapter_specific
+    registration_notes: The provider sends the key to the valid email supplied on the registration page.
+
+  - source_id: gus_sdp
+    research_id: AR-003
+    provider: Statistics Poland (GUS)
+    product: Skladnica Danych Publikacyjnych (SDP)
+    account_class: free_account_increases_limit
+    runtime_support: future_adapter
+    account_url: https://api.stat.gov.pl/Home/SDPApi
+    docs_url: https://api.stat.gov.pl/Home/SDPApi
+    free_benefit: Raises all four documented request ceilings and supplies an API client key.
+    numeric_quota:
+      anonymous:
+        requests_per_second: 5
+        requests_per_15_minutes: 100
+        requests_per_12_hours: 1000
+        requests_per_7_days: 10000
+      registered:
+        requests_per_second: 10
+        requests_per_15_minutes: 500
+        requests_per_12_hours: 5000
+        requests_per_7_days: 50000
+    credentials:
+      - secret_name: GUS_SDP_API_KEY
+        required_for: registered_limits
+        transport: adapter_specific
+    registration_notes: The provider sends the key to the valid email supplied on the registration page.
+
+  - source_id: gus_smup
+    research_id: AR-004
+    provider: Statistics Poland (GUS)
+    product: System Monitorowania Uslug Publicznych (SMUP)
+    account_class: free_account_increases_limit
+    runtime_support: future_adapter
+    account_url: https://api.stat.gov.pl/Home/SMUPApi?lang=en
+    docs_url: https://api.smup.gov.pl/apidocs/index.html
+    free_benefit: Raises all four documented request ceilings and supplies an API client key.
+    numeric_quota:
+      anonymous:
+        requests_per_second: 5
+        requests_per_15_minutes: 100
+        requests_per_12_hours: 1000
+        requests_per_7_days: 10000
+      registered:
+        requests_per_second: 10
+        requests_per_15_minutes: 500
+        requests_per_12_hours: 5000
+        requests_per_7_days: 50000
+    credentials:
+      - secret_name: GUS_SMUP_API_KEY
+        required_for: registered_limits
+        transport: adapter_specific
+    registration_notes: The provider sends the key to the valid email supplied on the registration page.
+
+  - source_id: gus_regon_bir1
+    research_id: AR-005
+    inventory_id: PLS-008
+    provider: Statistics Poland (GUS)
+    product: BIR1 REGON API
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://api.stat.gov.pl/Home/RegonApi
+    docs_url: https://api.stat.gov.pl/Home/RegonApi
+    free_benefit: Supplies the production User Key needed for the free REGON web service.
+    numeric_quota:
+      windows_local_time_europe_warsaw:
+        - hours: 08:00-16:59
+          requests_per_hour: 6000
+          requests_per_minute: 120
+          requests_per_second: 3
+        - hours: 06:00-07:59_and_17:00-21:59
+          requests_per_hour: 8000
+          requests_per_minute: 150
+          requests_per_second: 3
+        - hours: 22:00-05:59
+          requests_per_hour: 10000
+          requests_per_minute: 200
+          requests_per_second: 4
+    credentials:
+      - secret_name: GUS_REGON_API_KEY
+        required_for: api_access
+        transport: bir1_login_user_key
+    registration_notes: A commercial or ordinary non-public-body applicant emails the provider with organization and contact details; see the setup guide before sending anything.
+
+  - source_id: fred
+    research_id: AR-006
+    provider: Federal Reserve Bank of St. Louis
+    product: FRED API v1
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://fredaccount.stlouisfed.org/apikeys
+    docs_url: https://fred.stlouisfed.org/docs/api/api_key.html
+    free_benefit: Enables FRED web-service requests; the provider requires a distinct key for each application.
+    credentials:
+      - secret_name: FRED_API_KEY
+        required_for: api_access
+        transport: query_parameter
+        parameter: api_key
+    registration_notes: The API key is documented as a 32-character lowercase alphanumeric string. No numeric quota is stated on the primary API-key page.
+
+  - source_id: us_eia
+    research_id: AR-007
+    provider: U.S. Energy Information Administration
+    product: EIA Open Data API
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://www.eia.gov/opendata/register.php
+    docs_url: https://www.eia.gov/opendata/
+    free_benefit: Enables API use and API change or restriction notices by email; bulk downloads remain available without a key.
+    credentials:
+      - secret_name: EIA_API_KEY
+        required_for: api_access
+        transport: query_parameter
+        parameter: api_key
+    registration_notes: Registration asks for first and last name, email, organization category, reason for use, and acceptance of the API terms. No payment card is requested.
+
+  - source_id: un_comtrade
+    research_id: AR-008
+    inventory_id: GL-019
+    provider: United Nations Statistics Division
+    product: UN Comtrade Plus API
+    account_class: free_account_increases_limit
+    runtime_support: future_adapter
+    account_url: https://comtradeplus.un.org/
+    docs_url: https://comtradeapi.un.org/swagger/index.html
+    free_benefit: Provides a free API key with the advertised free-account download and daily-call allowances.
+    numeric_quota:
+      registered_free:
+        records_per_call: 100000
+        requests_per_day: 500
+    credentials:
+      - secret_name: UN_COMTRADE_API_KEY
+        required_for: registered_free_allowance
+        transport: adapter_specific
+    registration_notes: The official Comtrade Plus registration prompt advertises these free allowances; subscription and reuse terms still need dataset-contract review.
+
+  - source_id: us_census
+    research_id: AR-009
+    provider: U.S. Census Bureau
+    product: Census Data API
+    account_class: free_account_increases_limit
+    runtime_support: future_adapter
+    account_url: https://api.census.gov/data/key_signup.html
+    docs_url: https://www.census.gov/data/developers/guidance/api-user-guide.API_Key.html
+    free_benefit: Allows more than the anonymous threshold of 500 queries per IP address per day; the official guide does not state a keyed maximum.
+    numeric_quota:
+      anonymous:
+        requests_per_ip_per_day: 500
+        variables_per_query: 50
+    credentials:
+      - secret_name: US_CENSUS_API_KEY
+        required_for: requests_above_anonymous_threshold
+        transport: query_parameter
+        parameter: key
+    registration_notes: The current guide says the free form uses organization name and email, sends an email with the key and registration link, and accepts only listed common email-domain endings.
+
+  - source_id: openaq
+    research_id: AR-010
+    provider: OpenAQ
+    product: OpenAQ API v3
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://explore.openaq.org/register
+    docs_url: https://docs.openaq.org/using-the-api/api-key
+    free_benefit: Enables authenticated API access under the general-use free limits.
+    numeric_quota:
+      registered_free:
+        requests_per_minute: 60
+        requests_per_hour: 2000
+    credentials:
+      - secret_name: OPENAQ_API_KEY
+        required_for: api_access
+        transport: http_header
+        header: X-API-Key
+    registration_notes: Registration asks for full name, email, and password and requires acceptance of OpenAQ terms; the provider says to treat the key like a password.
+
+  - source_id: nasa_earthdata
+    research_id: AR-011
+    provider: NASA Earth Science Data Systems
+    product: Earthdata Login and EOSDIS data access
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://urs.earthdata.nasa.gov/users/new
+    docs_url: https://urs.earthdata.nasa.gov/
+    free_benefit: Provides one profile for data access across EOSDIS data centers, tools, and services; Earth science data are generally free of charge.
+    credentials:
+      - secret_name: NASA_EARTHDATA_USERNAME
+        required_for: authenticated_dataset_access
+        transport: adapter_specific
+      - secret_name: NASA_EARTHDATA_PASSWORD
+        required_for: authenticated_dataset_access
+        transport: adapter_specific
+    registration_notes: Required profile fields include username, password, name, email, country, affiliation, study area, and user type. Dataset-specific access conditions can still apply.
+
+  - source_id: copernicus_cds
+    research_id: AR-012
+    inventory_id: GL-036
+    provider: Copernicus Climate Change Service and ECMWF
+    product: Climate Data Store API
+    account_class: free_account_required_for_access
+    runtime_support: future_adapter
+    account_url: https://cds.climate.copernicus.eu/how-to-api
+    docs_url: https://cds.climate.copernicus.eu/how-to-api
+    free_benefit: Provides the personal access token used by CDSAPI for programmatic data access.
+    credentials:
+      - secret_name: COPERNICUS_CDS_PERSONAL_ACCESS_TOKEN
+        required_for: api_access
+        transport: cdsapi_configuration
+    registration_notes: The user must manually accept the Terms of Use on every selected dataset page before downloading that dataset. No numeric quota is stated on the API setup page.
+
+  - source_id: world_bank_wdi
+    research_id: AR-013
+    inventory_id: GL-005
+    provider: World Bank
+    product: World Development Indicators through Indicators API v2
+    account_class: no_account_needed
+    runtime_support: connected_without_credentials
+    account_url: null
+    docs_url: https://datahelpdesk.worldbank.org/knowledgebase/articles/889392-about-the-indicators-api-documentation
+    free_benefit: The official documentation says API keys and other authentication are no longer necessary.
+    credentials: []
+
+  - source_id: eurostat
+    research_id: AR-014
+    inventory_id: GL-001
+    provider: Eurostat
+    product: Eurostat dissemination APIs
+    account_class: no_account_needed
+    runtime_support: connected_without_credentials
+    account_url: null
+    docs_url: https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-introduction
+    free_benefit: Public dissemination endpoints are used without a repository credential; no free account tier is advertised in the API introduction.
+    credentials: []
+
+  - source_id: nbp
+    research_id: AR-015
+    provider: Narodowy Bank Polski
+    product: NBP Web API
+    account_class: no_account_needed
+    runtime_support: connected_without_credentials
+    account_url: null
+    docs_url: https://api.nbp.pl/en.html
+    free_benefit: The official public HTTP GET API is used without an account or API key.
+    credentials: []

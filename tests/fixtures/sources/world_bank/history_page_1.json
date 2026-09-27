@@ -1,0 +1,33 @@
+[
+  {
+    "page": 1,
+    "pages": 2,
+    "per_page": 2,
+    "total": 3,
+    "lastupdated": "2026-07-17"
+  },
+  [
+    {
+      "indicator": {"id": "SP.POP.TOTL", "value": "Population, total"},
+      "country": {"id": "PL", "value": "Poland"},
+      "countryiso3code": "POL",
+      "date": "2024",
+      "value": 36620670,
+      "unit": "people",
+      "obs_status": "",
+      "decimal": 0,
+      "footnote": ""
+    },
+    {
+      "indicator": {"id": "SP.POP.TOTL", "value": "Population, total"},
+      "country": {"id": "1W", "value": "World"},
+      "countryiso3code": "WLD",
+      "date": "2024",
+      "value": null,
+      "unit": "people",
+      "obs_status": "F",
+      "decimal": 0,
+      "footnote": "Forecast status retained from the API fixture."
+    }
+  ]
+]

@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: stg_biala_lista_taxpayers
+    description: "Staging view of active and exempt VAT taxpayer and bank account SHA-512 hashes from Ministerstwo Finansów Biała Lista."
+    columns:
+      - name: hash
+        description: "128-character SHA-512 cryptographic hash representing a taxpayer NIP or NIP + bank account combination."
+        tests:
+          - not_null
+      - name: status
+        description: "Taxpayer status: 'active' (czynny) or 'exempt' (zwolniony)."
+        tests:
+          - not_null
+      - name: snapshot_date
+        description: "Effective snapshot date of the flat file."
+        tests:
+          - not_null
+
+  - name: stg_biala_lista_masks
+    description: "Staging view of virtual bank account masks for subaccount validation."
+    columns:
+      - name: account_mask
+        description: "Virtual account mask string (e.g. XX10100055YYYXXXXXXXXXXXXX)."
+        tests:
+          - not_null
+      - name: bank_prefix
+        description: "8-digit bank clearing identifier extracted from mask positions 3-10."
+      - name: snapshot_date
+        description: "Effective snapshot date."
+
+  - name: dim_vat_taxpayer_account
+    description: "Gold dimension model of verified Polish VAT taxpayer and bank account status."
+    columns:
+      - name: hash
+        description: "Cryptographic hash of the VAT taxpayer or account."
+        tests:
+          - not_null
+      - name: taxpayer_status
+        description: "Official VAT status: active or exempt."
+        tests:
+          - not_null

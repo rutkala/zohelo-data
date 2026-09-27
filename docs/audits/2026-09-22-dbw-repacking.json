@@ -1,0 +1,34 @@
+{
+  "audit_report_sha256": "29c20b0daadb165784c5892bb39c42af43e934fd990dbee5418019e7bb5427ac",
+  "code_sha": "667afa87b4d3d2c3db0201d4ec7dd17b47efa0f4",
+  "drive_reads": false,
+  "drive_writes": false,
+  "elapsed_seconds": 35.461,
+  "format_version": 1,
+  "fragment_bytes": [
+    4532425,
+    4537176,
+    351238
+  ],
+  "fragment_count": 3,
+  "fragment_row_counts": [
+    1210621,
+    1191563,
+    110774
+  ],
+  "indicator_id": 573,
+  "input_unchanged": true,
+  "inventory_sha256": "15f587a7d0631befac394e6cc1d0183fb0f564801f144b7d6ca340e8d092a12e",
+  "limitations": [
+    "One bounded retained observation partition, not all-source repacking or live portal SQL.",
+    "Local verified cache; no fresh Drive object read."
+  ],
+  "observed_at_utc": "2026-09-22T12:54:39.784167+00:00",
+  "rows": 2512958,
+  "scope": "one_real_retained_partition_repacking",
+  "source_bytes": 8545221,
+  "source_id": "gus_dbw",
+  "source_sha256": "974162f94f8e72b54c77e75fcb1455c1fdab0b5fc562575798c107c036633df7",
+  "status": "verified",
+  "typed_ordered_stream_equality": true
+}

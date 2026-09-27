@@ -1,0 +1,34 @@
+[
+  {
+    "page": 1,
+    "pages": 1,
+    "per_page": "500",
+    "total": 2
+  },
+  [
+    {
+      "id": "POL",
+      "iso2Code": "PL",
+      "name": "Poland",
+      "region": {"id": "ECS", "iso2code": "Z7", "value": "Europe & Central Asia"},
+      "adminregion": {"id": "", "iso2code": "", "value": ""},
+      "incomeLevel": {"id": "HIC", "iso2code": "XD", "value": "High income"},
+      "lendingType": {"id": "", "iso2code": "", "value": ""},
+      "capitalCity": "Warsaw",
+      "longitude": "21.02",
+      "latitude": "52.26"
+    },
+    {
+      "id": "WLD",
+      "iso2Code": "1W",
+      "name": "World",
+      "region": {"id": "NA", "iso2code": "NA", "value": "Aggregates"},
+      "adminregion": {"id": "", "iso2code": "", "value": ""},
+      "incomeLevel": {"id": "NA", "iso2code": "NA", "value": "Aggregates"},
+      "lendingType": {"id": "", "iso2code": "", "value": ""},
+      "capitalCity": "",
+      "longitude": "",
+      "latitude": ""
+    }
+  ]
+]

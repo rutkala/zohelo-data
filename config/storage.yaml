@@ -1,0 +1,14 @@
+# config/storage.yaml
+storage:
+  # Google Drive is the supported durable backend. Another backend requires
+  # a transport implementation and recovery tests, not just a setting change.
+  protocol: "gdrive" 
+  base_path: "gdrive://zohelo-data"
+  
+  zones:
+    landing: "01_landing"
+    archive: "05_archive"
+    bronze: "02_bronze"
+    silver: "03_silver"
+    gold: "04_gold"
+    control: "06_control"

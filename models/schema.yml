@@ -1,0 +1,250 @@
+version: 2
+
+models:
+  - name: stg_nbp_table_a
+    description: "03_silver staging model for NBP exchange rates table A with flattened and deduplicated average rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
+      - name: mid
+        description: "Average exchange rate for the currency."
+        tests:
+          - not_null
+
+  - name: stg_nbp_table_b
+    description: "03_silver staging model for NBP exchange rates table B with flattened and deduplicated average rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
+      - name: mid
+        description: "Average exchange rate for the currency."
+        tests:
+          - not_null
+
+  - name: stg_nbp_table_c
+    description: "03_silver staging model for NBP exchange rates table C with flattened and deduplicated bid/ask rates."
+    columns:
+      - name: effectiveDate
+        description: "Publication date of the exchange rates table."
+        tests:
+          - not_null
+      - name: currency
+        description: "Currency name from the NBP rates array."
+      - name: code
+        description: "Currency code from the NBP rates array."
+        tests:
+          - not_null
+      - name: bid
+        description: "Buy rate for the currency."
+        tests:
+          - not_null
+      - name: ask
+        description: "Sell rate for the currency."
+        tests:
+          - not_null
+
+  - name: stg_nbp_gold_prices
+    description: "03_silver staging model for NBP gold prices, with one row per publication date. The price is the NBP-calculated PLN price for one gram of gold at 1000 millesimal fineness. Identical replay rows are collapsed; conflicting same-date values fail validation when legacy provenance cannot establish a reliable revision."
+    columns:
+      - name: effectiveDate
+        description: "NBP gold-price publication date, sourced from the API data field."
+        tests:
+          - not_null
+      - name: price_pln_per_gram
+        description: "NBP-calculated price in PLN per gram for gold of 1000 millesimal fineness, sourced from the API cena field; represented as DECIMAL(18,2)."
+        tests:
+          - not_null
+
+  - name: mart_exchange_rates_daily
+    description: "04_gold baseline mart model built from silver staging exchange rates table A."
+
+
+  - name: br_nbp_table_a
+    description: "Bronze Table A observations flattened from every retained verified raw response, retaining request and raw-file provenance."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_table_b
+    description: "Bronze Table B observations flattened from every retained verified raw response, retaining request and raw-file provenance."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_table_c
+    description: "Bronze Table C observations flattened from every retained verified raw response. no and trading_date remain nullable where source history omits them."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+  - name: br_nbp_gold_prices
+    description: "Bronze NBP gold-price observations flattened from every retained verified raw response."
+    columns:
+      - name: source_id
+        tests: [not_null]
+      - name: ingestion_sequence
+        tests: [not_null]
+      - name: effective_date
+        tests: [not_null]
+
+  - name: nbp_change_events
+    description: "Detected transitions between retained, validated NBP HTTP-200 response observations. Value and metadata rows report typed-record differences. Missing/reappeared rows are investigation candidates only and are emitted only when the same source publication date remains present in consecutive responses. They never assert an NBP withdrawal, correction time, or reason; 404s and entirely absent publications cannot create them."
+    columns:
+      - name: event_type
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['source_value_changed', 'source_metadata_changed', 'source_record_missing', 'source_record_reappeared']
+      - name: evidence_status
+        description: "Observed typed-record change, or candidate_for_investigation for a presence transition."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['observed_typed_record_change', 'candidate_for_investigation']
+      - name: provider_event_asserted
+        description: "Always false: the API provides no correction or withdrawal event field."
+        tests: [not_null]
+      - name: record_contract_version
+        description: "Version of the canonical typed-record representation used for comparison and record hashes."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['nbp_typed_record_v1']
+      - name: detection_method
+        description: "Versioned platform comparison method; this is transformation evidence, not provider event metadata."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['typed_record_comparison_v1']
+      - name: changed_fields
+        description: "JSON array of typed record fields that differ across the transition."
+        tests: [not_null]
+      - name: previous_record_sha256
+        description: "SHA-256 of the prior canonical typed record; null when the prior state is absence."
+      - name: current_record_sha256
+        description: "SHA-256 of the current canonical typed record; null for a missing-record candidate."
+
+  - name: dim_date
+    time_spine:
+      standard_granularity_column: date_key
+    description: "Conformed effective/publication dates observed in NBP current records; this date dimension does not imply an observation on every calendar date."
+    columns:
+      - name: date_key
+        granularity: day
+        tests: [not_null, unique]
+      - name: calendar_year
+        tests: [not_null]
+      - name: calendar_month
+        tests: [not_null]
+      - name: calendar_day
+        tests: [not_null]
+      - name: iso_weekday
+        tests: [not_null]
+  - name: dim_currency
+    description: "Observed NBP currency codes and source labels, plus PLN as the documented quote currency. No historic validity intervals are inferred."
+    columns:
+      - name: currency_key
+        tests: [not_null, unique]
+  - name: dim_source_table
+    description: "Conformed NBP Table A, B and C identities for FX facts."
+    columns:
+      - name: source_table_key
+        tests: [not_null, unique]
+  - name: dim_commodity
+    description: "Technical source-specific commodity identity for NBP's 1000-fineness, one-gram gold quotation."
+    columns:
+      - name: commodity_key
+        tests: [not_null, unique]
+
+  - name: fact_fx_quotes
+    description: "FX quotation fact. Grain: NBP source table, effective date and currency. API numbers and published source units are unchanged."
+    columns:
+      - name: source_table_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_source_table')
+                field: source_table_key
+      - name: effective_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: trading_date
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: currency_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+      - name: quote_currency_key
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [source_table_key, effective_date, currency_key]
+  - name: fact_gold_prices
+    description: "Gold price fact. Grain: NBP effective date and nbp_gold_1000_gram. Prices are PLN per one gram at 1000 fineness."
+    columns:
+      - name: effective_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: commodity_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_commodity')
+                field: commodity_key
+      - name: quote_currency_key
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_currency')
+                field: currency_key
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [effective_date, commodity_key]

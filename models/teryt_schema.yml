@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  - name: stg_teryt_territories
+    description: "Staging table for GUS TERYT TERC official territorial division hierarchy."
+    columns:
+      - name: teryt_code
+        description: "Official composite territorial unit code."
+        tests:
+          - not_null
+      - name: level
+        description: "Administrative level: 'wojewodztwo', 'powiat', or 'gmina'."
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['wojewodztwo', 'powiat', 'gmina']
+      - name: unit_name
+        description: "Official name of the administrative unit."
+        tests:
+          - not_null
+
+  - name: stg_teryt_localities
+    description: "Staging table for GUS TERYT SIMC official localities register."
+    columns:
+      - name: locality_id
+        description: "Official 7-digit locality identifier (SYM)."
+        tests:
+          - not_null
+      - name: locality_name
+        description: "Official name of the locality."
+        tests:
+          - not_null
+
+  - name: stg_teryt_streets
+    description: "Staging table for GUS TERYT ULIC official streets register."
+    columns:
+      - name: street_id
+        description: "Official 5-digit street identifier (SYM_UL)."
+        tests:
+          - not_null
+      - name: locality_id
+        description: "Official 7-digit locality identifier (SYM)."
+        tests:
+          - not_null
+      - name: full_street_name
+        description: "Full normalized street name including prefix."
+        tests:
+          - not_null
+
+  - name: dim_territory
+    description: "Enterprise dimension for Polish administrative units with resolved voivodeship and county lineage."
+    columns:
+      - name: teryt_code
+        description: "Unique composite territorial code."
+        tests:
+          - not_null
+          - unique
+      - name: level
+        description: "Administrative level."
+        tests:
+          - not_null
+      - name: unit_name
+        description: "Administrative unit name."
+        tests:
+          - not_null
+
+  - name: dim_locality
+    description: "Enterprise dimension for Polish localities (towns, villages, hamlets)."
+    columns:
+      - name: locality_id
+        description: "Unique 7-digit locality identifier."
+        tests:
+          - not_null
+          - unique
+      - name: locality_name
+        description: "Locality name."
+        tests:
+          - not_null
+
+  - name: dim_street
+    description: "Enterprise dimension for Polish streets with locality and municipality lineage."
+    columns:
+      - name: street_id
+        description: "Street identifier."
+        tests:
+          - not_null
+      - name: locality_id
+        description: "Locality identifier."
+        tests:
+          - not_null
+      - name: full_street_name
+        description: "Full street name."
+        tests:
+          - not_null

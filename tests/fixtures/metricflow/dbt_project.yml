@@ -1,0 +1,7 @@
+name: metricflow_runtime_fixture
+version: '1.0'
+config-version: 2
+profile: metricflow_runtime_fixture
+model-paths: ['models']
+target-path: target
+clean-targets: ['target', 'dbt_packages']

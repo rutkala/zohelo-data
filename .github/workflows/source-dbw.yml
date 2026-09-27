@@ -1,0 +1,81 @@
+name: GUS DBW data pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      pause_history:
+        description: 'Collect recent data and metadata while leaving historical tasks checkpointed'
+        type: boolean
+        default: false
+      retry_validation:
+        description: 'Retry HTTP-200 parser rejections from older code; preserve provider backoff and quotas'
+        type: boolean
+        default: false
+      cycles:
+        description: 'Consecutive collect-and-publish batches, within the 15-minute session budget'
+        type: choice
+        default: '3'
+        options: ['1', '3', '6']
+      publish_only:
+        description: 'Publish already-collected accepted responses without calling source APIs'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zohelo-pipeline-gus_dbw
+  cancel-in-progress: false
+
+jobs:
+  collect_and_publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Collect DBW Landing batch
+        id: dbw_batch
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          GUS_DBW_API_KEY: ${{ secrets.GUS_DBW_API_KEY }}
+          CAMPAIGN_CYCLES: ${{ inputs.cycles || '3' }}
+          CAMPAIGN_PUBLISH_ONLY: ${{ inputs.publish_only || 'false' }}
+          CAMPAIGN_PAUSE_HISTORY: ${{ inputs.pause_history || 'false' }}
+          CAMPAIGN_RETRY_VALIDATION: ${{ inputs.retry_validation || 'false' }}
+        run: |
+          args=(--source gus_dbw --backend drive --allow-production-write --summary campaign-summary.json --cycles "$CAMPAIGN_CYCLES" --session-seconds 900)
+          if [[ "$CAMPAIGN_PUBLISH_ONLY" == "true" ]]; then
+            args+=(--publish-only)
+          fi
+          if [[ "$CAMPAIGN_PAUSE_HISTORY" == "true" ]]; then
+            args+=(--pause-history)
+          fi
+          if [[ "$CAMPAIGN_RETRY_VALIDATION" == "true" ]]; then
+            args+=(--retry-validation-failures)
+          fi
+          python src/source_campaign.py "${args[@]}"
+      - name: Verify landed state and upload summary
+        if: always()
+        run: |
+          if [[ -f campaign-summary.json ]]; then
+            cat campaign-summary.json
+          fi
+      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4
+        if: always()
+        with:
+          name: dbw-campaign-summary
+          path: campaign-summary.json
+          if-no-files-found: ignore

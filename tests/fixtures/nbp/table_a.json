@@ -1,0 +1,9 @@
+[
+  {"table":"A","no":"001/A/NBP/2002","effectiveDate":"2002-01-02","rates":[
+    {"currency":"synthetic US dollar","code":"USD","mid":4.0},
+    {"currency":"synthetic euro","code":"EUR","mid":5.0}
+  ]},
+  {"table":"A","no":"002/A/NBP/2002","effectiveDate":"2002-01-03","rates":[
+    {"currency":"synthetic US dollar","code":"USD","mid":4.2}
+  ]}
+]

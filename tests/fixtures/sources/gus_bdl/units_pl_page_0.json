@@ -1,0 +1,23 @@
+{
+  "totalRecords": 21,
+  "page": 0,
+  "pageSize": 20,
+  "results": [
+    {
+      "id": "030210106062",
+      "name": "Wrocław",
+      "parentId": "030210100000",
+      "level": 6,
+      "kind": "4",
+      "hasDescription": true
+    },
+    {
+      "id": "030210100000",
+      "name": "Powiat wrocławski",
+      "parentId": "030200000000",
+      "level": 5,
+      "kind": "1",
+      "hasDescription": false
+    }
+  ]
+}

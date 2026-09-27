@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="How the personal Zohelo-data platform accesses Google Drive, stores local workspace data, and handles optional sharing and remote services."
+    />
+    <title>Privacy policy — Zohelo-data</title>
+    <link rel="stylesheet" href="platform-info.css" />
+  </head>
+  <body>
+    <header>
+      <nav aria-label="Zohelo-data information">
+        <a href="about.html">About Zohelo-data</a>
+        <a href="privacy.html" aria-current="page">Privacy</a>
+        <a href="terms.html">Terms</a>
+        <a href="./">Open workspace</a>
+      </nav>
+    </header>
+    <main>
+      <p class="eyebrow">Zohelo-data</p>
+      <h1>Privacy policy</h1>
+      <p class="meta">Effective 6 September 2026 · Current personal pilot</p>
+      <p class="lead">
+        This policy describes the current Zohelo-data portal and its owner's data-processing jobs.
+        The project is maintained by <a href="https://github.com/rutkala">rutkala</a>. Google
+        consent may show the application name <strong>zohelo-data-ingestor</strong>.
+      </p>
+      <p class="note">
+        Drive access is optional for using local files and public examples. Local browser analysis,
+        background data jobs and optional remote services have different access and storage
+        behavior.
+      </p>
+
+      <h2>Google data accessed and its purpose</h2>
+      <p>
+        The portal requests Google's read-only Drive permission. It uses file and folder metadata,
+        such as names, identifiers, types and sizes, to display the platform catalogue. It downloads
+        selected dataset files so you can query and view them. The permission can read accessible
+        Drive files beyond the platform folder; the catalogue is configured to look for the
+        <code>zohelo-data</code> folder tree.
+      </p>
+      <p>
+        The portal sends its access token to Google's Drive API and keeps it in browser session
+        storage and memory. Google sign-in supplies a lifetime when available; manually entered
+        tokens may have no recorded expiry. The portal does not need a client secret or refresh
+        token in the browser.
+      </p>
+      <p>
+        Separate ingestion and transformation jobs use the owner's Drive authorization, including
+        write permission, to create folders, upload files, archive raw inputs and replace published
+        datasets. Their authorization is stored in the relevant execution environment's secrets.
+        Browser sign-in does not grant or repair that separate authorization.
+      </p>
+
+      <h2>Where information is stored</h2>
+      <ul>
+        <li>
+          <strong>Google Drive:</strong> raw source responses and published datasets are durable
+          platform data. They remain until the owner or a configured data-processing operation
+          changes or removes them.
+        </li>
+        <li>
+          <strong>Your browser:</strong> profiles, saved SQL, query history, settings, connections,
+          dashboards and AI conversations may persist in browser databases. Some database
+          connections also keep local database files. Selected Drive data and local query results
+          are loaded into the analytical session; exports and saved database files can retain
+          copies.
+        </li>
+        <li>
+          <strong>Job environments:</strong> background processing downloads working copies to its
+          runner or development environment. Execution logs can contain source request details,
+          filenames, processing status and errors. Retention follows the relevant environment's
+          settings; this policy does not promise a fixed deletion period.
+        </li>
+      </ul>
+      <p>
+        The static portal is hosted on GitHub Pages. Google, GitHub and providers contacted by a
+        feature receive the network requests needed to provide their services and handle those
+        requests under their own policies. These public information pages use local styling and
+        contain no scripts, tracking pixels or remote fonts.
+      </p>
+
+      <h2>Optional features that send information elsewhere</h2>
+      <ul>
+        <li>
+          <strong>Remote AI:</strong> if you configure and use an external AI provider, prompts can
+          include SQL, schema descriptions, conversation history and samples of previous query
+          results. Those samples can contain data loaded from Drive. The provider receives that
+          information under its own terms. The browser-based local AI option performs model
+          inference on your device but may download model files.
+        </li>
+        <li>
+          <strong>External database connections:</strong> queries are sent to the selected database
+          service. Configured API-key or Basic Auth credentials are sent when that authentication
+          mode is selected. Data transfers depend on the query and connection.
+        </li>
+        <li>
+          <strong>Sharing and collaboration:</strong> analysis links can encode SQL, notebook or
+          chart content. People receiving such links can read their contents. Live sessions exchange
+          workspace information and shared data/results with connected peers. Connection setup uses
+          network services such as STUN and, if configured, TURN; connection details can reveal
+          network addresses.
+        </li>
+        <li>
+          <strong>Downloads:</strong> exported results and files are saved to the location you
+          choose and are governed by any sharing or backup settings for that location.
+        </li>
+      </ul>
+      <p>
+        Use these features only with information you intend and are authorized to send to the
+        selected recipient or service. Connecting Drive does not itself publish your Drive files or
+        change their sharing permissions.
+      </p>
+
+      <h2>Stopping access and removing copies</h2>
+      <p>
+        <strong>Disconnect Google Drive</strong> clears the portal's stored token and catalogue
+        connection state. It does not revoke Google's authorization, erase previously loaded results
+        or remove saved workspace data.
+      </p>
+      <p>
+        To revoke authorization, use
+        <a href="https://myaccount.google.com/connections"
+          >your Google Account's third-party connections</a
+        >. Removing access can also stop background jobs that rely on that grant. Revoke access
+        separately from deleting data already downloaded.
+      </p>
+      <p>
+        To remove local copies, close analytical sessions and clear this site's browser data,
+        including its databases and local file storage, using your browser's controls. Save any work
+        you want to keep first. Deleting a profile alone is not a guaranteed cleanup of every
+        browser store. Files exported to your device, Drive datasets and copies received by other
+        services or people need separate removal.
+      </p>
+
+      <h2>Contact and updates</h2>
+      <p>
+        Contact the maintainer through the <a href="https://github.com/rutkala">GitHub profile</a>.
+        General product questions can be raised in the
+        <a href="https://github.com/rutkala/zohelo-data/issues">project repository</a>. Public
+        issues are visible to others; keep private data and credentials out of them.
+      </p>
+      <p>
+        This notice will be updated when the platform's data handling changes. The current scope is
+        described on the <a href="about.html">application information page</a>.
+      </p>
+    </main>
+    <footer>
+      Zohelo-data · <a href="about.html">About</a> · <a href="terms.html">Terms of use</a>
+    </footer>
+  </body>
+</html>

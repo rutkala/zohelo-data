@@ -1,0 +1,12 @@
+zohelo_data:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('ZOHELO_DUCKDB_PATH', '/tmp/zohelo_docs.duckdb') }}"
+      # Serialize dbt model DDL and close the shared adapter environment
+      # explicitly so schema DDL is checkpointed before a fresh consumer opens it.
+      threads: 1
+      keep_open: false
+      settings:
+        preserve_insertion_order: false

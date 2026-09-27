@@ -1,0 +1,175 @@
+# Zohelo-data architecture
+
+> **Implementation versus target, 22 September 2026:** the current source-specific release paths coexist with unfinished native-only stage separation required by ADR 0009. Earlier intake/parsing descriptions explain remaining implementation, not an exception to that decision. WDI and the limited Eurostat modeled contract already exist; older future-tense sections must not trigger duplicate pipelines. See [the reconciled delivery record](deliverables.md).
+
+Current technical design for `zohelo-data` and `data.zohelo.com`. The umbrella `zohelo.com` site and other subprojects are outside this scope. Delivery/verification status lives in [the delivery record](deliverables.md). The [original proposal](history/2026-09-06-architecture-proposal.md) is historical evidence.
+
+## Constraints and responsibilities
+
+The initial user is the owner. Git stores definitions and tests; the existing Google Drive allocation stores durable data and release metadata. Computation runs on demand within measured limits. A human must be able to operate the system with standard tools and no AI.
+
+| Concern | Tool / authority | Human-editable definition |
+| --- | --- | --- |
+| Provider identity, methodology, frequency, reuse evidence | YAML metadata | `config/sources.yaml` |
+| Dated extraction, retry and recovery policy | Validated YAML plus source-specific Python adapter | `config/nbp-platform.yaml`, `src/ingestion/` |
+| Transformations, keys, tests, dimensional models | dbt Core SQL/YAML on native DuckDB | `models/`, `macros/`, `dbt_tests/` |
+| Daily source metrics | MetricFlow YAML and a query interface enforcing non-additive grain | `models/semantic/`, `scripts/query_metrics.py` |
+| Durable files | Existing Drive, immutable raw/Parquet/artifacts | `config/storage.yaml`, `src/storage_manager.py` |
+| Publication and recovery | Staged validation, immutable releases, explicit promotion | `src/release_protocol.py`, `src/release_validation.py` |
+| Batch orchestration | GitHub Actions YAML, serialized production operations | [Workflow inventory](audits/2026-09-07-workflows.md) |
+| SQL and discovery | React, DuckDB-WASM, one native dbt Docs viewer | `portal/`; [user guide](using-the-portal.md) |
+| Native/offline consumption | Verified local DuckDB and matching semantic manifest | `scripts/restore_release.py`, `scripts/query_metrics.py` |
+| Project status and decisions | One versioned GitHub record | [Delivery record](deliverables.md), [working agreement](collaboration.md) |
+
+Python handles extraction, transport and release control. It does not introduce a second business transformation engine alongside dbt. Generic HTTP configuration alone cannot replace the NBP adapter's exact-response retention and revision guarantees.
+
+## Data flow and storage
+
+```mermaid
+flowchart TD
+  A["NBP API"] --> B["Landing: exact responses"]
+  B --> C["dbt: Bronze → Silver → Gold"]
+  C --> D["Candidate Parquet and artifacts"]
+  D --> E["SQL, provenance and metric validation"]
+  E --> F["Current release pointer"]
+  F --> G["Portal SQL and catalogue"]
+  F --> H["Local DuckDB and MetricFlow"]
+  B --> I["Retained raw and state history"]
+```
+
+| Area | Meaning | Retention/query role |
+| --- | --- | --- |
+| `01_landing` | Exact received response bytes | Verified descriptors identify accepted build inputs. Rejected bytes remain evidence and are excluded from builds. |
+| `02_bronze` | Source-shaped records with request, sequence and raw-file provenance | Preserve source observations and repeated representations. |
+| `03_silver` | Typed current records and detected-change evidence | Preserve prior values when absence needs investigation. |
+| `04_gold` | Explicit-grain facts and conformed dimensions | FX: source table × publication date × currency. Gold: publication date × commodity. |
+| `05_archive` and retained releases | Lifecycle, audit and recovery | Legacy moved files remain archived. V2 raw history stays immutable in Landing. No automatic destructive cleanup. |
+
+Medallion describes progressively refined data quality; it does not require Spark or a particular storage product. Landing and Archive are additional lifecycle boundaries. [Medallion reference](https://learn.microsoft.com/en-us/azure/databricks/lakehouse/medallion).
+
+Published physical files belong to immutable release folders under `releases/<source>/<uuid>/`, where the current modeled sources are `nbp`, `bdl`, `wdi`, and `eurostat`. Each source contains its own `current-release.json` pointer directly in its source release folder. Ingestion state is unified under `06_control/` (`06_control/nbp` and `06_control/source_campaigns`). Medallion navigation is maintained via Drive shortcuts and `navigation-index.json` under `02_bronze`, `03_silver`, and `04_gold` (`current/<source_id>/`). See [the Google Drive structure guide](drive-structure.md) for the complete physical layout, release pointers, and operational runbook.
+
+## Publication and recovery
+
+The publisher saves validated ingestion progress after each request. It builds all tables from pinned inputs, runs dbt tests and native MetricFlow acceptance queries, uploads a candidate, then verifies the uploaded Parquet and its provenance before changing `current-release.json`. Consumers pin the release once. Post-publication fresh reads and cold replay are additional evidence; their failure is not an automatic rollback.
+
+Drive provides no database transaction or compare-and-swap for this protocol. Production operations use the unified Actions concurrency group `zohelo-production-data` with `cancel-in-progress: false` and `queue: max`, along with rigorous pointer and state drift detection. Do not run another production writer outside that route. An ambiguous update response stops rather than claiming success. Retained-release promotion checks the expected current release and validates the target before switching.
+
+`checked_through`, `latest_observation_date` and release identity describe different facts. Rebuild means recovery from retained input, not historical time travel; a regressive cutoff is rejected. `full` is a compatibility name for resumable catch-up, not a forced redownload of every historical interval.
+
+Value changes are observed source changes, not claims of an official correction date/reason. Missing currency records in a returned publication are investigation candidates and do not delete current values. A 404 never authorizes deletion. Entire missing publications and versions predating retained responses cannot be reconstructed reliably. See [revision policy](decisions/0001-nbp-corrections.md) and [source definitions](nbp-business-definitions.md).
+
+## Tool choices and change conditions
+
+| Option | Decision | Reconsider when |
+| --- | --- | --- |
+| dbt + DuckDB | Keep: portable SQL/YAML definitions and tested NBP workload; local databases remain disposable. | Measured runtime, memory or concurrency exceeds the single-machine design. |
+| dlt REST ingestion | Candidate for a future source; no speculative migration/dependency. Declarative endpoint, pagination and authentication configuration is useful, but must preserve raw/replay guarantees. | A selected source demonstrates lower total maintenance. [dlt REST source](https://dlthub.com/docs/dlt-ecosystem/verified-sources/rest_api/basic). |
+| Dagster / Prefect / Airflow | Hold migration: current daily dependencies already live in Actions YAML. A new orchestrator adds operated services/state. | Independently scheduled sources, asset-level backfills or dependency-aware operations justify it. [Dagster deployment components](https://docs.dagster.io/deployment/oss/oss-deployment-architecture). |
+| PySpark | Do not adopt for the current tens-of-MB input. | A benchmark establishes a distributed workload requirement. [Spark execution model](https://spark.apache.org/docs/latest/cluster-overview.html). |
+| Jupyter | Optional analysis client, not transformation/scheduling authority. | Exploration benefits from notebooks; durable logic is promoted into tested code. |
+| Object storage / transactional table format | Keep immutable Parquet on existing Drive. No active DuckDB file is maintained on Drive. | Multi-writer transactions, larger-scale pruning, automated retention or availability requirements justify migration. |
+| Hosted semantic API | Hold: on-demand native MetricFlow and CSV are the present supported interface. | A specific BI/multi-user/always-on requirement supplies a hosting and authorization design. |
+
+DuckDB can spill many operations to disk, but its memory setting does not bound every allocation. Browser download limits are not query-memory guarantees. [Workload guidance](https://duckdb.org/docs/lts/guides/performance/how_to_tune_workloads.html), [memory limitations](https://duckdb.org/docs/current/guides/performance/oom.html).
+
+## Commercial use and cost boundaries
+
+The pinned dbt Core and MetricFlow engine use Apache-2.0; MetricFlow's older versions had different terms. dlt also uses Apache-2.0 if adopted. Preserve Duck-UI's licence/attribution. The root project's own distribution licence remains an owner decision. [dbt licence](https://github.com/dbt-labs/dbt-core/blob/main/LICENSE), [MetricFlow licence history](https://github.com/dbt-labs/metricflow), [dlt licence](https://github.com/dlt-hub/dlt).
+
+Software permission, data reuse permission and service allowances are separate. Public NBP access does not establish unrestricted commercial redistribution; the source metadata records the unresolved scope. Standard hosted Actions runners are documented as free for public repositories, subject to terms. Codespaces, private-repository allowances, larger runners and Drive capacity remain account-specific. [Actions billing](https://docs.github.com/en/actions/concepts/billing-and-usage), [Drive quotas](https://developers.google.com/workspace/drive/api/guides/limits).
+
+GitHub Pages restricts operation of online businesses, commercial transactions and commercial SaaS. The present owner-focused project portal is not approval to launch a commercial hosted data product there. Revisit hosting before that change of use. [Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+
+## Operating envelope
+
+This is a bounded owner platform, not an unlimited archive or availability promise. Raw/state/release history is retained; compaction and destructive cleanup remain separate work. Capacity reports must expose batch/byte headroom before more sources are admitted. Increasing state snapshots, browser downloads and native peak memory are measured constraints, not solved by nominal Drive capacity.
+
+Use [the operating guide](nbp-platform-operations.md) to validate, publish, restore, query and recover without AI. The delivery record links actual CI/deployment/production evidence; this document is not proof of a live deployment.
+
+## Source expansion intake boundary
+
+[ADR 0004](decisions/0004-autonomous-source-onboarding.md) authorizes autonomous onboarding.
+A separate campaign runner implements WDI, BDL and Eurostat Landing intake with
+per-source state/serialization, fair recent/history queues and durable provider quotas. A shared
+preparation job initializes Drive paths before parallel source workers. Exact bytes and accepted
+or rejected receipts survive restart; uncertain state promotion stops the source. This changes
+no NBP release or consumer pointer. See [campaign operations](source-campaign-operations.md).
+
+The [domain taxonomy](../config/domain-taxonomy.yaml) separates stable categories, analytical
+dimensions and classification systems from the [candidate coverage ledger](../config/source-domain-coverage.json).
+Under [ADR 0005](decisions/0005-agile-landing-and-source-access.md), each source also publishes
+immutable Parquet response envelopes through its own verified Landing pointer. The portal pins
+these snapshots alongside the NBP release and queries raw payloads before full medallion modeling.
+These are transport rows, not source observation facts. New-source dbt models, modeled source
+releases, compatible cross-source modeled-release pinning and semantic/catalogue integration remain
+subsequent source-specific increments. Encrypted Actions secrets provide source credentials;
+BDL enables its registered quota profile without putting a key in requests/receipts or the browser.
+
+[ADR 0006](decisions/0006-complete-selected-source-coverage.md) replaces starter coverage
+ceilings with complete official distributions and exhaustive API paging. Campaign state v2
+uses immutable, adaptively split task/map shards and linked receipt segments; the existing
+pointer changes only after candidate verification. A verified in-process materialization
+can be reused after checking the current pointer, while fresh workers verify every shard.
+The runner still materializes a dictionary in native memory; this is an operating constraint
+to measure, not a promise of unlimited scale.
+
+WDI and Eurostat bulk collection shares the provider's quota ledger and serialized job with
+its recent API requests. Exact archives are streamed to disposable disk, uploaded as immutable
+Drive objects, and verified by streamed remote hashes. Their portal distribution indexes
+contain metadata and raw-file references, so archive size does not force browser downloads.
+The indexes do not replace source-specific Bronze/Silver models or establish semantic coverage.
+The repository's delivery record distinguishes implementation, successful collection and
+validated catalogue completeness. Retention and reference-safe compaction remain separate work.
+
+The WDI modeled path consumes only the freshly verified current official CSV archive. It fails
+closed unless the archive has exactly the six accepted members and campaign coverage is
+`complete_current_catalogue`. The source members are retained as six Bronze relations; populated
+annual cells in `WDICSV.csv` become Silver and Gold observations at geography (economy or
+source-published aggregate) × indicator × year grain. Geography, indicator and year dimensions,
+the observation fact and a release-coverage mart are published as an independent immutable
+release under `releases/wdi/`. Large observation relations are partitioned into bounded Parquet
+files; this changes transport size, not source scope. Staged validation restores every part,
+binds the release to the raw archive hash/size and dbt artifacts, and requires modeled observation
+coverage of every populated annual source cell. Nine native MetricFlow metrics expose archive/member
+and modeled-coverage counts at snapshot grain; WDI indicator values are not assumed additive.
+`enable_wdi` is set only by the source-specific build so existing NBP and BDL release manifests
+remain isolated from WDI models and metrics. Readers continue to preserve legacy compatibility
+for historical paths where applicable.
+The portal resolves `releases/wdi/current-release.json` directly alongside NBP and BDL, validates
+all fourteen dataset contracts and their bounded file descriptors, and merges the WDI dbt catalogue
+and lineage into the existing Lakehouse experience. Browser queries retain the shared 512 MiB
+session budget; partitioning avoids a single oversized transfer but does not make the browser an
+unlimited archive reader.
+
+The dated retained DBW audit has a separate progressive Bronze publication contract under
+`06_control/source_campaigns/gus_dbw_retained_bronze`. Its strict manifest contains four datasets
+and a bounded taxonomy-derived indicator index. Observation queries select one indicator, or one
+explicit part for selections above 64 MiB. Snapshot identity is the audited retained inventory and
+audit report; native-to-Bronze lineage remains unresolved. This snapshot is independent of NBP
+release identity and the native dbt business catalogue.
+
+A modeled DBW build may consume the native 64-character release only after an
+Actions runner reconstructs the exact reviewed audit package. Before dbt, the builder
+authenticates the pinned audit/inventory hashes and verifies every local native path,
+size and SHA-256 against all 3,103 audited descriptors. Its release input preserves
+the retained UUID pointer, audit hash, indicator-index fingerprint and retained
+dataset-file descriptors. This bridge does not upgrade the retained coverage or
+lineage status and does not make a developer checkout an operational dependency.
+
+The modeled DBW publisher is a manual, main-only Actions operation in the shared
+production concurrency group. Input restoration, dbt build, staged SQL/content
+validation and pointer promotion run in one job so the reconstructed native tree is
+never passed through an Actions artifact. Each complete bounded Parquet dataset is
+validated and uploaded before its disposable local parts are removed; promotion is
+impossible until all eleven Bronze, Silver and Gold contracts and the required dbt
+artifacts are present. A dependent fresh runner then restores and queries the current
+release read-only. Workflow success is release evidence only after both jobs pass; it
+does not change the retained snapshot's incomplete-coverage or unresolved-lineage
+labels.
+
+The retained DBW publisher alone additionally uses a non-expiring operational Git-ref
+claim acquired atomically before Drive namespace mutation. Explicit expected-SHA leases
+protect acquisition/release, and the reviewed audit hashes are enforced before either
+Git/Drive owner is acquired. See [ADR 0010](decisions/0010-retained-dbw-publication-ownership.md).
+Other source writers retain their own documented coordination boundaries.

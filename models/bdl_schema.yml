@@ -1,0 +1,172 @@
+version: 2
+
+models:
+  - name: br_bdl_variables
+    description: "Bronze BDL variable catalogue/detail records derived from accepted Landing response envelopes."
+    columns:
+      - name: variable_id
+        tests: [not_null]
+  - name: br_bdl_subjects
+    description: "Bronze BDL subject catalogue/detail records derived from accepted Landing response envelopes."
+    columns:
+      - name: subject_id
+        tests: [not_null]
+  - name: br_bdl_units
+    description: "Bronze BDL unit/locality catalogue/detail records derived from accepted Landing response envelopes."
+    columns:
+      - name: unit_id
+        tests: [not_null]
+  - name: br_bdl_dictionary_entries
+    description: "Bronze BDL dictionary entries derived from accepted Landing response envelopes."
+    columns:
+      - name: dictionary_resource
+        tests: [not_null]
+      - name: entry_id
+        tests: [not_null]
+  - name: br_bdl_years
+    description: "Bronze BDL year dictionary records derived from accepted Landing response envelopes."
+    columns:
+      - name: year_id
+        tests: [not_null]
+  - name: br_bdl_observations
+    description: "Bronze BDL observation rows at retained source grain variable × unit × period × attrId."
+    columns:
+      - name: variable_id
+        tests: [not_null]
+      - name: unit_id
+        tests: [not_null]
+      - name: period_key
+        tests: [not_null]
+
+  - name: stg_bdl_dictionary_entries
+    description: "Current BDL dictionary entries after latest-by-language deduplication."
+    columns:
+      - name: dictionary_resource
+        tests: [not_null]
+      - name: entry_id
+        tests: [not_null]
+  - name: stg_bdl_variables
+    description: "Current typed BDL variable definitions with bilingual labels where available."
+    columns:
+      - name: variable_id
+        tests: [not_null, unique]
+  - name: stg_bdl_subjects
+    description: "Current typed BDL subject definitions with bilingual labels where available."
+    columns:
+      - name: subject_id
+        tests: [not_null, unique]
+  - name: stg_bdl_units
+    description: "Current typed BDL units and statistical localities with preserved hierarchy and kind metadata."
+    columns:
+      - name: unit_id
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [resource_kind, unit_id]
+  - name: bdl_observation_revisions
+    description: "Distinct current and historical BDL typed observation representations, collapsed across identical replays."
+    columns:
+      - name: variable_id
+        tests: [not_null]
+      - name: unit_id
+        tests: [not_null]
+      - name: period_key
+        tests: [not_null]
+      - name: attribute_key
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [variable_id, unit_id, period_key, attribute_key, revision_number]
+  - name: stg_bdl_observations
+    description: "Current typed BDL observations with explicit attribute/status metadata and revision counts."
+    columns:
+      - name: variable_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_bdl_variables')
+                field: variable_id
+      - name: unit_id
+        tests:
+          - not_null
+      - name: period_key
+        tests: [not_null]
+      - name: attribute_key
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [variable_id, unit_id, period_key, attribute_key]
+
+  - name: dim_bdl_period
+    description: "Conformed BDL period dimension preserving the exact source period key and a parsed start/end date when recognizable."
+    columns:
+      - name: period_key
+        tests: [not_null, unique]
+  - name: dim_bdl_subject
+    description: "Conformed BDL subject dimension."
+    columns:
+      - name: subject_key
+        tests: [not_null, unique]
+  - name: dim_bdl_variable
+    description: "Conformed BDL variable dimension with source measure-unit metadata."
+    columns:
+      - name: variable_key
+        tests: [not_null, unique]
+      - name: subject_key
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_bdl_subject')
+                field: subject_key
+  - name: dim_bdl_unit
+    description: "Conformed BDL unit and locality dimension."
+    columns:
+      - name: unit_key
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [resource_kind, unit_key]
+  - name: fact_bdl_observations
+    description: "Gold BDL business fact table at current grain variable × unit × period × attribute."
+    columns:
+      - name: variable_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_bdl_variable')
+                field: variable_key
+      - name: unit_key
+        tests:
+          - not_null
+      - name: period_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_bdl_period')
+                field: period_key
+      - name: attribute_key
+        tests: [not_null]
+    tests:
+      - nbp_unique_combination:
+          arguments:
+            combination_of_columns: [variable_key, unit_key, period_key, attribute_key]
+  - name: mart_bdl_coverage
+    description: "Single-row BDL coverage and accountability summary for the current modeled snapshot."
+    columns:
+      - name: snapshot_date
+        tests: [not_null, unique]
+      - name: source_universe_total
+        tests: [not_null]
+      - name: discovered_total
+        tests: [not_null]
+      - name: landed_accepted_total
+        tests: [not_null]
+      - name: modeled_total
+        tests: [not_null]
