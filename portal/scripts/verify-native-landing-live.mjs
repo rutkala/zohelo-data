@@ -104,13 +104,23 @@ try {
   stage = 'load_live_portal';
   await page.goto(origin, { waitUntil: 'domcontentloaded' });
   if (new URL(page.url()).origin !== origin) throw new Error('Unexpected portal origin');
+  // This context has no saved profile. React and IndexedDB bootstrap finish
+  // after DOMContentLoaded; an immediate isVisible() can miss the dialog.
+  stage = 'wait_profile_dialog';
   const profile = page.getByRole('dialog', { name: 'Create Profile' });
-  if (await profile.isVisible()) {
-    await profile.getByPlaceholder('Profile name').fill('Landing acceptance');
-    await profile.getByRole('button', { name: 'Create Profile', exact: true }).click();
-  }
+  await profile.waitFor({ state: 'visible' });
+  stage = 'create_profile';
+  await profile.getByPlaceholder('Profile name').fill('Landing acceptance');
+  await profile.getByRole('button', { name: 'Create Profile', exact: true }).click();
+  await profile.waitFor({ state: 'hidden' });
+  stage = 'wait_landing_root';
   const section = page.getByRole('region', { name: 'Landing', exact: true });
   await section.locator('[data-native-depth="0"]').waitFor();
+  stage = 'wait_landing_sources';
+  // Root markup can appear while its metadata pages are still loading.
+  for (const source of sources) {
+    await section.locator(`[data-native-id="${source.id}"][data-native-folder="true"]`).waitFor();
+  }
   if (await section.count() !== 1 || await page.getByText('Files on Drive', { exact: true }).count() ||
       await page.getByText('01_landing', { exact: true }).count()) throw new Error('Landing navigation is duplicated');
   async function revealActions(row, file) {

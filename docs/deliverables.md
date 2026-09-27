@@ -17,16 +17,33 @@ appear as a competing Landing folder. DBW's Bronze-specific selector belongs
 inside Bronze. Keep existing SQL references compatible and retain all source
 files and read-only verification behavior.
 
-The implementation uses one native Landing tree with compact rows and optional
-file actions/details, retains SQL indexes inside Landing, and places DBW search
-inside expanded Bronze. The retired inventory panel no longer triggers its
-unused background Drive scans. Local validation passed 759 portal tests,
-typechecking and lint; independent review corrected legacy SQL-index discovery
-before finding no remaining blocker. The local build compiled the application
-but stopped in Workbox service-worker generation, so the clean Actions build
-and mobile/desktop browser checks remain required. Merge, deployment and current
-live UI verification are pending. This priority supersedes the engineering
-queue below. Existing authorized schedules remain separate.
+**Landing navigation correction deployed.**
+[PR #181](https://github.com/rutkala/zohelo-data/pull/181) merged as
+`dfc9e1a696a8fb1de1406fbc73ac4676d7ab25ff`. The portal now has one Landing
+source/file tree with compact rows and file actions/details on demand. Existing
+SQL indexes remain under the collapsed **File indexes (SQL)** option within
+Landing; their SQL names remain compatible. DBW search is inside expanded
+Bronze. The retired inventory panel and its unused background Drive scan are
+removed. Original source files are unchanged.
+
+Independent review found no remaining blocker after corrections to legacy
+index loading and keyboard access. The final
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36299588562)
+passed builds, 759 unit/engine tests and all 18 browser tests for each deployment
+base, including desktop/mobile Landing and keyboard navigation. The
+[production deployment](https://github.com/rutkala/zohelo-data/actions/runs/36299838734)
+built and published the merged commit and verified its exact live build marker.
+The first current authenticated
+[Landing verification](https://github.com/rutkala/zohelo-data/actions/runs/36300043637)
+resolved 13 source folders across 10 families, then timed out at
+`load_live_portal` before any UI file probe. Live folder/action acceptance remains
+pending while the verifier's first-run profile wait is corrected and rerun.
+
+This correction is limited to portal navigation and file access. It does not
+establish source completeness or downstream layer acceptance. For this portal
+correction, this 27 September entry supersedes the older native-reader receipt
+and status below. The broader engineering queue remains paused; existing
+authorized schedules remain separate.
 
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
