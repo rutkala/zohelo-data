@@ -1,4 +1,8 @@
-{{ config(alias='dbw_observations', enabled=var('enable_gus_dbw', false)) }}
+{{ config(
+    alias='dbw_observations',
+    enabled=var('enable_gus_dbw', false),
+    materialized=var('dbw_silver_observations_materialization', 'table')
+) }}
 
 select
     cast(indicator_id as integer) as indicator_id,

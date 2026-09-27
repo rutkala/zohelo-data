@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import Callable
 
 import duckdb
 
@@ -157,6 +158,17 @@ def _copy_relation(
     return paths
 
 
+def _deliver_dataset(
+    dataset: dict,
+    paths: list[Path],
+    sink: Callable[[dict], object],
+) -> None:
+    """Delete local parts only after the sink accepted the complete dataset."""
+    sink(dataset)
+    for path in paths:
+        path.unlink()
+
+
 def build_candidate(
     data_root: Path,
     release_id: str,
@@ -166,6 +178,7 @@ def build_candidate(
     retained_manifest: Path,
     retained_pointer_file_id: str,
     retained_audit_dir: Path,
+    dataset_sink: Callable[[dict], object] | None = None,
 ) -> dict:
     """Build all eleven DBW relations from one verified retained snapshot."""
     retained_source, retained_document = load_retained_source_descriptor(
@@ -197,6 +210,7 @@ def build_candidate(
         "--log-path", str(workspace / "logs"), "--threads", "1",
         "--no-partial-parse", "--vars",
         '{"enable_gus_dbw": true, "dbw_observations_materialization": "view", '
+        '"dbw_silver_observations_materialization": "view", '
         '"dbw_fact_materialization": "view"}',
     ]
     subprocess.run([*cli, "build", "--select", *models, *common], cwd=REPO_ROOT, env=env, check=True, timeout=1800)
@@ -234,6 +248,8 @@ def build_candidate(
         }},
     }, sort_keys=True), encoding="utf-8")
     datasets = []
+    output_bytes = 0
+    output_files = 0
     with duckdb.connect(str(database), read_only=True) as connection:
         for dataset_id, (layer, model_id) in DBW_PLATFORM_DATASETS.items():
             table_name = dataset_id.removeprefix("bronze_")
@@ -267,14 +283,19 @@ def build_candidate(
             paths = _copy_relation(
                 connection, relation, output, dataset_id, int(rows)
             )
-            datasets.append({
+            dataset = {
                 "dataset_id": dataset_id, "layer": layer,
                 "table_name": table_name, "model_name": model_id.rsplit(".", 1)[-1],
                 "model_id": model_id, "path": str(paths[0]),
                 "paths": [str(path) for path in paths], "row_count": rows,
                 "date_column": date_column, "min_date": min_date, "max_date": max_date,
                 "columns": [{"name": row[0], "type": row[1]} for row in connection.execute(f"DESCRIBE {relation}").fetchall()],
-            })
+            }
+            datasets.append(dataset)
+            output_bytes += sum(path.stat().st_size for path in paths)
+            output_files += len(paths)
+            if dataset_sink is not None:
+                _deliver_dataset(dataset, paths, dataset_sink)
     catalogue = json.loads((target / "business-catalog.json").read_text(encoding="utf-8"))
     catalogue["datasets"] = [
         {key: item[key] for key in (
@@ -301,6 +322,9 @@ def build_candidate(
             "native_verified_files": native_validation["verified_files"],
             "native_verified_bytes": native_validation["verified_bytes"],
             "dataset_count": len(datasets),
+            "output_bytes": output_bytes,
+            "output_files": output_files,
+            "streamed_publication": dataset_sink is not None,
         },
     }
 
