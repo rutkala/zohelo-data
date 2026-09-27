@@ -148,6 +148,27 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
         )
         finalize.assert_called_once_with(storage, "root", "dbw", manifest)
 
+    def test_existing_release_root_without_pointer_is_retryable(self):
+        store = mock.Mock(root_id="release-root")
+        store.find.return_value = []
+        with mock.patch.object(release, "read_current_release_manifest") as read:
+            self.assertIsNone(release._read_optional_current_release(store))
+        store.find.assert_called_once_with("current-release.json", "release-root")
+        read.assert_not_called()
+
+    def test_existing_pointer_errors_still_fail_closed(self):
+        store = mock.Mock(root_id="release-root")
+        store.find.return_value = ["pointer-id"]
+        with mock.patch.object(
+            release,
+            "read_current_release_manifest",
+            side_effect=release.ReleaseProtocolError("invalid current pointer"),
+        ):
+            with self.assertRaisesRegex(
+                release.ReleaseProtocolError, "invalid current pointer"
+            ):
+                release._read_optional_current_release(store)
+
     def test_fresh_consumer_rejects_another_workflows_current_release(self):
         manifest = {"release_id": "00000000-0000-0000-0000-000000000001"}
         release._require_expected_release(manifest, manifest["release_id"])
