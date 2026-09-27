@@ -16,7 +16,7 @@ export class GoogleDriveAuthError extends Error {
 export const isGoogleDriveAuthError = (error: unknown): error is GoogleDriveAuthError =>
   error instanceof GoogleDriveAuthError;
 
-export const driveRequest = async (url: string, token: string): Promise<Response> => {
+export const driveRequest = async (url: string, token: string, signal?: AbortSignal): Promise<Response> => {
   if (!token) {
     throw new Error("No Google Drive OAuth token available");
   }
@@ -27,6 +27,7 @@ export const driveRequest = async (url: string, token: string): Promise<Response
   }
 
   const response = await fetch(url, {
+    signal,
     headers: {
       Authorization: `Bearer ${token}`,
     },
@@ -103,19 +104,45 @@ export const listNativeChildrenPage = async (
   return { files: payload.files.map(nativeMetadata), nextPageToken: payload.nextPageToken || null };
 };
 
+/** Scanner-only batched parent search. Keep interactive folder navigation unchanged. */
+export const listNativeMetadataBatchPage = async (
+  parentIds: readonly string[], kind: "folders" | "files", token: string, pageToken?: string,
+  signal?: AbortSignal
+): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
+  if (!parentIds.length || parentIds.length > 25) throw new Error("Invalid Landing metadata parent batch.");
+  const parents = parentIds.map((id) => `'${id.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' in parents`).join(" or ");
+  const mime = kind === "folders" ? "=" : "!=";
+  const q = `(${parents}) and mimeType ${mime} 'application/vnd.google-apps.folder' and trashed=false`;
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("q", q);
+  url.searchParams.set("fields", `nextPageToken,incompleteSearch,files(${NATIVE_FIELDS})`);
+  url.searchParams.set("pageSize", "1000");
+  if (pageToken) url.searchParams.set("pageToken", pageToken);
+  if (url.toString().length > 3500) throw new Error("Landing metadata parent batch URL exceeds 3500 characters.");
+  const payload = await (await driveRequest(url.toString(), token, signal)).json();
+  if (payload?.incompleteSearch === true) throw new Error("Drive returned an incomplete Landing metadata search.");
+  if (!Array.isArray(payload?.files) ||
+      (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string") ||
+      (payload.incompleteSearch !== undefined && typeof payload.incompleteSearch !== "boolean"))
+    throw new Error("Drive returned an incomplete Landing metadata page.");
+  return { files: payload.files.map(nativeMetadata), nextPageToken: payload.nextPageToken || null };
+};
+
 /** Fresh metadata by ID, including current parent and original Drive-managed links. */
 export const getNativeFileMetadata = async (
   fileId: string,
-  token: string
+  token: string,
+  signal?: AbortSignal
 ): Promise<DriveFileMetadata> => {
   const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=${encodeURIComponent(NATIVE_FIELDS)}`;
-  return nativeMetadata(await (await driveRequest(url, token)).json());
+  return nativeMetadata(await (await driveRequest(url, token, signal)).json());
 };
 
 const listFilesForQuery = async (
   query: string,
   token: string,
-  onPage?: () => void
+  onPage?: () => void,
+  signal?: AbortSignal
 ): Promise<DriveFileMetadata[]> => {
   const files: DriveFileMetadata[] = [];
   let pageToken: string | null = null;
@@ -125,7 +152,7 @@ const listFilesForQuery = async (
     )}&fields=files(id,name,mimeType,size,modifiedTime,version,md5Checksum,sha256Checksum),nextPageToken&pageSize=1000`;
     if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
     onPage?.();
-    const response = await driveRequest(url, token);
+    const response = await driveRequest(url, token, signal);
     const payload = await response.json();
     for (const item of payload.files || []) {
       files.push({
@@ -148,7 +175,8 @@ export const findFoldersByName = async (
   name: string,
   parentId = "root",
   token: string,
-  onPage?: () => void
+  onPage?: () => void,
+  signal?: AbortSignal
 ): Promise<Array<{ id: string; name: string }>> => {
   if (name.includes("'"))
     throw new Error("Folder names containing single quotes are not supported.");
@@ -158,7 +186,7 @@ export const findFoldersByName = async (
     `'${parentId}' in parents`,
     "trashed=false",
   ].join(" and ");
-  return (await listFilesForQuery(query, token, onPage)).map(({ id, name: folderName }) => ({
+  return (await listFilesForQuery(query, token, onPage, signal)).map(({ id, name: folderName }) => ({
     id,
     name: folderName,
   }));

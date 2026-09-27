@@ -4,6 +4,30 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current priority: one usable Landing browser — 27 September 2026
 
+**Owner accepted the layout; metadata performance follow-up in progress.**
+The owner confirmed the Landing presentation and reported that **Query file
+metadata** for GUS BDL was still scanning. They expect newly ingested files to
+be available immediately and suggested an object inventory with metadata and
+virtual folders. Completed uploads are directly discoverable without a SQL
+publication gate, but open listings and generated SQL tables are currently
+cached until refresh. Automatic visibility in an already-open portal remains
+an unmet freshness expectation; this increment does not claim push updates.
+
+The scoped performance change groups known-parent Drive searches, separates
+folder discovery from flat file-metadata reads, and rechecks the folder graph
+before publishing a complete local table. It adds progress and cancellation in
+the accepted source action area. No payload reads, ingestion changes, shared
+index publisher or object-storage migration are included. A maintained shared
+inventory could avoid first-use crawls but needs an explicit update and
+reconciliation design. Review, exact-head CI, deployment and a complete live
+BDL metadata measurement are still pending. The earlier NBP query below is not
+a BDL performance receipt.
+
+The deep/wide fixture contains 2,503 folders within one source. The new scanner
+uses 310 batched list pages, four identity reads and two project lookups, with
+zero payload reads. This establishes bounded request reduction in a fixture;
+it does not supply a before/after BDL wall-time measurement.
+
 **Owner clarification: SQL describes files.** The owner clarified that Landing
 must show original files and that its SQL tables should contain file metadata:
 one table per source folder, one row per file, with paths, timestamps and other

@@ -22,6 +22,9 @@ In the data explorer, expand **Landing**, then a source folder. This is the one
 place to browse the original files currently held in Drive, including sources
 that do not yet have published SQL tables. The tree follows actual folders and
 loads their contents when opened. **Refresh Landing** checks for new files.
+Completed uploads are discoverable directly from Drive, without a SQL
+publication step. An already-open listing is cached until you refresh; it is
+not a live subscription to ingestion events.
 
 Select a file, or use its **⋮** button, for **Open in Drive**, **Download via
 Drive** where permitted, and **Preview in SQL** for supported small files. Folder
@@ -47,8 +50,17 @@ times are Drive timestamps; the metadata refresh time is when your browser
 started the scan, not a source-provider refresh date. Drive shortcuts are not
 original files and are excluded. A failed or over-limit scan creates no new
 table; scans are limited to 100,000 files and 20,000 folders per source. Refresh
-or disconnect clears these temporary tables. A source scan can take time for a
-large tree.
+or disconnect clears these temporary tables. Repeating a query uses the same
+completed table until you refresh, so its rows are a scan snapshot rather than
+an automatically updating inventory.
+
+The first scan groups folder metadata requests, then reads file metadata across
+the discovered folders and checks the folder structure again. Progress shows
+the phase and files/folders found; **Cancel** stops the scan without exposing
+a partial table. Folder count, tree depth, file count and Drive response times
+affect this initial scan. File sizes in bytes do not cause payload downloads.
+After the scan, SQL filters the local flat table without walking Drive folders
+again. The file ID is its stable identity; the path describes its location.
 
 You can also type a qualified SQL SELECT against the displayed table name.
 The portal scans referenced source tables on demand, including joins, without

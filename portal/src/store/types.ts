@@ -18,6 +18,7 @@ import type {
 import type {
   NativeLandingFile,
   NativeLandingFolder,
+  NativeMetadataProgress,
 } from "@/services/googleDrive/nativeLandingCatalog";
 
 //
@@ -654,6 +655,7 @@ export interface GoogleDriveSlice {
   nativeLandingActionError: string | null;
   nativeMetadataTables: Record<string, string>;
   nativeMetadataLoading: string | null;
+  nativeMetadataProgress: NativeMetadataProgress | null;
   nativeMetadataError: string | null;
   isLakehouseLoading: boolean;
   lakehouseStatusMessage: string;
@@ -672,6 +674,7 @@ export interface GoogleDriveSlice {
   ) => Promise<{ open: string | null; download: string | null } | null>;
   previewNativeLandingFile: (folderId: string, fileId: string) => Promise<string | null>;
   loadNativeMetadataTable: (folderId: string) => Promise<string | null>;
+  cancelNativeMetadataScan: () => void;
   toggleLakehouseLayer: (layerName: string) => Promise<void>;
   toggleLakehouseTable: (layerName: string, tableName: string) => Promise<void>;
   selectLakehouseDataset: (layerName: string, tableName: string) => Promise<string | null>;

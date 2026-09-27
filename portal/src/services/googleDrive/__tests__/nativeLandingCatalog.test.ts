@@ -19,6 +19,7 @@ import {
   findFoldersByName,
   getNativeFileMetadata,
   listNativeChildrenPage,
+  listNativeMetadataBatchPage,
   fetchDriveFileBuffer,
 } from "../driveApi";
 import { DriveDownloadBudget } from "../releaseCatalog";
@@ -28,6 +29,7 @@ vi.mock("../driveApi", async (original) => ({
   findFoldersByName: vi.fn(),
   getNativeFileMetadata: vi.fn(),
   listNativeChildrenPage: vi.fn(),
+  listNativeMetadataBatchPage: vi.fn(),
   fetchDriveFileBuffer: vi.fn(),
 }));
 const root = {
@@ -133,9 +135,10 @@ describe("physical Landing discovery", () => {
       async (id) =>
         ({ landing: root, deep: child, nested })[id as "landing" | "deep" | "nested"] ?? file
     );
-    vi.mocked(listNativeChildrenPage).mockImplementation(async (id, _token, page) => {
-      if (id === child.id && !page) return { files: [nested], nextPageToken: "second" };
-      if (id === child.id)
+    vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (ids, kind, _token, page) => {
+      if (kind === "folders") return { files: ids.includes(child.id) ? [nested] : [], nextPageToken: null };
+      if (ids.includes(child.id) && !page) return { files: [], nextPageToken: "second" };
+      if (ids.includes(child.id))
         return {
           files: [
             {
@@ -146,21 +149,13 @@ describe("physical Landing discovery", () => {
               createdTime: "2026-09-25T00:00:00Z",
               parents: [child.id],
             },
+            { ...file, parents: [nested.id], id: "deep-file", name: "value.csv" },
+            { ...file, parents: [nested.id], id: "shortcut",
+              mimeType: "application/vnd.google-apps.shortcut" },
           ],
           nextPageToken: null,
         };
-      return {
-        files: [
-          { ...file, parents: [nested.id], id: "deep-file", name: "value.csv" },
-          {
-            ...file,
-            parents: [nested.id],
-            id: "shortcut",
-            mimeType: "application/vnd.google-apps.shortcut",
-          },
-        ],
-        nextPageToken: null,
-      };
+      return { files: [], nextPageToken: null };
     });
     const rows = await scanNativeSourceMetadata(child, root, "token", () => true);
     expect(rows.map((row) => row.relative_path)).toEqual(["a.zip", "division/value.csv"]);
@@ -172,7 +167,8 @@ describe("physical Landing discovery", () => {
     });
     expect(rows[0].metadata_refreshed_at_utc).not.toEqual(rows[0].modified_at_utc);
     expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
-    expect(listNativeChildrenPage).toHaveBeenCalledTimes(3);
+    expect(listNativeMetadataBatchPage).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(listNativeMetadataBatchPage).mock.calls.some((call) => call[3] === "second")).toBe(true);
   });
 
   it("bounds metadata requests linearly across a deep and wide source tree", async () => {
@@ -187,15 +183,22 @@ describe("physical Landing discovery", () => {
         id: `side-${depth}-${width}`, name: `item-${width}`,
         parentId: parent.id, parents: [parent.id] });
     }
+    for (let width = 0; width < 2250; width++) all.push({ ...child,
+      id: `wide-${width}`, name: `wide-${width}`,
+      parentId: child.id, parents: [child.id] });
     const byId = new Map(all.map(folder => [folder.id, folder]));
     vi.mocked(getNativeFileMetadata).mockImplementation(async id => byId.get(id)!);
-    vi.mocked(listNativeChildrenPage).mockImplementation(async id => ({
-      files: all.filter(folder => folder.parentId === id), nextPageToken: null,
-    }));
+    vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (ids, kind, _token, page) => {
+      const items = kind === "folders" ? all.filter(folder => ids.includes(folder.parentId)) : [];
+      const offset = page ? Number(page) : 0;
+      return { files: items.slice(offset, offset + 1000),
+        nextPageToken: offset + 1000 < items.length ? String(offset + 1000) : null };
+    });
     const result = await scanNativeSourceMetadata(child, root, "token", () => true);
     expect(result).toEqual([]);
-    expect(listNativeChildrenPage).toHaveBeenCalledTimes(all.length - 1);
-    expect(getNativeFileMetadata).toHaveBeenCalledTimes(3 * all.length - 1);
+    expect(all.length - 2).toBeGreaterThan(2500);
+    expect(listNativeMetadataBatchPage).toHaveBeenCalledTimes(310);
+    expect(getNativeFileMetadata).toHaveBeenCalledTimes(4);
     expect(findFoldersByName).toHaveBeenCalledTimes(2);
     expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
   });
@@ -208,7 +211,7 @@ describe("physical Landing discovery", () => {
           ? root
           : child
     );
-    vi.mocked(listNativeChildrenPage)
+    vi.mocked(listNativeMetadataBatchPage)
       .mockResolvedValueOnce({
         files: [{ ...child, id: "nested", parents: [child.id] }],
         nextPageToken: null,
@@ -218,6 +221,44 @@ describe("physical Landing discovery", () => {
       "Drive page failed"
     );
     expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ ...file, parents: ["elsewhere"] }, "out-of-scope"],
+    [{ ...file, parents: [child.id, "elsewhere"] }, "out-of-scope"],
+  ])("rejects an invalid file parent before returning rows", async (invalid, message) => {
+    vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (_ids, kind) => ({
+      files: kind === "files" ? [invalid] : [], nextPageToken: null,
+    }));
+    await expect(scanNativeSourceMetadata(child, root, "token", () => true)).rejects.toThrow(message);
+  });
+
+  it("rejects changed, duplicated, and missing folders on final verification", async () => {
+    const nested = { ...child, id: "nested", parentId: child.id, parents: [child.id] };
+    const changed = { ...nested, version: "99" };
+    for (const final of [[changed], [nested, nested], []]) {
+      let folderPhase = 0;
+      vi.mocked(listNativeMetadataBatchPage).mockImplementation(async (_ids, kind) => ({
+        files: kind === "files" ? [] : ++folderPhase === 1 ? [nested] : folderPhase === 2 ? [] : final,
+        nextPageToken: null,
+      }));
+      await expect(scanNativeSourceMetadata(child, root, "token", () => true)).rejects.toThrow();
+    }
+    expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
+  });
+
+  it("aborts a held project lookup and never issues a folder list", async () => {
+    const controller = new AbortController();
+    vi.mocked(findFoldersByName).mockImplementationOnce(async (_name, _parent, _token,
+      _onPage, signal) => new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true });
+      }));
+    const task = scanNativeSourceMetadata(child, root, "token", () => true, undefined,
+      controller.signal);
+    controller.abort();
+    await expect(task).rejects.toThrow("Aborted");
+    expect(listNativeMetadataBatchPage).not.toHaveBeenCalled();
   });
 
   it("publishes only a completed metadata table and rolls back a superseded commit", async () => {

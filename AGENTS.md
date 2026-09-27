@@ -4,6 +4,12 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Current owner priority — 27 September 2026: portal Landing only.**
 
+- The owner has accepted the current Landing layout. The follow-up is metadata
+  performance, especially a complete GUS BDL scan, and clear file freshness.
+  Preserve the accepted single file browser. Measure BDL itself before claiming
+  its metadata performance is accepted; an NBP query is not a BDL performance
+  receipt. Explain that completed uploads are discoverable directly, while open
+  listings and generated SQL tables currently refresh on request.
 - The owner clarified that Landing SQL represents file metadata: one table per
   actual source folder, one row per file, including nested files and paths,
   timestamps and other technical metadata. Apply
