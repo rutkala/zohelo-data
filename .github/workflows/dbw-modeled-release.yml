@@ -21,9 +21,34 @@ permissions:
   contents: read
 
 jobs:
+  validate_dispatch:
+    name: Validate reviewed production dispatch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require exact main SHA and confirmation
+        env:
+          REQUESTED_CODE_SHA: ${{ inputs.code_sha }}
+          REQUESTED_CONFIRMATION: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "DBW publication must be dispatched from main" >&2
+            exit 1
+          fi
+          if [[ "$REQUESTED_CODE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "Requested code SHA does not match the dispatched main commit" >&2
+            exit 1
+          fi
+          if [[ "$REQUESTED_CONFIRMATION" != "publish-reviewed-dbw" ]]; then
+            echo "Production confirmation is invalid" >&2
+            exit 1
+          fi
+
   prepare_build_validate_and_publish:
     name: Prepare, build, validate and publish
+    needs: validate_dispatch
     if: >-
+      needs.validate_dispatch.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       inputs.code_sha == github.sha &&
       inputs.confirm == 'publish-reviewed-dbw'
@@ -35,11 +60,6 @@ jobs:
       queue: max
     outputs:
       release_id: ${{ steps.publish.outputs.release_id }}
-    env:
-      GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-      GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-      ZOHELO_ALLOW_PRODUCTION_WRITES: "true"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -59,6 +79,10 @@ jobs:
         env:
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
           EXPECTED_CODE_SHA: ${{ inputs.code_sha }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          ZOHELO_ALLOW_PRODUCTION_WRITES: "true"
         run: |
           python src/dbw_platform_release.py \
             --drive-root-id "$DRIVE_ROOT_ID" \
@@ -69,16 +93,12 @@ jobs:
     name: Verify current release from a fresh runner
     needs: prepare_build_validate_and_publish
     if: >-
+      needs.prepare_build_validate_and_publish.result == 'success' &&
       github.ref == 'refs/heads/main' &&
       inputs.code_sha == github.sha &&
-      inputs.confirm == 'publish-reviewed-dbw' &&
-      needs.prepare_build_validate_and_publish.result == 'success'
+      inputs.confirm == 'publish-reviewed-dbw'
     runs-on: ubuntu-latest
     timeout-minutes: 180
-    env:
-      GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
-      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
-      GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -98,6 +118,9 @@ jobs:
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
           EXPECTED_CODE_SHA: ${{ inputs.code_sha }}
           EXPECTED_RELEASE_ID: ${{ needs.prepare_build_validate_and_publish.outputs.release_id }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
         run: |
           python src/dbw_platform_release.py \
             --drive-root-id "$DRIVE_ROOT_ID" \
