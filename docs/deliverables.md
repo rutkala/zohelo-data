@@ -17,7 +17,7 @@ appear as a competing Landing folder. DBW's Bronze-specific selector belongs
 inside Bronze. Keep existing SQL references compatible and retain all source
 files and read-only verification behavior.
 
-**Landing navigation correction deployed.**
+**Landing navigation correction deployed and verified.**
 [PR #181](https://github.com/rutkala/zohelo-data/pull/181) merged as
 `dfc9e1a696a8fb1de1406fbc73ac4676d7ab25ff`. The portal now has one Landing
 source/file tree with compact rows and file actions/details on demand. Existing
@@ -36,8 +36,23 @@ built and published the merged commit and verified its exact live build marker.
 The first current authenticated
 [Landing verification](https://github.com/rutkala/zohelo-data/actions/runs/36300043637)
 resolved 13 source folders across 10 families, then timed out at
-`load_live_portal` before any UI file probe. Live folder/action acceptance remains
-pending while the verifier's first-run profile wait is corrected and rerun.
+`load_live_portal` before any UI file probe. Live folder/action acceptance remained
+pending at that point. [PR #182](https://github.com/rutkala/zohelo-data/pull/182)
+then made the fresh-profile and source-row waits explicit, retaining the same
+read-only checks. The UI source is unchanged from PR #181. The subsequent
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36300372166)
+successfully built, published and verified exact commit
+`cb2b9a2405dbbaea077e48472c99e3f6e440d434`.
+
+The corrected authenticated
+[live check](https://github.com/rutkala/zohelo-data/actions/runs/36300506130)
+passed at 06:38 UTC on 27 September against that exact deployed commit. It
+verified one Landing entry, browsed all 13 source folders across 10 families,
+checked one file and its managed download link in each folder, followed four
+BDL folder levels, exercised one supported SQL preview and checked the managed
+link for a 21,378,254,323-byte ZIP. The receipt recorded 66 metadata pages and
+read-only access. This closes live navigation/file-action verification for this
+correction; the owner's assessment of the revised experience remains separate.
 
 This correction is limited to portal navigation and file access. It does not
 establish source completeness or downstream layer acceptance. For this portal
