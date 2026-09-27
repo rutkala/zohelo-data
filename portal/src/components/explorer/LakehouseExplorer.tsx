@@ -751,22 +751,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               legacy / unversioned
             </Badge>
           )}
-          {(lakehouseLanding?.snapshots.filter(
-            ({ manifest }) => manifest.kind === "landing_snapshot"
-          ).length ?? 0) > 0 && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
-              title="Independently validated published SQL indexes"
-            >
-              SQL indexes{" "}
-              {
-                lakehouseLanding?.snapshots.filter(
-                  ({ manifest }) => manifest.kind === "landing_snapshot"
-                ).length
-              }
-            </Badge>
-          )}
           {activeLakehouseDataset && (
             <Badge
               variant="secondary"

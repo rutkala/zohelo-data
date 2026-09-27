@@ -375,7 +375,8 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
   await expect(dataExplorer.getByRole("button", { name: "Business catalogue" })).toHaveCount(0);
 
   // Published legacy response SQL remains directly usable without a response-index UI.
-  await page.getByRole("button", { name: "Tables", exact: true }).click();
+  await dataExplorer.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dataExplorer).toBeHidden();
   await page.getByRole("button", { name: "New SQL query", exact: true }).click();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.click();

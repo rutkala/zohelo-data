@@ -586,7 +586,22 @@ describe("immutable release selection", () => {
         .lakehouseCatalog.find((layer) => layer.name === "01_landing")
         ?.children.map((table) => table.name)
     ).toEqual(["world_bank_wdi_responses"]);
-    expect(store.getState().lakehouseStatusMessage).toContain("1 published file-index snapshot");
+    expect(store.getState().lakehouseStatusMessage).toContain("Select a dataset to query.");
+    expect(store.getState().lakehouseStatusMessage).not.toContain("file-index snapshot");
+  });
+
+  it("keeps published SQL catalogue errors visible without an index count", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce({
+      snapshots: [], issues: [{ source_id: "world_bank_wdi", message: "Invalid snapshot pointer" }],
+      fingerprint: "issue",
+    });
+    await store.getState().refreshLakehouseCatalog();
+    expect(store.getState().lakehouseStatusMessage).toContain(
+      "Published SQL catalogue error — world_bank_wdi: Invalid snapshot pointer."
+    );
+    expect(store.getState().lakehouseStatusMessage).not.toContain("file-index snapshot");
   });
 
   it("refreshes native folders and the query catalogue without the retired inventory scan", async () => {

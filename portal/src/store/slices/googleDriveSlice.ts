@@ -157,10 +157,9 @@ const publishedDatasets = (
 ];
 
 const landingStatus = (landing: LandingCatalogResolution) => {
-  const available = `${landing.snapshots.length} published file-index snapshot(s)`;
-  if (landing.issues.length === 0) return available;
+  if (landing.issues.length === 0) return "";
   const errors = landing.issues.map((issue) => `${issue.source_id}: ${issue.message}`).join("; ");
-  return `${available}. File-index metadata error — ${errors}`;
+  return `Published SQL catalogue error — ${errors}. `;
 };
 
 const handleDriveAuthFailure = (
@@ -1297,12 +1296,13 @@ export const createGoogleDriveSlice: StateCreator<
         }
         if (get().googleAuth.token !== activeToken || get().currentSession !== activeSession)
           return;
+        const compatibilityStatus = landingStatus(landing);
         if (release.kind === "release") {
           set({
             lakehouseCatalog: treeFromPublished(release, landing),
             lakehouseRelease: release,
             lakehouseLanding: landing,
-            lakehouseStatusMessage: `${releaseMessage(release)} ${landingStatus(landing)}. Select a dataset to query.`,
+            lakehouseStatusMessage: `${releaseMessage(release)} ${compatibilityStatus}Select a dataset to query.`,
           });
         } else {
           const tree: LakehouseLayer[] = [];
@@ -1318,7 +1318,7 @@ export const createGoogleDriveSlice: StateCreator<
             lakehouseCatalog: mergeLandingIntoTree(tree, landing),
             lakehouseRelease: release,
             lakehouseLanding: landing,
-            lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${landingStatus(landing)}. Select a dataset to query.`,
+            lakehouseStatusMessage: `Legacy/unversioned catalog loaded. ${compatibilityStatus}Select a dataset to query.`,
           });
         }
       } catch (error) {

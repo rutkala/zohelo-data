@@ -142,10 +142,11 @@ describe("one Landing entry", () => {
     expect(html).toContain("Query file metadata");
     expect(html).toContain("Shortcuts are excluded");
     expect(html).not.toContain("File indexes (SQL)");
+    expect(html).not.toContain("SQL indexes");
     expect(html).not.toContain("Actions for world_bank_wdi_responses");
   });
 
-  it("keeps unloaded legacy SQL indexes reachable inside Landing", () => {
+  it("shows source metadata access without a loaded legacy catalog layer", () => {
     state.lakehouseCatalog[0] = {
       ...state.lakehouseCatalog[0],
       loaded: false,
