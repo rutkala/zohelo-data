@@ -22,15 +22,21 @@ recorded existing source inventories; no arbitrary future-source capacity is
 claimed. Refresh/logout cleanup is awaited by SQL preparation, including queries
 through local views, and cleanup failure prevents stale results in that engine.
 
-Local validation passed 54 focused tests, type checking and lint (24 existing
-warnings). The local production build compiled the client but failed at the
-Workbox/terser service-worker step; local Playwright installation also failed
-because its downloaded browser archive was invalid. Production builds and
-desktop/mobile browser acceptance therefore remain CI gates. The read-only live
-verifier now includes a source metadata SQL query and requires zero payload reads
-for that scan, alongside its existing raw-file checks. This entry is not a
-deployment or live acceptance claim. No ingestion or downstream-layer work is
-included.
+Review added an exact ownership marker for generated tables and cleanup before a
+saved OPFS database is reopened for SQL or introspection. Unmarked user tables
+remain intact. Metadata scans now validate direct folder membership and perform
+a final consistency check, avoiding repeated ancestry walks for nested sources.
+The 254-folder fixture requires 253 listings, 761 metadata reads and two project
+lookups, with no payload downloads.
+
+The latest review fixes passed 104 focused scanner, store, OPFS lifecycle and
+packaged DuckDB engine tests, type checking and lint (24 existing warnings).
+Both deployment-base CI jobs passed production builds and all browser tests
+before these final review fixes; exact-head CI and deployment remain gates. The
+read-only live verifier includes a source metadata SQL query and requires zero
+payload reads for that scan, alongside its existing raw-file checks. This entry
+is not a deployment or live acceptance claim. No ingestion or downstream-layer
+work is included.
 
 The owner has narrowed active engineering to the portal, one layer at a time,
 starting with Landing. Their phone screenshots show three overlapping entry

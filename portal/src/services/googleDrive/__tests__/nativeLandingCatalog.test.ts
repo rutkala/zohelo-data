@@ -175,6 +175,31 @@ describe("physical Landing discovery", () => {
     expect(listNativeChildrenPage).toHaveBeenCalledTimes(3);
   });
 
+  it("bounds metadata requests linearly across a deep and wide source tree", async () => {
+    const all = [root, child];
+    let parent = child;
+    for (let depth = 0; depth < 12; depth++) {
+      const next = { ...child, id: `chain-${depth}`, name: `level-${depth}`,
+        parentId: parent.id, parents: [parent.id] };
+      all.push(next);
+      parent = next;
+      for (let width = 0; width < 20; width++) all.push({ ...child,
+        id: `side-${depth}-${width}`, name: `item-${width}`,
+        parentId: parent.id, parents: [parent.id] });
+    }
+    const byId = new Map(all.map(folder => [folder.id, folder]));
+    vi.mocked(getNativeFileMetadata).mockImplementation(async id => byId.get(id)!);
+    vi.mocked(listNativeChildrenPage).mockImplementation(async id => ({
+      files: all.filter(folder => folder.parentId === id), nextPageToken: null,
+    }));
+    const result = await scanNativeSourceMetadata(child, root, "token", () => true);
+    expect(result).toEqual([]);
+    expect(listNativeChildrenPage).toHaveBeenCalledTimes(all.length - 1);
+    expect(getNativeFileMetadata).toHaveBeenCalledTimes(3 * all.length - 1);
+    expect(findFoldersByName).toHaveBeenCalledTimes(2);
+    expect(fetchDriveFileBuffer).not.toHaveBeenCalled();
+  });
+
   it("fails a broken nested page before any SQL relation is published", async () => {
     vi.mocked(getNativeFileMetadata).mockImplementation(async (id) =>
       id === "nested"
@@ -218,6 +243,12 @@ describe("physical Landing discovery", () => {
     expect(statements.find((sql) => sql.startsWith("INSERT"))).toContain("a''b.zip");
     expect(statements.find((sql) => sql.startsWith("CREATE OR REPLACE TABLE"))).toContain(
       '"BDL ""files"""'
+    );
+    expect(statements.find((sql) => sql.startsWith("COMMENT ON TABLE"))).toContain(
+      "zohelo-native-landing-file-metadata:v1"
+    );
+    expect(statements.indexOf("COMMIT;")).toBeGreaterThan(
+      statements.findIndex((sql) => sql.startsWith("COMMENT ON TABLE"))
     );
     let checks = 0;
     await expect(publishNativeMetadata(session, "other", rows, () => ++checks < 4)).rejects.toThrow(

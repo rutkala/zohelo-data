@@ -9,6 +9,7 @@
  */
 
 import { cleanupOPFSConnection, testOPFSConnection } from "@/services/duckdb/opfsConnection";
+import { cleanupOwnedNativeMetadataTables } from "@/lib/nativeMetadataOwnership";
 import { LOCAL_OPFS_CAPABILITIES } from "../session";
 import { LocalDuckSessionImpl } from "./localDuckSession";
 import type { ConnectionDefinition, DataDriver, DataSession } from "../types";
@@ -29,6 +30,15 @@ export const opfsDriver: DataDriver<"opfs"> = {
   async connect(definition: ConnectionDefinition<"opfs">): Promise<DataSession> {
     const { path } = definition.config;
     const { db, connection } = await testOPFSConnection(path);
+
+    try {
+      // The OPFS file outlives the previous browser tab. Remove only tables
+      // bearing our exact provenance marker before any SQL or schema counts.
+      await cleanupOwnedNativeMetadataTables(connection);
+    } catch (error) {
+      await cleanupOPFSConnection(db, connection, path);
+      throw error;
+    }
 
     return new LocalDuckSessionImpl({
       connectionId: definition.id,

@@ -144,7 +144,8 @@ describe("Landing file metadata SQL", () => {
         local: {
           db: {},
           connection: {
-            query: vi.fn().mockResolvedValue({ toArray: () => [] }),
+            query: vi.fn(async (sql: string) => ({ toArray: () =>
+              sql.includes("duckdb_tables()") ? [{ table_name: "source_files" }] : [] })),
           },
         },
       },
@@ -181,6 +182,19 @@ describe("Landing file metadata SQL", () => {
     expect(publishNativeMetadata).not.toHaveBeenCalled();
   });
 
+  it("does not overwrite an unmarked user replacement of a former metadata table", async () => {
+    const store = ready();
+    await store.getState().loadNativeMetadataTable("source");
+    const connection = (store.getState().currentSession as unknown as { local: { connection: { query: ReturnType<typeof vi.fn> } } }).local.connection;
+    connection.query.mockResolvedValue({ toArray: () => [{ table_name: "source_files" }] });
+    // Provenance discovery now returns no owned tables, even though the name exists.
+    connection.query.mockImplementation(async (sql: string) => ({ toArray: () =>
+      sql.includes("duckdb_tables()") ? [] : [{ table_name: "source_files" }] }));
+    expect(await store.getState().loadNativeMetadataTable("source")).toBeNull();
+    expect(store.getState().nativeMetadataError).toContain("already exists");
+    expect(publishNativeMetadata).toHaveBeenCalledTimes(1);
+  });
+
   it("invalidates a superseded scan and clears browser-local relations on refresh", async () => {
     const store = ready();
     await store.getState().loadNativeMetadataTable("source");
@@ -203,9 +217,10 @@ describe("Landing file metadata SQL", () => {
     await store.getState().loadNativeMetadataTable("source");
     const connection = (store.getState().currentSession as unknown as { local: { connection: { query: ReturnType<typeof vi.fn> } } }).local.connection;
     let finishDrop!: () => void;
+    const original = connection.query.getMockImplementation() as (sql: string) => Promise<unknown>;
     connection.query.mockImplementation((sql: string) => sql.startsWith("DROP TABLE")
       ? new Promise(resolve => { finishDrop = () => resolve({ toArray: () => [] }); })
-      : Promise.resolve({ toArray: () => [] }));
+      : original(sql));
     vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
     vi.mocked(listNativeFolder).mockResolvedValue([source]);
     const refresh = store.getState().refreshNativeLanding();
@@ -221,7 +236,9 @@ describe("Landing file metadata SQL", () => {
     const store = ready();
     await store.getState().loadNativeMetadataTable("source");
     const connection = (store.getState().currentSession as unknown as { local: { connection: { query: ReturnType<typeof vi.fn> } } }).local.connection;
-    connection.query.mockRejectedValueOnce(new Error("DROP failed"));
+    const original = connection.query.getMockImplementation() as (sql: string) => Promise<unknown>;
+    connection.query.mockImplementationOnce((sql: string) => original(sql))
+      .mockRejectedValueOnce(new Error("DROP failed"));
     await store.getState().refreshNativeLanding();
     await expect(store.getState().preparePublishedTablesForQuery("SELECT * FROM my_saved_metadata_view"))
       .rejects.toThrow("DROP failed");

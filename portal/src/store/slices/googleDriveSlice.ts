@@ -2,6 +2,7 @@ import type { StateCreator } from "zustand";
 import { toast } from "sonner";
 import { asLocalDuckSession } from "@/services/engine";
 import { sqlEscapeIdentifier } from "@/lib/sqlSanitize";
+import { listOwnedNativeMetadataTables } from "@/lib/nativeMetadataOwnership";
 import {
   clearStoredToken,
   clearStoredTokenIfCurrent,
@@ -312,14 +313,16 @@ export const createGoogleDriveSlice: StateCreator<
     if (!local) return;
     const names = metadataRelations.get(local.db);
     if (!names) return;
+    const owned = new Set(await listOwnedNativeMetadataTables(local.connection));
     for (const name of [...names]) {
       if (!session?.isOpen) {
         names.clear();
         break;
       }
-      await local.connection.query(
-        `DROP TABLE IF EXISTS ${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(name)};`
-      );
+      if (owned.has(name))
+        await local.connection.query(
+          `DROP TABLE IF EXISTS ${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(name)};`
+        );
       names.delete(name);
     }
     if (names.size === 0) metadataRelations.delete(local.db);
@@ -373,10 +376,8 @@ export const createGoogleDriveSlice: StateCreator<
       get().currentSession === session;
     const names = metadataRelations.get(local.db);
     if (names?.has(tableName)) {
-      const currentTable = await local.connection.query(
-        `SELECT table_name FROM information_schema.tables WHERE table_schema = '01_landing' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
-      );
-      if (currentTable.toArray().length && current())
+      const owned = await listOwnedNativeMetadataTables(local.connection);
+      if (owned.includes(tableName) && current())
         return `${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(tableName)}`;
       names.delete(tableName);
     }
@@ -388,7 +389,8 @@ export const createGoogleDriveSlice: StateCreator<
       const existing = await local.connection.query(
         `SELECT table_name FROM information_schema.tables WHERE table_schema = '01_landing' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
       );
-      if (existing.toArray().length && !metadataRelations.get(local.db)?.has(tableName))
+      if (existing.toArray().length &&
+          !(await listOwnedNativeMetadataTables(local.connection)).includes(tableName))
         throw new Error(
           `Local relation '${tableName}' already exists. Start a fresh DuckDB session to load this metadata table.`
         );

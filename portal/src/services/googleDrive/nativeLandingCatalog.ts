@@ -2,6 +2,7 @@
 import type * as duckdb from "@duckdb/duckdb-wasm";
 import { runQuery, type LocalDuckSession } from "@/services/engine";
 import { sqlEscapeIdentifier, sqlEscapeString } from "@/lib/sqlSanitize";
+import { NATIVE_METADATA_COMMENT } from "@/lib/nativeMetadataOwnership";
 import { DRIVE_ROOT } from "./auth";
 import {
   fetchDriveFileBuffer,
@@ -66,6 +67,8 @@ export async function scanNativeSourceMetadata(
   token: string,
   isCurrent: () => boolean
 ): Promise<NativeMetadataRow[]> {
+  if (source.id === root.id || source.parentId !== root.id)
+    throw new Error("Landing metadata source must be an immediate folder under 01_landing.");
   const folders: Record<string, NativeLandingFolder> = { [root.id]: root, [source.id]: source };
   const queue: Array<{ folder: NativeLandingFolder; prefix: string }> = [
     { folder: source, prefix: "" },
@@ -74,6 +77,18 @@ export async function scanNativeSourceMetadata(
   const files = new Set<string>();
   const rows: NativeMetadataRow[] = [];
   const scanned = new Date().toISOString();
+  // Source scans validate direct membership in O(folders), rather than using
+  // interactive browsing's whole-ancestor verification twice per folder.
+  const verifyMember = async (folder: NativeLandingFolder) => {
+    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+    const fresh = await getNativeFileMetadata(folder.id, token);
+    if (!isCurrent() || fresh.trashed || fresh.id !== folder.id || fresh.name !== folder.name ||
+        fresh.mimeType !== NATIVE_FOLDER_MIME || !fresh.parents?.includes(folder.parentId) ||
+        fresh.version !== folder.version || fresh.modifiedTime !== folder.modifiedTime)
+      throw new Error("Landing folder changed during metadata scan. Refresh and retry.");
+  };
+  await verifyProjectParent(root.parentId, token, isCurrent);
+  await verifyMember(root);
   for (let index = 0; index < queue.length; index++) {
     if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
     if (seen.size > NATIVE_METADATA_MAX_FOLDERS)
@@ -81,7 +96,26 @@ export async function scanNativeSourceMetadata(
         `Source folder exceeds the ${NATIVE_METADATA_MAX_FOLDERS}-folder metadata scan limit.`
       );
     const { folder, prefix } = queue[index];
-    const children = await listNativeFolder(folder, folders, root.id, token, isCurrent);
+    await verifyMember(folder);
+    const children: NativeLandingFile[] = [];
+    const ids = new Set<string>();
+    const seenPages = new Set<string>();
+    let next: string | null = null;
+    do {
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      const page = await listNativeChildrenPage(folder.id, token, next ?? undefined);
+      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
+      for (const item of page.files) {
+        if (item.trashed || !item.parents?.includes(folder.id) || ids.has(item.id))
+          throw new Error("Landing folder membership changed during metadata scan.");
+        ids.add(item.id);
+        children.push({ ...item, parentId: folder.id });
+      }
+      next = page.nextPageToken;
+      if (next && seenPages.has(next)) throw new Error("Drive repeated a native folder page token.");
+      if (next) seenPages.add(next);
+    } while (next);
+    await verifyMember(folder);
     for (const file of children) {
       if (isNativeFolder(file)) {
         if (seen.has(file.id)) throw new Error("Landing folder appears twice in the source tree.");
@@ -113,6 +147,12 @@ export async function scanNativeSourceMetadata(
       }
     }
   }
+  // Recheck every direct parent edge after the entire traversal: a folder
+  // moved after its earlier page would otherwise leave a plausible partial tree.
+  const finalFolders = Object.values(folders);
+  for (let index = 0; index < finalFolders.length; index += 4)
+    await Promise.all(finalFolders.slice(index, index + 4).map(verifyMember));
+  await verifyProjectParent(root.parentId, token, isCurrent);
   if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
   return rows;
 }
@@ -173,6 +213,10 @@ export async function publishNativeMetadata(
     try {
       if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
       await runNativeDdl(session, `CREATE OR REPLACE TABLE ${target} AS SELECT * FROM ${staging};`);
+      await runNativeDdl(
+        session,
+        `COMMENT ON TABLE ${target} IS '${sqlEscapeString(NATIVE_METADATA_COMMENT)}';`
+      );
       if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
       await runNativeDdl(session, "COMMIT;");
     } catch (error) {
