@@ -115,6 +115,14 @@ def _require_expected_release(manifest: dict, expected_release_id: str | None) -
         )
 
 
+def _read_optional_current_release(store: DriveReleaseStore) -> dict | None:
+    """Return no release only when the publication root has no pointer yet."""
+    pointer_ids = store.find("current-release.json", store.root_id)
+    if not pointer_ids:
+        return None
+    return read_current_release_manifest(store, store.root_id)
+
+
 def run(
     *,
     drive_root_id: str,
@@ -174,10 +182,8 @@ def run(
             existing_direct_releases = False
         if existing_root is not None:
             existing_store = DriveReleaseStore(storage, existing_root)
-            existing = read_current_release_manifest(
-                existing_store, existing_store.root_id
-            )
-            if (
+            existing = _read_optional_current_release(existing_store)
+            if existing is not None and (
                 existing.get("release_scope") == DBW_RELEASE_SCOPE
                 and existing.get("code_sha") == code_sha
                 and existing.get("inputs") == [retained_source]
