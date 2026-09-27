@@ -96,14 +96,11 @@ test("Drive selection opens matching SQL results and a failed selection leaves t
   await expect(page.getByText("2.46", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Drive Demo Mode", { exact: true })).toHaveCount(0);
 
-  // Legacy tables are discovered lazily, including from the advanced Landing area.
+  // Legacy Bronze remains queryable, and Landing has only the original-file browser.
   const landing = page.getByRole("region", { name: "Landing", exact: true });
-  await expect(landing.getByText("legacy_responses", { exact: true })).toHaveCount(0);
-  await landing.getByText("File indexes (SQL)", { exact: true }).click();
-  await landing.getByText("legacy_responses", { exact: true }).click();
-  await expect(page.getByRole("tab", { name: "01_landing/legacy_responses", exact: true }))
-    .toHaveAttribute("aria-selected", "true");
-  await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
+  await expect(landing.getByText("File indexes (SQL)", { exact: true })).toHaveCount(0);
+  await expect(landing).toHaveCount(1);
+  await expect(tab).toHaveAttribute("aria-selected", "true");
 });
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -373,20 +370,14 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
   await expect(
     dataExplorer.getByRole("link", { name: "GitHub encrypted secrets" })
   ).toHaveAttribute("href", "https://github.com/rutkala/zohelo-data/settings/secrets/actions");
-  await expect(dataExplorer.getByText(/one accepted source response per row/i)).toBeHidden();
-  await dataExplorer.getByText("File indexes (SQL)", { exact: true }).click();
-  await expect(dataExplorer.getByText(/one accepted source response per row/i)).toBeVisible();
+  await expect(dataExplorer.getByText("File indexes (SQL)", { exact: true })).toHaveCount(0);
 
   await expect(dataExplorer.getByRole("button", { name: "Business catalogue" })).toHaveCount(0);
 
-  const landingActions = dataExplorer.getByRole("button", {
-    name: "Actions for world_bank_wdi_responses",
-  });
-  await expect(landingActions).toBeVisible();
-  await landingActions.click();
-  await page.getByRole("menuitem", { name: "Query as SELECT" }).click();
+  // Published legacy response SQL remains directly usable without a response-index UI.
+  await page.getByRole("button", { name: "Tables", exact: true }).click();
+  await page.getByRole("button", { name: "New SQL query", exact: true }).click();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
-  await expect(editor).toContainText('"01_landing"."world_bank_wdi_responses"');
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.insertText(
@@ -396,9 +387,8 @@ test("v2 NBP and source Landing snapshots are queryable together", async ({ page
   await expect(page.locator(":text-is('TEST'):visible").first()).toBeVisible();
   await expect(page.locator(":text-is('wdi-country-metadata'):visible").first()).toBeVisible();
   await expect(page.getByText(/Poland/).first()).toBeVisible();
-  await expect(
-    page.getByRole("tab", { name: "world_bank_wdi_responses", exact: true })
-  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "Untitled Query", exact: true }))
+    .toHaveAttribute("aria-selected", "true");
 });
 
 // Synthetic Bronze fixtures only. This exercises direct original-file loading in
