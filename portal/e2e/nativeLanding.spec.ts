@@ -139,6 +139,16 @@ for (const viewport of [
       body: await page.screenshot(),
       contentType: "image/png",
     });
+    const sourceRow = section.locator('[data-native-id="bdl"]');
+    await sourceRow.getByRole("button", { name: "Actions for GUS BDL" }).click();
+    await sourceRow.getByRole("button", { name: "Query file metadata" }).click();
+    await expect(page.getByRole("tab", { name: "Landing/GUS BDL file metadata" })).toBeVisible();
+    await expect(
+      page.getByText("_control/duplicate.unknown", { exact: true }).first()
+    ).toBeVisible();
+    expect(mediaRequests).toBe(0);
+    if (viewport.width < 768)
+      await page.getByRole("button", { name: "Tables", exact: true }).click();
     await section.getByRole("button", { name: "Expand GUS BDL" }).click();
     await section.getByRole("button", { name: "Expand _control" }).click();
     const archiveRow = section.locator('[data-native-id="huge-archive"]');

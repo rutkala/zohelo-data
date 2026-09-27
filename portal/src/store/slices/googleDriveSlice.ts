@@ -1,6 +1,7 @@
 import type { StateCreator } from "zustand";
 import { toast } from "sonner";
 import { asLocalDuckSession } from "@/services/engine";
+import { sqlEscapeIdentifier } from "@/lib/sqlSanitize";
 import {
   clearStoredToken,
   clearStoredTokenIfCurrent,
@@ -24,6 +25,9 @@ import {
   nativeDriveLink,
   previewNativeFile,
   disposeAllNativePreviews,
+  nativeMetadataNames,
+  scanNativeSourceMetadata,
+  publishNativeMetadata,
   isGoogleDriveAuthError,
   setStoredToken,
   type LakehouseLayer,
@@ -60,30 +64,65 @@ const releaseFingerprint = (release: ReleaseCatalogResolution | null) => {
 
 export const landingDatasets = (landing: LandingCatalogResolution | null): PublishedDataset[] =>
   (landing?.snapshots ?? []).flatMap(({ manifest }) => {
-    if (manifest.kind !== "retained_bronze_snapshot") return [{
-      dataset_id: manifest.table_name, layer: manifest.layer, table_name: manifest.table_name,
-      columns: manifest.columns, files: manifest.files,
-    }];
+    if (manifest.kind !== "retained_bronze_snapshot")
+      return [
+        {
+          dataset_id: manifest.table_name,
+          layer: manifest.layer,
+          table_name: manifest.table_name,
+          columns: manifest.columns,
+          files: manifest.files,
+        },
+      ];
     const fixed = manifest.datasets.filter((dataset) => dataset.dataset_id !== "observations");
-    const observationRoot = manifest.datasets.find((dataset) => dataset.dataset_id === "observations");
+    const observationRoot = manifest.datasets.find(
+      (dataset) => dataset.dataset_id === "observations"
+    );
     const observations = manifest.indicators.flatMap((indicator): PublishedDataset[] => {
       const base = `br_dbw_observations__indicator_${indicator.indicator_id}`;
       const label = `${indicator.indicator_id} · ${indicator.indicator_name_en || indicator.indicator_name}`;
-      if (indicator.status === "pending") return [{ dataset_id: base, layer: "02_bronze", table_name: base,
-        columns: manifest.observation_schema, files: [], label: `${label} · pending`, availability: "pending" }];
+      if (indicator.status === "pending")
+        return [
+          {
+            dataset_id: base,
+            layer: "02_bronze",
+            table_name: base,
+            columns: manifest.observation_schema,
+            files: [],
+            label: `${label} · pending`,
+            availability: "pending",
+          },
+        ];
       const total = indicator.parts.reduce((sum, part) => sum + (part.size ?? 0), 0);
-      if (total <= 64 * 1024 * 1024) return [{ dataset_id: base, layer: "02_bronze", table_name: base,
-        columns: manifest.observation_schema,
-        files: indicator.parts.map((part) => ({ ...part, tableName: base })), label, availability: "published" }];
+      if (total <= 64 * 1024 * 1024)
+        return [
+          {
+            dataset_id: base,
+            layer: "02_bronze",
+            table_name: base,
+            columns: manifest.observation_schema,
+            files: indicator.parts.map((part) => ({ ...part, tableName: base })),
+            label,
+            availability: "published",
+          },
+        ];
       return indicator.parts.map((part, index) => {
         const tableName = `${base}__part_${index + 1}`;
-        return { dataset_id: tableName, layer: "02_bronze", table_name: tableName,
-          columns: manifest.observation_schema, files: [{ ...part, tableName }],
-          label: `${label} · part ${index + 1}/${indicator.parts.length}`, availability: "published" };
+        return {
+          dataset_id: tableName,
+          layer: "02_bronze",
+          table_name: tableName,
+          columns: manifest.observation_schema,
+          files: [{ ...part, tableName }],
+          label: `${label} · part ${index + 1}/${indicator.parts.length}`,
+          availability: "published",
+        };
       });
     });
     return [
-      ...(observationRoot ? [{ ...observationRoot, label: "DBW observations · choose an indicator" }] : []),
+      ...(observationRoot
+        ? [{ ...observationRoot, label: "DBW observations · choose an indicator" }]
+        : []),
       ...fixed,
       ...observations,
     ];
@@ -93,12 +132,17 @@ const snapshotForTable = (
   landing: LandingCatalogResolution | null,
   layerName: string,
   tableName: string
-) => landing?.snapshots.find((snapshot) =>
-  snapshot.manifest.kind === "retained_bronze_snapshot"
-    ? layerName === "02_bronze" && landingDatasets({ snapshots: [snapshot], issues: [], fingerprint: snapshot.fingerprint })
-        .some((dataset) => dataset.table_name === tableName)
-    : snapshot.manifest.layer === layerName && snapshot.manifest.table_name === tableName
-);
+) =>
+  landing?.snapshots.find((snapshot) =>
+    snapshot.manifest.kind === "retained_bronze_snapshot"
+      ? layerName === "02_bronze" &&
+        landingDatasets({
+          snapshots: [snapshot],
+          issues: [],
+          fingerprint: snapshot.fingerprint,
+        }).some((dataset) => dataset.table_name === tableName)
+      : snapshot.manifest.layer === layerName && snapshot.manifest.table_name === tableName
+  );
 
 const publishedDatasets = (
   release: ReleaseCatalogResolution | null,
@@ -128,7 +172,10 @@ const handleDriveAuthFailure = (
   if (!isGoogleDriveAuthError(error) || get().googleAuth.token !== token) return false;
   clearStoredTokenIfCurrent(token);
   void disposeAllNativePreviews().catch(() => {
-    set({ lakehouseStatusMessage: "Could not remove a local native preview. Start a fresh DuckDB session." });
+    set({
+      lakehouseStatusMessage:
+        "Could not remove a local native preview. Start a fresh DuckDB session.",
+    });
   });
   set({
     googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: error.message },
@@ -139,6 +186,9 @@ const handleDriveAuthFailure = (
     nativeLandingLinks: null,
     nativeLandingSelected: null,
     nativeLandingActionError: null,
+    nativeMetadataTables: {},
+    nativeMetadataLoading: null,
+    nativeMetadataError: null,
     nativeLandingError: error.message,
     nativeLandingLoading: false,
   });
@@ -254,6 +304,126 @@ export const createGoogleDriveSlice: StateCreator<
   const loadedReleaseFingerprints = new WeakMap<object, string>();
   const loadedLandingFingerprints = new WeakMap<object, Map<LandingSourceId, string>>();
   const downloadBudgets = new WeakMap<object, ReturnType<typeof createDriveDownloadBudget>>();
+  const metadataRelations = new WeakMap<object, Set<string>>();
+  let metadataInFlight: Promise<unknown> | null = null;
+  let metadataCleanup: Promise<void> | null = null;
+  let metadataCleanupDb: object | null = null;
+  const clearMetadataRelations = async (session = get().currentSession) => {
+    const local = asLocalDuckSession(session)?.local;
+    if (!local) return;
+    const names = metadataRelations.get(local.db);
+    if (!names) return;
+    for (const name of [...names]) {
+      if (!session?.isOpen) {
+        names.clear();
+        break;
+      }
+      await local.connection.query(
+        `DROP TABLE IF EXISTS ${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(name)};`
+      );
+      names.delete(name);
+    }
+    if (names.size === 0) metadataRelations.delete(local.db);
+  };
+  const beginMetadataCleanup = (session = get().currentSession): Promise<void> => {
+    const previous = metadataCleanup;
+    metadataCleanupDb = asLocalDuckSession(session)?.local.db ?? null;
+    const task = (async () => {
+      await previous?.catch(() => undefined);
+      await metadataInFlight?.catch(() => undefined);
+      await clearMetadataRelations(session);
+    })();
+    metadataCleanup = task;
+    return task;
+  };
+  const handleAuthFailure = (token: string, error: unknown): boolean => {
+    const session = get().currentSession;
+    const handled = handleDriveAuthFailure(set, get, token, error);
+    if (handled) {
+      nativeGeneration += 1;
+      void beginMetadataCleanup(session).catch(() =>
+        set({
+          lakehouseStatusMessage:
+            "Could not remove local Landing metadata tables. Start a fresh DuckDB session.",
+        })
+      );
+    }
+    return handled;
+  };
+  const loadMetadataUntracked = async (folderId: string): Promise<string | null> => {
+    if (get().nativeMetadataLoading)
+      throw new Error("A Landing source metadata scan is already running.");
+    const token = get().googleAuth.token;
+    const root = get().nativeLandingRoot;
+    const folder = get().nativeLandingFolders[folderId];
+    const tableName = get().nativeMetadataTables[folderId];
+    const session = asLocalDuckSession(get().currentSession);
+    const local = session?.local;
+    const generation = nativeGeneration;
+    if (!token || !root || !folder || !tableName || !local || !session) {
+      set({
+        nativeMetadataError:
+          "Sign in, load Landing source folders, and start a local DuckDB session.",
+      });
+      return null;
+    }
+    const current = () =>
+      generation === nativeGeneration &&
+      get().googleAuth.token === token &&
+      get().nativeLandingRoot === root &&
+      get().currentSession === session;
+    const names = metadataRelations.get(local.db);
+    if (names?.has(tableName)) {
+      const currentTable = await local.connection.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = '01_landing' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
+      );
+      if (currentTable.toArray().length && current())
+        return `${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(tableName)}`;
+      names.delete(tableName);
+    }
+    set({ nativeMetadataLoading: folderId, nativeMetadataError: null });
+    try {
+      const rows = await scanNativeSourceMetadata(folder, root, token, current);
+      if (!current()) return null;
+      // Never replace an unrelated user/release relation with the same name.
+      const existing = await local.connection.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = '01_landing' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
+      );
+      if (existing.toArray().length && !metadataRelations.get(local.db)?.has(tableName))
+        throw new Error(
+          `Local relation '${tableName}' already exists. Start a fresh DuckDB session to load this metadata table.`
+        );
+      const target = await publishNativeMetadata(session, tableName, rows, current);
+      const registered = metadataRelations.get(local.db) ?? new Set<string>();
+      registered.add(tableName);
+      metadataRelations.set(local.db, registered);
+      if (!current()) return null;
+      if (current())
+        set({
+          lakehouseStatusMessage: `Scanned ${rows.length} original file(s) for ${folder.name}. Query ${target}.`,
+        });
+      return current() ? target : null;
+    } catch (error) {
+      if (current()) {
+        if (!handleAuthFailure(token, error)) set({ nativeMetadataError: messageOf(error) });
+      }
+      return null;
+    } finally {
+      if (current()) set({ nativeMetadataLoading: null });
+    }
+  };
+  const loadMetadata = (folderId: string): Promise<string | null> => {
+    if (metadataInFlight)
+      return Promise.reject(new Error("A Landing source metadata scan is already running."));
+    const task = loadMetadataUntracked(folderId);
+    metadataInFlight = task;
+    void task
+      .finally(() => {
+        if (metadataInFlight === task) metadataInFlight = null;
+      })
+      .catch(() => undefined);
+    return task;
+  };
   const budgetForEngine = (db: object) => {
     let budget = downloadBudgets.get(db);
     if (!budget) {
@@ -320,10 +490,14 @@ export const createGoogleDriveSlice: StateCreator<
     });
     try {
       if (tableName === "br_dbw_observations" && (!table || table.children.length === 0)) {
-        throw new Error("Search and choose a dated retained DBW indicator or explicit part before loading observations.");
+        throw new Error(
+          "Search and choose a dated retained DBW indicator or explicit part before loading observations."
+        );
       }
       if (table?.availability === "pending") {
-        throw new Error("This dated retained DBW indicator is discoverable but its query fragments are still pending publication.");
+        throw new Error(
+          "This dated retained DBW indicator is discoverable but its query fragments are still pending publication."
+        );
       }
       if (!table) throw new Error(`Dataset '${tableName}' was not found in the catalog.`);
       let queryTarget: string;
@@ -368,7 +542,7 @@ export const createGoogleDriveSlice: StateCreator<
       toast.success(`Loaded '${label}'`);
       return queryTarget;
     } catch (error) {
-      const authFailure = handleDriveAuthFailure(set, get, token ?? "", error);
+      const authFailure = handleAuthFailure(token ?? "", error);
       if (current()) {
         const message = authFailure
           ? "Google Drive authorization expired or was revoked. Sign in again."
@@ -497,7 +671,7 @@ export const createGoogleDriveSlice: StateCreator<
       toast.success("Join SQL is ready to run");
       return tabId;
     } catch (error) {
-      const authFailure = handleDriveAuthFailure(set, get, token, error);
+      const authFailure = handleAuthFailure(token, error);
       if (current()) {
         const message = authFailure
           ? "Google Drive authorization expired or was revoked. Sign in again."
@@ -520,43 +694,82 @@ export const createGoogleDriveSlice: StateCreator<
   const preparePublishedTablesForQuery = async (sql: string): Promise<void> => {
     const session = get().currentSession;
     const local = asLocalDuckSession(session)?.local;
+    if (local && metadataCleanupDb === local.db) await metadataCleanup;
     const token = get().googleAuth.token;
     const source = get().lakehouseRelease;
     const landing = get().lakehouseLanding;
+    const metadataGeneration = nativeGeneration;
+    const metadataRoot = get().nativeLandingRoot;
+    const metadataNames = new Map(
+      Object.entries(get().nativeMetadataTables).map(([id, table]) => [table, id])
+    );
     // Remote engines, ordinary local SQL, and legacy catalogs keep their
     // existing execution path. Only a resolved immutable release participates.
-    const datasets = publishedDatasets(source, landing);
+    const metadataDatasets: PublishedDataset[] = [...metadataNames.keys()].map((table) => ({
+      dataset_id: table,
+      layer: "01_landing",
+      table_name: table,
+      columns: [],
+      files: [],
+    }));
+    const datasets = [...publishedDatasets(source, landing), ...metadataDatasets];
     if (!local || datasets.length === 0) return;
     const current = () =>
       get().currentSession === session &&
       get().googleAuth.token === token &&
       get().lakehouseRelease === source &&
       get().lakehouseLanding === landing;
-    if (busy) {
-      throw new Error(
-        "Google Drive is already loading data. Wait for it to finish, then run the query again."
-      );
-    }
-
-    busy = true;
+    let acquired = false;
     try {
       const referenced = await resolvePublishedTableReferences(local.connection, sql, datasets);
-      if (!current()) {
+      if (
+        get().currentSession !== session ||
+        get().googleAuth.token !== token ||
+        metadataGeneration !== nativeGeneration ||
+        get().nativeLandingRoot !== metadataRoot
+      )
         throw new Error("Google Drive session changed before SQL dependencies could be resolved.");
-      }
       if (referenced.length === 0) return;
-      if (referenced.some((table) =>
-        table.layerName === "02_bronze" &&
-        table.datasetName === "br_dbw_observations" &&
-        table.files.length === 0
+      for (const table of referenced.filter(
+        (item) => item.layerName === "01_landing" && metadataNames.has(item.datasetName)
       )) {
+        const target = await loadMetadata(metadataNames.get(table.datasetName)!);
+        if (!target)
+          throw new Error(get().nativeMetadataError ?? "Landing metadata scan was superseded.");
+      }
+      const publishedReferences = referenced.filter(
+        (table) => !(table.layerName === "01_landing" && metadataNames.has(table.datasetName))
+      );
+      if (publishedReferences.length === 0) return;
+      if (busy)
+        throw new Error(
+          "Google Drive is already loading data. Wait for it to finish, then run the query again."
+        );
+      busy = true;
+      acquired = true;
+      if (!current())
+        throw new Error(
+          "Google Drive publication changed before SQL dependencies could be resolved."
+        );
+      if (
+        publishedReferences.some(
+          (table) =>
+            table.layerName === "02_bronze" &&
+            table.datasetName === "br_dbw_observations" &&
+            table.files.length === 0
+        )
+      ) {
         throw new Error(
           "Choose a dated retained DBW indicator (or one of its explicit parts) before querying observations; the full retained collection is not loaded into the browser."
         );
       }
-      if (referenced.some((table) =>
-        table.datasetName.startsWith("br_dbw_observations__indicator_") && table.files.length === 0
-      )) {
+      if (
+        publishedReferences.some(
+          (table) =>
+            table.datasetName.startsWith("br_dbw_observations__indicator_") &&
+            table.files.length === 0
+        )
+      ) {
         throw new Error(
           "The selected dated retained DBW indicator is still pending fragment publication. Choose a published indicator or part."
         );
@@ -587,7 +800,7 @@ export const createGoogleDriveSlice: StateCreator<
             tableKey(String(row.table_schema).toLowerCase(), String(row.table_name).toLowerCase())
           )
       );
-      const pending = referenced.filter(
+      const pending = publishedReferences.filter(
         (table) =>
           !existing.has(tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase()))
       );
@@ -636,7 +849,7 @@ export const createGoogleDriveSlice: StateCreator<
         lakehouseStatusMessage: `Loaded ${pending.length} published dataset(s) for this query: ${label}.`,
       });
     } catch (error) {
-      const authFailure = token ? handleDriveAuthFailure(set, get, token, error) : false;
+      const authFailure = token ? handleAuthFailure(token, error) : false;
       if (current()) {
         set({
           lakehouseStatusMessage: authFailure
@@ -646,8 +859,10 @@ export const createGoogleDriveSlice: StateCreator<
       }
       throw error;
     } finally {
-      busy = false;
-      set({ isLakehouseLoading: false });
+      if (acquired) {
+        busy = false;
+        set({ isLakehouseLoading: false });
+      }
     }
   };
 
@@ -672,6 +887,9 @@ export const createGoogleDriveSlice: StateCreator<
     nativeLandingSelected: null,
     nativeLandingLinks: null,
     nativeLandingActionError: null,
+    nativeMetadataTables: {},
+    nativeMetadataLoading: null,
+    nativeMetadataError: null,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
     activeLakehouseDataset: null,
@@ -727,8 +945,18 @@ export const createGoogleDriveSlice: StateCreator<
     disconnectGoogleDrive: () => {
       nativeGeneration += 1;
       nativeActionSequence += 1;
+      const oldSession = get().currentSession;
+      void beginMetadataCleanup(oldSession).catch(() => {
+        set({
+          lakehouseStatusMessage:
+            "Could not remove local Landing metadata tables. Start a fresh DuckDB session.",
+        });
+      });
       void disposeAllNativePreviews().catch(() => {
-        set({ lakehouseStatusMessage: "Could not remove a local native preview. Start a fresh DuckDB session." });
+        set({
+          lakehouseStatusMessage:
+            "Could not remove a local native preview. Start a fresh DuckDB session.",
+        });
       });
       refreshGeneration += 1;
       clearStoredToken();
@@ -747,6 +975,9 @@ export const createGoogleDriveSlice: StateCreator<
         nativeLandingSelected: null,
         nativeLandingLinks: null,
         nativeLandingActionError: null,
+        nativeMetadataTables: {},
+        nativeMetadataLoading: null,
+        nativeMetadataError: null,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
         isLakehouseLoading: false,
@@ -758,9 +989,30 @@ export const createGoogleDriveSlice: StateCreator<
       const token = get().googleAuth.token;
       const generation = ++nativeGeneration;
       nativeActionSequence += 1;
-      set({ nativeLandingRoot: null, nativeLandingFolders: {}, nativeLandingChildren: {},
-        nativeLandingSelected: null, nativeLandingLinks: null, nativeLandingActionError: null,
-        nativeLandingError: null, nativeLandingLoading: !!token });
+      const oldSession = get().currentSession;
+      set({
+        nativeLandingRoot: null,
+        nativeLandingFolders: {},
+        nativeLandingChildren: {},
+        nativeLandingSelected: null,
+        nativeLandingLinks: null,
+        nativeLandingActionError: null,
+        nativeLandingError: null,
+        nativeLandingLoading: !!token,
+        nativeMetadataTables: {},
+        nativeMetadataLoading: null,
+        nativeMetadataError: null,
+      });
+      try {
+        await beginMetadataCleanup(oldSession);
+      } catch (error) {
+        if (generation === nativeGeneration)
+          set({
+            nativeMetadataError: `Could not remove old metadata tables; start a fresh DuckDB session: ${messageOf(error)}`,
+            nativeLandingLoading: false,
+          });
+        return;
+      }
       if (!token) return;
       const current = () => generation === nativeGeneration && get().googleAuth.token === token;
       try {
@@ -768,11 +1020,15 @@ export const createGoogleDriveSlice: StateCreator<
         if (!current()) return;
         const root = await resolveNativeLandingRoot(token);
         if (!current()) return;
-        set({ nativeLandingRoot: root, nativeLandingFolders: { [root.id]: root }, nativeLandingLoading: false });
+        set({
+          nativeLandingRoot: root,
+          nativeLandingFolders: { [root.id]: root },
+          nativeLandingLoading: false,
+        });
         await get().loadNativeLandingFolder(root.id);
       } catch (error) {
         if (!current()) return;
-        handleDriveAuthFailure(set, get, token, error);
+        handleAuthFailure(token, error);
         if (current()) set({ nativeLandingError: messageOf(error), nativeLandingLoading: false });
       }
     },
@@ -784,10 +1040,16 @@ export const createGoogleDriveSlice: StateCreator<
       const folder = folders[folderId];
       const generation = nativeGeneration;
       if (!token || !root || !folder || get().nativeLandingChildren[folderId]?.loading) return;
-      const current = () => generation === nativeGeneration && get().googleAuth.token === token &&
+      const current = () =>
+        generation === nativeGeneration &&
+        get().googleAuth.token === token &&
         get().nativeLandingRoot === root;
-      set({ nativeLandingChildren: { ...get().nativeLandingChildren,
-        [folderId]: { files: [], loaded: false, loading: true, error: null } } });
+      set({
+        nativeLandingChildren: {
+          ...get().nativeLandingChildren,
+          [folderId]: { files: [], loaded: false, loading: true, error: null },
+        },
+      });
       try {
         const files = await listNativeFolder(folder, folders, root.id, token, current);
         if (!current()) return;
@@ -795,14 +1057,30 @@ export const createGoogleDriveSlice: StateCreator<
         for (const file of files) {
           if (isNativeFolder(file)) newFolders[file.id] = file;
         }
-        set({ nativeLandingFolders: newFolders, nativeLandingChildren: {
-          ...get().nativeLandingChildren, [folderId]: { files, loaded: true, loading: false, error: null }
-        } });
+        set({
+          nativeLandingFolders: newFolders,
+          nativeLandingChildren: {
+            ...get().nativeLandingChildren,
+            [folderId]: { files, loaded: true, loading: false, error: null },
+          },
+          ...(folderId === root.id
+            ? {
+                nativeMetadataTables: Object.fromEntries(
+                  nativeMetadataNames(files.filter(isNativeFolder)).entries()
+                ),
+              }
+            : {}),
+        });
       } catch (error) {
         if (!current()) return;
-        handleDriveAuthFailure(set, get, token, error);
-        if (current()) set({ nativeLandingChildren: { ...get().nativeLandingChildren,
-          [folderId]: { files: [], loaded: false, loading: false, error: messageOf(error) } } });
+        handleAuthFailure(token, error);
+        if (current())
+          set({
+            nativeLandingChildren: {
+              ...get().nativeLandingChildren,
+              [folderId]: { files: [], loaded: false, loading: false, error: messageOf(error) },
+            },
+          });
       }
     },
 
@@ -811,26 +1089,56 @@ export const createGoogleDriveSlice: StateCreator<
       const root = get().nativeLandingRoot;
       const folderState = get().nativeLandingChildren[folderId];
       const selected: NativeLandingFile | undefined = folderState?.loaded
-        ? folderState.files.find((file) => file.id === fileId) : undefined;
+        ? folderState.files.find((file) => file.id === fileId)
+        : undefined;
       const generation = nativeGeneration;
       const sequence = ++nativeActionSequence;
       if (!token || !root || !selected) return null;
-      const current = () => generation === nativeGeneration && sequence === nativeActionSequence &&
-        get().googleAuth.token === token && get().nativeLandingRoot === root;
-      set({ nativeLandingSelected: fileId, nativeLandingLinks: null, nativeLandingActionError: null });
+      const current = () =>
+        generation === nativeGeneration &&
+        sequence === nativeActionSequence &&
+        get().googleAuth.token === token &&
+        get().nativeLandingRoot === root;
+      set({
+        nativeLandingSelected: fileId,
+        nativeLandingLinks: null,
+        nativeLandingActionError: null,
+      });
       try {
-        const fresh = await freshNativeFile(selected, get().nativeLandingFolders, root.id, token, current);
+        const fresh = await freshNativeFile(
+          selected,
+          get().nativeLandingFolders,
+          root.id,
+          token,
+          current
+        );
         if (!current()) return null;
-        const links = { open: (() => { try { return nativeDriveLink(fresh, token, "open"); } catch { return null; } })(),
-          download: fresh.capabilities?.canDownload === true
-            ? (() => { try { return nativeDriveLink(fresh, token, "download"); } catch { return null; } })()
-            : null };
-        if (!links.open && !links.download) throw new Error("Drive did not provide a safe link for this file.");
+        const links = {
+          open: (() => {
+            try {
+              return nativeDriveLink(fresh, token, "open");
+            } catch {
+              return null;
+            }
+          })(),
+          download:
+            fresh.capabilities?.canDownload === true
+              ? (() => {
+                  try {
+                    return nativeDriveLink(fresh, token, "download");
+                  } catch {
+                    return null;
+                  }
+                })()
+              : null,
+        };
+        if (!links.open && !links.download)
+          throw new Error("Drive did not provide a safe link for this file.");
         set({ nativeLandingLinks: { fileId, ...links } });
         return links;
       } catch (error) {
         if (!current()) return null;
-        handleDriveAuthFailure(set, get, token, error);
+        handleAuthFailure(token, error);
         if (current()) set({ nativeLandingActionError: messageOf(error) });
         return null;
       }
@@ -840,30 +1148,51 @@ export const createGoogleDriveSlice: StateCreator<
       const sequence = ++nativeActionSequence;
       const token = get().googleAuth.token;
       const root = get().nativeLandingRoot;
-      const selected = get().nativeLandingChildren[folderId]?.files.find((file) => file.id === fileId);
+      const selected = get().nativeLandingChildren[folderId]?.files.find(
+        (file) => file.id === fileId
+      );
       const session = get().currentSession;
       const localSession = asLocalDuckSession(session);
       const local = localSession?.local;
       const generation = nativeGeneration;
       if (!token || !root || !selected || !localSession || !local) {
-        set({ nativeLandingActionError: "Sign in and start a local DuckDB session to preview this file." });
+        set({
+          nativeLandingActionError:
+            "Sign in and start a local DuckDB session to preview this file.",
+        });
         return null;
       }
-      const current = () => generation === nativeGeneration && sequence === nativeActionSequence && get().googleAuth.token === token &&
-        get().nativeLandingRoot === root && get().currentSession === session;
+      const current = () =>
+        generation === nativeGeneration &&
+        sequence === nativeActionSequence &&
+        get().googleAuth.token === token &&
+        get().nativeLandingRoot === root &&
+        get().currentSession === session;
       set({ nativeLandingSelected: fileId, nativeLandingActionError: null });
       try {
-        const target = await previewNativeFile(localSession, selected,
-          get().nativeLandingFolders, root.id, token, current, budgetForEngine(local.db));
+        const target = await previewNativeFile(
+          localSession,
+          selected,
+          get().nativeLandingFolders,
+          root.id,
+          token,
+          current,
+          budgetForEngine(local.db)
+        );
         if (!current()) return null;
         await get().fetchDatabasesAndTablesInfo();
         return current() ? target : null;
       } catch (error) {
         if (!current()) return null;
-        handleDriveAuthFailure(set, get, token, error);
+        handleAuthFailure(token, error);
         if (current()) set({ nativeLandingActionError: messageOf(error) });
         return null;
       }
+    },
+
+    loadNativeMetadataTable: async (folderId) => {
+      if (get().nativeMetadataLoading) return null;
+      return loadMetadata(folderId);
     },
 
     refreshLakehouseCatalog: async () => {
@@ -922,21 +1251,30 @@ export const createGoogleDriveSlice: StateCreator<
                 const dropped = new Set<string>();
                 for (const row of relations.toArray()) {
                   const name = String(row.table_name);
-                  if (name.startsWith("br_dbw_observations__indicator_") ||
-                      ["br_dbw_dictionaries", "br_dbw_metadata", "br_dbw_indicators"].includes(name)) {
-                    await local.connection.query(`DROP VIEW IF EXISTS "02_bronze"."${name.replace(/"/g, '""')}";`);
+                  if (
+                    name.startsWith("br_dbw_observations__indicator_") ||
+                    ["br_dbw_dictionaries", "br_dbw_metadata", "br_dbw_indicators"].includes(name)
+                  ) {
+                    await local.connection.query(
+                      `DROP VIEW IF EXISTS "02_bronze"."${name.replace(/"/g, '""')}";`
+                    );
                     dropped.add(name);
                   }
                 }
                 loadedLanding.delete(sourceId);
-                if (get().activeLakehouseLayer === "02_bronze" &&
-                    get().activeLakehouseDataset && dropped.has(get().activeLakehouseDataset!)) {
+                if (
+                  get().activeLakehouseLayer === "02_bronze" &&
+                  get().activeLakehouseDataset &&
+                  dropped.has(get().activeLakehouseDataset!)
+                ) {
                   set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
                 }
                 continue;
               }
               const tableName =
-                (selected && selected.manifest.kind !== "retained_bronze_snapshot" ? selected.manifest.table_name : undefined) ??
+                (selected && selected.manifest.kind !== "retained_bronze_snapshot"
+                  ? selected.manifest.table_name
+                  : undefined) ??
                 (sourceId === "opendata_org_bronze"
                   ? "br_opendata_organizations"
                   : sourceId === "opendata_org_locations_bronze"
@@ -984,7 +1322,7 @@ export const createGoogleDriveSlice: StateCreator<
           });
         }
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        const authFailure = handleAuthFailure(activeToken, error);
         if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure
             ? "Google Drive authorization expired or was revoked. Sign in again."
@@ -1029,7 +1367,7 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: `Found ${updated.children.length} legacy/unversioned dataset(s) in '${layerName}'.`,
         });
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        const authFailure = handleAuthFailure(activeToken, error);
         if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure
@@ -1085,7 +1423,7 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: `Found ${updated.children.length} legacy/unversioned file(s) in '${tableName}'.`,
         });
       } catch (error) {
-        const authFailure = handleDriveAuthFailure(set, get, activeToken, error);
+        const authFailure = handleAuthFailure(activeToken, error);
         if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure

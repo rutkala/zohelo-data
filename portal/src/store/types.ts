@@ -15,7 +15,10 @@ import type {
   LakehouseLayer,
   ReleaseCatalogResolution,
 } from "@/services/googleDrive/types";
-import type { NativeLandingFile, NativeLandingFolder } from "@/services/googleDrive/nativeLandingCatalog";
+import type {
+  NativeLandingFile,
+  NativeLandingFolder,
+} from "@/services/googleDrive/nativeLandingCatalog";
 
 //
 // Global Window type augmentation
@@ -640,12 +643,18 @@ export interface GoogleDriveSlice {
   /** Physical native files, independent of published DuckDB datasets. */
   nativeLandingRoot: NativeLandingFolder | null;
   nativeLandingFolders: Record<string, NativeLandingFolder>;
-  nativeLandingChildren: Record<string, { files: NativeLandingFile[]; loaded: boolean; loading: boolean; error: string | null }>;
+  nativeLandingChildren: Record<
+    string,
+    { files: NativeLandingFile[]; loaded: boolean; loading: boolean; error: string | null }
+  >;
   nativeLandingLoading: boolean;
   nativeLandingError: string | null;
   nativeLandingSelected: string | null;
   nativeLandingLinks: { fileId: string; open: string | null; download: string | null } | null;
   nativeLandingActionError: string | null;
+  nativeMetadataTables: Record<string, string>;
+  nativeMetadataLoading: string | null;
+  nativeMetadataError: string | null;
   isLakehouseLoading: boolean;
   lakehouseStatusMessage: string;
   activeLakehouseDataset: string | null;
@@ -657,8 +666,12 @@ export interface GoogleDriveSlice {
   refreshLakehouseCatalog: () => Promise<void>;
   refreshNativeLanding: () => Promise<void>;
   loadNativeLandingFolder: (folderId: string) => Promise<void>;
-  verifyNativeLandingFile: (folderId: string, fileId: string) => Promise<{ open: string | null; download: string | null } | null>;
+  verifyNativeLandingFile: (
+    folderId: string,
+    fileId: string
+  ) => Promise<{ open: string | null; download: string | null } | null>;
   previewNativeLandingFile: (folderId: string, fileId: string) => Promise<string | null>;
+  loadNativeMetadataTable: (folderId: string) => Promise<string | null>;
   toggleLakehouseLayer: (layerName: string) => Promise<void>;
   toggleLakehouseTable: (layerName: string, tableName: string) => Promise<void>;
   selectLakehouseDataset: (layerName: string, tableName: string) => Promise<string | null>;

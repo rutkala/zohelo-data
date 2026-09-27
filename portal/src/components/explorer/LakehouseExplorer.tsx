@@ -67,6 +67,10 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const nativeSelected = useDuckStore((s) => s.nativeLandingSelected);
   const nativeLinks = useDuckStore((s) => s.nativeLandingLinks);
   const nativeActionError = useDuckStore((s) => s.nativeLandingActionError);
+  const nativeMetadataTables = useDuckStore((s) => s.nativeMetadataTables);
+  const nativeMetadataLoading = useDuckStore((s) => s.nativeMetadataLoading);
+  const nativeMetadataError = useDuckStore((s) => s.nativeMetadataError);
+  const loadNativeMetadataTable = useDuckStore((s) => s.loadNativeMetadataTable);
   const loadNativeFolder = useDuckStore((s) => s.loadNativeLandingFolder);
   const verifyNativeFile = useDuckStore((s) => s.verifyNativeLandingFile);
   const previewNativeFile = useDuckStore((s) => s.previewNativeLandingFile);
@@ -93,7 +97,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
     root: typeof nativeRoot;
     id: string;
   } | null>(null);
-  const landingIndexes = lakehouseCatalog.find((layer) => layer.name === "01_landing");
   const [folderExpansion, setFolderExpansion] = useState<{
     root: typeof nativeRoot;
     ids: ReadonlySet<string>;
@@ -164,14 +167,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
     if (isLakehouseLoading) return;
     const target = await selectLakehouseDataset(layerName, tableName);
     await openPreview(target, `${layerName}/${tableName}`);
-  };
-
-  const loadLandingIndexes = async () => {
-    if (isLakehouseLoading || !landingIndexes || landingIndexes.loaded) return;
-    // Legacy catalogues discover tables when their layer is expanded. Keep that
-    // route available inside the advanced disclosure, including failed-load retries.
-    if (landingIndexes.expanded) await toggleLakehouseLayer("01_landing");
-    await toggleLakehouseLayer("01_landing");
   };
 
   const handleSelectFile = async (
@@ -304,6 +299,23 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 {detailsOpen && (
                   <div className="mb-2 space-y-2 rounded bg-muted/30 p-2 text-[11px]">
                     <div className="flex flex-wrap gap-1.5">
+                      {folder && depth === 0 && nativeMetadataTables[file.id] && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-9 h-auto whitespace-normal text-xs"
+                          disabled={!!nativeMetadataLoading}
+                          onClick={async () => {
+                            const target = await loadNativeMetadataTable(file.id);
+                            await openPreview(target, `Landing/${file.name} file metadata`);
+                            if (target) onSqlAction?.();
+                          }}
+                        >
+                          {nativeMetadataLoading === file.id
+                            ? "Scanning metadata…"
+                            : "Query file metadata"}
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -337,6 +349,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                         </Button>
                       )}
                     </div>
+                    {folder && depth === 0 && nativeMetadataTables[file.id] && (
+                      <p className="break-all text-muted-foreground">
+                        SQL: {qualifyTable(undefined, "01_landing", nativeMetadataTables[file.id])}
+                      </p>
+                    )}
                     {!folder && !preview && (
                       <p className="text-muted-foreground">
                         Preview unavailable for this file. Open or download the original in Drive.
@@ -822,6 +839,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                   </div>
                 )}
                 {nativeRoot && renderNativeFolder(nativeRoot.id)}
+                {nativeMetadataError && (
+                  <div role="alert" className="px-2 text-destructive">
+                    {nativeMetadataError}
+                  </div>
+                )}
                 <details className="px-2 pt-1 text-[11px] text-muted-foreground">
                   <summary className="cursor-pointer py-2">About these files</summary>
                   <p className="pb-2">
@@ -829,37 +851,12 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     through Drive. Supported files up to {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}{" "}
                     can be previewed in SQL. Each preview replaces the previous one and is cleared
                     on refresh or disconnect. A folder listing does not establish complete source
-                    coverage.
+                    coverage. Query file metadata on a source folder to scan its full nested tree
+                    into a browser-local SQL table. A row describes one original file; Drive
+                    creation/modification dates are not provider refresh dates. Shortcuts are
+                    excluded.
                   </p>
                 </details>
-                {landingIndexes && (
-                  <details
-                    className="px-2 text-[11px] text-muted-foreground"
-                    onToggle={(event) => {
-                      if (event.currentTarget.open) void loadLandingIndexes();
-                    }}
-                  >
-                    <summary className="cursor-pointer py-2">File indexes (SQL)</summary>
-                    <p className="pb-1">
-                      Advanced: published response and archive indexes. Response tables contain one
-                      accepted source response per row; payload_utf8 holds its JSON or text.
-                      Distribution tables describe downloaded archives. These indexes may cover
-                      fewer files than the folders above.
-                    </p>
-                    {!landingIndexes.loaded && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isLakehouseLoading}
-                        onClick={() => void loadLandingIndexes()}
-                      >
-                        {isLakehouseLoading ? "Loading file indexes…" : "Load file indexes"}
-                      </Button>
-                    )}
-                    {(landingIndexes.loaded || landingIndexes.children.length > 0) &&
-                      renderTables(landingIndexes)}
-                  </details>
-                )}
               </div>
             )}
           </section>

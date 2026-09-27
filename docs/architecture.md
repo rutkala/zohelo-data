@@ -98,10 +98,17 @@ no NBP release or consumer pointer. See [campaign operations](source-campaign-op
 
 The [domain taxonomy](../config/domain-taxonomy.yaml) separates stable categories, analytical
 dimensions and classification systems from the [candidate coverage ledger](../config/source-domain-coverage.json).
-Under [ADR 0005](decisions/0005-agile-landing-and-source-access.md), each source also publishes
+The legacy path introduced by [ADR 0005](decisions/0005-agile-landing-and-source-access.md) publishes
 immutable Parquet response envelopes through its own verified Landing pointer. The portal pins
 these snapshots alongside the NBP release and queries raw payloads before full medallion modeling.
-These are transport rows, not source observation facts. New-source dbt models, modeled source
+These are transport rows, not source observation facts or a complete file inventory.
+[ADR 0009](decisions/0009-native-only-landing.md) supersedes their generation as a
+Landing responsibility. [ADR 0011](decisions/0011-landing-file-metadata.md) defines
+the portal's Landing SQL representation as metadata-only tables discovered from
+actual source folders: one row per retained file, including nested paths and
+Drive timestamps. Original files remain the primary browser. Existing response
+SQL references are retained for compatibility outside Landing navigation.
+New-source dbt models, modeled source
 releases, compatible cross-source modeled-release pinning and semantic/catalogue integration remain
 subsequent source-specific increments. Encrypted Actions secrets provide source credentials;
 BDL enables its registered quota profile without putting a key in requests/receipts or the browser.

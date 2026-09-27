@@ -62,6 +62,14 @@ const state = {
     ],
   },
   isLakehouseLoading: false,
+  nativeMetadataTables: {
+    "bdl-one": "gus_bdl_files__bdl-one",
+    "bdl-two": "gus_bdl_files__bdl-two",
+    unknown: "new_source_files",
+  },
+  nativeMetadataLoading: null,
+  nativeMetadataError: null,
+  loadNativeMetadataTable: vi.fn(),
   isSourceInventoryLoading: false,
   lakehouseStatusMessage: "",
   activeLakehouseDataset: null,
@@ -129,12 +137,12 @@ describe("one Landing entry", () => {
     expect(html).not.toContain("Download via Drive");
   });
 
-  it("keeps existing SQL indexes in a closed details area inside Landing", () => {
+  it("offers source-folder metadata without exposing legacy response indexes", () => {
     const html = renderToStaticMarkup(createElement(LakehouseExplorer));
-    expect(html).toContain("File indexes (SQL)");
-    expect(html).toContain("Actions for world_bank_wdi_responses");
-    expect(html).not.toMatch(/<details[^>]*open/);
-    expect(html.indexOf("File indexes (SQL)")).toBeLessThan(html.indexOf("</section>"));
+    expect(html).toContain("Query file metadata");
+    expect(html).toContain("Shortcuts are excluded");
+    expect(html).not.toContain("File indexes (SQL)");
+    expect(html).not.toContain("Actions for world_bank_wdi_responses");
   });
 
   it("keeps unloaded legacy SQL indexes reachable inside Landing", () => {
@@ -145,8 +153,8 @@ describe("one Landing entry", () => {
       children: [],
     };
     const html = renderToStaticMarkup(createElement(LakehouseExplorer));
-    expect(html).toContain("File indexes (SQL)");
-    expect(html).toContain("Load file indexes");
+    expect(html).toContain("Query file metadata");
+    expect(html).not.toContain("File indexes (SQL)");
   });
 
   it("shows DBW search only inside expanded Bronze, after Landing", () => {

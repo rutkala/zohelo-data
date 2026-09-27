@@ -19,6 +19,8 @@ import {
   freshNativeFile,
   nativeDriveLink,
   disposeAllNativePreviews,
+  scanNativeSourceMetadata,
+  publishNativeMetadata,
   type LandingSnapshotResolution,
 } from "@/services/googleDrive";
 
@@ -42,6 +44,8 @@ vi.mock("@/services/googleDrive", async (original) => ({
   freshNativeFile: vi.fn(),
   nativeDriveLink: vi.fn(),
   disposeAllNativePreviews: vi.fn().mockResolvedValue(undefined),
+  scanNativeSourceMetadata: vi.fn(),
+  publishNativeMetadata: vi.fn(),
 }));
 
 const target = '"02_bronze"."rates"';
@@ -115,18 +119,142 @@ beforeEach(() => {
     fingerprint: "none",
   });
   vi.mocked(resolveSourceInventory).mockResolvedValue({ entries: [], drive_api_pages: 0 });
+  vi.mocked(scanNativeSourceMetadata).mockResolvedValue([]);
+  vi.mocked(publishNativeMetadata).mockResolvedValue('"01_landing"."source_files"');
+});
+
+describe("Landing file metadata SQL", () => {
+  const root = {
+    id: "landing",
+    name: "01_landing",
+    parentId: "project",
+    parents: ["project"],
+    mimeType: "application/vnd.google-apps.folder" as const,
+    version: "1",
+  };
+  const source = { ...root, id: "source", name: "source", parentId: root.id, parents: [root.id] };
+  const ready = () => {
+    const store = makeStore();
+    store.setState({
+      nativeLandingRoot: root,
+      nativeLandingFolders: { landing: root, source },
+      nativeMetadataTables: { source: "source_files" },
+      currentSession: {
+        isOpen: true,
+        local: {
+          db: {},
+          connection: {
+            query: vi.fn().mockResolvedValue({ toArray: () => [] }),
+          },
+        },
+      },
+    } as unknown as Partial<DuckStoreState>);
+    return store;
+  };
+
+  it("autoloads metadata for a qualified SELECT with absent release pointers and no payload downloads", async () => {
+    const store = ready();
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
+      { datasetName: "source_files", layerName: "01_landing", files: [] },
+    ]);
+    await store
+      .getState()
+      .preparePublishedTablesForQuery('SELECT file_id FROM "01_landing"."source_files"');
+    expect(scanNativeSourceMetadata).toHaveBeenCalledWith(
+      source,
+      root,
+      "fixture-token",
+      expect.any(Function)
+    );
+    expect(publishNativeMetadata).toHaveBeenCalledTimes(1);
+    expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
+    expect(store.getState().fetchDatabasesAndTablesInfo).not.toHaveBeenCalled();
+  });
+
+  it("does not publish a partial relation when a nested source listing fails", async () => {
+    const store = ready();
+    vi.mocked(scanNativeSourceMetadata).mockRejectedValueOnce(
+      new Error("Nested Drive page failed")
+    );
+    expect(await store.getState().loadNativeMetadataTable("source")).toBeNull();
+    expect(store.getState().nativeMetadataError).toContain("Nested Drive page failed");
+    expect(publishNativeMetadata).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a superseded scan and clears browser-local relations on refresh", async () => {
+    const store = ready();
+    await store.getState().loadNativeMetadataTable("source");
+    const connection = (
+      store.getState().currentSession as unknown as {
+        local: { connection: { query: ReturnType<typeof vi.fn> } };
+      }
+    ).local.connection;
+    vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
+    vi.mocked(listNativeFolder).mockResolvedValue([source]);
+    await store.getState().refreshNativeLanding();
+    expect(connection.query).toHaveBeenCalledWith(
+      'DROP TABLE IF EXISTS "01_landing"."source_files";'
+    );
+    expect(store.getState().nativeMetadataTables).toEqual({ source: "source_files" });
+  });
+
+  it("holds SQL through a user view until the old metadata relation is dropped", async () => {
+    const store = ready();
+    await store.getState().loadNativeMetadataTable("source");
+    const connection = (store.getState().currentSession as unknown as { local: { connection: { query: ReturnType<typeof vi.fn> } } }).local.connection;
+    let finishDrop!: () => void;
+    connection.query.mockImplementation((sql: string) => sql.startsWith("DROP TABLE")
+      ? new Promise(resolve => { finishDrop = () => resolve({ toArray: () => [] }); })
+      : Promise.resolve({ toArray: () => [] }));
+    vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
+    vi.mocked(listNativeFolder).mockResolvedValue([source]);
+    const refresh = store.getState().refreshNativeLanding();
+    await vi.waitFor(() => expect(connection.query).toHaveBeenCalledWith('DROP TABLE IF EXISTS "01_landing"."source_files";'));
+    const query = store.getState().preparePublishedTablesForQuery("SELECT * FROM my_saved_metadata_view");
+    expect(resolvePublishedTableReferences).not.toHaveBeenCalled();
+    finishDrop();
+    await refresh;
+    await query;
+  });
+
+  it("blocks SQL after a failed DROP until cleanup succeeds", async () => {
+    const store = ready();
+    await store.getState().loadNativeMetadataTable("source");
+    const connection = (store.getState().currentSession as unknown as { local: { connection: { query: ReturnType<typeof vi.fn> } } }).local.connection;
+    connection.query.mockRejectedValueOnce(new Error("DROP failed"));
+    await store.getState().refreshNativeLanding();
+    await expect(store.getState().preparePublishedTablesForQuery("SELECT * FROM my_saved_metadata_view"))
+      .rejects.toThrow("DROP failed");
+    expect(store.getState().nativeMetadataError).toContain("fresh DuckDB session");
+    vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
+    vi.mocked(listNativeFolder).mockResolvedValue([source]);
+    await store.getState().refreshNativeLanding();
+    await expect(store.getState().preparePublishedTablesForQuery("SELECT 1")).resolves.toBeUndefined();
+  });
 });
 
 describe("native Landing request fencing", () => {
-  const root = { id: "landing", name: "01_landing", parentId: "project", parents: ["project"],
-    mimeType: "application/vnd.google-apps.folder" as const, version: "1", modifiedTime: "2026-09-26T00:00:00Z" };
+  const root = {
+    id: "landing",
+    name: "01_landing",
+    parentId: "project",
+    parents: ["project"],
+    mimeType: "application/vnd.google-apps.folder" as const,
+    version: "1",
+    modifiedTime: "2026-09-26T00:00:00Z",
+  };
   const fileA = { id: "a", name: "a.zip", parentId: "landing", parents: ["landing"], version: "1" };
   const fileB = { ...fileA, id: "b", name: "b.zip" };
 
   it("does not restore a stale root after disconnect during preview disposal", async () => {
     const store = makeStore();
     let finish!: () => void;
-    vi.mocked(disposeAllNativePreviews).mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
+    vi.mocked(disposeAllNativePreviews).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
     vi.mocked(resolveNativeLandingRoot).mockResolvedValue(root);
     vi.mocked(listNativeFolder).mockResolvedValue([]);
     const refresh = store.getState().refreshNativeLanding();
@@ -140,12 +268,22 @@ describe("native Landing request fencing", () => {
 
   it("keeps the later file action when an earlier metadata request finishes last", async () => {
     const store = makeStore();
-    store.setState({ nativeLandingRoot: root, nativeLandingFolders: { landing: root },
-      nativeLandingChildren: { landing: { files: [fileA, fileB], loaded: true, loading: false, error: null } } });
+    store.setState({
+      nativeLandingRoot: root,
+      nativeLandingFolders: { landing: root },
+      nativeLandingChildren: {
+        landing: { files: [fileA, fileB], loaded: true, loading: false, error: null },
+      },
+    });
     let finishA!: (value: typeof fileA) => void;
-    vi.mocked(freshNativeFile).mockImplementation(file =>
-      file.id === "a" ? new Promise(resolve => { finishA = resolve; }) : Promise.resolve(file));
-    vi.mocked(nativeDriveLink).mockImplementation(file => `https://drive.google.com/${file.id}`);
+    vi.mocked(freshNativeFile).mockImplementation((file) =>
+      file.id === "a"
+        ? new Promise((resolve) => {
+            finishA = resolve;
+          })
+        : Promise.resolve(file)
+    );
+    vi.mocked(nativeDriveLink).mockImplementation((file) => `https://drive.google.com/${file.id}`);
     const first = store.getState().verifyNativeLandingFile("landing", "a");
     const second = store.getState().verifyNativeLandingFile("landing", "b");
     expect((await second)?.open).toBe("https://drive.google.com/b");
@@ -379,22 +517,56 @@ describe("immutable release selection", () => {
 
   const retainedDbwLanding = (snapshotId: string) =>
     ({
-      snapshots: [{
-        fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
-        pointer: { snapshot_id: snapshotId },
-        manifest: {
-          kind: "retained_bronze_snapshot", source_id: "gus_dbw_retained_bronze",
-          snapshot_id: snapshotId, layer: "02_bronze", table_name: "br_dbw_observations",
-          columns: [{ name: "indicator_id", type: "BIGINT" }], files: [], row_count: 1,
-          observation_schema: [{ name: "indicator_id", type: "BIGINT" }],
-          datasets: [{ dataset_id: "observations", layer: "02_bronze",
-            table_name: "br_dbw_observations", columns: [{ name: "indicator_id", type: "BIGINT" }], files: [] }],
-          indicators: [{ indicator_id: 1, indicator_name: "Wskaźnik", indicator_name_en: "Indicator",
-            thematic_area: "Area", domain: "Domain", taxonomy_path: "Area > Domain", status: "published",
-            row_count: 1, parts: [{ id: `${snapshotId}-part`, name: "fragment.parquet", size: 10,
-              sha256: "c".repeat(64), tableName: "br_dbw_observations__indicator_1", layer: "02_bronze" }] }],
+      snapshots: [
+        {
+          fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
+          pointer: { snapshot_id: snapshotId },
+          manifest: {
+            kind: "retained_bronze_snapshot",
+            source_id: "gus_dbw_retained_bronze",
+            snapshot_id: snapshotId,
+            layer: "02_bronze",
+            table_name: "br_dbw_observations",
+            columns: [{ name: "indicator_id", type: "BIGINT" }],
+            files: [],
+            row_count: 1,
+            observation_schema: [{ name: "indicator_id", type: "BIGINT" }],
+            datasets: [
+              {
+                dataset_id: "observations",
+                layer: "02_bronze",
+                table_name: "br_dbw_observations",
+                columns: [{ name: "indicator_id", type: "BIGINT" }],
+                files: [],
+              },
+            ],
+            indicators: [
+              {
+                indicator_id: 1,
+                indicator_name: "Wskaźnik",
+                indicator_name_en: "Indicator",
+                thematic_area: "Area",
+                domain: "Domain",
+                taxonomy_path: "Area > Domain",
+                status: "published",
+                row_count: 1,
+                parts: [
+                  {
+                    id: `${snapshotId}-part`,
+                    name: "fragment.parquet",
+                    size: 10,
+                    sha256: "c".repeat(64),
+                    tableName: "br_dbw_observations__indicator_1",
+                    layer: "02_bronze",
+                  },
+                ],
+              },
+            ],
+          },
         },
-      }], issues: [], fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
+      ],
+      issues: [],
+      fingerprint: `gus_dbw_retained_bronze:${snapshotId}`,
     }) as unknown as DuckStoreState["lakehouseLanding"] & {};
 
   it("merges an independently pinned Landing table without changing the NBP manifest", async () => {
@@ -424,13 +596,15 @@ describe("immutable release selection", () => {
     await store.getState().refreshLakehouseCatalog();
 
     expect(resolveSourceInventory).not.toHaveBeenCalled();
-    expect(resolveNativeLandingRoot).toHaveBeenCalledWith("fixture-token");
+    await vi.waitFor(() => expect(resolveNativeLandingRoot).toHaveBeenCalledWith("fixture-token"));
     expect(store.getState().lakehouseRelease).toMatchObject({
-      kind: "release", manifest: { release_id: "release-1" },
+      kind: "release",
+      manifest: { release_id: "release-1" },
     });
     expect(store.getState().isLakehouseLoading).toBe(false);
-    await expect(store.getState().selectLakehouseDataset("03_silver", "nbp_gold_prices"))
-      .resolves.toBe('"02_bronze"."rates"');
+    await expect(
+      store.getState().selectLakehouseDataset("03_silver", "nbp_gold_prices")
+    ).resolves.toBe('"02_bronze"."rates"');
   });
 
   it("invalidates only a changed Landing view on refresh and retains the NBP pin", async () => {
@@ -468,14 +642,17 @@ describe("immutable release selection", () => {
     vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-1"));
     await store.getState().refreshLakehouseCatalog();
     await store.getState().selectLakehouseDataset("02_bronze", "br_dbw_observations__indicator_1");
-    const connection = (store.getState().currentSession as unknown as {
-      local: { connection: { query: ReturnType<typeof vi.fn> } };
-    }).local.connection;
+    const connection = (
+      store.getState().currentSession as unknown as {
+        local: { connection: { query: ReturnType<typeof vi.fn> } };
+      }
+    ).local.connection;
     connection.query.mockClear();
     connection.query.mockImplementation(async (sql: string) => ({
-      toArray: () => sql.startsWith("SELECT table_name")
-        ? [{ table_name: "br_dbw_observations__indicator_1" }, { table_name: "rates" }]
-        : [],
+      toArray: () =>
+        sql.startsWith("SELECT table_name")
+          ? [{ table_name: "br_dbw_observations__indicator_1" }, { table_name: "rates" }]
+          : [],
     }));
     vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-2"));
 
@@ -486,7 +663,10 @@ describe("immutable release selection", () => {
     );
     expect(connection.query).not.toHaveBeenCalledWith('DROP VIEW IF EXISTS "02_bronze"."rates";');
     expect(store.getState().activeLakehouseDataset).toBeNull();
-    expect(store.getState().lakehouseRelease).toMatchObject({ kind: "release", manifest: { release_id: "release-1" } });
+    expect(store.getState().lakehouseRelease).toMatchObject({
+      kind: "release",
+      manifest: { release_id: "release-1" },
+    });
   });
 
   it("pins the loaded release and refuses an explicit refresh to a different release", async () => {
@@ -1003,9 +1183,11 @@ describe("lazy published-query loading", () => {
   ])("does not reject non-published DBW text or relations: %s", async (sql) => {
     const store = makeStore();
     configurePinnedGoldRelease(store);
-    store.setState({ currentSession: {
-      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
-    } } as unknown as Partial<DuckStoreState>);
+    store.setState({
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
+    } as unknown as Partial<DuckStoreState>);
     vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
     await expect(store.getState().preparePublishedTablesForQuery(sql)).resolves.toBeUndefined();
     expect(resolvePublishedTableReferences).toHaveBeenCalled();
@@ -1015,15 +1197,19 @@ describe("lazy published-query loading", () => {
   it("blocks only the parsed aggregate published DBW relation before downloading", async () => {
     const store = makeStore();
     configurePinnedGoldRelease(store);
-    store.setState({ currentSession: {
-      local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
-    } } as unknown as Partial<DuckStoreState>);
+    store.setState({
+      currentSession: {
+        local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
+      },
+    } as unknown as Partial<DuckStoreState>);
     vi.mocked(resolvePublishedTableReferences).mockResolvedValue([
       { datasetName: "br_dbw_observations", layerName: "02_bronze", files: [] },
     ]);
-    await expect(store.getState().preparePublishedTablesForQuery(
-      'SELECT * FROM "02_bronze"."br_dbw_observations"'
-    )).rejects.toThrow("Choose a dated retained DBW indicator");
+    await expect(
+      store
+        .getState()
+        .preparePublishedTablesForQuery('SELECT * FROM "02_bronze"."br_dbw_observations"')
+    ).rejects.toThrow("Choose a dated retained DBW indicator");
     expect(resolvePublishedTableReferences).toHaveBeenCalled();
     expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
   });
@@ -1040,14 +1226,16 @@ describe("lazy published-query loading", () => {
       {
         datasetName: "br_dbw_observations",
         layerName: "02_bronze",
-        files: [{
-          id: "dbw-platform-observations",
-          name: "bronze_dbw_observations.parquet",
-          size: 10,
-          sha256: "d".repeat(64),
-          tableName: "br_dbw_observations",
-          layer: "02_bronze",
-        }],
+        files: [
+          {
+            id: "dbw-platform-observations",
+            name: "bronze_dbw_observations.parquet",
+            size: 10,
+            sha256: "d".repeat(64),
+            tableName: "br_dbw_observations",
+            layer: "02_bronze",
+          },
+        ],
       },
     ]);
     vi.mocked(loadTablesIntoDuckDB).mockResolvedValue({
@@ -1056,9 +1244,9 @@ describe("lazy published-query loading", () => {
     });
 
     await expect(
-      store.getState().preparePublishedTablesForQuery(
-        'SELECT count(*) FROM "02_bronze"."br_dbw_observations"'
-      )
+      store
+        .getState()
+        .preparePublishedTablesForQuery('SELECT count(*) FROM "02_bronze"."br_dbw_observations"')
     ).resolves.toBeUndefined();
     expect(loadTablesIntoDuckDB).toHaveBeenCalled();
   });
