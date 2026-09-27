@@ -29,14 +29,29 @@ a final consistency check, avoiding repeated ancestry walks for nested sources.
 The 254-folder fixture requires 253 listings, 761 metadata reads and two project
 lookups, with no payload downloads.
 
-The latest review fixes passed 104 focused scanner, store, OPFS lifecycle and
-packaged DuckDB engine tests, type checking and lint (24 existing warnings).
-Both deployment-base CI jobs passed production builds and all browser tests
-before these final review fixes; exact-head CI and deployment remain gates. The
-read-only live verifier includes a source metadata SQL query and requires zero
-payload reads for that scan, alongside its existing raw-file checks. This entry
-is not a deployment or live acceptance claim. No ingestion or downstream-layer
-work is included.
+**File metadata change deployed and verified.**
+[PR #184](https://github.com/rutkala/zohelo-data/pull/184) merged as
+`875a5e7d5bc93996b2bd73230be6ac0702be3b6a`. Independent review addressed saved
+database ownership and repeated ancestry reads. The latest fixes passed 104
+focused scanner, store, OPFS lifecycle and packaged DuckDB engine tests.
+Exact-head [CI](https://github.com/rutkala/zohelo-data/actions/runs/36329204143)
+passed lint, production builds/type checking, 774 unit tests and all 18 browser
+tests for each deployment base, including mobile/desktop metadata actions and
+legacy direct-SQL joins. The
+[production deployment](https://github.com/rutkala/zohelo-data/actions/runs/36329577482)
+published the merge commit and verified its exact live build marker at
+`https://data.zohelo.com/`.
+
+The authenticated [live check](https://github.com/rutkala/zohelo-data/actions/runs/36329793200)
+passed at 15:34:37 UTC on 27 September against that exact deployed commit. It
+verified original-file access across 13 source folders / 10 families, checked 13
+files and managed download links, and completed the new `nbp_gold_prices` metadata
+SQL query with zero source-payload reads during that scan. It also passed one
+supported native preview, four-level BDL navigation and the managed link for a
+21,378,254,323-byte ZIP. The sanitized receipt records 66 metadata pages and
+read-only operation. This verifies a representative live metadata query and
+existing raw-file actions, not an exhaustive metadata scan of every source or
+full provider-data coverage. No ingestion or downstream-layer work is included.
 
 The owner has narrowed active engineering to the portal, one layer at a time,
 starting with Landing. Their phone screenshots show three overlapping entry
