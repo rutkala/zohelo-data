@@ -498,6 +498,16 @@ test("DBW v2 loads original Bronze files without a publication copy", async ({ p
   await profile.getByRole("button", { name: "Create Profile", exact: true }).click();
   await expect(profile).toBeHidden();
   await expect(page.getByText("br_dbw_indicators", { exact: true })).toBeVisible({ timeout: 60000 });
+  const bronze = page.getByRole("button", { name: "02_bronze", exact: true });
+  const indicatorSearch = page.getByPlaceholder("Search DBW indicator name or ID");
+  await expect(bronze).toHaveAttribute("aria-expanded", "true");
+  await bronze.focus();
+  await page.keyboard.press("Enter");
+  await expect(bronze).toHaveAttribute("aria-expanded", "false");
+  await expect(indicatorSearch).toBeHidden();
+  await page.keyboard.press("Space");
+  await expect(bronze).toHaveAttribute("aria-expanded", "true");
+  await expect(indicatorSearch).toBeVisible();
   await page.getByRole("button", { name: "New SQL query", exact: true }).click();
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.click();

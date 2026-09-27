@@ -414,7 +414,7 @@ describe("immutable release selection", () => {
         .lakehouseCatalog.find((layer) => layer.name === "01_landing")
         ?.children.map((table) => table.name)
     ).toEqual(["world_bank_wdi_responses"]);
-    expect(store.getState().lakehouseStatusMessage).toContain("1 Landing source snapshot");
+    expect(store.getState().lakehouseStatusMessage).toContain("1 published file-index snapshot");
   });
 
   it("refreshes native folders and the query catalogue without the retired inventory scan", async () => {

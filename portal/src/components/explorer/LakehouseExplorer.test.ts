@@ -150,12 +150,13 @@ describe("one Landing entry", () => {
   });
 
   it("shows DBW search only inside expanded Bronze, after Landing", () => {
-    expect(renderToStaticMarkup(createElement(LakehouseExplorer))).not.toContain(
-      "Search DBW indicator"
-    );
+    const collapsedHtml = renderToStaticMarkup(createElement(LakehouseExplorer));
+    expect(collapsedHtml).not.toContain("Search DBW indicator");
+    expect(collapsedHtml).toMatch(/<button[^>]*aria-label="02_bronze" aria-expanded="false"/);
     state.lakehouseCatalog[1].expanded = true;
     const html = renderToStaticMarkup(createElement(LakehouseExplorer));
     expect(html).toContain("Search DBW indicator name or ID");
+    expect(html).toMatch(/<button[^>]*aria-label="02_bronze" aria-expanded="true"/);
     expect(html.indexOf("Search DBW indicator")).toBeGreaterThan(html.indexOf(">02_bronze</span>"));
   });
 });

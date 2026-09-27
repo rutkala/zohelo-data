@@ -869,8 +869,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
           .map((layer) => (
             <div key={layer.name} className="select-none">
               {/* Layer Row */}
-              <div
-                className={`flex items-center gap-1.5 py-1 px-1.5 rounded hover:bg-muted/70 cursor-pointer ${
+              <button
+                type="button"
+                aria-label={layer.name}
+                aria-expanded={layer.expanded}
+                className={`flex w-full items-center gap-1.5 py-1 px-1.5 rounded text-left hover:bg-muted/70 cursor-pointer ${
                   layer.expanded ? "font-medium" : "text-muted-foreground"
                 }`}
                 onClick={() => toggleLakehouseLayer(layer.name)}
@@ -891,7 +894,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     }
                   </span>
                 )}
-              </div>
+              </button>
 
               {/* Datasets / Tables in Layer */}
               {layer.expanded && (

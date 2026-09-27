@@ -113,10 +113,10 @@ const publishedDatasets = (
 ];
 
 const landingStatus = (landing: LandingCatalogResolution) => {
-  const available = `${landing.snapshots.length} Landing source snapshot(s)`;
+  const available = `${landing.snapshots.length} published file-index snapshot(s)`;
   if (landing.issues.length === 0) return available;
   const errors = landing.issues.map((issue) => `${issue.source_id}: ${issue.message}`).join("; ");
-  return `${available}. Landing metadata error — ${errors}`;
+  return `${available}. File-index metadata error — ${errors}`;
 };
 
 const handleDriveAuthFailure = (

@@ -189,7 +189,7 @@ for (const viewport of [
     await section.getByRole("button", { name: "Refresh Landing" }).click();
     await expect(section.getByRole("button", { name: "Expand GUS BDL" })).toBeVisible();
     await expect(section.locator('[data-native-id="small-csv"]')).toHaveCount(0);
-    await page.getByTitle("Disconnect Google Drive").click();
+    await page.getByRole("button", { name: "Disconnect Google Drive", exact: true }).click();
     await expect(section).toHaveCount(0);
   });
 }
