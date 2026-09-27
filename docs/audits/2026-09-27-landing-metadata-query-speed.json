@@ -1,0 +1,103 @@
+{
+  "format_version": 1,
+  "status": "verified",
+  "origin": "https://data.zohelo.com",
+  "expected_deployed_sha": "db5188cc403e340638c566937a2d3f1dee5b7e28",
+  "source_folder_count": 13,
+  "family_count": 10,
+  "folders_probed": 13,
+  "files_probed": 13,
+  "managed_download_links_checked": 13,
+  "preview_checks": 1,
+  "large_link_checks": 1,
+  "metadata_sql_checks": 1,
+  "bdl_metadata": {
+    "files": 26666,
+    "folders": 9064,
+    "scan_list_pages": 338,
+    "cold_drive_requests": 344,
+    "cold_list_requests": 338,
+    "cold_successful_list_responses": 338,
+    "cold_list_retries": 0,
+    "warm_drive_requests": 0,
+    "cold_scan_and_query_ms": 210140,
+    "warm_query_ms": 3317,
+    "sampled_phase_timing_resolution_ms": 1000,
+    "sampled_folder_discovery_ms": 65643,
+    "sampled_file_listing_ms": 82392,
+    "sampled_folder_verification_ms": 49671,
+    "sampled_scanner_ms": 203591,
+    "sampled_sql_publication_ms": 5798,
+    "sampled_first_preview_ms": 750,
+    "http_status_counts": {
+      "200": 344
+    },
+    "attempted_payload_reads": 0
+  },
+  "large_file_bytes": 21378254323,
+  "large_file_format": "zip",
+  "per_source": [
+    {
+      "source": "gleif",
+      "file_link_checked": true
+    },
+    {
+      "source": "mf_biala_lista",
+      "file_link_checked": true
+    },
+    {
+      "source": "gugik_prg",
+      "file_link_checked": true
+    },
+    {
+      "source": "gus_teryt",
+      "file_link_checked": true
+    },
+    {
+      "source": "gus_dbw",
+      "file_link_checked": true
+    },
+    {
+      "source": "opendata_org",
+      "file_link_checked": true
+    },
+    {
+      "source": "eurostat",
+      "file_link_checked": true
+    },
+    {
+      "source": "gus_bdl",
+      "file_link_checked": true
+    },
+    {
+      "source": "world_bank_wdi",
+      "file_link_checked": true
+    },
+    {
+      "source": "nbp_gold_prices",
+      "file_link_checked": true
+    },
+    {
+      "source": "nbp_exchange_rates_table_c",
+      "file_link_checked": true
+    },
+    {
+      "source": "nbp_exchange_rates_table_b",
+      "file_link_checked": true
+    },
+    {
+      "source": "nbp_exchange_rates_table_a",
+      "file_link_checked": true
+    }
+  ],
+  "read_only": true,
+  "metadata_progress": {
+    "phase": "Preparing SQL",
+    "folders": 9064,
+    "files": 26666,
+    "list_pages": 338
+  },
+  "bdl_depth_checked": 4,
+  "metadata_pages": 66,
+  "observed_at_utc": "2026-09-27T17:45:29.650Z"
+}
