@@ -267,7 +267,7 @@ the modeled release, including expected Bronze, revision-history, Gold
 dimension/fact, coverage-mart, catalogue, semantic and release artifacts. Its
 coverage mart truthfully records three admitted/modelled datasets, admitted
 coverage 1.0, and `complete_official_catalogue=false`. This is progress, not
-complete Eurostat delivery: raw catalogue coverage remains 33.07%, and
+complete Eurostat delivery: raw catalogue coverage remains 33.09%, and
 source-shaped downstream models for the full-distribution catalogue remain
 open.
 
