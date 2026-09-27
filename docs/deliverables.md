@@ -194,7 +194,7 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`c02c22ca7c9ccfcbae1057e9f14856e438096248`. The earlier inspection at
+`20221f3214ded967a6bc296632c092f7e7a7fb86`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
@@ -207,7 +207,8 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 [#173](https://github.com/rutkala/zohelo-data/pull/173), and
 [#174](https://github.com/rutkala/zohelo-data/pull/174),
 [#175](https://github.com/rutkala/zohelo-data/pull/175), and
-[#176](https://github.com/rutkala/zohelo-data/pull/176) are already merged and
+[#176](https://github.com/rutkala/zohelo-data/pull/176), and
+[#177](https://github.com/rutkala/zohelo-data/pull/177) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
@@ -273,6 +274,32 @@ coverage 1.0, and `complete_official_catalogue=false`. This is progress, not
 complete Eurostat delivery: raw catalogue coverage remains 33.09%, and
 source-shaped downstream models for the full-distribution catalogue remain
 open.
+
+### Eurostat full-distribution Bronze decoder — 27 September 2026
+
+The repository now has a local, non-publishing downstream decoder for one
+receipt-bound official Eurostat `.tsv.gz` distribution. It verifies the immutable
+receipt bytes against their Drive descriptor, derives all source provenance from
+the accepted `full_distribution` receipt, then verifies the exact raw size and
+SHA-256 before reading. It streams the native file with bounded batches, preserves the
+complete source dimensional key, original numeric lexeme, analytical numeric value,
+status flags, `:` versus empty missing states, source positions and Drive receipt
+identity, and produces a fresh typed Parquet relation. Duplicate complete keys,
+malformed source rows, receipt drift, invalid/non-finite numbers and an existing
+output path fail closed; failed attempts remove only their own incomplete output.
+Partition leaves retain the official dataset separately from their immutable leaf
+identity and selection; accepted constrained `no_results` leaves produce typed empty
+relations rather than entering the GZIP parser. Seven focused fixture tests cover
+ordinary, flagged and missing cells, typed empty datasets, immutable
+receipt/provenance binding, partition identity, accepted empty leaves,
+hash/key/value failures and overwrite protection.
+
+This is code and fixture evidence only. No production file was downloaded or
+decoded, no Drive object or release pointer changed, and the current progressive
+release still models only three datasets. Complete source-shaped delivery remains
+open until the decoder is connected to an independently resumable Drive-backed
+Bronze publication/checkpoint, all retained current distributions are processed,
+and fresh Silver/Gold/semantic consumers verify the published scope.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
 

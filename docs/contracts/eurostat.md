@@ -15,6 +15,29 @@ No country, sex, age, industry, product, unit or period filter narrows those fil
 Exact URL/query, catalogue version, source response headers, retrieval time, raw
 hashes, ZIP members and TSV/XML structure checks are retained with each receipt.
 
+Downstream Bronze decoding is receipt-bound and replayable. For one accepted data
+distribution, `src/eurostat_bulk_decode.py` first verifies the immutable receipt
+bytes against their Drive descriptor, admits only an accepted Eurostat
+`full_distribution` receipt with a complete inspection, and derives dataset,
+version, retrieval time and raw object identity from that receipt. It then verifies
+the exact native `.tsv.gz` size and SHA-256 before streaming it into a source-shaped
+Parquet relation without changing Landing. The observation grain is dataset plus the complete native series
+dimension key plus `TIME_PERIOD`. Native numeric text, analytical numeric value,
+status flags, explicit `:` missing values, empty cells, series/period positions,
+retrieval time, raw object identity and hash, and receipt object identity, hash and
+size are retained. Duplicate complete keys,
+receipt drift, malformed series arity, invalid numbers and stale output paths fail
+closed. This decoder is a downstream building block; complete catalogue Bronze
+publication still requires a resumable Drive checkpoint/publisher and independent
+fresh readback. A local decoder result does not establish modeled catalogue coverage.
+
+Partition leaves retain the official dataset ID separately from the immutable
+synthetic distribution/leaf ID, partition ID and canonical partition selection, so
+disjoint leaves can be assembled without turning them into pseudo-datasets. An
+accepted constrained `no_results` leaf is receipt and raw-descriptor verified but is
+not parsed as GZIP; it emits a typed empty observation relation and remains explicit
+in the decoder report for the future publication manifest.
+
 Full files are preferred over extraction. Asynchronous envelopes retain their raw
 evidence and provider job identity. Oversized uncached requests require authoritative
 dataflow/DSD/content-constraint partition planning, with completion only after every
