@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import gzip
-from hashlib import sha256
+from hashlib import md5, sha256
 import json
 from pathlib import Path
 import sys
@@ -28,31 +28,62 @@ class EurostatBulkDecodeTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def _source(self, body: bytes) -> tuple[Path, str]:
+    def _source(self, body: bytes) -> tuple[Path, dict[str, object]]:
         source = self.root / "distribution.tsv.gz"
         source.write_bytes(gzip.compress(body, mtime=0))
-        return source, sha256(source.read_bytes()).hexdigest()
+        raw = source.read_bytes()
+        digest = sha256(raw).hexdigest()
+        receipt = {
+            "schema_version": 1,
+            "source_id": "eurostat",
+            "accepted": True,
+            "kind": "full_distribution",
+            "distribution": {
+                "dataset_id": "demo_test",
+                "kind": "eurostat_tsv_gzip",
+                "version": "2026-09-26T23:00:00+0200",
+                "url": "https://ec.europa.eu/eurostat/demo_test.tsv.gz",
+                "params": {},
+            },
+            "retrieved_at_utc": "2026-09-27T03:30:00+00:00",
+            "raw": {
+                "id": "drive-file-1",
+                "name": f"raw-{digest}.bin",
+                "sha256": digest,
+                "md5": md5(raw, usedforsecurity=False).hexdigest(),
+                "size_bytes": len(raw),
+            },
+            "inspection": {"status": "complete"},
+        }
+        receipt_path = self.root / "receipt.json"
+        receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+        receipt_raw = receipt_path.read_bytes()
+        return source, {
+            "path": receipt_path,
+            "id": "receipt-drive-id",
+            "sha256": sha256(receipt_raw).hexdigest(),
+            "size_bytes": len(receipt_raw),
+        }
 
-    def _decode(self, source: Path, digest: str, output: Path | None = None):
+    def _decode(self, source: Path, receipt: dict[str, object], output: Path | None = None):
         return decode_full_distribution(
             source,
+            receipt["path"],
             output or self.root / "bronze.parquet",
-            dataset_id="demo_test",
-            retrieved_at_utc="2026-09-27T03:30:00Z",
-            raw_sha256=digest,
-            raw_file_id="drive-file-1",
-            source_version="2026-09-26T23:00:00+0200",
+            receipt_descriptor={
+                key: receipt[key] for key in ("id", "sha256", "size_bytes")
+            },
         )
 
     def test_decodes_every_cell_with_complete_key_and_lossless_value_text(self):
-        source, digest = self._source(
+        source, receipt = self._source(
             (
                 "freq,unit,geo\\TIME_PERIOD\t2020 \t2021-01 \t2022-Q1 \n"
                 "A,NR,PL\t123.00 p\t:\t\n"
                 "A,NR,DE\t-4.5E+2 \t: z\t789 e\n"
             ).encode("utf-8")
         )
-        report = self._decode(source, digest)
+        report = self._decode(source, receipt)
 
         self.assertEqual(report["source_rows"], 2)
         self.assertEqual(report["observation_cells"], 6)
@@ -79,7 +110,7 @@ class EurostatBulkDecodeTests(unittest.TestCase):
             {"freq": "A", "geo": "PL", "time": "2020", "unit": "NR"},
         )
         self.assertEqual(rows[0][2:7], ("123.00", 123.0, "p", False, None))
-        self.assertEqual(rows[0][7], digest)
+        self.assertEqual(rows[0][7], json.loads(receipt["path"].read_text())["raw"]["sha256"])
         self.assertEqual(rows[0][8:], (2, 1))
         self.assertEqual(rows[1][2], ":")
         self.assertEqual(rows[1][5:7], (True, "colon"))
@@ -87,8 +118,8 @@ class EurostatBulkDecodeTests(unittest.TestCase):
         self.assertEqual(rows[2][5:7], (True, "empty"))
 
     def test_header_only_distribution_produces_typed_empty_parquet(self):
-        source, digest = self._source(b"freq,geo\\TIME_PERIOD\t2025 \n")
-        report = self._decode(source, digest)
+        source, receipt = self._source(b"freq,geo\\TIME_PERIOD\t2025 \n")
+        report = self._decode(source, receipt)
         self.assertEqual(report["observation_cells"], 0)
         with duckdb.connect() as connection:
             self.assertEqual(
@@ -100,31 +131,57 @@ class EurostatBulkDecodeTests(unittest.TestCase):
             )
 
     def test_rejects_receipt_drift_duplicate_keys_and_malformed_cells(self):
-        source, digest = self._source(
+        source, receipt = self._source(
             b"freq,geo\\TIME_PERIOD\t2025 \nA,PL\t1\nA,PL\t2\n"
         )
-        with self.assertRaisesRegex(EurostatBulkDecodeError, "SHA-256"):
-            self._decode(source, "0" * 64)
+        drifted = {**receipt, "sha256": "0" * 64}
+        with self.assertRaisesRegex(EurostatBulkDecodeError, "immutable descriptor"):
+            self._decode(source, drifted)
         with self.assertRaisesRegex(EurostatBulkDecodeError, "repeats"):
-            self._decode(source, digest)
+            self._decode(source, receipt)
 
-        malformed, malformed_digest = self._source(
+        malformed, malformed_receipt = self._source(
             b"freq,geo\\TIME_PERIOD\t2025 \nA,PL\tunknown e\n"
         )
         with self.assertRaisesRegex(EurostatBulkDecodeError, "non-numeric"):
-            self._decode(malformed, malformed_digest, self.root / "other.parquet")
+            self._decode(malformed, malformed_receipt, self.root / "other.parquet")
 
     def test_rejects_stale_output_and_invalid_series_arity(self):
-        source, digest = self._source(
+        source, receipt = self._source(
             b"freq,unit,geo\\TIME_PERIOD\t2025 \nA,PL\t1\n"
         )
         with self.assertRaisesRegex(EurostatBulkDecodeError, "series key"):
-            self._decode(source, digest)
+            self._decode(source, receipt)
         output = self.root / "existing.parquet"
         output.write_bytes(b"preserve")
         with self.assertRaisesRegex(EurostatBulkDecodeError, "fresh"):
-            self._decode(source, digest, output)
+            self._decode(source, receipt, output)
         self.assertEqual(output.read_bytes(), b"preserve")
+
+    def test_derives_provenance_from_exact_accepted_receipt(self):
+        source, receipt = self._source(b"freq,geo\\TIME_PERIOD\t2025 \nA,PL\t7\n")
+        report = self._decode(source, receipt)
+        self.assertEqual(report["dataset_id"], "demo_test")
+        with duckdb.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT dataset_id, source_version, retrieved_at_utc, raw_file_id,
+                       receipt_file_id, receipt_sha256, receipt_size_bytes
+                FROM read_parquet(?)
+                """,
+                [str(self.root / "bronze.parquet")],
+            ).fetchone()
+        self.assertEqual(row[0], "demo_test")
+        self.assertEqual(row[1], "2026-09-26T23:00:00+0200")
+        self.assertEqual(row[3:], (
+            "drive-file-1", "receipt-drive-id", receipt["sha256"], receipt["size_bytes"]
+        ))
+
+        accepted = json.loads(receipt["path"].read_text())
+        accepted["distribution"]["dataset_id"] = "wrong_dataset"
+        receipt["path"].write_text(json.dumps(accepted, sort_keys=True), encoding="utf-8")
+        with self.assertRaisesRegex(EurostatBulkDecodeError, "immutable descriptor"):
+            self._decode(source, receipt, self.root / "drifted.parquet")
 
 
 if __name__ == "__main__":

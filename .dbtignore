@@ -1,2 +1,0 @@
-# Standalone synthetic dbt projects used by Python runtime tests.
-tests/fixtures/

@@ -18,13 +18,14 @@ import math
 from pathlib import Path
 import re
 import sys
-from typing import Any
+from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import duckdb
 
 
-_DATASET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.$-]{0,127}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_MD5_RE = re.compile(r"^[0-9a-f]{32}$")
 _DIMENSION_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
 _DRIVE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,1024}$")
 _BATCH_ROWS = 10_000
@@ -46,6 +47,9 @@ BRONZE_COLUMNS = (
     ("retrieved_at_utc", "TIMESTAMPTZ"),
     ("raw_sha256", "VARCHAR"),
     ("raw_file_id", "VARCHAR"),
+    ("receipt_sha256", "VARCHAR"),
+    ("receipt_file_id", "VARCHAR"),
+    ("receipt_size_bytes", "BIGINT"),
     ("source_row_number", "BIGINT"),
     ("source_period_position", "BIGINT"),
 )
@@ -57,13 +61,10 @@ class EurostatBulkDecodeError(ValueError):
 
 def decode_full_distribution(
     source: Path,
+    receipt: Path,
     output: Path,
     *,
-    dataset_id: str,
-    retrieved_at_utc: str,
-    raw_sha256: str,
-    raw_file_id: str,
-    source_version: str | None = None,
+    receipt_descriptor: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Stream one exact Eurostat TSV.GZ distribution into a fresh Parquet file.
 
@@ -72,16 +73,17 @@ def decode_full_distribution(
     analytical double so downstream consumers never depend on a lossy conversion.
     """
     source = Path(source)
+    receipt = Path(receipt)
     output = Path(output)
-    _validate_identity(
-        source=source,
-        output=output,
-        dataset_id=dataset_id,
-        retrieved_at_utc=retrieved_at_utc,
-        raw_sha256=raw_sha256,
-        raw_file_id=raw_file_id,
-        source_version=source_version,
+    identity = _validated_receipt_identity(
+        source=source, receipt=receipt, output=output,
+        descriptor=receipt_descriptor,
     )
+    dataset_id = identity["dataset_id"]
+    retrieved_at_utc = identity["retrieved_at_utc"]
+    raw_sha256 = identity["raw_sha256"]
+    raw_file_id = identity["raw_file_id"]
+    source_version = identity["source_version"]
     if _file_sha256(source) != raw_sha256:
         raise EurostatBulkDecodeError("Eurostat distribution SHA-256 does not match its receipt")
 
@@ -169,6 +171,9 @@ def decode_full_distribution(
                                 retrieved_at_utc,
                                 raw_sha256,
                                 raw_file_id,
+                                identity["receipt_sha256"],
+                                identity["receipt_file_id"],
+                                identity["receipt_size_bytes"],
                                 line_number,
                                 period_position,
                             )
@@ -269,38 +274,109 @@ def _parse_cell(
     return value_text, numeric_float, status, False, None
 
 
-def _validate_identity(
+def _validated_receipt_identity(
     *,
     source: Path,
+    receipt: Path,
     output: Path,
-    dataset_id: str,
-    retrieved_at_utc: str,
-    raw_sha256: str,
-    raw_file_id: str,
-    source_version: str | None,
-) -> None:
+    descriptor: Mapping[str, Any],
+) -> dict[str, Any]:
     if not source.is_file():
         raise EurostatBulkDecodeError("Eurostat distribution path is not a regular file")
+    if not receipt.is_file():
+        raise EurostatBulkDecodeError("Eurostat receipt path is not a regular file")
     if output.exists():
         raise EurostatBulkDecodeError("Eurostat Bronze output must be a fresh path")
-    if not isinstance(dataset_id, str) or not _DATASET_RE.fullmatch(dataset_id):
+    if not isinstance(descriptor, Mapping) or set(descriptor) != {
+        "id", "sha256", "size_bytes"
+    }:
+        raise EurostatBulkDecodeError("Eurostat receipt descriptor has invalid fields")
+    receipt_file_id = descriptor.get("id")
+    receipt_sha256 = descriptor.get("sha256")
+    receipt_size_bytes = descriptor.get("size_bytes")
+    if not isinstance(receipt_file_id, str) or not _DRIVE_FILE_ID_RE.fullmatch(receipt_file_id):
+        raise EurostatBulkDecodeError("Eurostat receipt Drive identity is invalid")
+    if not isinstance(receipt_sha256, str) or not _SHA256_RE.fullmatch(receipt_sha256):
+        raise EurostatBulkDecodeError("Eurostat receipt SHA-256 is invalid")
+    if type(receipt_size_bytes) is not int or receipt_size_bytes <= 0:
+        raise EurostatBulkDecodeError("Eurostat receipt size is invalid")
+    if receipt.stat().st_size != receipt_size_bytes or _file_sha256(receipt) != receipt_sha256:
+        raise EurostatBulkDecodeError("Eurostat receipt bytes do not match the immutable descriptor")
+    try:
+        accepted = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise EurostatBulkDecodeError(f"Eurostat receipt is not valid UTF-8 JSON: {exc}") from exc
+    if (
+        not isinstance(accepted, dict)
+        or accepted.get("schema_version") != 1
+        or accepted.get("source_id") != "eurostat"
+        or accepted.get("accepted") is not True
+        or accepted.get("kind") != "full_distribution"
+    ):
+        raise EurostatBulkDecodeError("receipt is not an accepted Eurostat full distribution")
+    distribution = accepted.get("distribution")
+    raw = accepted.get("raw")
+    inspection = accepted.get("inspection")
+    if not isinstance(distribution, dict) or not isinstance(raw, dict):
+        raise EurostatBulkDecodeError("Eurostat receipt is missing distribution or raw metadata")
+    if not isinstance(inspection, dict) or inspection.get("status") != "complete":
+        raise EurostatBulkDecodeError("Eurostat receipt inspection is not complete")
+    dataset_id = distribution.get("dataset_id")
+    if not _bounded_text(dataset_id, 2048):
         raise EurostatBulkDecodeError("Eurostat dataset identity is invalid")
+    if distribution.get("kind") != "eurostat_tsv_gzip":
+        raise EurostatBulkDecodeError("Eurostat receipt is not a TSV.GZ data distribution")
+    url = distribution.get("url")
+    if not isinstance(url, str) or urlsplit(url).scheme != "https" or not urlsplit(url).hostname:
+        raise EurostatBulkDecodeError("Eurostat receipt distribution URL is invalid")
+    if not isinstance(distribution.get("params"), dict):
+        raise EurostatBulkDecodeError("Eurostat receipt distribution parameters are invalid")
+    source_version = distribution.get("version")
+    if source_version is not None and not _bounded_text(source_version, 1024):
+        raise EurostatBulkDecodeError("Eurostat source version is invalid")
+    raw_sha256 = raw.get("sha256")
+    raw_file_id = raw.get("id")
+    raw_name = raw.get("name")
+    raw_md5 = raw.get("md5")
+    raw_size = raw.get("size_bytes")
     if not isinstance(raw_sha256, str) or not _SHA256_RE.fullmatch(raw_sha256):
         raise EurostatBulkDecodeError("Eurostat distribution SHA-256 is invalid")
     if not isinstance(raw_file_id, str) or not _DRIVE_FILE_ID_RE.fullmatch(raw_file_id):
         raise EurostatBulkDecodeError("Eurostat Drive file identity is invalid")
-    if source_version is not None and (
-        not isinstance(source_version, str)
-        or not source_version
-        or len(source_version) > 1024
+    if (
+        raw_name != f"raw-{raw_sha256}.bin"
+        or not isinstance(raw_md5, str)
+        or not _MD5_RE.fullmatch(raw_md5)
+        or type(raw_size) is not int
+        or raw_size <= 0
+        or source.stat().st_size != raw_size
     ):
-        raise EurostatBulkDecodeError("Eurostat source version is invalid")
+        raise EurostatBulkDecodeError("Eurostat raw descriptor is invalid")
+    retrieved_at_utc = accepted.get("retrieved_at_utc")
     try:
         parsed = datetime.fromisoformat(retrieved_at_utc.replace("Z", "+00:00"))
     except (AttributeError, ValueError):
         raise EurostatBulkDecodeError("Eurostat retrieval timestamp is invalid") from None
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise EurostatBulkDecodeError("Eurostat retrieval timestamp must be UTC")
+    return {
+        "dataset_id": dataset_id,
+        "source_version": source_version,
+        "retrieved_at_utc": retrieved_at_utc,
+        "raw_sha256": raw_sha256,
+        "raw_file_id": raw_file_id,
+        "receipt_sha256": receipt_sha256,
+        "receipt_file_id": receipt_file_id,
+        "receipt_size_bytes": receipt_size_bytes,
+    }
+
+
+def _bounded_text(value: Any, limit: int) -> bool:
+    return (
+        isinstance(value, str)
+        and 0 < len(value) <= limit
+        and not any(ord(character) < 32 for character in value)
+    )
 
 
 def _file_sha256(path: Path) -> str:
@@ -315,22 +391,22 @@ def main(argv: list[str] | None = None) -> int:
     """Run the local, non-publishing decoder for one receipt-bound distribution."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
+    parser.add_argument("receipt", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--dataset-id", required=True)
-    parser.add_argument("--retrieved-at-utc", required=True)
-    parser.add_argument("--raw-sha256", required=True)
-    parser.add_argument("--raw-file-id", required=True)
-    parser.add_argument("--source-version")
+    parser.add_argument("--receipt-file-id", required=True)
+    parser.add_argument("--receipt-sha256", required=True)
+    parser.add_argument("--receipt-size-bytes", required=True, type=int)
     args = parser.parse_args(argv)
     try:
         report = decode_full_distribution(
             args.source,
+            args.receipt,
             args.output,
-            dataset_id=args.dataset_id,
-            retrieved_at_utc=args.retrieved_at_utc,
-            raw_sha256=args.raw_sha256,
-            raw_file_id=args.raw_file_id,
-            source_version=args.source_version,
+            receipt_descriptor={
+                "id": args.receipt_file_id,
+                "sha256": args.receipt_sha256,
+                "size_bytes": args.receipt_size_bytes,
+            },
         )
     except EurostatBulkDecodeError as exc:
         print(

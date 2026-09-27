@@ -278,15 +278,18 @@ open.
 ### Eurostat full-distribution Bronze decoder — 27 September 2026
 
 The repository now has a local, non-publishing downstream decoder for one
-receipt-bound official Eurostat `.tsv.gz` distribution. It verifies the exact raw
-SHA-256 before reading, streams the native file with bounded batches, preserves the
+receipt-bound official Eurostat `.tsv.gz` distribution. It verifies the immutable
+receipt bytes against their Drive descriptor, derives all source provenance from
+the accepted `full_distribution` receipt, then verifies the exact raw size and
+SHA-256 before reading. It streams the native file with bounded batches, preserves the
 complete source dimensional key, original numeric lexeme, analytical numeric value,
 status flags, `:` versus empty missing states, source positions and Drive receipt
 identity, and produces a fresh typed Parquet relation. Duplicate complete keys,
 malformed source rows, receipt drift, invalid/non-finite numbers and an existing
 output path fail closed; failed attempts remove only their own incomplete output.
-Four focused fixture tests cover ordinary, flagged and missing cells, typed empty
-datasets, hash/key/value failures and overwrite protection.
+Five focused fixture tests cover ordinary, flagged and missing cells, typed empty
+datasets, immutable receipt/provenance binding, hash/key/value failures and overwrite
+protection.
 
 This is code and fixture evidence only. No production file was downloaded or
 decoded, no Drive object or release pointer changed, and the current progressive
