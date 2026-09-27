@@ -82,6 +82,27 @@ This closes commit-level live marker verification. No ingestion, Drive mutation,
 new source completeness, medallion completeness or DBW publication follows
 from these portal deployments.
 
+**DBW serialized modeled publisher implemented; production not dispatched.**
+The repository now contains a manual, main-only Actions workflow for the next
+modeled-release boundary. One serialized job reconstructs and revalidates the
+exact reviewed retained input, builds all eleven DBW Bronze/Silver/Gold datasets,
+streams each complete bounded dataset to an immutable candidate, validates every
+staged byte and SQL contract, and promotes only the complete release. Disposable
+local parts are removed only after verified upload, so three 879,999,727-row
+observation exports do not coexist on runner disk. The publication job exposes
+its exact release ID to a dependent fresh runner; that runner rejects a different
+current pointer before performing the independent full readback and SQL checks.
+An unchanged-release retry also repairs and finalizes canonical medallion
+navigation before returning success.
+
+This is implementation and test evidence only. The workflow has not been
+dispatched, `releases/dbw/current-release.json` has not been created, and there is
+no live modeled DBW, fresh consumer, portal SQL or source-completeness acceptance.
+The next boundary is reviewed merge followed by the explicitly confirmed
+serialized production run and authenticated portal queries. The retained
+snapshot continues to declare `incomplete_retained_inventory` coverage and
+`unresolved_native_to_bronze` lineage.
+
 **DBW cold-runner input preparation accepted; modeled publication not run.**
 [PR #174](https://github.com/rutkala/zohelo-data/pull/174) merged to main as
 [`4b18df822c9d4e4912b03c75f61f942fe71ef134`](https://github.com/rutkala/zohelo-data/commit/4b18df822c9d4e4912b03c75f61f942fe71ef134)
@@ -100,11 +121,9 @@ A fresh authenticated Drive read at approximately 02:43 CEST still found retaine
 pointer `8c10d951-1b2d-42cd-8378-315cdc14e2fa` with manifest SHA-256
 `2e3770b25ef49704353e7cec02cf006f7733021b371fd7c0200009064fab4208`.
 No preflight or publisher was dispatched, no Drive write occurred, and no modeled
-DBW release, live portal SQL or source-completeness claim follows. The next
-boundary remains a separately reviewed serialized modeled publisher that runs
-preparation, build, staged validation and fresh consumer verification on the
-same Actions runner; a separate preflight job cannot hand off its temporary
-cache.
+DBW release, live portal SQL or source-completeness claim follows. The same-runner
+preparation/build/promotion path is now implemented above; a separate preflight
+job still cannot hand off its temporary cache.
 
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
@@ -268,12 +287,10 @@ Drive payload pass and a working set bounded by one dataset rather than the whol
 release. It rereads the canonical retained pointer after the long SQL pass and
 rejects source drift before modeled promotion can continue.
 
-This guard does not create `releases/dbw`, upload a candidate, move a pointer or
-establish live SQL acceptance.
-The next production increment remains a source-sized serialized Actions publisher
-that can upload and release each bounded dataset without retaining three complete
-879-million-row exports simultaneously on the runner, followed by this independent
-fresh validator and authenticated portal SQL.
+This guard does not itself create `releases/dbw`, upload a candidate, move a pointer
+or establish live SQL acceptance. The source-sized serialized Actions publisher is
+now implemented but undispatched; production acceptance still requires its complete
+run, exact-release fresh validation and authenticated portal SQL.
 
 ### DBW modeled release bounded-export increment — 26 September 2026
 
@@ -289,11 +306,10 @@ dataset exceeds the reviewed 120 MiB file limit.
 
 This is runner-capacity engineering only. It does not publish a DBW platform
 release, change the retained Bronze pointer, prove sufficient total runner disk,
-or establish current-provider completeness or native-to-Bronze lineage. The next
-accepted boundary remains a serialized Actions job that restores the exact reviewed
-Drive inputs in its own runner, publishes the complete eleven-dataset candidate,
-and verifies the canonical `releases/dbw/current-release.json` through an
-independent fresh SQL consumer before promotion is called complete.
+or establish current-provider completeness or native-to-Bronze lineage. The
+serialized job is now implemented but has not run; acceptance still requires the
+complete eleven-dataset candidate and exact canonical
+`releases/dbw/current-release.json` to pass its independent fresh SQL consumer.
 
 ### BDL checkpoint-save recovery and ten-proxy restart — 24 September 2026
 

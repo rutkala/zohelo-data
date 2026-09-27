@@ -93,12 +93,35 @@ def _current_pointer(store: DriveReleaseStore) -> dict:
     return pointer
 
 
+def _finalize_existing_navigation(
+    storage: StorageManager,
+    root_id: str,
+    manifest: dict,
+) -> None:
+    """Repair a prior post-promotion navigation failure before returning success."""
+    sync_source_medallion_navigation(
+        storage, root_id, "dbw", manifest, finalize=False
+    )
+    finalize_source_medallion_navigation(storage, root_id, "dbw", manifest)
+
+
+def _require_expected_release(manifest: dict, expected_release_id: str | None) -> None:
+    if (
+        not isinstance(expected_release_id, str)
+        or manifest.get("release_id") != expected_release_id
+    ):
+        raise ReleaseProtocolError(
+            "Current DBW release differs from the release published by this workflow"
+        )
+
+
 def run(
     *,
     drive_root_id: str,
     expected_code_sha: str,
     allow_production_write: bool = False,
     verify_current: bool = False,
+    expected_release_id: str | None = None,
 ) -> dict:
     code_sha = _require_actions_main(
         expected_code_sha=expected_code_sha,
@@ -128,6 +151,7 @@ def run(
                 raise ReleaseProtocolError(
                     "Current DBW pointer does not identify a modeled DBW release"
                 )
+            _require_expected_release(manifest, expected_release_id)
             report = validate_staged_dbw_release(
                 release_store,
                 _current_pointer(release_store),
@@ -142,11 +166,12 @@ def run(
             }
 
         try:
-            existing_root, _ = resolve_source_release_root(
+            existing_root, existing_direct_releases = resolve_source_release_root(
                 storage, root_id, "dbw", is_writer=False
             )
         except LayoutResolutionError:
             existing_root = None
+            existing_direct_releases = False
         if existing_root is not None:
             existing_store = DriveReleaseStore(storage, existing_root)
             existing = read_current_release_manifest(
@@ -162,6 +187,9 @@ def run(
                     _current_pointer(existing_store),
                     retained_pointer_file_id=RETAINED_POINTER_FILE_ID,
                 )
+                if existing_direct_releases:
+                    storage.authorize_writes()
+                    _finalize_existing_navigation(storage, root_id, existing)
                 return {
                     "status": "dbw_modeled_release_unchanged",
                     "release_id": report["release_id"],
@@ -246,6 +274,7 @@ def main() -> int:
     parser.add_argument("--expected-code-sha", required=True)
     parser.add_argument("--allow-production-write", action="store_true")
     parser.add_argument("--verify-current", action="store_true")
+    parser.add_argument("--expected-release-id")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     try:
@@ -254,6 +283,7 @@ def main() -> int:
             expected_code_sha=args.expected_code_sha,
             allow_production_write=args.allow_production_write,
             verify_current=args.verify_current,
+            expected_release_id=args.expected_release_id,
         )
     except Exception as exc:
         print(json.dumps({
@@ -269,6 +299,10 @@ def main() -> int:
     if summary:
         with Path(summary).open("a", encoding="utf-8") as handle:
             handle.write("## DBW modeled release\n\n```json\n" + rendered + "\n```\n")
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output and isinstance(report.get("release_id"), str):
+        with Path(output).open("a", encoding="utf-8") as handle:
+            handle.write(f"release_id={report['release_id']}\n")
     return 0
 
 

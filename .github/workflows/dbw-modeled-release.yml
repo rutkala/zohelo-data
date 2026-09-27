@@ -33,6 +33,8 @@ jobs:
       group: zohelo-production-data
       cancel-in-progress: false
       queue: max
+    outputs:
+      release_id: ${{ steps.publish.outputs.release_id }}
     env:
       GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
       GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -53,6 +55,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Publish reviewed retained DBW as a modeled release
+        id: publish
         env:
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
           EXPECTED_CODE_SHA: ${{ inputs.code_sha }}
@@ -94,8 +97,10 @@ jobs:
         env:
           DRIVE_ROOT_ID: ${{ inputs.drive_root_id }}
           EXPECTED_CODE_SHA: ${{ inputs.code_sha }}
+          EXPECTED_RELEASE_ID: ${{ needs.prepare_build_validate_and_publish.outputs.release_id }}
         run: |
           python src/dbw_platform_release.py \
             --drive-root-id "$DRIVE_ROOT_ID" \
             --expected-code-sha "$EXPECTED_CODE_SHA" \
+            --expected-release-id "$EXPECTED_RELEASE_ID" \
             --verify-current

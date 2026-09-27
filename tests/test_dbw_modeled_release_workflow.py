@@ -40,7 +40,16 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(
             verify["needs"], "prepare_build_validate_and_publish"
         )
+        self.assertEqual(
+            publish["outputs"]["release_id"],
+            "${{ steps.publish.outputs.release_id }}",
+        )
         self.assertIn("--verify-current", str(verify))
+        self.assertIn("--expected-release-id", str(verify))
+        self.assertIn(
+            "needs.prepare_build_validate_and_publish.outputs.release_id",
+            str(verify),
+        )
         self.assertNotIn("ZOHELO_ALLOW_PRODUCTION_WRITES", str(verify))
 
     def test_workflow_never_uploads_the_restored_cache_as_an_artifact(self):
@@ -122,6 +131,31 @@ class DBWModeledReleaseWorkflowTests(unittest.TestCase):
                     require_write=False,
                 ),
                 sha,
+            )
+
+    def test_existing_release_navigation_is_synchronized_then_finalized(self):
+        storage = object()
+        manifest = {"release_id": "00000000-0000-0000-0000-000000000001"}
+        with mock.patch.object(
+            release, "sync_source_medallion_navigation"
+        ) as synchronize, mock.patch.object(
+            release, "finalize_source_medallion_navigation"
+        ) as finalize:
+            release._finalize_existing_navigation(storage, "root", manifest)
+
+        synchronize.assert_called_once_with(
+            storage, "root", "dbw", manifest, finalize=False
+        )
+        finalize.assert_called_once_with(storage, "root", "dbw", manifest)
+
+    def test_fresh_consumer_rejects_another_workflows_current_release(self):
+        manifest = {"release_id": "00000000-0000-0000-0000-000000000001"}
+        release._require_expected_release(manifest, manifest["release_id"])
+        with self.assertRaisesRegex(
+            release.ReleaseProtocolError, "differs from the release published"
+        ):
+            release._require_expected_release(
+                manifest, "00000000-0000-0000-0000-000000000002"
             )
 
 
