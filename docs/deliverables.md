@@ -83,7 +83,10 @@ new source completeness, medallion completeness or DBW publication follows
 from these portal deployments.
 
 **DBW serialized modeled publisher implemented; production not dispatched.**
-The repository now contains a manual, main-only Actions workflow for the next
+[PR #176](https://github.com/rutkala/zohelo-data/pull/176) merged to main as
+[`c02c22ca7c9ccfcbae1057e9f14856e438096248`](https://github.com/rutkala/zohelo-data/commit/c02c22ca7c9ccfcbae1057e9f14856e438096248)
+at 04:58 CEST on 27 September after exact-head review. The repository now
+contains a manual, main-only Actions workflow for the next
 modeled-release boundary. One serialized job reconstructs and revalidates the
 exact reviewed retained input, builds all eleven DBW Bronze/Silver/Gold datasets,
 streams each complete bounded dataset to an immutable candidate, validates every
@@ -95,12 +98,25 @@ current pointer before performing the independent full readback and SQL checks.
 An unchanged-release retry also repairs and finalizes canonical medallion
 navigation before returning success.
 
+Review corrections bind the fresh consumer to one captured immutable pointer,
+make a release root without a pointer retryable while corrupt pointers remain
+fail-closed, make invalid branch/SHA/confirmation dispatches fail rather than
+finish all-skipped green, and expose production OAuth credentials only to the
+publisher/readback command steps. Exact-head
+[CI](https://github.com/rutkala/zohelo-data/actions/runs/36289522499) passed the
+workflow policy and 807 Python/dbt tests (one skipped) at `61ec3946feb6ba13a4ca3a1884b66aa8c56bf60f`.
+
 This is implementation and test evidence only. The workflow has not been
 dispatched, `releases/dbw/current-release.json` has not been created, and there is
 no live modeled DBW, fresh consumer, portal SQL or source-completeness acceptance.
-The next boundary is reviewed merge followed by the explicitly confirmed
-serialized production run and authenticated portal queries. The retained
-snapshot continues to declare `incomplete_retained_inventory` coverage and
+The next boundary is the explicitly confirmed serialized production run and
+authenticated portal queries. No production dispatch was attempted as part of
+this merge, and no previously denied operation was replayed or rerouted. A fresh
+authenticated Drive read at
+approximately 05:00 CEST still found retained snapshot
+`8c10d951-1b2d-42cd-8378-315cdc14e2fa` and manifest SHA-256
+`2e3770b25ef49704353e7cec02cf006f7733021b371fd7c0200009064fab4208`.
+The retained snapshot continues to declare `incomplete_retained_inventory` coverage and
 `unresolved_native_to_bronze` lineage.
 
 **DBW cold-runner input preparation accepted; modeled publication not run.**
@@ -178,7 +194,7 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`4b18df822c9d4e4912b03c75f61f942fe71ef134`. The earlier inspection at
+`c02c22ca7c9ccfcbae1057e9f14856e438096248`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
@@ -189,7 +205,9 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 [#171](https://github.com/rutkala/zohelo-data/pull/171), and
 [#172](https://github.com/rutkala/zohelo-data/pull/172),
 [#173](https://github.com/rutkala/zohelo-data/pull/173), and
-[#174](https://github.com/rutkala/zohelo-data/pull/174) are already merged and
+[#174](https://github.com/rutkala/zohelo-data/pull/174),
+[#175](https://github.com/rutkala/zohelo-data/pull/175), and
+[#176](https://github.com/rutkala/zohelo-data/pull/176) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
@@ -236,22 +254,23 @@ handover before any writer starts.
 ### Eurostat scheduled continuation and progressive release — 27 September 2026
 
 The scheduled
-[Eurostat run](https://github.com/rutkala/zohelo-data/actions/runs/36277436928)
-completed successfully at 01:32 CEST without a duplicate writer. Its fresh
-Landing checks report 21,154 official catalogue distributions, 6,996 validated
-current distributions, 9,045 accepted distribution receipts, 27,073,219,156
-raw bytes, zero failed pending distribution tasks and a 0.3307175947811289
-current full-distribution coverage ratio. The remaining full-distribution task
-ledger contains 20,965 tasks. The independent API campaign published all 2,116
-accepted responses with zero publication backlog and 45 API tasks remaining.
+[Eurostat run](https://github.com/rutkala/zohelo-data/actions/runs/36285475484)
+completed successfully at 04:18 CEST without a duplicate writer. Its fresh
+Landing checks report 21,154 official catalogue distributions, 6,999 validated
+current distributions, 9,068 accepted distribution receipts, 27,109,886,389
+raw bytes, zero failed pending distribution tasks and a 0.3308594119315496
+current full-distribution coverage ratio. The remaining full-distribution task ledger contains 21,072
+tasks after the current inventory refresh. The independent API campaign
+published all 2,143 accepted responses with zero publication backlog and 18 API
+tasks remaining; one transient disconnect was recovered within the run.
 
 The same run passed 38 dbt checks and published progressive release
-`f02ca269-dd5f-49bc-a3d5-918f3f2ee97d`. A fresh Drive read confirmed its
-immutable release folder and expected Bronze, revision-history, Gold
+`38e6036e-ea7b-4c75-acad-f55d1d1acb54`. Its independent fresh process verified
+the modeled release, including expected Bronze, revision-history, Gold
 dimension/fact, coverage-mart, catalogue, semantic and release artifacts. Its
 coverage mart truthfully records three admitted/modelled datasets, admitted
 coverage 1.0, and `complete_official_catalogue=false`. This is progress, not
-complete Eurostat delivery: raw catalogue coverage remains 33.07%, and
+complete Eurostat delivery: raw catalogue coverage remains 33.09%, and
 source-shaped downstream models for the full-distribution catalogue remain
 open.
 
