@@ -69,8 +69,10 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const nativeActionError = useDuckStore((s) => s.nativeLandingActionError);
   const nativeMetadataTables = useDuckStore((s) => s.nativeMetadataTables);
   const nativeMetadataLoading = useDuckStore((s) => s.nativeMetadataLoading);
+  const nativeMetadataProgress = useDuckStore((s) => s.nativeMetadataProgress);
   const nativeMetadataError = useDuckStore((s) => s.nativeMetadataError);
   const loadNativeMetadataTable = useDuckStore((s) => s.loadNativeMetadataTable);
+  const cancelNativeMetadataScan = useDuckStore((s) => s.cancelNativeMetadataScan);
   const loadNativeFolder = useDuckStore((s) => s.loadNativeLandingFolder);
   const verifyNativeFile = useDuckStore((s) => s.verifyNativeLandingFile);
   const previewNativeFile = useDuckStore((s) => s.previewNativeLandingFile);
@@ -312,9 +314,14 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                           }}
                         >
                           {nativeMetadataLoading === file.id
-                            ? "Scanning metadata…"
+                            ? nativeMetadataProgress?.phase === "cancelling" ? "Cancelling scan…" : "Scanning metadata…"
                             : "Query file metadata"}
                         </Button>
+                      )}
+                      {nativeMetadataLoading === file.id && (
+                        <Button size="sm" variant="outline" className="min-h-9 h-auto text-xs"
+                          disabled={nativeMetadataProgress?.phase === "cancelling"}
+                          onClick={cancelNativeMetadataScan}>Cancel scan</Button>
                       )}
                       <Button
                         size="sm"
@@ -352,6 +359,17 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     {folder && depth === 0 && nativeMetadataTables[file.id] && (
                       <p className="break-all text-muted-foreground">
                         SQL: {qualifyTable(undefined, "01_landing", nativeMetadataTables[file.id])}
+                      </p>
+                    )}
+                    {nativeMetadataLoading === file.id && nativeMetadataProgress && (
+                      <p role="status" className="text-muted-foreground">
+                        {{ folders: "Finding folders", files: "Reading file metadata",
+                          verifying: "Checking folders", publishing: "Preparing SQL",
+                          cancelling: "Cancelling" }[nativeMetadataProgress.phase]}:
+                        {" "}{nativeMetadataProgress.folders.toLocaleString()} folders,
+                        {" "}{nativeMetadataProgress.files.toLocaleString()} files,
+                        {" "}{nativeMetadataProgress.listPages.toLocaleString()} Drive list pages;
+                        {" "}{Math.round((Date.now() - nativeMetadataProgress.startedAtMs) / 1000)}s elapsed.
                       </p>
                     )}
                     {!folder && !preview && (

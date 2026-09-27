@@ -9,6 +9,7 @@ import {
   findFoldersByName,
   getNativeFileMetadata,
   listNativeChildrenPage,
+  listNativeMetadataBatchPage,
   type DriveFileMetadata,
 } from "./driveApi";
 import { DriveDownloadBudget, sha256Hex } from "./releaseCatalog";
@@ -60,101 +61,168 @@ export interface NativeMetadataRow {
   sha256_checksum: string | null;
 }
 
+export interface NativeMetadataProgress {
+  phase: "folders" | "files" | "verifying" | "publishing" | "cancelling";
+  folders: number;
+  files: number;
+  listPages: number;
+  startedAtMs: number;
+}
+
+export const NATIVE_METADATA_PARENT_BATCH = 25;
+export const NATIVE_METADATA_WORKERS = 4;
+
+const parentBatches = (ids: readonly string[]): string[][] => {
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  for (const id of ids) {
+    // Leave ample space for fields, MIME filter and encoded URL delimiters.
+    if (encodeURIComponent(id).length > 1500)
+      throw new Error("Drive folder ID exceeds the Landing metadata query limit.");
+    const candidate = [...batch, id];
+    const length = candidate.reduce((sum, value) => sum + encodeURIComponent(value).length + 35, 0);
+    if (batch.length && (candidate.length > NATIVE_METADATA_PARENT_BATCH || length > 2000)) {
+      batches.push(batch);
+      batch = [id];
+    } else batch = candidate;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+};
+
 /** Complete metadata-only recursion. A failed page/limit/cancellation never returns partial rows. */
 export async function scanNativeSourceMetadata(
   source: NativeLandingFolder,
   root: NativeLandingFolder,
   token: string,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  onProgress?: (progress: NativeMetadataProgress) => void,
+  signal?: AbortSignal
 ): Promise<NativeMetadataRow[]> {
   if (source.id === root.id || source.parentId !== root.id)
     throw new Error("Landing metadata source must be an immediate folder under 01_landing.");
-  const folders: Record<string, NativeLandingFolder> = { [root.id]: root, [source.id]: source };
-  const queue: Array<{ folder: NativeLandingFolder; prefix: string }> = [
-    { folder: source, prefix: "" },
-  ];
-  const seen = new Set<string>([source.id]);
+  const folders = new Map<string, NativeLandingFolder>([[source.id, source]]);
+  const prefixes = new Map<string, string>([[source.id, ""]]);
   const files = new Set<string>();
   const rows: NativeMetadataRow[] = [];
   const scanned = new Date().toISOString();
-  // Source scans validate direct membership in O(folders), rather than using
-  // interactive browsing's whole-ancestor verification twice per folder.
+  const progress: NativeMetadataProgress = { phase: "folders", folders: 1, files: 0,
+    listPages: 0, startedAtMs: Date.now() };
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) controller.abort();
+  const ensureCurrent = () => {
+    if (!isCurrent() || controller.signal.aborted)
+      throw new Error("Landing metadata scan was cancelled or superseded.");
+  };
+  const report = () => { ensureCurrent(); onProgress?.({ ...progress }); };
   const verifyMember = async (folder: NativeLandingFolder) => {
-    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
-    const fresh = await getNativeFileMetadata(folder.id, token);
+    ensureCurrent();
+    const fresh = await getNativeFileMetadata(folder.id, token, controller.signal);
     if (!isCurrent() || fresh.trashed || fresh.id !== folder.id || fresh.name !== folder.name ||
         fresh.mimeType !== NATIVE_FOLDER_MIME || !fresh.parents?.includes(folder.parentId) ||
         fresh.version !== folder.version || fresh.modifiedTime !== folder.modifiedTime)
       throw new Error("Landing folder changed during metadata scan. Refresh and retry.");
+    ensureCurrent();
   };
-  await verifyProjectParent(root.parentId, token, isCurrent);
-  await verifyMember(root);
-  for (let index = 0; index < queue.length; index++) {
-    if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
-    if (seen.size > NATIVE_METADATA_MAX_FOLDERS)
-      throw new Error(
-        `Source folder exceeds the ${NATIVE_METADATA_MAX_FOLDERS}-folder metadata scan limit.`
-      );
-    const { folder, prefix } = queue[index];
-    await verifyMember(folder);
-    const children: NativeLandingFile[] = [];
-    const ids = new Set<string>();
-    const seenPages = new Set<string>();
-    let next: string | null = null;
-    do {
-      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
-      const page = await listNativeChildrenPage(folder.id, token, next ?? undefined);
-      if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
-      for (const item of page.files) {
-        if (item.trashed || !item.parents?.includes(folder.id) || ids.has(item.id))
-          throw new Error("Landing folder membership changed during metadata scan.");
-        ids.add(item.id);
-        children.push({ ...item, parentId: folder.id });
+  /** Four workers, complete pagination per batch, globally unique IDs per phase. */
+  const collect = async (parentIds: readonly string[], kind: "folders" | "files",
+    handle: (item: DriveFileMetadata, parentId: string) => void) => {
+    const batches = parentBatches(parentIds);
+    const seenIds = new Set<string>();
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < batches.length) {
+        ensureCurrent();
+        const ids = batches[cursor++];
+        const requested = new Set(ids);
+        const tokens = new Set<string>();
+        let next: string | null = null;
+        do {
+          ensureCurrent();
+          const page = await listNativeMetadataBatchPage(ids, kind, token, next ?? undefined, controller.signal);
+          ensureCurrent();
+          progress.listPages++;
+          for (const item of page.files) {
+            if (item.trashed || item.parents?.length !== 1 || !requested.has(item.parents[0]) ||
+                seenIds.has(item.id) || (kind === "folders") !== (item.mimeType === NATIVE_FOLDER_MIME))
+              throw new Error("Drive returned changed, duplicated or out-of-scope Landing metadata.");
+            seenIds.add(item.id);
+            handle(item, item.parents[0]);
+          }
+          report();
+          next = page.nextPageToken;
+          if (next && tokens.has(next)) throw new Error("Drive repeated a Landing metadata page token.");
+          if (next) tokens.add(next);
+        } while (next);
       }
-      next = page.nextPageToken;
-      if (next && seenPages.has(next)) throw new Error("Drive repeated a native folder page token.");
-      if (next) seenPages.add(next);
-    } while (next);
-    await verifyMember(folder);
-    for (const file of children) {
-      if (isNativeFolder(file)) {
-        if (seen.has(file.id)) throw new Error("Landing folder appears twice in the source tree.");
-        seen.add(file.id);
-        folders[file.id] = file;
-        queue.push({ folder: file, prefix: `${prefix}${file.name}/` });
-      } else if (file.mimeType !== NATIVE_SHORTCUT_MIME) {
-        if (files.has(file.id)) throw new Error("Landing file appears twice in the source tree.");
-        files.add(file.id);
-        if (rows.length >= NATIVE_METADATA_MAX_FILES)
-          throw new Error(
-            `Source folder exceeds the ${NATIVE_METADATA_MAX_FILES}-file metadata scan limit.`
-          );
-        rows.push({
-          file_id: file.id,
-          source_folder_id: source.id,
-          source_folder: source.name,
-          relative_path: `${prefix}${file.name}`,
-          file_name: file.name,
-          parent_folder_id: folder.id,
-          size_bytes: file.size ?? null,
-          mime_type: file.mimeType ?? null,
-          created_at_utc: file.createdTime ?? null,
-          modified_at_utc: file.modifiedTime ?? null,
-          metadata_refreshed_at_utc: scanned,
-          drive_url: safeDriveLink(file.webViewLink, token),
-          sha256_checksum: file.sha256Checksum ?? null,
-        });
-      }
+    };
+    try { await Promise.all(Array.from({ length: Math.min(NATIVE_METADATA_WORKERS, batches.length) }, worker)); }
+    catch (error) { controller.abort(); throw error; }
+  };
+  try {
+    await verifyProjectParent(root.parentId, token, () => isCurrent() && !controller.signal.aborted,
+      controller.signal);
+    await verifyMember(root);
+    await verifyMember(source);
+    report();
+    let frontier = [source.id];
+    while (frontier.length) {
+      const next: string[] = [];
+      await collect(frontier, "folders", (item, parentId) => {
+        if (folders.has(item.id)) throw new Error("Landing folder appears twice in the source tree.");
+        if (folders.size >= NATIVE_METADATA_MAX_FOLDERS)
+          throw new Error(`Source exceeds the ${NATIVE_METADATA_MAX_FOLDERS}-folder metadata scan limit.`);
+        const folder = { ...item, parentId, mimeType: NATIVE_FOLDER_MIME } as NativeLandingFolder;
+        folders.set(item.id, folder);
+        prefixes.set(item.id, `${prefixes.get(parentId)}${item.name}/`);
+        next.push(item.id);
+        progress.folders = folders.size;
+      });
+      frontier = next;
     }
+    progress.phase = "files";
+    report();
+    await collect([...folders.keys()], "files", (item, parentId) => {
+      if (folders.has(item.id) || files.has(item.id))
+        throw new Error("Landing file appears twice in the source tree.");
+      files.add(item.id);
+      if (item.mimeType === NATIVE_SHORTCUT_MIME) return;
+      if (rows.length >= NATIVE_METADATA_MAX_FILES)
+        throw new Error(`Source exceeds the ${NATIVE_METADATA_MAX_FILES}-file metadata scan limit.`);
+      rows.push({ file_id: item.id, source_folder_id: source.id, source_folder: source.name,
+        relative_path: `${prefixes.get(parentId)}${item.name}`, file_name: item.name,
+        parent_folder_id: parentId, size_bytes: item.size ?? null, mime_type: item.mimeType ?? null,
+        created_at_utc: item.createdTime ?? null, modified_at_utc: item.modifiedTime ?? null,
+        metadata_refreshed_at_utc: scanned, drive_url: safeDriveLink(item.webViewLink, token),
+        sha256_checksum: item.sha256Checksum ?? null });
+      progress.files = rows.length;
+    });
+    progress.phase = "verifying";
+    report();
+    const verified = new Set<string>();
+    await collect([...folders.keys()], "folders", (item, parentId) => {
+      const original = folders.get(item.id);
+      if (!original || original.parentId !== parentId || original.name !== item.name ||
+          original.version !== item.version || original.modifiedTime !== item.modifiedTime)
+        throw new Error("Landing folder changed during metadata scan. Refresh and retry.");
+      verified.add(item.id);
+    });
+    // Source is the only folder absent from searches of its descendants.
+    if (verified.size !== folders.size - 1)
+      throw new Error("Landing folder disappeared during metadata scan. Refresh and retry.");
+    await verifyMember(source);
+    await verifyMember(root);
+    await verifyProjectParent(root.parentId, token, () => isCurrent() && !controller.signal.aborted,
+      controller.signal);
+    ensureCurrent();
+    progress.phase = "publishing";
+    report();
+    return rows;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
-  // Recheck every direct parent edge after the entire traversal: a folder
-  // moved after its earlier page would otherwise leave a plausible partial tree.
-  const finalFolders = Object.values(folders);
-  for (let index = 0; index < finalFolders.length; index += 4)
-    await Promise.all(finalFolders.slice(index, index + 4).map(verifyMember));
-  await verifyProjectParent(root.parentId, token, isCurrent);
-  if (!isCurrent()) throw new Error("Landing metadata scan was superseded.");
-  return rows;
 }
 
 const metadataColumns = [
@@ -306,9 +374,10 @@ async function verifyNativeFolder(
 async function verifyProjectParent(
   projectId: string,
   token: string,
-  isCurrent: () => boolean
+  isCurrent: () => boolean,
+  signal?: AbortSignal
 ): Promise<void> {
-  const matches = await findFoldersByName(DRIVE_ROOT, "root", token);
+  const matches = await findFoldersByName(DRIVE_ROOT, "root", token, undefined, signal);
   if (!isCurrent() || matches.length !== 1 || matches[0].id !== projectId) {
     throw new Error("Native Landing project location changed. Refresh before browsing it.");
   }

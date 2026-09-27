@@ -1,6 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
 import { clearStoredToken, setStoredToken } from "../auth";
-import { GoogleDriveAuthError, driveRequest } from "../driveApi";
+import { GoogleDriveAuthError, driveRequest, listNativeMetadataBatchPage } from "../driveApi";
+
+describe("batched native metadata listing", () => {
+  it("groups bounded parents, filters MIME, requests complete pages and passes abort signal", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ files: [], nextPageToken: "next" })));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    expect(await listNativeMetadataBatchPage(["a'", "b"], "files", "token", "previous", controller.signal))
+      .toEqual({ files: [], nextPageToken: "next" });
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.searchParams.get("q")).toBe("('a\\'' in parents or 'b' in parents) and mimeType != 'application/vnd.google-apps.folder' and trashed=false");
+    expect(url.searchParams.get("pageSize")).toBe("1000");
+    expect(url.searchParams.get("fields")).toContain("incompleteSearch");
+    expect(url.searchParams.get("pageToken")).toBe("previous");
+    expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  });
+
+  it("rejects incomplete searches and malformed pages without fabricating completeness", async () => {
+    for (const payload of [{ files: [], incompleteSearch: true }, { files: {} },
+      { files: [], nextPageToken: 23 }]) {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(payload))));
+      await expect(listNativeMetadataBatchPage(["a"], "folders", "token")).rejects.toThrow("incomplete");
+    }
+    await expect(listNativeMetadataBatchPage(Array.from({ length: 26 }, (_, i) => String(i)),
+      "files", "token")).rejects.toThrow("parent batch");
+  });
+});
 
 describe("driveRequest authorization failures", () => {
   it("turns an expired/revoked token response into a sign-in error", async () => {

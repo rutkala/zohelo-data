@@ -108,6 +108,14 @@ the portal's Landing SQL representation as metadata-only tables discovered from
 actual source folders: one row per retained file, including nested paths and
 Drive timestamps. Original files remain the primary browser. Existing response
 SQL references are retained for compatibility outside Landing navigation.
+The browser builds the inventory on demand using bounded parent-ID search
+batches: folder discovery, file metadata reads, then folder-graph verification.
+Only complete scans become SQL tables. The Drive file ID identifies each object;
+its relative path is metadata, not an SQL traversal requirement. Completed
+uploads are directly discoverable, but open listings and generated tables
+remain cached until a refresh. This is not a shared, continuously maintained
+object catalogue. Such a catalogue would require an explicit update and
+reconciliation design for additions, moves, deletions and access changes.
 New-source dbt models, modeled source
 releases, compatible cross-source modeled-release pinning and semantic/catalogue integration remain
 subsequent source-specific increments. Encrypted Actions secrets provide source credentials;

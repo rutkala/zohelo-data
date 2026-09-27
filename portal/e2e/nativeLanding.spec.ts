@@ -103,6 +103,20 @@ for (const viewport of [
       if (q.includes("name='zohelo-data'"))
         files = [{ id: "project", name: "zohelo-data", mimeType: folder }];
       else if (q.includes("name='01_landing'")) files = [root];
+      else if (q.includes("mimeType ")) {
+        const parentIds = ["bdl", "deep"].filter((id) => q.includes(`'${id}' in parents`));
+        if (q.includes("mimeType =")) files = parentIds.includes("bdl") ? [leaf] : [];
+        else if (parentIds.includes("deep")) {
+          files = url.searchParams.has("pageToken")
+            ? [archive, small]
+            : Array.from({ length: 1000 }, (_, i) => ({
+                ...archive, id: `other-${i}`, name: "duplicate.unknown", size: "2",
+                webViewLink: undefined, webContentLink: undefined,
+                capabilities: { canDownload: false },
+              }));
+          if (!url.searchParams.has("pageToken")) nextPageToken = "continuation";
+        }
+      }
       else if (q.includes("'landing' in parents")) files = [nested];
       else if (q.includes("'bdl' in parents")) files = [leaf];
       else if (q.includes("'deep' in parents")) {

@@ -165,7 +165,9 @@ describe("Landing file metadata SQL", () => {
       source,
       root,
       "fixture-token",
-      expect.any(Function)
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(AbortSignal)
     );
     expect(publishNativeMetadata).toHaveBeenCalledTimes(1);
     expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
@@ -180,6 +182,29 @@ describe("Landing file metadata SQL", () => {
     expect(await store.getState().loadNativeMetadataTable("source")).toBeNull();
     expect(store.getState().nativeMetadataError).toContain("Nested Drive page failed");
     expect(publishNativeMetadata).not.toHaveBeenCalled();
+  });
+
+  it("cancels an in-flight scan, waits for its abort, and allows a clean retry", async () => {
+    const store = ready();
+    vi.mocked(scanNativeSourceMetadata).mockImplementationOnce(async (_source, _root, _token,
+      _current, onProgress, signal) => {
+      onProgress?.({ phase: "files", folders: 2503, files: 1000, listPages: 120,
+        startedAtMs: Date.now() });
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true });
+      });
+    });
+    const first = store.getState().loadNativeMetadataTable("source");
+    await vi.waitFor(() => expect(store.getState().nativeMetadataProgress?.files).toBe(1000));
+    store.getState().cancelNativeMetadataScan();
+    expect(store.getState().nativeMetadataProgress?.phase).toBe("cancelling");
+    expect(store.getState().nativeMetadataLoading).toBe("source");
+    expect(await first).toBeNull();
+    await vi.waitFor(() => expect(store.getState().nativeMetadataLoading).toBeNull());
+    expect(publishNativeMetadata).not.toHaveBeenCalled();
+    expect(await store.getState().loadNativeMetadataTable("source")).toBe('"01_landing"."source_files"');
+    expect(publishNativeMetadata).toHaveBeenCalledTimes(1);
   });
 
   it("does not overwrite an unmarked user replacement of a former metadata table", async () => {

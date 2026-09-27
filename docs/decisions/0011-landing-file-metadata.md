@@ -36,6 +36,20 @@ inventory. Refresh and authentication/session changes must invalidate stale
 results. A completed scan describes retained files observed during that scan;
 it does not establish full provider-data coverage.
 
+The owner accepted the Landing layout and subsequently reported a slow BDL
+metadata query. Optimize the on-demand scan through bounded, paginated Drive
+parent searches, visible progress and cancellation, retaining complete-scan
+and read-only guarantees. Measure a full retained BDL inventory before making
+a BDL performance claim. A shallow navigation check or NBP metadata query does
+not establish that result.
+
+Completed uploads do not wait for SQL publication. Open folder listings and
+completed SQL inventories currently remain cached until a user refresh.
+The owner's desired immediate visibility is not an implemented push or polling
+guarantee. A persistent inventory maintained during ingestion or through Drive
+change reconciliation would be a separate architecture increment; batching
+the browser scan does not establish that behavior.
+
 ## Compatibility
 
 Remove legacy response-envelope and archive-index tables from the Landing

@@ -42,6 +42,7 @@ const result = {
   preview_checks: 0,
   large_link_checks: 0,
   metadata_sql_checks: 0,
+  bdl_metadata: null,
   large_file_bytes: 0,
   large_file_format: null,
   per_source: [],
@@ -150,12 +151,23 @@ try {
   }, token);
   let attemptedWrite = false;
   let mediaRequests = 0;
+  let metadataDriveRequests = 0;
+  let metadataListRequests = 0;
+  let metadataMediaAttempts = 0;
   const guardDriveRequest = (route) => {
     const request = route.request();
     const method = request.method();
     if (method !== "GET" && method !== "OPTIONS") {
       attemptedWrite = true;
       return route.abort("blockedbyclient");
+    }
+    if (stage === "metadata_sql" && method === "GET") {
+      metadataDriveRequests++;
+      const url = new URL(request.url());
+      if (url.pathname.endsWith("/files") &&
+          /^\(.+ in parents(?: or .+ in parents)*\) and mimeType (?:=|!=)/.test(url.searchParams.get("q") || ""))
+        metadataListRequests++;
+      if (url.searchParams.get("alt") === "media") metadataMediaAttempts++;
     }
     if (method === "GET" && new URL(request.url()).searchParams.get("alt") === "media") {
       if (stage !== "bounded_preview" || !request.url().includes(`/${previewCandidate?.file?.id}?`))
@@ -283,21 +295,62 @@ try {
     result.folders_probed++;
   }
   stage = "metadata_sql";
-  const metadataSource = sources.find((f) => f.name === "nbp_gold_prices");
+  const metadataSource = sources.find((f) => f.name === "gus_bdl");
   if (!metadataSource) throw new Error("Metadata SQL acceptance source folder missing");
   const metadataRow = section.locator(`[data-native-id="${metadataSource.id}"]`).first();
   await revealActions(metadataRow, metadataSource);
   const mediaBeforeMetadata = mediaRequests;
+  const started = performance.now();
   await metadataRow.getByRole("button", { name: "Query file metadata" }).click();
   await page
     .getByRole("tab", { name: `Landing/${metadataSource.name} file metadata` })
-    .waitFor({ timeout: 180000 });
-  await page.locator("table:visible tbody tr").first().waitFor({ timeout: 180000 });
+    .waitFor({ timeout: 1200000 });
+  await page.getByRole("columnheader", { name: "relative_path" }).first().waitFor({ timeout: 1200000 });
+  await page.locator("table:visible tbody tr").first().waitFor({ timeout: 1200000 });
+  const coldMs = Math.round(performance.now() - started);
+  const completed = await page.getByRole("status").filter({ hasText: /^Scanned \d+ original file/ }).textContent();
+  const summary = completed?.match(/Scanned (\d+) original file\(s\) across (\d+) folders \((\d+) Drive list pages\)/);
+  if (!summary || Number(summary[1]) < 1 || Number(summary[2]) < 2 ||
+      Number(summary[3]) !== metadataListRequests)
+    throw new Error("BDL metadata scan did not report complete folder and page counts");
+  const countEditor = page.locator(".monaco-editor .view-lines:visible").first();
+  await countEditor.click();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.insertText('SELECT COUNT(*) AS file_count FROM "01_landing"."gus_bdl_files";');
+  await page.getByRole("button", { name: "Run Query", exact: true }).click();
+  await page.getByRole("columnheader", { name: "file_count" }).first().waitFor();
+  await page.getByRole("cell", { name: summary[1], exact: true }).first().waitFor();
   if (
     (await page.getByText("Query Error", { exact: true }).count()) ||
-    mediaRequests !== mediaBeforeMetadata
+    mediaRequests !== mediaBeforeMetadata || metadataMediaAttempts !== 0
   )
     throw new Error("Metadata SQL queried payload bytes or failed");
+  const coldRequests = metadataDriveRequests;
+  const coldListRequests = metadataListRequests;
+  const warmStart = performance.now();
+  const existingMetadataTabs = await page.getByRole("tab", {
+    name: `Landing/${metadataSource.name} file metadata`, exact: true,
+  }).count();
+  await metadataRow.getByRole("button", { name: "Query file metadata" }).click();
+  const warmTab = page.getByRole("tab", {
+    name: `Landing/${metadataSource.name} file metadata`, exact: true,
+  }).nth(existingMetadataTabs);
+  await warmTab.waitFor({ state: "visible" });
+  if (await warmTab.getAttribute("aria-selected") !== "true")
+    throw new Error("Warm metadata query did not activate its new SQL tab");
+  await page.getByRole("columnheader", { name: "relative_path" }).first().waitFor();
+  await page.locator("table:visible tbody tr").first().waitFor();
+  const warmMs = Math.round(performance.now() - warmStart);
+  if (metadataDriveRequests !== coldRequests || metadataMediaAttempts !== 0 ||
+      await page.getByText("Query Error", { exact: true }).count())
+    throw new Error("Warm BDL metadata query unexpectedly read Drive again");
+  result.bdl_metadata = {
+    files: Number(summary[1]), folders: Number(summary[2]),
+    scan_list_pages: Number(summary[3]), cold_drive_requests: coldRequests,
+    cold_list_requests: coldListRequests, warm_drive_requests: metadataDriveRequests - coldRequests,
+    cold_scan_and_query_ms: coldMs, warm_query_ms: warmMs,
+    attempted_payload_reads: metadataMediaAttempts,
+  };
   result.metadata_sql_checks = 1;
   // BDL's retained bulk folders are several levels deep. A source-root file
   // cannot stand in for this navigation check.

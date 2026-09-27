@@ -298,6 +298,13 @@ export const createGoogleDriveSlice: StateCreator<
 > = (set, get) => {
   let refreshGeneration = 0;
   let nativeGeneration = 0;
+  let nativeMetadataSequence = 0;
+  let nativeMetadataAbort: AbortController | null = null;
+  const abortMetadataScan = () => {
+    nativeMetadataSequence += 1;
+    nativeMetadataAbort?.abort();
+    nativeMetadataAbort = null;
+  };
   let nativeActionSequence = 0;
   let busy = false;
   // DuckDB views survive disconnect; record their release per engine, not globally.
@@ -343,6 +350,8 @@ export const createGoogleDriveSlice: StateCreator<
     const handled = handleDriveAuthFailure(set, get, token, error);
     if (handled) {
       nativeGeneration += 1;
+      abortMetadataScan();
+      set({ nativeMetadataLoading: null, nativeMetadataProgress: null });
       void beginMetadataCleanup(session).catch(() =>
         set({
           lakehouseStatusMessage:
@@ -362,6 +371,7 @@ export const createGoogleDriveSlice: StateCreator<
     const session = asLocalDuckSession(get().currentSession);
     const local = session?.local;
     const generation = nativeGeneration;
+    const sequence = nativeMetadataSequence;
     if (!token || !root || !folder || !tableName || !local || !session) {
       set({
         nativeMetadataError:
@@ -371,6 +381,7 @@ export const createGoogleDriveSlice: StateCreator<
     }
     const current = () =>
       generation === nativeGeneration &&
+      sequence === nativeMetadataSequence &&
       get().googleAuth.token === token &&
       get().nativeLandingRoot === root &&
       get().currentSession === session;
@@ -381,9 +392,18 @@ export const createGoogleDriveSlice: StateCreator<
         return `${sqlEscapeIdentifier("01_landing")}.${sqlEscapeIdentifier(tableName)}`;
       names.delete(tableName);
     }
-    set({ nativeMetadataLoading: folderId, nativeMetadataError: null });
+    const controller = new AbortController();
+    nativeMetadataAbort = controller;
+    set({ nativeMetadataLoading: folderId, nativeMetadataProgress: null, nativeMetadataError: null });
+    let folderCount = 1;
+    let listPages = 0;
     try {
-      const rows = await scanNativeSourceMetadata(folder, root, token, current);
+      const rows = await scanNativeSourceMetadata(folder, root, token, current,
+        (progress) => { if (current()) {
+          folderCount = progress.folders;
+          listPages = progress.listPages;
+          set({ nativeMetadataProgress: progress });
+        } }, controller.signal);
       if (!current()) return null;
       // Never replace an unrelated user/release relation with the same name.
       const existing = await local.connection.query(
@@ -401,7 +421,7 @@ export const createGoogleDriveSlice: StateCreator<
       if (!current()) return null;
       if (current())
         set({
-          lakehouseStatusMessage: `Scanned ${rows.length} original file(s) for ${folder.name}. Query ${target}.`,
+          lakehouseStatusMessage: `Scanned ${rows.length} original file(s) across ${folderCount} folders (${listPages} Drive list pages) for ${folder.name}. Query ${target}.`,
         });
       return current() ? target : null;
     } catch (error) {
@@ -410,7 +430,11 @@ export const createGoogleDriveSlice: StateCreator<
       }
       return null;
     } finally {
-      if (current()) set({ nativeMetadataLoading: null });
+      if (nativeMetadataAbort === controller) nativeMetadataAbort = null;
+      if (current()) set({ nativeMetadataLoading: null, nativeMetadataProgress: null });
+      else if (generation === nativeGeneration && get().nativeMetadataLoading === folderId &&
+        nativeMetadataAbort === null)
+        set({ nativeMetadataLoading: null, nativeMetadataProgress: null });
     }
   };
   const loadMetadata = (folderId: string): Promise<string | null> => {
@@ -890,6 +914,7 @@ export const createGoogleDriveSlice: StateCreator<
     nativeLandingActionError: null,
     nativeMetadataTables: {},
     nativeMetadataLoading: null,
+    nativeMetadataProgress: null,
     nativeMetadataError: null,
     isLakehouseLoading: false,
     lakehouseStatusMessage: "Sign in to browse Google Drive datasets.",
@@ -904,6 +929,7 @@ export const createGoogleDriveSlice: StateCreator<
         });
         const nextToken = await requestGoogleAccessToken({ promptConsent });
         nativeGeneration += 1;
+        abortMetadataScan();
         set({
           googleAuth: {
             token: nextToken,
@@ -932,6 +958,7 @@ export const createGoogleDriveSlice: StateCreator<
       }
       setStoredToken(trimmed);
       nativeGeneration += 1;
+      abortMetadataScan();
       set({
         googleAuth: { token: trimmed, isAuthenticated: true, authSource: "manual", error: null },
       });
@@ -945,6 +972,7 @@ export const createGoogleDriveSlice: StateCreator<
 
     disconnectGoogleDrive: () => {
       nativeGeneration += 1;
+      abortMetadataScan();
       nativeActionSequence += 1;
       const oldSession = get().currentSession;
       void beginMetadataCleanup(oldSession).catch(() => {
@@ -978,6 +1006,7 @@ export const createGoogleDriveSlice: StateCreator<
         nativeLandingActionError: null,
         nativeMetadataTables: {},
         nativeMetadataLoading: null,
+        nativeMetadataProgress: null,
         nativeMetadataError: null,
         activeLakehouseDataset: null,
         activeLakehouseLayer: null,
@@ -989,6 +1018,7 @@ export const createGoogleDriveSlice: StateCreator<
     refreshNativeLanding: async () => {
       const token = get().googleAuth.token;
       const generation = ++nativeGeneration;
+      abortMetadataScan();
       nativeActionSequence += 1;
       const oldSession = get().currentSession;
       set({
@@ -1002,6 +1032,7 @@ export const createGoogleDriveSlice: StateCreator<
         nativeLandingLoading: !!token,
         nativeMetadataTables: {},
         nativeMetadataLoading: null,
+        nativeMetadataProgress: null,
         nativeMetadataError: null,
       });
       try {
@@ -1194,6 +1225,17 @@ export const createGoogleDriveSlice: StateCreator<
     loadNativeMetadataTable: async (folderId) => {
       if (get().nativeMetadataLoading) return null;
       return loadMetadata(folderId);
+    },
+    cancelNativeMetadataScan: () => {
+      if (!get().nativeMetadataLoading || !nativeMetadataAbort ||
+        get().nativeMetadataProgress?.phase === "cancelling") return;
+      abortMetadataScan();
+      set({ nativeMetadataProgress: { phase: "cancelling",
+        folders: get().nativeMetadataProgress?.folders ?? 0,
+        files: get().nativeMetadataProgress?.files ?? 0,
+        listPages: get().nativeMetadataProgress?.listPages ?? 0,
+        startedAtMs: get().nativeMetadataProgress?.startedAtMs ?? Date.now() },
+        nativeMetadataError: "Landing metadata scan cancelled." });
     },
 
     refreshLakehouseCatalog: async () => {
