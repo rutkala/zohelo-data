@@ -193,7 +193,7 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`4b18df822c9d4e4912b03c75f61f942fe71ef134`. The earlier inspection at
+`c02c22ca7c9ccfcbae1057e9f14856e438096248`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
@@ -204,7 +204,9 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 [#171](https://github.com/rutkala/zohelo-data/pull/171), and
 [#172](https://github.com/rutkala/zohelo-data/pull/172),
 [#173](https://github.com/rutkala/zohelo-data/pull/173), and
-[#174](https://github.com/rutkala/zohelo-data/pull/174) are already merged and
+[#174](https://github.com/rutkala/zohelo-data/pull/174),
+[#175](https://github.com/rutkala/zohelo-data/pull/175), and
+[#176](https://github.com/rutkala/zohelo-data/pull/176) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
