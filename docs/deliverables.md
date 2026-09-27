@@ -82,6 +82,30 @@ This closes commit-level live marker verification. No ingestion, Drive mutation,
 new source completeness, medallion completeness or DBW publication follows
 from these portal deployments.
 
+**DBW cold-runner input preparation accepted; modeled publication not run.**
+[PR #174](https://github.com/rutkala/zohelo-data/pull/174) merged to main as
+[`4b18df822c9d4e4912b03c75f61f942fe71ef134`](https://github.com/rutkala/zohelo-data/commit/4b18df822c9d4e4912b03c75f61f942fe71ef134)
+on 27 September after exact-head review. The read-only Actions preparer now
+hard-links the freshly verified 3,103-object / 4,803,673,234-byte cache into one
+fresh release-scoped data root on the same runner, avoiding a second 4.8 GB copy.
+Native-tree acceptance now includes the 1,550 retained Landing receipts as well
+as every observation and fixed Bronze path; the prior production-shaped mismatch
+would otherwise have rejected the real reconstructed tree while its smaller
+fixture passed.
+
+Focused [DBW release CI](https://github.com/rutkala/zohelo-data/actions/runs/36284085308)
+and the full [data-platform CI](https://github.com/rutkala/zohelo-data/actions/runs/36284085309)
+passed at exact head `18c289b903af8e3263e2c58d1595abb00b4754ca`.
+A fresh authenticated Drive read at approximately 02:43 CEST still found retained
+pointer `8c10d951-1b2d-42cd-8378-315cdc14e2fa` with manifest SHA-256
+`2e3770b25ef49704353e7cec02cf006f7733021b371fd7c0200009064fab4208`.
+No preflight or publisher was dispatched, no Drive write occurred, and no modeled
+DBW release, live portal SQL or source-completeness claim follows. The next
+boundary remains a separately reviewed serialized modeled publisher that runs
+preparation, build, staged validation and fresh consumer verification on the
+same Actions runner; a separate preflight job cannot hand off its temporary
+cache.
+
 **BDL Actions migration merged; live preflight failed on missing secrets.**
 [PR #166](https://github.com/rutkala/zohelo-data/pull/166) merged to main as
 `e674f303644dd777b4a2d29737da488aa9b43de0` at 22:48 CEST on 26 September
@@ -135,7 +159,7 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 | 4 — Repository reconciliation | Integrate useful work from chat, Copilot, AGY and the devcontainer into reviewed main changes. | Compare live branches, worktrees and local changes; preserve unique work and secrets; validate and integrate bounded changes before removing only verified merged branches/worktrees. No blanket reset, clean, pull or source reload. |
 
 **Current GitHub baseline:** main is
-`da720abf70ceb86f4ccdf1cf5c09bfb33f64dba6`. The earlier inspection at
+`4b18df822c9d4e4912b03c75f61f942fe71ef134`. The earlier inspection at
 `490ffbed` is historical: PRs
 [#164](https://github.com/rutkala/zohelo-data/pull/164),
 [#166](https://github.com/rutkala/zohelo-data/pull/166),
@@ -144,7 +168,9 @@ approved architecture/cost boundaries. This is a priority change, not data accep
 [#169](https://github.com/rutkala/zohelo-data/pull/169),
 [#170](https://github.com/rutkala/zohelo-data/pull/170),
 [#171](https://github.com/rutkala/zohelo-data/pull/171), and
-[#172](https://github.com/rutkala/zohelo-data/pull/172) are already merged and
+[#172](https://github.com/rutkala/zohelo-data/pull/172),
+[#173](https://github.com/rutkala/zohelo-data/pull/173), and
+[#174](https://github.com/rutkala/zohelo-data/pull/174) are already merged and
 are not pending integration gates. Recent NBP, WDI and Eurostat runs have
 succeeded, but workflow success alone does not establish full source or portal
 coverage.
