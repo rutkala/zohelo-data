@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current priority: one usable Landing browser — 27 September 2026
 
-**Owner accepted the layout; metadata performance follow-up in progress.**
+**Owner accepted the layout; scan optimization deployed, cold latency remains.**
 The owner confirmed the Landing presentation and reported that **Query file
 metadata** for GUS BDL was still scanning. They expect newly ingested files to
 be available immediately and suggested an object inventory with metadata and
@@ -19,9 +19,39 @@ before publishing a complete local table. It adds progress and cancellation in
 the accepted source action area. No payload reads, ingestion changes, shared
 index publisher or object-storage migration are included. A maintained shared
 inventory could avoid first-use crawls but needs an explicit update and
-reconciliation design. Review, exact-head CI, deployment and a complete live
-BDL metadata measurement are still pending. The earlier NBP query below is not
-a BDL performance receipt.
+reconciliation design. The earlier NBP query below is not a BDL performance
+receipt.
+
+[PR #186](https://github.com/rutkala/zohelo-data/pull/186) merged as
+`d581cdb61c81608e59da1c8211f8505e0d6f819f` after independent review and exact-head
+[CI](https://github.com/rutkala/zohelo-data/actions/runs/36333495883). Both portal
+base configurations passed lint, production builds/type checking, 781 unit tests
+and all 18 browser tests. The
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36333832795)
+published that exact commit; the fresh live-marker check passed at 16:38:16 UTC.
+
+The authenticated [production check](https://github.com/rutkala/zohelo-data/actions/runs/36334009753)
+completed at 16:50:13 UTC on 27 September. Its full retained BDL inventory
+contained **26,666 files across 9,064 folders**, confirmed with SQL `COUNT(*)`.
+The cold scan plus first displayed query took **448,268 ms (7 minutes 28 seconds)**
+and made 1,149 scanner list requests plus six identity/membership requests.
+A second displayed query in the same session took **1,338 ms**, with **zero Drive
+requests**. Metadata access attempted **zero payload reads**. The same run also
+passed original-file/managed-link access across all 13 retained source folders,
+four-level BDL navigation, one supported preview and the 21,378,254,323-byte ZIP
+link. The [sanitized receipt](audits/2026-09-27-landing-metadata-performance.json)
+preserves the exact measurements.
+
+This verifies the deployed scan and SQL reuse, not satisfactory first-use
+latency, automatic freshness or full provider-data coverage. **The first BDL
+query is still too slow for interactive use.** No old complete BDL wall-time
+baseline was measured, so no percentage speedup is claimed. The current browser
+session must still discover Drive's folder tree; batching does not remove that
+work. A durable file inventory maintained incrementally would avoid rebuilding
+it per session and could support fresher views. Its update/reconciliation design
+(additions, moves, deletions and permission changes) remains a separate scoped
+architecture decision. No shared inventory service, updater or new ingestion
+pipeline was introduced, and no background engineering task is implied.
 
 The deep/wide fixture contains 2,503 folders within one source. The new scanner
 uses 310 batched list pages, four identity reads and two project lookups, with

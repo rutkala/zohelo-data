@@ -10,6 +10,12 @@ Shared instructions for coding work in this repository. Run commands from the re
   its metadata performance is accepted; an NBP query is not a BDL performance
   receipt. Explain that completed uploads are discoverable directly, while open
   listings and generated SQL tables currently refresh on request.
+- The complete live BDL measurement is now recorded in `docs/deliverables.md`:
+  26,666 files in 9,064 folders took 448.268 seconds on first use and 1.338
+  seconds for a repeated query in the same session. The batched scanner is
+  deployed, but first-use latency and automatic freshness are not solved.
+  A shared incremental metadata inventory remains a design option, not an
+  implemented component or an implicit authorization to add another publisher.
 - The owner clarified that Landing SQL represents file metadata: one table per
   actual source folder, one row per file, including nested files and paths,
   timestamps and other technical metadata. Apply
