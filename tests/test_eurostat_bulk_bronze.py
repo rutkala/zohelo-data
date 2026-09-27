@@ -15,6 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+CODE_SHA = "a" * 40
 
 from eurostat_bulk_bronze import (  # noqa: E402
     EurostatBulkBronzeError,
@@ -168,13 +169,16 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source, bronze = self._stores([entry])
         report = run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "work",
-            owner="run-one", max_distributions=2, max_seconds=60,
+            owner="run-one", code_sha=CODE_SHA,
+            max_distributions=2, max_seconds=60,
         )
         self.assertEqual(report["processed_data_receipts"], 1)
         self.assertEqual(report["pending_accepted_receipts"], 0)
         self.assertTrue(report["retained_receipt_prefix_complete"])
         self.assertFalse(report["complete_official_catalogue"])
         completed = next(iter(bronze.state["completed"].values()))
+        self.assertEqual(completed["decoder_code_sha"], CODE_SHA)
+        self.assertEqual(completed["output"]["metadata"]["decoder_code_sha"], CODE_SHA)
         parquet = self.root / "published.parquet"
         parquet.write_bytes(self.output_store.values[completed["output"]["sha256"]])
         with duckdb.connect() as connection:
@@ -200,14 +204,16 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source, bronze = self._stores([inventory, data])
         first = run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "first",
-            owner="run-one", max_distributions=1, max_seconds=60,
+            owner="run-one", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         self.assertEqual(first["skipped_in_batch"], 1)
         self.assertEqual(first["processed_source_receipts"], 2)
         self.assertEqual(self.output_store.put_calls, 1)
         second = run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "second",
-            owner="run-two", max_distributions=1, max_seconds=60,
+            owner="run-two", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         self.assertEqual(second["decoded_in_batch"], 0)
         self.assertEqual(self.output_store.put_calls, 1)
@@ -219,7 +225,8 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source, bronze = self._stores([first_entry])
         run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "one",
-            owner="run-one", max_distributions=1, max_seconds=60,
+            owner="run-one", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         second_entry = self._receipt(
             "two", b"freq,geo\\TIME_PERIOD\t2025 \nA,DE\t2\n"
@@ -228,7 +235,8 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source.receipt_values[second_entry[0]["sha256"]] = second_entry[1]
         report = run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "two",
-            owner="run-two", max_distributions=1, max_seconds=60,
+            owner="run-two", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         self.assertEqual(report["processed_data_receipts"], 2)
         self.assertEqual(report["processed_source_receipts"], 2)
@@ -243,13 +251,15 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source, bronze = self._stores([one, two])
         run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "one",
-            owner="run-one", max_distributions=1, max_seconds=60,
+            owner="run-one", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         source.state["receipts"] = [two[0], one[0]]
         with self.assertRaisesRegex(EurostatBulkBronzeError, "prefix"):
             run_bronze_batch(
                 source, self.raw_store, bronze, self.output_store, self.root / "two",
-                owner="run-two", max_distributions=1, max_seconds=60,
+                owner="run-two", code_sha=CODE_SHA,
+                max_distributions=1, max_seconds=60,
             )
 
     def test_accepted_empty_partition_is_durable_typed_output(self):
@@ -257,7 +267,8 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         source, bronze = self._stores([entry])
         report = run_bronze_batch(
             source, self.raw_store, bronze, self.output_store, self.root / "empty",
-            owner="run-one", max_distributions=1, max_seconds=60,
+            owner="run-one", code_sha=CODE_SHA,
+            max_distributions=1, max_seconds=60,
         )
         self.assertEqual(report["observation_cells"], 0)
         completed = next(iter(bronze.state["completed"].values()))
@@ -272,6 +283,7 @@ class EurostatBulkBronzeTests(unittest.TestCase):
             run_bronze_batch(
                 source, self.raw_store, bronze, self.output_store,
                 self.root / "broken", owner="run-one",
+                code_sha=CODE_SHA,
                 max_distributions=1, max_seconds=60,
             )
         self.assertIsNone(bronze.owner)
@@ -287,9 +299,24 @@ class EurostatBulkBronzeTests(unittest.TestCase):
             run_bronze_batch(
                 source, self.raw_store, bronze, self.output_store,
                 self.root / "broken-cleanup", owner="run-one",
+                code_sha=CODE_SHA,
                 max_distributions=1, max_seconds=60,
             )
         self.assertIsNone(bronze.state)
+
+    def test_rejects_unpinned_decoder_identity_before_acquiring_owner(self):
+        entry = self._receipt(
+            "demo", b"freq,geo\\TIME_PERIOD\t2025 \nA,PL\t1\n"
+        )
+        source, bronze = self._stores([entry])
+        with self.assertRaisesRegex(EurostatBulkBronzeError, "code_sha"):
+            run_bronze_batch(
+                source, self.raw_store, bronze, self.output_store,
+                self.root / "unpinned", owner="run-one", code_sha="main",
+                max_distributions=1, max_seconds=60,
+            )
+        self.assertIsNone(bronze.owner)
+        self.assertEqual(self.output_store.put_calls, 0)
 
     def test_workflow_serializes_writer_and_uses_fresh_read_only_verifier(self):
         workflow = yaml.load(

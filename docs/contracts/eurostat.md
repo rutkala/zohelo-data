@@ -33,7 +33,8 @@ accepted-receipt prefix; each output is content-addressed and verified before th
 checkpoint advances. A fresh runner rebinds that checkpoint to Landing and streams
 the newest immutable output. This incremental verifier is not the final all-output
 readback, and neither a local result nor a caught-up retained prefix establishes
-complete official-catalogue or modeled coverage.
+complete official-catalogue or modeled coverage. Every completed output descriptor
+also records the exact Git commit that ran the decoder.
 
 Partition leaves retain the official dataset ID separately from the immutable
 synthetic distribution/leaf ID, partition ID and canonical partition selection, so

@@ -13,6 +13,7 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import time
@@ -24,6 +25,7 @@ from eurostat_bulk_decode import decode_full_distribution
 SOURCE_CAMPAIGN_ID = "eurostat_bulk"
 BRONZE_CAMPAIGN_ID = "eurostat_bulk_bronze"
 _STATE_VERSION = 1
+_CODE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 class EurostatBulkBronzeError(RuntimeError):
@@ -38,6 +40,7 @@ def run_bronze_batch(
     workdir: Path,
     *,
     owner: str,
+    code_sha: str,
     max_distributions: int = 64,
     max_seconds: int = 2400,
     clock=time.monotonic,
@@ -47,6 +50,8 @@ def run_bronze_batch(
         raise EurostatBulkBronzeError("max_distributions must be between 1 and 256")
     if type(max_seconds) is not int or not 60 <= max_seconds <= 3300:
         raise EurostatBulkBronzeError("max_seconds must be between 60 and 3300")
+    if not isinstance(code_sha, str) or _CODE_SHA_RE.fullmatch(code_sha) is None:
+        raise EurostatBulkBronzeError("code_sha must be an exact Git commit SHA")
     workdir = Path(workdir)
     if workdir.is_symlink():
         raise EurostatBulkBronzeError("Bronze work directory cannot be a symlink")
@@ -116,6 +121,7 @@ def run_bronze_batch(
                         "dataset_id": report["dataset_id"],
                         "distribution_id": report["distribution_id"],
                         "source_receipt_sha256": receipt_sha,
+                        "decoder_code_sha": code_sha,
                     },
                 )
             finally:
@@ -124,6 +130,7 @@ def run_bronze_batch(
             candidate = deepcopy(state)
             candidate["completed"][receipt_sha] = {
                 "source_receipt": _compact_receipt_descriptor(receipt_descriptor),
+                "decoder_code_sha": code_sha,
                 "dataset_id": report["dataset_id"],
                 "distribution_id": report["distribution_id"],
                 "partition_id": report["partition_id"],
@@ -261,6 +268,8 @@ def _validate_state(state: Any, source_receipts: list[dict[str, Any]]) -> None:
             raise EurostatBulkBronzeError("Eurostat bulk Bronze receipt key is invalid")
         if not isinstance(value, dict) or not isinstance(value.get("output"), dict):
             raise EurostatBulkBronzeError("Eurostat bulk Bronze output descriptor is invalid")
+        if _CODE_SHA_RE.fullmatch(value.get("decoder_code_sha", "")) is None:
+            raise EurostatBulkBronzeError("Eurostat bulk Bronze decoder commit is invalid")
 
 
 def _source_receipts(state: Any) -> list[dict[str, Any]]:
@@ -471,8 +480,11 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("Bronze publication requires --allow-production-write")
         run_id = os.environ.get("GITHUB_RUN_ID")
         attempt = os.environ.get("GITHUB_RUN_ATTEMPT")
-        if not run_id or not attempt:
-            raise EurostatBulkBronzeError("GitHub run identity is required for publication")
+        code_sha = os.environ.get("GITHUB_SHA")
+        if not run_id or not attempt or not code_sha:
+            raise EurostatBulkBronzeError(
+                "GitHub run, attempt, and commit identity are required for publication"
+            )
         owner = f"github-run-{run_id}-attempt-{attempt}"
         with tempfile.TemporaryDirectory(prefix="zohelo-eurostat-bronze-") as directory:
             report = run_bronze_batch(
@@ -482,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
                 output_store,
                 Path(directory),
                 owner=owner,
+                code_sha=code_sha,
                 max_distributions=args.max_distributions,
                 max_seconds=args.session_seconds,
             )
