@@ -11,13 +11,16 @@ Shared instructions for coding work in this repository. Run commands from the re
   its metadata performance is accepted; an NBP query is not a BDL performance
   receipt. Explain that completed uploads are discoverable directly, while open
   listings and generated SQL tables currently refresh on request.
-- The complete live BDL measurement is now recorded in `docs/deliverables.md`:
-  26,666 files in 9,064 folders took 448.268 seconds on first use and 1.338
-  seconds for a repeated query in the same session. The batched scanner is
-  deployed, but first-use latency is still too high. Automatic freshness is
-  outside this increment following the owner's manual-refresh clarification.
-  Optimize bounded source-scoped requests and measure scanner and SQL costs;
-  preserve refresh and authentication/session invalidation. Do not add a
+- The measured query-speed optimization is deployed and recorded in
+  `docs/deliverables.md`: the same 26,666 BDL files in 9,064 folders now took
+  210.140 seconds on first use versus 448.268 seconds previously (53.1% less).
+  Drive requests fell from 1,155 to 344; the repeated same-session query took
+  3.317 seconds with no Drive requests. All 344 responses succeeded, with no
+  retries or source-payload reads during metadata access. The first query still scans Drive and
+  takes several minutes; do not describe it as instant or owner-accepted latency.
+  Automatic freshness is outside this increment following the owner's
+  manual-refresh clarification. Preserve the measured source-scoped design,
+  refresh and authentication/session invalidation. Do not add a
   cross-login inventory cache as an incidental performance change.
   A shared incremental metadata inventory remains a design option, not an
   implemented component or an implicit authorization to add another publisher.

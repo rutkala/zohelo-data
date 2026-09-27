@@ -4,7 +4,7 @@ Approved work programme, 6 September 2026. The owner approved this scope; that a
 
 ## Current priority: one usable Landing browser — 27 September 2026
 
-**Owner accepted the layout and manual refresh; cold-query optimization active.**
+**Owner accepted the layout and manual refresh; query optimization deployed and measured.**
 The owner confirmed the Landing presentation and reported that **Query file
 metadata** for GUS BDL was still scanning. They initially asked about immediate
 file availability and suggested an object inventory with metadata and virtual
@@ -13,23 +13,73 @@ prioritized faster metadata queries. Completed uploads are directly discoverable
 without a SQL publication gate; open listings and generated SQL tables remain
 cached until refresh. Automatic visibility is outside the current increment.
 
-The next scoped optimization increases the bounded known-parent batch from 25
+The scoped optimization increases the bounded known-parent batch from 25
 to at most 100, measures the fully encoded request URL, requests only the fields
 used by each scan phase, and adds bounded scanner-specific retry/backoff. Eight
-workers are an experiment to validate against the live BDL baseline below.
+workers passed the full live BDL check without retries or HTTP errors.
 The complete-scan, source-membership, cancellation and authentication cleanup
 rules remain in force. No persistent cross-login cache, ingestion changes or
 shared metadata publisher are included. The live verifier separates scan, SQL
 publication and displayed-query timings with approximately one-second phase
-sampling. Implementation and independent review are complete; CI, deployment
-and a new full BDL production measurement are pending. The 2,503-folder fixture
-drops from 310 to 92 list requests; this alone does not establish the resulting
-user wait. A local packaged DuckDB WASM benchmark of 26,666 metadata-shaped rows
+sampling. The 2,503-folder fixture drops from 310 to 92 list requests. A local
+packaged DuckDB WASM benchmark of 26,666 metadata-shaped rows
 took 1,793 ms using existing 100-row inserts versus 1,525 ms with 500-row inserts.
 SQL insertion is unchanged because that small local gain does not address the
 measured 448-second cold query.
 
-The scoped performance change groups known-parent Drive searches, separates
+[PR #188](https://github.com/rutkala/zohelo-data/pull/188) merged as
+`db5188cc403e340638c566937a2d3f1dee5b7e28` after independent review and final
+[CI](https://github.com/rutkala/zohelo-data/actions/runs/36337043673) on
+`a22a083418db256cd0f191533bfbbe02a5d4186f`. Both deployment bases passed lint,
+production builds/type checking, 789 unit tests and all 18 browser tests.
+Review corrected oversized-ID batch planning, retry-attempt accounting and
+older-browser cancellation compatibility. Scanner deadlines now cover response
+bodies using ordinary AbortController/timer logic. Local TypeScript and Vite
+bundling passed; the known local Workbox/terser early-exit limitation remained,
+while both CI builds and the production build succeeded. The
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36337370690)
+verified that exact merge commit live at 17:35:54 UTC.
+
+The authenticated [production check](https://github.com/rutkala/zohelo-data/actions/runs/36337612679)
+completed at **17:45:29 UTC** on 27 September against that deployment. Both
+measurements include the complete retained BDL inventory, confirmed with SQL
+`COUNT(*)`: **26,666 files across 9,064 folders**.
+
+| Measured result | PR #186 baseline | PR #188 deployed optimization |
+| --- | ---: | ---: |
+| Cold scan plus first displayed query | 448,268 ms | 210,140 ms |
+| Scanner list pages | 1,149 | 338 |
+| Total cold Drive requests | 1,155 | 344 |
+| Repeated same-session displayed query | 1,338 ms | 3,317 ms |
+| Drive requests for repeated query | 0 | 0 |
+| Attempted payload reads during metadata | 0 | 0 |
+
+The observed cold wait is **53.1% shorter**, with **70.2% fewer Drive requests**.
+All 344 responses were HTTP 200 and no retries were needed. Approximate phase
+observations were 65.6 seconds discovering folders, 82.4 seconds reading file
+metadata and 49.7 seconds checking the folder graph. Total sampled scan time,
+including boundary checks, was 203.6 seconds; SQL publication was about 5.8
+seconds and the first displayed preview another 0.8 seconds. These phases are
+sampled at roughly one-second intervals, not precise engine timings. The newer
+poll-based verifier also affects short query timings; the warm measurements
+establish zero-Drive reuse, not a stable performance SLA.
+
+The same run passed raw-file/managed-link checks across all 13 source folders,
+four-level BDL navigation, a supported preview and the 21,378,254,323-byte ZIP
+link, with read-only operation. The
+[new sanitized receipt](audits/2026-09-27-landing-metadata-query-speed.json)
+preserves the exact values; the earlier receipt remains below as the baseline.
+This closes implementation, review, deployment and measured before/after proof
+for the scoped optimization. **The first BDL query still takes several minutes**
+because it constructs a complete inventory from Drive; it is not instant, and
+the owner's assessment of the new wait remains separate. File byte sizes do
+not require payload downloads during this work. Subsequent metadata SQL uses
+the completed local table until manual refresh or authentication/session cleanup.
+No shared inventory or cross-login cache was introduced; those would require a
+separate update, reconciliation and access-invalidation design. The broader
+engineering queue remains paused, and no background engineering task is implied.
+
+**Earlier PR #186 baseline.** That performance change groups known-parent Drive searches, separates
 folder discovery from flat file-metadata reads, and rechecks the folder graph
 before publishing a complete local table. It adds progress and cancellation in
 the accepted source action area. No payload reads, ingestion changes, shared
@@ -58,17 +108,11 @@ four-level BDL navigation, one supported preview and the 21,378,254,323-byte ZIP
 link. The [sanitized receipt](audits/2026-09-27-landing-metadata-performance.json)
 preserves the exact measurements.
 
-This verifies the deployed scan and SQL reuse, not satisfactory first-use
-latency or full provider-data coverage. **The first BDL
-query is still too slow for interactive use.** No old complete BDL wall-time
-baseline was measured, so no percentage speedup is claimed. The current browser
-session must still discover Drive's folder tree; batching does not remove that
-work. A durable file inventory maintained incrementally would avoid rebuilding
-it per session and could support fresher views. Its update/reconciliation design
-(additions, moves, deletions and permission changes) remains a separate scoped
-architecture decision. No shared inventory service, updater or new ingestion
-pipeline was introduced. The active follow-up above focuses on cheaper cold
-queries while keeping the now-accepted manual-refresh behavior.
+This earlier result verified the deployed scan and SQL reuse, while establishing
+that first-use latency was still too high. It did not establish full provider-data
+coverage. No pre-PR #186 complete BDL wall-time was measured, so no earlier
+percentage speedup is claimed. PR #188 above now provides a measured comparison
+against this baseline while keeping the accepted manual-refresh behavior.
 
 The PR #186 deep/wide fixture contains 2,503 folders within one source. That scanner
 uses 310 batched list pages, four identity reads and two project lookups, with
