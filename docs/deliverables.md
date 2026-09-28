@@ -140,6 +140,23 @@ attempts and measured evidence. Synthetic success establishes engine feasibility
 not private Drive, immutable revision access, independent range integrity, or DBW
 complete-table acceptance. No production loader changed in this increment.
 
+The tightened probe also passed at `c66673dd7e1b9856e1f253105607f87414a5677b`
+in [run 36402148552](https://github.com/rutkala/zohelo-data/actions/runs/36402148552),
+with the same measured bytes. It now requires filtered transfer below half of the
+full-column scan and reruns when package manifests or the Node version change.
+
+A separate, reviewed `Probe retained DBW lazy Drive reads` workflow is prepared
+for manual execution from an exact reviewed main SHA and the existing production
+Drive root. It verifies the pointer/manifest/index chain, selects one published
+2–8 MiB observation part, checks Drive's reported size/hash, and tests current-head
+and exact-revision URLs independently. It caps metadata requests/bytes and browser
+Range requests/bytes, blocks other URLs and writes, checks response ranges, and
+records only sanitized outcomes. This is a transport probe, not a one-indicator
+implementation of the requested complete table. It makes no retention changes and
+does not hash unread payload bytes. Before/after metadata equality only detects
+observed changes; it is not an atomic snapshot guarantee. Actual Drive execution
+and its result remain pending.
+
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
 specific corrective reason or later resolving decision was recovered. Those
