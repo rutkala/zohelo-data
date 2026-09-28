@@ -112,6 +112,12 @@ are also supported by relevant engines. The existing Drive allocation does not
 satisfy this gate merely because the Drive API can serve a Range request in some
 clients.
 
+This authorization gate applies to production data copies, live deployment and
+promotion. It does not block local or synthetic feasibility work. Generated
+fixtures, a local range-capable HTTP server and disposable catalog/storage may be
+used to validate the Iceberg snapshot and query contract without an external
+account, production data or a durable service.
+
 ## Alternatives considered
 
 | Option | Result | Reason |
