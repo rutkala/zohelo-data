@@ -20,12 +20,17 @@ Shared instructions for coding work in this repository. Run commands from the re
   independently checksum-verified current manifest declares 3,802,407,075 bytes
   across 493 files, exceeding the 512 MiB session budget by itself. Do not claim
   all-source SQL acceptance. See the dated Bronze receipt in `docs/deliverables.md`.
-- Naming is independently deliverable, but does not complete DBW access. The
-  retained observations exceed the current browser's 512 MiB download budget;
-  removing the selector or publishing another copy does not solve that reader
-  constraint. Keep the specific rejected reader approaches recorded below on hold.
-  A native authenticated query service is a proposal requiring a hosting/access
-  decision, not an existing component or authorization for new paid infrastructure.
+- The owner rejected the proposed new query server on 28 September and directed
+  us to consider lazy evaluation. Prioritize one complete DBW logical table with
+  query-driven file, column and row-group reads. The current 512 MiB limit is an
+  eager download allowance, not proof that the dataset must fit in RAM or needs
+  a server. No hosting decision is a prerequisite for this feasibility work.
+- The installed DuckDB-WASM has a newer HTTP client with scoped HTTP-secret
+  support; do not infer its capabilities from the older registered-file reader
+  or stale troubleshooting text. Test the exact browser path and actual Drive
+  behavior. Keep the specifically rejected ServiceWorker relay and disk-backed
+  adapter on hold; the upstream HTTP client is a distinct path. Preserve snapshot
+  and byte-integrity guarantees rather than silently dropping whole-file checks.
 - Acceptance of DBW whole-table access requires ordinary LIMIT, complete counts,
   multi-indicator filters and joins against the complete pinned relation, with
   integrity, authentication and resource checks. Do not mark it Done from naming,
