@@ -19,6 +19,39 @@ const result = { format_version: 1, status: "failed", expected_deployed_sha: exp
   dbw_whole_table_verified: false, checked: [], read_only: false };
 let stage = "oauth";
 let browser;
+const mediaRequests = { bootstrap: 0, sql: 0 };
+let sqlMediaBytesKnown = 0;
+let sqlMediaBytesUnknown = 0;
+let sqlMediaRequestFailures = 0;
+const sqlMediaHttpStatuses = {};
+let activeQueryStartMs = null;
+const queryErrorCategory = (message) => {
+  if (/out of memory|memory allocation|cannot allocate|\boom\b/i.test(message))
+    return "engine_memory_error";
+  if (/SHA-?256|digest|checksum|hash mismatch|declared size/i.test(message))
+    return "integrity_error";
+  if (/512\s*MiB|download limit|Drive downloads exceeded/i.test(message))
+    return "browser_download_limit";
+  if (/authoriz|sign in|unauthorized|forbidden|permission|access denied|\b401\b|\b403\b/i.test(message))
+    return "drive_access_error";
+  if (/network|fetch|rate limit|quota|\b429\b|\b5\d\d\b/i.test(message))
+    return "drive_transport_error";
+  if (/no data files|empty file|file (?:is )?missing|file not found|file .* does not exist/i.test(message))
+    return "missing_or_empty_file";
+  if (/schema mismatch|column mismatch|column .*not found|column .*does not exist|type mismatch|different types/i.test(message))
+    return "schema_or_column_error";
+  if (/binder error/i.test(message)) return "sql_binder_error";
+  if (/parser error/i.test(message)) return "sql_parser_error";
+  if (/conversion error/i.test(message)) return "sql_conversion_error";
+  if (/IO Error/i.test(message)) return "sql_io_error";
+  if (/invalid input error/i.test(message)) return "sql_invalid_input_error";
+  if (/not implemented error/i.test(message)) return "sql_not_implemented_error";
+  if (/internal error/i.test(message)) return "sql_internal_error";
+  if (/parquet/i.test(message)) return "parquet_reader_error";
+  if (/catalog|relation|view|session|already exists|replaced/i.test(message))
+    return "relation_state_error";
+  return "query_error_other";
+};
 try {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST", signal: AbortSignal.timeout(60000),
@@ -120,9 +153,6 @@ try {
   }, token);
   let attemptedWrite = false;
   let phase = "bootstrap";
-  const mediaRequests = { bootstrap: 0, sql: 0 };
-  let sqlMediaBytesKnown = 0;
-  let sqlMediaBytesUnknown = 0;
   await context.route("https://www.googleapis.com/drive/**", (route) => {
     const request = route.request();
     if (!["GET", "OPTIONS"].includes(request.method())) {
@@ -140,9 +170,15 @@ try {
   page.on("response", (item) => {
     if (phase !== "sql" || !item.url().startsWith("https://www.googleapis.com/drive/") ||
         new URL(item.url()).searchParams.get("alt") !== "media") return;
+    const status = String(item.status());
+    sqlMediaHttpStatuses[status] = (sqlMediaHttpStatuses[status] ?? 0) + 1;
     const length = Number(item.headers()["content-length"]);
     if (Number.isSafeInteger(length) && length >= 0) sqlMediaBytesKnown += length;
     else sqlMediaBytesUnknown++;
+  });
+  page.on("requestfailed", (item) => {
+    if (phase === "sql" && item.url().startsWith("https://www.googleapis.com/drive/") &&
+        new URL(item.url()).searchParams.get("alt") === "media") sqlMediaRequestFailures++;
   });
   page.setDefaultTimeout(120000);
   await page.goto(origin, { waitUntil: "domcontentloaded" });
@@ -193,6 +229,7 @@ try {
   const editor = page.locator(".monaco-editor .view-lines:visible").first();
   await editor.waitFor();
   for (const candidate of available) {
+    activeQueryStartMs = Date.now();
     stage = `sql_${candidate.source}`;
     const c = `"02_bronze"."${candidate.canonical}"`;
     const l = `"02_bronze"."${candidate.legacy}"`;
@@ -220,32 +257,48 @@ try {
     }) });
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
-      if (await page.getByText("Query Error", { exact: true }).count())
+      const queryError = page.getByRole("alert").filter({ hasText: "Query Error" });
+      if (await queryError.count()) {
+        result.failure_category = queryErrorCategory(await queryError.first().textContent() ?? "");
         throw new Error("Bronze SQL query failed");
+      }
       if (await page.getByRole("columnheader", { name: column, exact: true }).count() &&
           await matchingRow.count()) break;
       await page.waitForTimeout(1000);
     }
-    if (!await matchingRow.count())
+    if (!await matchingRow.count()) {
+      result.failure_category = "result_timeout";
       throw new Error("Bronze SQL equivalence timed out");
+    }
     const rowText = await matchingRow.first().getByRole("cell").last().textContent();
     const count = Number(rowText?.replaceAll(",", ""));
-    if (!Number.isSafeInteger(count) || count < 0) throw new Error("Bronze SQL count missing");
+    if (!Number.isSafeInteger(count) || count < 0) {
+      result.failure_category = "result_count_invalid";
+      throw new Error("Bronze SQL count missing");
+    }
     Object.assign(result.checked.find((item) => item.source === candidate.source),
-      { verified: true, rows: count });
+      { verified: true, rows: count, elapsed_ms: Date.now() - activeQueryStartMs });
+    activeQueryStartMs = null;
   }
-  if (attemptedWrite || sqlMediaBytesKnown > 512 * 1024 * 1024)
+  if (attemptedWrite || sqlMediaBytesKnown > 512 * 1024 * 1024) {
+    result.failure_category = attemptedWrite ? "unexpected_drive_write" : "media_budget_exceeded";
     throw new Error("Unexpected Drive operation or media budget");
-  result.media_requests = mediaRequests;
-  result.sql_media_bytes_with_content_length = sqlMediaBytesKnown;
-  result.sql_media_responses_without_content_length = sqlMediaBytesUnknown;
+  }
   result.read_only = true;
   result.status = "verified";
 } catch {
   result.failed_stage = stage;
+  result.failure_category ??= stage.startsWith("sql_editor") ? "editor_control_failure" :
+    stage.startsWith("sql_run") ? "run_control_failure" : "verification_failure_other";
+  if (activeQueryStartMs !== null) result.failed_source_elapsed_ms = Date.now() - activeQueryStartMs;
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
+  result.media_requests = mediaRequests;
+  result.sql_media_bytes_with_content_length = sqlMediaBytesKnown;
+  result.sql_media_responses_without_content_length = sqlMediaBytesUnknown;
+  result.sql_media_http_status_counts = sqlMediaHttpStatuses;
+  result.sql_media_request_failures = sqlMediaRequestFailures;
   result.observed_at_utc = new Date().toISOString();
   await mkdir(dirname(outputPath), { recursive: true });
   await writeFile(outputPath, JSON.stringify(result, null, 2) + "\n");
