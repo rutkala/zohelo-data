@@ -131,6 +131,28 @@ datasets through the same ordinary SQL experience, with DBW as the first explici
 acceptance target. The next owner question is whether an existing always-on server
 is available for this service; no host, subscription or access route is selected.
 
+### WDI scheduled publication incident — 28 September 2026
+
+The scheduled [WDI run](https://github.com/rutkala/zohelo-data/actions/runs/36382419749)
+started at 07:33:25 Europe/Warsaw on an older main revision. Landing collection
+succeeded, and the platform job passed all 11 dbt table models, 47 data tests and
+3 views before a Drive read timeout stopped immutable candidate upload at
+08:06:48. This was a publication failure, not a transformation failure.
+
+Metadata-only Drive inspection found the abandoned candidate
+`9f5beef5-d3fe-4a69-93f4-d55858eb5174` with exactly three Parquet objects and no
+release manifest. The mutable pointer was not advanced: it still identifies the
+previous accepted release `7d4a97ff-70da-4768-a4ba-2a01b3c51d1b`, last updated
+at 23:56:21 Europe/Warsaw on 27 September. The partial candidate is retained as
+failure evidence; no object was deleted or overwritten. This pointer check does
+not constitute a fresh readback of every file in the prior release.
+
+The transport repair in this increment keeps preallocated object identities and
+lost-response reconciliation, while bounding resumable Drive upload chunks to
+8 MiB (a valid 256 KiB multiple). That reduces the amount retried after a slow
+large-object request without loosening publication, ownership or retention
+guards. No production rerun or pointer write is part of the repair.
+
 ## Previous priority: one usable Landing browser — 27 September 2026
 
 **Owner accepted the layout and manual refresh; query optimization deployed and measured.**
