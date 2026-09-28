@@ -12,9 +12,31 @@ continues to preserve source-shaped rows; an observations relation does not impl
 that it has already been modeled as a Gold fact table. Existing ingestion schedules
 and the accepted Landing/manual-refresh behavior are outside this increment.
 
-**Naming implementation in progress; not yet merged or deployed.** The scoped
-portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
-manifest identities, physical files and existing SQL references. Current mappings:
+**Naming implementation is merged and deployed; live acceptance is partial.**
+[PR #190](https://github.com/rutkala/zohelo-data/pull/190) merged as
+`1bf5395aadd7c9b6b3b3a59e9bb3555fd85d2900`; its CI and exact-marker
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36378598561)
+passed. The first authenticated check exposed a verifier navigation defect after
+the BDL query. [PR #191](https://github.com/rutkala/zohelo-data/pull/191) repaired
+that verifier only and was deployed as `10dab2bd4f61aae5c01d525445c70efd2c56a259`
+by [run 36379537549](https://github.com/rutkala/zohelo-data/actions/runs/36379537549).
+
+The corrected authenticated
+[production check](https://github.com/rutkala/zohelo-data/actions/runs/36379742610)
+completed at **06:58:29 Europe/Warsaw on 28 September 2026**. It found all four
+expected representative canonical names among 24 visible Bronze tables and
+verified canonical/legacy SQL equivalence for `gus_bdl_variables` (102 rows),
+`world_bank_wdi_country` (264 rows), and `gus_dbw_indicators` (1,550 rows).
+It then failed closed at the OpenData result stage before
+`opendata_org_people` equivalence completed. The failed receipt's
+`read_only: false` is the script's default-on-failure value, not evidence of a
+write attempt; a narrow diagnostic follow-up is open to record the actual guarded
+write state and a bounded redacted error. Therefore complete live naming acceptance
+remains open. No source data or publication was changed by this naming increment,
+and no DBW whole-table claim follows from these metadata checks.
+
+The scoped portal change uses `<source_key>_<entity>` in `02_bronze`, preserving
+immutable manifest identities, physical files and existing SQL references. Current mappings:
 
 | Published name prefix | Portal Bronze SQL prefix |
 | --- | --- |
