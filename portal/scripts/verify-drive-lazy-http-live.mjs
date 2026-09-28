@@ -49,6 +49,7 @@ const receipt = { format_version: 1, status: "failed", expected_git_sha: expecte
   head: null, revision: null, browser_http: { head: {}, revision: {}, blocked: 0,
     blocked_categories: {}, httpfs_extension: { requests: 0, statuses: {} },
     parquet_extension: { requests: 0, statuses: {} },
+    range_attempts: [],
     requests: 0, unauthenticated_requests: 0, requested_range_bytes: 0,
     body_bytes: 0, unknown_body_count: 0, content_range_mismatches: 0 } };
 let stage = "oauth";
@@ -63,6 +64,27 @@ const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const validId = (id) => typeof id === "string" && idPattern.test(id);
 const validSha = (value) => typeof value === "string" && shaPattern.test(value);
 const validSize = (value, maximum) => Number.isSafeInteger(value) && value > 0 && value <= maximum;
+const safeHeaderInteger = (value) => {
+  if (typeof value !== "string" || !/^\d+$/.test(value)) return null;
+  const number = Number(value);
+  return Number.isSafeInteger(number) ? number : null;
+};
+const rangeShape = (value) => {
+  if (value === undefined) return { shape: "missing" };
+  let match = /^bytes=(\d+)-(\d+)$/.exec(value);
+  if (match) {
+    const start = safeHeaderInteger(match[1]);
+    const end = safeHeaderInteger(match[2]);
+    const count = start !== null && end !== null && end >= start ? end - start + 1 : null;
+    return { shape: "closed", start, end,
+      count: Number.isSafeInteger(count) ? count : null };
+  }
+  match = /^bytes=(\d+)-$/.exec(value);
+  if (match) return { shape: "open_ended", start: safeHeaderInteger(match[1]) };
+  match = /^bytes=-(\d+)$/.exec(value);
+  if (match) return { shape: "suffix", count: safeHeaderInteger(match[1]) };
+  return { shape: "other" };
+};
 
 async function boundedBytes(response, limit) {
   if (!response.ok || Number(response.headers.get("content-length")) > limit)
@@ -292,7 +314,8 @@ try {
   await context.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const headers = await request.allHeaders();
+    const headers = await request.allHeaders().catch(() => null);
+    if (!headers) return block(route, "request_headers_unavailable");
     if (url.origin === fixtureOrigin) {
       if (headers.authorization) return block(route, "fixture_authorization");
       return route.continue();
@@ -319,6 +342,9 @@ try {
     if (method !== "OPTIONS" && headers.authorization !== `Bearer ${token}`)
       receipt.browser_http.unauthenticated_requests++;
     if (method === "GET") {
+      receipt.browser_http.range_attempts.push({ target: kind,
+        basic: rangeShape(request.headers().range),
+        complete: rangeShape(headers.range) });
       const match = /^bytes=(\d+)-(\d+)$/.exec(headers.range ?? "");
       if (!match || Number(match[2]) < Number(match[1]) ||
           Number(match[2]) >= selected.size ||
@@ -347,26 +373,46 @@ try {
     const key = receipt.browser_http[kind];
     const label = `${method.toLowerCase()}_${response.status()}`;
     key[label] = (key[label] ?? 0) + 1;
-    if (method === "GET" && response.status() === 200) fullGetSeen = true;
-    let expectedLength = null;
-    if (method === "GET" && response.status() === 206) {
-      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers()["content-range"] ?? "");
-      const requested = /^bytes=(\d+)-(\d+)$/.exec(response.request().headers().range ?? "");
-      if (!range || Number(range[3]) !== selected.size ||
-          Number(range[2]) < Number(range[1]) || !requested ||
-          range[1] !== requested[1] || range[2] !== requested[2])
-        receipt.browser_http.content_range_mismatches++;
-      else expectedLength = Number(range[2]) - Number(range[1]) + 1;
+    if (method === "HEAD") {
+      const headers = response.headers();
+      const exposed = (headers["access-control-expose-headers"] ?? "").toLowerCase()
+        .split(",").map((item) => item.trim());
+      const exposedHeader = (name) => exposed.includes("*") || exposed.includes(name);
+      const contentRange = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(headers["content-range"] ?? "");
+      (key.head_responses ??= []).push({ status: response.status(),
+        content_length_present: headers["content-length"] !== undefined,
+        content_length_bytes: safeHeaderInteger(headers["content-length"]),
+        accept_ranges: headers["accept-ranges"] === "bytes" ? "bytes" :
+          headers["accept-ranges"] === undefined ? "missing" : "other",
+        content_range_present: headers["content-range"] !== undefined,
+        content_range_start: contentRange ? safeHeaderInteger(contentRange[1]) : null,
+        content_range_end: contentRange ? safeHeaderInteger(contentRange[2]) : null,
+        content_range_total: contentRange ? safeHeaderInteger(contentRange[3]) : null,
+        cors_allows_fixture: ["*", fixtureOrigin].includes(headers["access-control-allow-origin"]),
+        cors_explicitly_exposes_content_length: exposedHeader("content-length"),
+        cors_exposes_accept_ranges: exposedHeader("accept-ranges"),
+        cors_exposes_content_range: exposedHeader("content-range") });
     }
     // A 200 may be the entire selected file; record and fail without copying it
     // into the receipt process. The selected file itself is capped at 8 MiB.
+    if (method === "GET" && response.status() === 200) fullGetSeen = true;
     if (method === "GET" && response.status() === 206) {
-      responses.push(response.body().then((body) => {
+      responses.push((async () => {
+        const requestHeaders = await response.request().allHeaders();
+        const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers()["content-range"] ?? "");
+        const requested = /^bytes=(\d+)-(\d+)$/.exec(requestHeaders.range ?? "");
+        let expectedLength = null;
+        if (!range || Number(range[3]) !== selected.size ||
+            Number(range[2]) < Number(range[1]) || !requested ||
+            range[1] !== requested[1] || range[2] !== requested[2])
+          receipt.browser_http.content_range_mismatches++;
+        else expectedLength = Number(range[2]) - Number(range[1]) + 1;
+        const body = await response.body();
         if (expectedLength === null || body.byteLength !== expectedLength)
           receipt.browser_http.content_range_mismatches++;
         receipt.browser_http.body_bytes += body.byteLength;
         key.body_bytes = (key.body_bytes ?? 0) + body.byteLength;
-      }).catch(() => { receipt.browser_http.unknown_body_count++; }));
+      })().catch(() => { receipt.browser_http.unknown_body_count++; }));
     }
   });
   stage = "browser_fixture_bootstrap";

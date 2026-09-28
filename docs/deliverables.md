@@ -217,6 +217,16 @@ The synthetic observer and live route must use complete asynchronous header
 inspection before dispatch. No post-merge live rerun or Drive browser read is
 claimed from this increment.
 
+The [third live attempt](https://github.com/rutkala/zohelo-data/actions/runs/36407786438)
+at merged `e613763cd93ae78f617ad11f92632f45365809b8` loaded both extensions
+successfully. Authenticated media HEAD returned HTTP 200 for both the current
+file and its exact revision. The following GET in each query was blocked by
+the range guard (`invalid_drive_range`), so neither SQL query succeeded and no
+payload bytes were returned. File metadata remained unchanged afterward.
+The receipt does not capture the requested range shape or HEAD size headers;
+those must be diagnosed before changing the guard or drawing conclusions about
+Drive's partial-read support. The production loader remains unchanged.
+
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
 specific corrective reason or later resolving decision was recovered. Those
