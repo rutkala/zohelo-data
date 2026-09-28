@@ -197,11 +197,11 @@ try {
     const sql = `SELECT CASE WHEN
       (SELECT COUNT(*) FROM ${c}) = (SELECT COUNT(*) FROM ${l})
       AND NOT EXISTS (
-        SELECT * FROM (SELECT * FROM ${c} LIMIT 20)
-        EXCEPT ALL SELECT * FROM (SELECT * FROM ${l} LIMIT 20))
+        SELECT * FROM (SELECT * FROM ${c} ORDER BY ALL LIMIT 20)
+        EXCEPT ALL SELECT * FROM (SELECT * FROM ${l} ORDER BY ALL LIMIT 20))
       AND NOT EXISTS (
-        SELECT * FROM (SELECT * FROM ${l} LIMIT 20)
-        EXCEPT ALL SELECT * FROM (SELECT * FROM ${c} LIMIT 20))
+        SELECT * FROM (SELECT * FROM ${l} ORDER BY ALL LIMIT 20)
+        EXCEPT ALL SELECT * FROM (SELECT * FROM ${c} ORDER BY ALL LIMIT 20))
       THEN '${sentinel}' ELSE 'MISMATCH' END AS ${column},
       (SELECT COUNT(*) FROM ${c}) AS row_count;`;
     await page.getByRole("button", { name: "New SQL query", exact: true }).click();
