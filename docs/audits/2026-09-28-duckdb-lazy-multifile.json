@@ -100,5 +100,27 @@
     "Binding reads one file; all scenarios subsequently touch metadata for all five files.",
     "Preview transfer is about 5% of all fixture bytes, not proof of avoiding metadata requests or real Drive latency.",
     "No production loader, publication, retention setting or integrity contract changed."
-  ]
+  ],
+  "extension_diagnostic": {
+    "run_id": 36407201234,
+    "job_id": 108878686286,
+    "head_sha": "6d5926f4de2cf61ea3210e7e9ff3299ce213f20d",
+    "result": "pass",
+    "requests": [
+      {
+        "origin": "https://extensions.duckdb.org",
+        "path": "/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm",
+        "method": "GET",
+        "authorizationPresent": false,
+        "status": 200
+      },
+      {
+        "origin": "https://extensions.duckdb.org",
+        "path": "/v1.5.5/wasm_eh/parquet.duckdb_extension.wasm",
+        "method": "GET",
+        "authorizationPresent": false,
+        "status": 200
+      }
+    ]
+  }
 }

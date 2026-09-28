@@ -201,6 +201,14 @@ Drive browser requests or payload reads occurred, so Drive range/revision
 feasibility remains unverified. The next diagnostic must observe the actual
 extension path in the secret-free synthetic run before adjusting the live rule.
 
+The [secret-free diagnostic](https://github.com/rutkala/zohelo-data/actions/runs/36407201234)
+passed at `6d5926f4de2cf61ea3210e7e9ff3299ce213f20d` and observed HTTP 200,
+unauthenticated GETs for both `httpfs` and `parquet` under the actual public
+`https://extensions.duckdb.org/v1.5.5/wasm_eh/` path. The documented extra
+`duckdb-wasm/` segment was not used by the installed engine. The live harness
+can therefore permit those two exact observed files without allowing other
+extensions or forwarding Drive authorization. A live rerun is still required.
+
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
 specific corrective reason or later resolving decision was recovered. Those
