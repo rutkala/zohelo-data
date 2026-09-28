@@ -324,6 +324,9 @@ class EurostatBulkBronzeTests(unittest.TestCase):
             Loader=yaml.BaseLoader,
         )
         writer = workflow["jobs"]["full_distribution_bronze"]
+        recovery = workflow["jobs"][
+            "recover_cancelled_full_distribution_bronze_owner"
+        ]
         verifier = workflow["jobs"]["verify_full_distribution_bronze"]
         self.assertEqual(writer["needs"], "collect_and_publish")
         self.assertIn("always()", writer["if"])
@@ -332,8 +335,28 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         )
         self.assertEqual(writer["concurrency"]["group"], "zohelo-production-data")
         writer_command = writer["steps"][-1]["run"]
+        self.assertIn("timeout --signal=INT --kill-after=60s 2700s", writer_command)
         self.assertIn("--allow-production-write", writer_command)
         self.assertIn("--max-distributions 64", writer_command)
+        owner_step = writer["steps"][-2]
+        self.assertEqual(
+            owner_step["if"],
+            "inputs.bronze_recovery_owner != ''",
+        )
+        self.assertIn("--recover-owner", owner_step["run"])
+        self.assertEqual(recovery["needs"], "full_distribution_bronze")
+        self.assertIn(
+            "needs.full_distribution_bronze.result == 'cancelled'",
+            recovery["if"],
+        )
+        self.assertEqual(
+            recovery["concurrency"]["group"],
+            "zohelo-production-data",
+        )
+        self.assertIn(
+            '"github-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"',
+            recovery["steps"][-1]["run"],
+        )
         self.assertEqual(verifier["needs"], "full_distribution_bronze")
         self.assertEqual(
             verifier["steps"][-1]["run"],
