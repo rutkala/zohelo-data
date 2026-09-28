@@ -95,6 +95,21 @@ def run_bronze_batch(
                     "completed receipt appears at or beyond the saved source cursor"
                 )
             _require_local_headroom(workdir, receipt)
+            distribution = receipt.get("distribution", {})
+            raw_descriptor = receipt.get("raw", {})
+            print(
+                json.dumps(
+                    {
+                        "status": "eurostat_bulk_bronze_distribution_started",
+                        "source_receipt_index": index,
+                        "source_receipt_sha256": receipt_sha,
+                        "distribution_id": distribution.get("dataset_id"),
+                        "raw_size_bytes": raw_descriptor.get("size_bytes"),
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
             distribution_dir = workdir / f"receipt-{receipt_sha}"
             if distribution_dir.exists():
                 raise EurostatBulkBronzeError("Bronze receipt work path is not fresh")
@@ -161,6 +176,20 @@ def run_bronze_batch(
             bronze_store.save(candidate)
             state = candidate
             decoded += 1
+            print(
+                json.dumps(
+                    {
+                        "status": "eurostat_bulk_bronze_distribution_completed",
+                        "source_receipt_index": index,
+                        "source_receipt_sha256": receipt_sha,
+                        "distribution_id": report["distribution_id"],
+                        "observation_cells": report["observation_cells"],
+                        "output_bytes": output["size_bytes"],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
 
         # Persist progress that advanced only across non-data receipts.
         persisted = bronze_store.load_cached()
@@ -465,15 +494,39 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--allow-production-write", action="store_true")
     parser.add_argument("--verify-current", action="store_true")
+    parser.add_argument("--recover-owner")
+    parser.add_argument("--recovery-identity")
     parser.add_argument("--max-distributions", type=int, default=64)
     parser.add_argument("--session-seconds", type=int, default=2400)
     args = parser.parse_args(argv)
     if args.verify_current and args.allow_production_write:
         parser.error("--verify-current is read-only and rejects write authorization")
+    if args.recover_owner:
+        if (
+            args.verify_current
+            or not args.allow_production_write
+            or not args.recovery_identity
+        ):
+            parser.error(
+                "--recover-owner requires write authorization and "
+                "--recovery-identity, without --verify-current"
+            )
+    elif args.recovery_identity:
+        parser.error("--recovery-identity requires --recover-owner")
     source_store, source_raw, bronze_store, output_store = _production_stores(
         allow_write=args.allow_production_write
     )
-    if args.verify_current:
+    if args.recover_owner:
+        bronze_store.recover_publication_owner(
+            args.recover_owner,
+            args.recovery_identity,
+        )
+        report = {
+            "status": "eurostat_bulk_bronze_owner_recovered",
+            "expected_owner": args.recover_owner,
+            "recovery_identity": args.recovery_identity,
+        }
+    elif args.verify_current:
         report = verify_bronze_checkpoint(source_store, bronze_store, output_store)
     else:
         if not args.allow_production_write:
