@@ -214,8 +214,20 @@ omit security-sensitive headers. The diagnostic's recorded
 `authorizationPresent: false` values are therefore not accepted as proof that
 credentials were absent, and the live route used the same incomplete inspection.
 The synthetic observer and live route must use complete asynchronous header
-inspection before dispatch. No post-merge live rerun or Drive browser read is
-claimed from this increment.
+inspection before dispatch. [PR #205](https://github.com/rutkala/zohelo-data/pull/205)
+merged that correction at `b308b9bf17b90dd51a5d4d89ca054c3f9b7d7a93`
+after exact-head Chromium CI and a no-finding review.
+
+The corrected [fourth live attempt](https://github.com/rutkala/zohelo-data/actions/runs/36408516877)
+verified both exact extension GETs as HTTP 200 without Authorization, then reached
+the Drive URLs. Authenticated HEAD returned 200 for the current file and revision;
+before/after metadata remained equal. Both SQL reads failed because the harness
+blocked two GETs whose Range headers did not match its closed `bytes=start-end`
+form. No Drive payload bytes were transferred. A diagnostic-only correction now
+classifies missing, open-ended, suffix, multiple, malformed, out-of-bounds and
+oversized ranges without recording header values or loosening the read budget.
+The observed shape still requires a reviewed live rerun; complete DBW SQL remains
+unverified.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
