@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import resource
 import subprocess
 import time
@@ -75,58 +74,48 @@ def attach_catalog(con: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def explain_text(con: duckdb.DuckDBPyConnection, query: str) -> str:
-    rows = con.execute("EXPLAIN ANALYZE " + query).fetchall()
-    return "\n".join(str(value) for row in rows for value in row if value is not None)
-
-
-def parse_transfer_bytes(plan: str) -> int | None:
-    match = re.search(
-        r"Total Data Transferred:\s*([0-9.,]+)\s*([KMGT]?i?B|bytes?)",
-        plan,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-    amount = float(match.group(1).replace(",", ""))
-    unit = match.group(2).lower()
-    multipliers = {
-        "b": 1,
-        "byte": 1,
-        "bytes": 1,
-        "kib": 1024,
-        "mib": 1024**2,
-        "gib": 1024**3,
-        "tib": 1024**4,
-        "kb": 1000,
-        "mb": 1000**2,
-        "gb": 1000**3,
-        "tb": 1000**4,
-    }
-    return int(amount * multipliers[unit])
-
-
-def parse_requests(plan: str) -> int | None:
-    match = re.search(r"Total Requests:\s*([0-9,]+)", plan, flags=re.IGNORECASE)
-    if match:
-        return int(match.group(1).replace(",", ""))
-    method_counts = re.findall(r"#(?:HEAD|GET|POST|PUT):\s*([0-9,]+)", plan)
-    if method_counts:
-        return sum(int(value.replace(",", "")) for value in method_counts)
-    return None
-
-
-def profile(con: duckdb.DuckDBPyConnection, query: str) -> dict[str, object]:
+def profile(con: duckdb.DuckDBPyConnection, query: str) -> tuple[list[tuple], dict[str, object]]:
+    con.execute("CALL truncate_duckdb_logs()")
+    con.execute("CALL enable_logging(['HTTP', 'FileSystem'])")
     started = time.perf_counter()
-    plan = explain_text(con, query)
+    rows = con.execute(query).fetchall()
     elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
-    return {
-        "elapsed_ms": elapsed_ms,
-        "requests": parse_requests(plan),
-        "bytes": parse_transfer_bytes(plan),
-        "plan_excerpt": plan[-4000:],
-    }
+    con.execute("CALL disable_logging()")
 
+    requests = int(
+        con.execute(
+            """
+            SELECT count(*)
+            FROM duckdb_logs_parsed('HTTP')
+            WHERE request.url LIKE '%127.0.0.1:5000/warehouse/%'
+            """
+        ).fetchone()[0]
+    )
+    fs_rows, transferred = con.execute(
+        """
+        SELECT count(*), coalesce(sum(bytes), 0)
+        FROM duckdb_logs_parsed('FileSystem')
+        WHERE path LIKE '%warehouse/%'
+          AND op IN ('READ', 'READ_AT', 'read', 'read_at')
+        """
+    ).fetchone()
+    # Some filesystems use different operation labels. Fall back to all positive
+    # byte events for the S3 warehouse while retaining the HTTP request count.
+    if int(fs_rows) == 0:
+        fs_rows, transferred = con.execute(
+            """
+            SELECT count(*), coalesce(sum(bytes), 0)
+            FROM duckdb_logs_parsed('FileSystem')
+            WHERE path LIKE '%warehouse/%' AND bytes > 0
+            """
+        ).fetchone()
+    con.execute("CALL enable_logging(['HTTP', 'FileSystem'])")
+    return rows, {
+        "elapsed_ms": elapsed_ms,
+        "requests": requests,
+        "filesystem_events": int(fs_rows),
+        "bytes": int(transferred),
+    }
 
 def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     entries, total_bytes, loaded_bytes = con.execute(
@@ -316,19 +305,16 @@ def main() -> int:
         ),
     }
 
-    profiles = {name: profile(reader, query) for name, query in queries.items()}
-    missing_metrics = [
-        name
-        for name, values in profiles.items()
-        if values["requests"] is None or values["bytes"] is None
-    ]
-    if missing_metrics:
-        raise AssertionError("missing_http_metrics:" + ",".join(missing_metrics))
-
-    preview_rows = reader.execute(queries["preview"]).fetchall()
-    count = reader.execute(queries["count"]).fetchone()[0]
-    filtered = reader.execute(queries["multi_indicator"]).fetchone()[0]
-    joined = reader.execute(queries["join"]).fetchone()[0]
+    profiled = {name: profile(reader, query) for name, query in queries.items()}
+    profiles = {name: values[1] for name, values in profiled.items()}
+    preview_rows = profiled["preview"][0]
+    count = profiled["count"][0][0]
+    filtered = profiled["multi_indicator"][0][0]
+    joined = profiled["join"][0][0]
+    if any(values["requests"] <= 0 for values in profiles.values()):
+        raise AssertionError("missing_http_requests")
+    if any(values["bytes"] <= 0 for values in profiles.values()):
+        raise AssertionError("missing_filesystem_bytes")
     if len(preview_rows) != 1000:
         raise AssertionError(f"preview_rows:{len(preview_rows)}")
     if count != EXPECTED_ROWS:
