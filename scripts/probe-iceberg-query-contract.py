@@ -49,7 +49,7 @@ def make_connection(endpoint_port: int = 5000) -> duckdb.DuckDBPyConnection:
     con.execute("INSTALL iceberg")
     con.execute("LOAD iceberg")
     con.execute(
-        """
+        f"""
         CREATE SECRET fixture_s3 (
             TYPE S3,
             KEY_ID 'admin',
@@ -59,7 +59,7 @@ def make_connection(endpoint_port: int = 5000) -> duckdb.DuckDBPyConnection:
             URL_STYLE 'path',
             USE_SSL false
         )
-        """.format(endpoint_port=endpoint_port)
+        """
     )
     return con
 
@@ -78,7 +78,13 @@ def attach_catalog(con: duckdb.DuckDBPyConnection) -> None:
 
 
 class CountingProxy:
-    def __init__(self, upstream_host: str = "127.0.0.1", upstream_port: int = 5000) -> None:
+    """Local S3 proxy that counts exactly the response bytes DuckDB receives."""
+
+    def __init__(
+        self,
+        upstream_host: str = "127.0.0.1",
+        upstream_port: int = 5000,
+    ) -> None:
         self.upstream_host = upstream_host
         self.upstream_port = upstream_port
         self._lock = threading.Lock()
@@ -90,27 +96,45 @@ class CountingProxy:
             protocol_version = "HTTP/1.1"
 
             def _forward(self) -> None:
-                body = None
-                content_length = int(self.headers.get("content-length", "0") or 0)
-                if content_length:
-                    body = self.rfile.read(content_length)
+                request_body = None
+                request_length = int(self.headers.get("content-length", "0") or 0)
+                if request_length:
+                    request_body = self.rfile.read(request_length)
+
                 headers = {key: value for key, value in self.headers.items()}
                 connection = http.client.HTTPConnection(
-                    proxy.upstream_host, proxy.upstream_port, timeout=30
+                    proxy.upstream_host,
+                    proxy.upstream_port,
+                    timeout=30,
                 )
                 try:
-                    connection.request(self.command, self.path, body=body, headers=headers)
+                    connection.request(
+                        self.command,
+                        self.path,
+                        body=request_body,
+                        headers=headers,
+                    )
                     upstream = connection.getresponse()
                     payload = upstream.read()
+                    upstream_length = upstream.getheader("content-length")
+
                     self.send_response(upstream.status)
                     for key, value in upstream.getheaders():
-                        if key.lower() in {"connection", "transfer-encoding"}:
+                        if key.lower() in {
+                            "connection",
+                            "transfer-encoding",
+                            "content-length",
+                        }:
                             continue
                         self.send_header(key, value)
-                    self.send_header("content-length", str(len(payload)))
+                    if self.command == "HEAD" and upstream_length is not None:
+                        self.send_header("content-length", upstream_length)
+                    else:
+                        self.send_header("content-length", str(len(payload)))
                     self.end_headers()
                     if self.command != "HEAD":
                         self.wfile.write(payload)
+
                     with proxy._lock:
                         proxy.requests += 1
                         if self.command != "HEAD":
@@ -129,7 +153,10 @@ class CountingProxy:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.port = int(self.server.server_address[1])
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever,
+            daemon=True,
+        )
 
     def __enter__(self) -> "CountingProxy":
         self.thread.start()
@@ -150,22 +177,6 @@ class CountingProxy:
             return self.requests, self.bytes
 
 
-def profile(
-    con: duckdb.DuckDBPyConnection,
-    query: str,
-    proxy: CountingProxy,
-) -> tuple[list[tuple], dict[str, object]]:
-    proxy.reset()
-    started = time.perf_counter()
-    rows = con.execute(query).fetchall()
-    elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
-    requests, transferred = proxy.snapshot()
-    return rows, {
-        "elapsed_ms": elapsed_ms,
-        "requests": requests,
-        "bytes": transferred,
-    }
-
 def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     entries, total_bytes, loaded_bytes = con.execute(
         """
@@ -181,6 +192,27 @@ def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
         "bytes": int(total_bytes),
         "loaded_bytes": int(loaded_bytes),
     }
+
+
+def query_once(
+    query: str,
+    proxy: CountingProxy,
+) -> tuple[list[tuple], dict[str, object], dict[str, int]]:
+    con = make_connection(proxy.port)
+    proxy.reset()
+    started = time.perf_counter()
+    try:
+        rows = con.execute(query).fetchall()
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+        requests, transferred = proxy.snapshot()
+        cache = cache_stats(con)
+        return rows, {
+            "elapsed_ms": elapsed_ms,
+            "requests": requests,
+            "bytes": transferred,
+        }, cache
+    finally:
+        con.close()
 
 
 def moto_python(code: str) -> subprocess.CompletedProcess[str]:
@@ -232,15 +264,6 @@ def remove_object(s3_path: str) -> None:
 
 
 def main() -> int:
-    receipt: dict[str, object] = {
-        "result": "fail",
-        "contract": "synthetic-iceberg-v2-query-plane",
-        "production_data": False,
-        "external_account": False,
-        "rows": EXPECTED_ROWS,
-        "indicators": INDICATORS,
-    }
-
     writer = make_connection()
     attach_catalog(writer)
     writer.execute(f"CREATE SCHEMA {CATALOG}.bronze")
@@ -279,8 +302,7 @@ def main() -> int:
         f"SELECT * FROM iceberg_load_table_response({TABLE})"
     )
     load_columns = [column[0] for column in load_cursor.description]
-    load_row = load_cursor.fetchone()
-    load_response = dict(zip(load_columns, load_row))
+    load_response = dict(zip(load_columns, load_cursor.fetchone()))
     metadata_location = load_response.get("metadata_location")
     if not isinstance(metadata_location, str) or not metadata_location.startswith("s3://"):
         raise AssertionError("missing_metadata_location")
@@ -300,47 +322,42 @@ def main() -> int:
         ORDER BY file_path
         """
     ).fetchall()
-    if not membership:
-        membership = writer.execute(
-            f"""
-            SELECT file_path, record_count
-            FROM iceberg_metadata({TABLE})
-            WHERE file_format = 'PARQUET' AND status <> 'DELETED'
-            ORDER BY file_path
-            """
-        ).fetchall()
     membership_rows = sum(int(row[1]) for row in membership)
-    if membership_rows != EXPECTED_ROWS:
+    if not membership or membership_rows != EXPECTED_ROWS:
         raise AssertionError(f"manifest_membership_rows:{membership_rows}")
 
     schema_catalog = writer.execute(f"DESCRIBE SELECT * FROM {TABLE}").fetchall()
     writer.close()
 
+    physical_parquet_bytes = object_store_parquet_bytes()
+
     with CountingProxy() as proxy:
-        reader = make_connection(proxy.port)
-        source = f"iceberg_scan({sql_string(metadata_location)})"
-        direct_snapshots = reader.execute(
-        f"SELECT snapshot_id FROM iceberg_snapshots({sql_string(metadata_location)}) "
-        "ORDER BY sequence_number"
-    ).fetchall()
+        consistency_reader = make_connection(proxy.port)
+        direct_snapshots = consistency_reader.execute(
+            f"SELECT snapshot_id FROM iceberg_snapshots({sql_string(metadata_location)}) "
+            "ORDER BY sequence_number"
+        ).fetchall()
+        direct_membership = consistency_reader.execute(
+            f"""
+            SELECT file_path, record_count
+            FROM iceberg_metadata({sql_string(metadata_location)})
+            WHERE content = 'EXISTING' AND status <> 'DELETED'
+            ORDER BY file_path
+            """
+        ).fetchall()
+        schema_direct = consistency_reader.execute(
+            f"DESCRIBE SELECT * FROM iceberg_scan({sql_string(metadata_location)})"
+        ).fetchall()
+        consistency_reader.close()
+
         if not direct_snapshots or int(direct_snapshots[-1][0]) != snapshot_id:
             raise AssertionError("snapshot_disagreement")
-
-        direct_membership = reader.execute(
-        f"""
-        SELECT file_path, record_count
-        FROM iceberg_metadata({sql_string(metadata_location)})
-        WHERE content = 'EXISTING' AND status <> 'DELETED'
-        ORDER BY file_path
-        """
-    ).fetchall()
         if direct_membership != membership:
             raise AssertionError("membership_disagreement")
-
-        schema_direct = reader.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
         if schema_direct != schema_catalog:
             raise AssertionError("schema_disagreement")
 
+        source = f"iceberg_scan({sql_string(metadata_location)})"
         queries = {
             "preview": f"SELECT * FROM {source} LIMIT 1000",
             "count": f"SELECT count(*) FROM {source}",
@@ -355,16 +372,29 @@ def main() -> int:
             ),
         }
 
-        profiled = {name: profile(reader, query, proxy) for name, query in queries.items()}
-        profiles = {name: values[1] for name, values in profiled.items()}
-        preview_rows = profiled["preview"][0]
-        count = profiled["count"][0][0]
-        filtered = profiled["multi_indicator"][0][0]
-        joined = profiled["join"][0][0]
-        if any(values["requests"] <= 0 for values in profiles.values()):
+        preview_rows, preview_profile, preview_cache = query_once(
+            queries["preview"], proxy
+        )
+        count_rows, count_profile, _ = query_once(queries["count"], proxy)
+        filtered_rows, filtered_profile, _ = query_once(
+            queries["multi_indicator"], proxy
+        )
+        join_rows, join_profile, _ = query_once(queries["join"], proxy)
+
+        profiles = {
+            "preview": preview_profile,
+            "count": count_profile,
+            "multi_indicator": filtered_profile,
+            "join": join_profile,
+        }
+        if any(int(values["requests"]) <= 0 for values in profiles.values()):
             raise AssertionError("missing_http_requests")
-        if any(values["bytes"] <= 0 for values in profiles.values()):
-            raise AssertionError("missing_filesystem_bytes")
+        if any(int(values["bytes"]) <= 0 for values in profiles.values()):
+            raise AssertionError("missing_proxy_bytes")
+
+        count = int(count_rows[0][0])
+        filtered = int(filtered_rows[0][0])
+        joined = int(join_rows[0][0])
         if len(preview_rows) != 1000:
             raise AssertionError(f"preview_rows:{len(preview_rows)}")
         if count != EXPECTED_ROWS:
@@ -374,60 +404,78 @@ def main() -> int:
         if joined != EXPECTED_FILTERED:
             raise AssertionError(f"join_count:{joined}")
 
-        cache_after_first = cache_stats(reader)
-        reader.execute(queries["preview"]).fetchall()
-        cache_after_repeat = cache_stats(reader)
-        physical_parquet_bytes = object_store_parquet_bytes()
-        preview_bytes = int(profiles["preview"]["bytes"])
+        preview_bytes = int(preview_profile["bytes"])
         if preview_bytes >= physical_parquet_bytes:
             raise AssertionError(
                 f"preview_not_lazy:{preview_bytes}>={physical_parquet_bytes}"
             )
-        if cache_after_first["bytes"] <= 0:
-            raise AssertionError("external_cache_empty")
-        reader.close()
 
-    missing_path = str(membership[0][0])
-    remove_object(missing_path)
-    with CountingProxy() as fail_proxy:
-        fail_reader = make_connection(fail_proxy.port)
+        repeat_reader = make_connection(proxy.port)
+        proxy.reset()
+        repeat_reader.execute(queries["preview"]).fetchall()
+        first_repeat_requests, first_repeat_bytes = proxy.snapshot()
+        cache_after_first = cache_stats(repeat_reader)
+        proxy.reset()
+        repeat_reader.execute(queries["preview"]).fetchall()
+        repeat_requests, repeat_bytes = proxy.snapshot()
+        cache_after_repeat = cache_stats(repeat_reader)
+        repeat_reader.close()
+
+        if first_repeat_requests <= 0:
+            raise AssertionError("repeat_reader_first_query_missing_requests")
+        if repeat_requests > first_repeat_requests or repeat_bytes > first_repeat_bytes:
+            raise AssertionError("repeat_query_cache_regressed")
+
+        missing_path = str(membership[0][0])
+        remove_object(missing_path)
+        fail_reader = make_connection(proxy.port)
         missing_failed_closed = False
         try:
             fail_reader.execute(
-            f"SELECT sum(value) FROM iceberg_scan({sql_string(metadata_location)})"
+                f"SELECT sum(value) FROM iceberg_scan({sql_string(metadata_location)})"
             ).fetchone()
         except duckdb.Error:
             missing_failed_closed = True
         finally:
             fail_reader.close()
-    if not missing_failed_closed:
-        raise AssertionError("missing_object_did_not_fail_closed")
+        if not missing_failed_closed:
+            raise AssertionError("missing_object_did_not_fail_closed")
 
     max_rss_bytes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
-    receipt.update(
-        {
-            "result": "pass",
-            "iceberg_format_version": 2,
-            "snapshot_id": snapshot_id,
-            "metadata_location_scheme": metadata_location.split(":", 1)[0],
-            "data_files": len(membership),
-            "manifest_rows": membership_rows,
-            "physical_parquet_bytes": physical_parquet_bytes,
-            "queries": {
-                "preview_rows": len(preview_rows),
-                "complete_count": int(count),
-                "multi_indicator_count": int(filtered),
-                "join_count": int(joined),
-            },
-            "profiles": profiles,
-            "cache": {
-                "after_first": cache_after_first,
-                "after_repeat": cache_after_repeat,
-            },
-            "max_rss_bytes": max_rss_bytes,
-            "missing_object_failed_closed": missing_failed_closed,
-        }
-    )
+    receipt = {
+        "result": "pass",
+        "contract": "synthetic-iceberg-v2-query-plane",
+        "production_data": False,
+        "external_account": False,
+        "iceberg_format_version": 2,
+        "snapshot_id": snapshot_id,
+        "metadata_location_scheme": metadata_location.split(":", 1)[0],
+        "rows": EXPECTED_ROWS,
+        "indicators": INDICATORS,
+        "data_files": len(membership),
+        "manifest_rows": membership_rows,
+        "physical_parquet_bytes": physical_parquet_bytes,
+        "queries": {
+            "preview_rows": len(preview_rows),
+            "complete_count": count,
+            "multi_indicator_count": filtered,
+            "join_count": joined,
+        },
+        "profiles": profiles,
+        "repeat_preview": {
+            "first_requests": first_repeat_requests,
+            "first_bytes": first_repeat_bytes,
+            "repeat_requests": repeat_requests,
+            "repeat_bytes": repeat_bytes,
+        },
+        "cache": {
+            "cold_preview": preview_cache,
+            "after_first_repeat_reader_query": cache_after_first,
+            "after_second_repeat_reader_query": cache_after_repeat,
+        },
+        "max_rss_bytes": max_rss_bytes,
+        "missing_object_failed_closed": missing_failed_closed,
+    }
     print(json.dumps(receipt, sort_keys=True))
     return 0
 
