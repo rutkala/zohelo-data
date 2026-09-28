@@ -1,12 +1,12 @@
 # Zohelo-data architecture
 
-> **Implementation versus target, 22 September 2026:** the current source-specific release paths coexist with unfinished native-only stage separation required by ADR 0009. Earlier intake/parsing descriptions explain remaining implementation, not an exception to that decision. WDI and the limited Eurostat modeled contract already exist; older future-tense sections must not trigger duplicate pipelines. See [the reconciled delivery record](deliverables.md).
+> **Implementation versus target, 28 September 2026:** the current production bytes and release pointers still live on Google Drive while [ADR 0013](decisions/0013-cloudflare-first-storage.md) selects Cloudflare R2 as the target platform storage: native Landing objects in R2 and Bronze/Silver/Gold Iceberg tables in the R2 lakehouse bucket. The real generated-data R2/Data Catalog contract has passed, but the production migration has not. Existing Drive data remains the migration/recovery baseline until staged reconciliation succeeds. Earlier source-specific release paths and unfinished native-only stage separation required by ADR 0009 remain implementation facts, not exceptions to the target.
 
 Current technical design for `zohelo-data` and `data.zohelo.com`. The umbrella `zohelo.com` site and other subprojects are outside this scope. Delivery/verification status lives in [the delivery record](deliverables.md). The [original proposal](history/2026-09-06-architecture-proposal.md) is historical evidence.
 
 ## Constraints and responsibilities
 
-The initial user is the owner. Git stores definitions and tests; the existing Google Drive allocation stores durable data and release metadata. Computation runs on demand within measured limits. A human must be able to operate the system with standard tools and no AI.
+The initial user is the owner. Git stores definitions and tests. Current production data still resides on Google Drive; the target durable platform store is Cloudflare R2 under ADR 0013. Computation runs on demand within measured limits. A human must be able to operate the system with standard tools and no AI.
 
 | Concern | Tool / authority | Human-editable definition |
 | --- | --- | --- |
@@ -14,7 +14,7 @@ The initial user is the owner. Git stores definitions and tests; the existing Go
 | Dated extraction, retry and recovery policy | Validated YAML plus source-specific Python adapter | `config/nbp-platform.yaml`, `src/ingestion/` |
 | Transformations, keys, tests, dimensional models | dbt Core SQL/YAML on native DuckDB | `models/`, `macros/`, `dbt_tests/` |
 | Daily source metrics | MetricFlow YAML and a query interface enforcing non-additive grain | `models/semantic/`, `scripts/query_metrics.py` |
-| Durable files | Existing Drive, immutable raw/Parquet/artifacts | `config/storage.yaml`, `src/storage_manager.py` |
+| Durable files | Current: existing Drive. Target: R2 native Landing + Iceberg medallion tables under ADR 0013 | `config/storage.yaml`, storage/catalog adapters |
 | Publication and recovery | Staged validation, immutable releases, explicit promotion | `src/release_protocol.py`, `src/release_validation.py` |
 | Batch orchestration | GitHub Actions YAML, serialized production operations | [Workflow inventory](audits/2026-09-07-workflows.md) |
 | SQL and discovery | React, DuckDB-WASM, one native dbt Docs viewer | `portal/`; [user guide](using-the-portal.md) |
@@ -78,16 +78,18 @@ Value changes are observed source changes, not claims of an official correction 
 | Dagster / Prefect / Airflow | Hold migration: current daily dependencies already live in Actions YAML. A new orchestrator adds operated services/state. | Independently scheduled sources, asset-level backfills or dependency-aware operations justify it. [Dagster deployment components](https://docs.dagster.io/deployment/oss/oss-deployment-architecture). |
 | PySpark | Do not adopt for the current tens-of-MB input. | A benchmark establishes a distributed workload requirement. [Spark execution model](https://spark.apache.org/docs/latest/cluster-overview.html). |
 | Jupyter | Optional analysis client, not transformation/scheduling authority. | Exploration benefits from notebooks; durable logic is promoted into tested code. |
-| Object storage / transactional table format | Keep Drive authoritative; select Iceberg v2 for a future derived query plane only after a compatible storage endpoint is authorized and proven. No active DuckDB file is maintained on Drive. | Apply [ADR 0012](decisions/0012-bronze-table-query-plane.md); do not mistake a table format for a repair to Drive browser transport. |
+| Object storage / transactional table format | Cloudflare R2 is the authorized target object store; R2 Data Catalog is the initial Iceberg REST catalog; Iceberg v2 remains the open table format. Current Drive bytes stay untouched until migration acceptance. | Apply [ADR 0013](decisions/0013-cloudflare-first-storage.md). Reconsider provider/catalog only from measured cost, availability, residency or interoperability evidence. |
 | Hosted semantic API | Hold: on-demand native MetricFlow and CSV are the present supported interface. | A specific BI/multi-user/always-on requirement supplies a hosting and authorization design. |
 
 ## Bronze table and query plane
 
-[ADR 0012](decisions/0012-bronze-table-query-plane.md) separates the durable
-evidence plane from the interactive query plane. Google Drive remains authoritative
-for native bytes, retained release inputs and manifests. A complete logical table
-does not require one physical file, but every file in its pinned membership must be
-represented by one table snapshot.
+[ADR 0012](decisions/0012-bronze-table-query-plane.md) established the table/query
+contract; [ADR 0013](decisions/0013-cloudflare-first-storage.md) resolves the
+provider and long-term storage direction. Current Drive bytes remain authoritative
+only until their staged migration is accepted. The target is native Landing in R2
+and complete Iceberg Bronze/Silver/Gold tables in the R2 lakehouse bucket. A
+complete logical table does not require one physical file, but every file in its
+pinned membership must be represented by one table snapshot.
 
 Parquet, table format, engine and service are separate choices. Parquet stores
 columnar data; Iceberg supplies snapshot/table metadata; DuckDB executes SQL; and

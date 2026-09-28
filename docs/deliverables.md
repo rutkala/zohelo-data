@@ -30,6 +30,38 @@ SQL filters remain optional. The acceptance test must measure view binding,
 preview transfer and returned rows, then complete counts and multi-indicator SQL;
 a single-file transport test cannot establish the requested experience.
 
+**Owner decision — 28 September, Cloudflare-first platform storage.** The owner
+authorized Cloudflare R2 as the target object store for the Zohelo data platform
+and created `zohelo-landing-prod`, `zohelo-lakehouse-prod`, R2 Data Catalog and
+budget alerts. [ADR 0013](decisions/0013-cloudflare-first-storage.md) supersedes
+ADR 0012's long-term assumption that Drive stays authoritative. The target is now
+native Landing objects in R2 and Bronze/Silver/Gold Iceberg tables in the R2
+lakehouse bucket, while DuckDB, dbt and GitHub Actions remain the portable compute
+plane. Existing Drive bytes remain the migration source and recovery baseline
+until staged R2 readback is accepted; nothing is deleted or repointed merely
+because the target architecture changed.
+
+**Real Cloudflare storage/catalog contract verified.** The bounded
+[live run](https://github.com/rutkala/zohelo-data/actions/runs/36479212904) passed
+using generated data only. DuckDB wrote a 4,753,049-byte private Parquet object to
+`zohelo-landing-prod`; authenticated object metadata returned HTTP 200 and an
+exact 16,384-byte range request returned HTTP 206 with `Content-Range`. DuckDB
+then committed an Iceberg v2 table through R2 Data Catalog with 160,000 rows and
+eight data files. Ordinary LIMIT 1000 returned 1,000 rows; complete count returned
+160,000; the two-indicator filter and representative join each returned 40,000.
+The preview made five HTTP requests with two partial-content reads and 820,309
+known response bytes; complete COUNT used three requests and 6,589 known response
+bytes. The repeated preview required one catalog request and zero additional known
+response bytes after cache population. The generated Landing object, Iceberg table
+and namespace were all deleted by the probe. No Google Drive data was read.
+See [the dated live receipt](audits/2026-09-28-cloudflare-r2-iceberg-live.json).
+
+The provider/account/cost gate from ADR 0012 is therefore resolved. The remaining
+Bronze gate is a **bounded real-data DBW serving-copy pilot** with exact retained
+Drive identity/hash lineage, followed by portal/browser read-only authentication
+and CORS validation. That pilot must not change the current Drive pointer or claim
+that the full storage migration has already happened.
+
 **Architecture decision — 28 September, 13:34 CEST: separate Drive
 retention from the query-serving plane.** The live Drive evidence and current
 official engine/table documentation were reconciled in
@@ -39,14 +71,16 @@ on the existing Drive files would not repair the missing size/range contract see
 by the installed browser path. GitHub Actions remains batch compute and
 verification; it is not an interactive serverless SQL endpoint.
 
-The selected target is an **Apache Iceberg v2 derived serving copy** on an
-owner-authorized, range-capable object-storage contract. Google Drive remains
-authoritative for native source bytes, immutable evidence, release inputs and
-existing pointers. Native DuckDB in Actions remains the default transformation,
-writer and fresh verification engine. DuckDB-WASM remains the preferred portal
-reader if the selected storage proves scoped browser authentication, CORS,
-immutable object identity and bounded Range reads. PySpark is not adopted without
-a measured distributed-compute requirement.
+The earlier ADR 0012 target was an **Apache Iceberg v2 derived serving copy**
+while Drive remained authoritative. That was the correct feasibility boundary
+before a provider was authorized. The later owner decision in ADR 0013 changes the
+long-term storage target to Cloudflare R2 for Landing and the Iceberg medallion
+layers. Drive remains authoritative only for the still-unmigrated current
+production bytes until staged reconciliation and rollback evidence permit
+retirement. Native DuckDB in Actions remains the default transformation, writer
+and fresh verification engine. DuckDB-WASM remains the preferred owner-portal
+reader when read-only browser authentication and CORS are proven. PySpark is not
+adopted without a measured distributed-compute requirement.
 
 Delta Lake is held as the strongest option if Microsoft Fabric or Databricks is
 later authorized. DuckLake is held because it adds a catalog database and has a
