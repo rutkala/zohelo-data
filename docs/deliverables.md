@@ -227,6 +227,28 @@ The receipt does not capture the requested range shape or HEAD size headers;
 those must be diagnosed before changing the guard or drawing conclusions about
 Drive's partial-read support. The production loader remains unchanged.
 
+[PR #205](https://github.com/rutkala/zohelo-data/pull/205) replaced the incomplete
+security-sensitive header inspection with Playwright's complete asynchronous
+headers. [PR #206](https://github.com/rutkala/zohelo-data/pull/206) then added
+bounded sanitized request-shape and HEAD-response diagnostics without widening
+the URL, method or byte guards. Both exact-head Chromium runs passed and both
+reviews completed without findings.
+
+The authoritative [fourth diagnostic](https://github.com/rutkala/zohelo-data/actions/runs/36408963262)
+completed at 12:19:50 Europe/Warsaw on 28 September at main
+`7cf505f821ccfdd8160873647bbe5d8172ae5d85`. Current-file and revision
+metadata still matched the manifest, both exact extension GETs returned 200
+without Authorization, and both authenticated Drive media HEAD requests returned
+200. However, those HEAD responses exposed neither `Content-Length` nor
+`Accept-Ranges`. DuckDB then issued two GETs with no Range header; the harness
+blocked both full-file fallbacks. Zero Drive payload bytes were read, both SQL
+queries failed, and post-run metadata was unchanged. The separately dispatched
+[duplicate read-only run](https://github.com/rutkala/zohelo-data/actions/runs/36408968335)
+produced the identical sanitized artifact digest and adds no independent evidence.
+No further probe is authorized by this result alone. Efficient direct Drive
+lazy reads are not established; the specifically held relay/adapter approaches
+remain held and the owner-rejected query-server proposal is not revived.
+
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
 specific corrective reason or later resolving decision was recovered. Those
