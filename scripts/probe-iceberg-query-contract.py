@@ -53,7 +53,7 @@ def make_connection() -> duckdb.DuckDBPyConnection:
             KEY_ID 'admin',
             SECRET 'password',
             REGION 'us-east-1',
-            ENDPOINT '127.0.0.1:4566',
+            ENDPOINT '127.0.0.1:5000',
             URL_STYLE 'path',
             USE_SSL false
         )
@@ -145,7 +145,7 @@ def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     }
 
 
-def localstack_cli(*args: str) -> subprocess.CompletedProcess[str]:
+def moto_python(code: str) -> subprocess.CompletedProcess[str]:
     command = [
         "docker",
         "compose",
@@ -153,21 +153,20 @@ def localstack_cli(*args: str) -> subprocess.CompletedProcess[str]:
         str(COMPOSE_FILE),
         "exec",
         "-T",
-        "localstack",
-        "awslocal",
-        *args,
+        "moto",
+        "python",
+        "-c",
+        code,
     ]
     return subprocess.run(command, check=True, capture_output=True, text=True)
 
 
 def object_store_parquet_bytes() -> int:
-    result = localstack_cli(
-        "s3api",
-        "list-objects-v2",
-        "--bucket",
-        "warehouse",
-        "--output",
-        "json",
+    result = moto_python(
+        "import boto3,json; "
+        "c=boto3.client('s3',endpoint_url='http://127.0.0.1:5000',"
+        "aws_access_key_id='admin',aws_secret_access_key='password',region_name='us-east-1'); "
+        "print(json.dumps(c.list_objects_v2(Bucket='warehouse')))"
     )
     payload = json.loads(result.stdout)
     total = sum(
@@ -185,13 +184,12 @@ def remove_object(s3_path: str) -> None:
     if not s3_path.startswith(prefix):
         raise AssertionError(f"unexpected_data_path:{s3_path}")
     key = s3_path[len(prefix) :]
-    localstack_cli(
-        "s3api",
-        "delete-object",
-        "--bucket",
-        "warehouse",
-        "--key",
-        key,
+    key_literal = json.dumps(key)
+    moto_python(
+        "import boto3; "
+        "c=boto3.client('s3',endpoint_url='http://127.0.0.1:5000',"
+        "aws_access_key_id='admin',aws_secret_access_key='password',region_name='us-east-1'); "
+        f"c.delete_object(Bucket='warehouse',Key={key_literal})"
     )
 
 
