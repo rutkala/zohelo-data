@@ -4,11 +4,13 @@ Shared instructions for coding work in this repository. Run commands from the re
 
 **Current owner priority — 28 September 2026: portal Bronze.**
 
-- The owner paused the object-storage migration discussion and moved to Bronze:
-  standardize the names of all available sources and make DBW observations a
-  complete logical table, without mandatory indicator or physical-part selection.
-  This supersedes the previous Landing-only priority below. Preserve the accepted
-  Landing browser and manual refresh; do not resume unrelated ingestion or layers.
+- The owner moved the active work to Bronze: standardize the names of all
+  available sources and make DBW observations a complete logical table, without
+  mandatory indicator or physical-part selection. After the installed direct
+  Drive browser path reached a concrete compatibility blocker, the owner reopened
+  the table-format/query-serving decision. Preserve the accepted Landing browser,
+  manual refresh, authoritative Drive bytes and existing release guards; do not
+  resume unrelated ingestion or layers.
 - Bronze portal SQL names use lowercase `<source_key>_<entity>` in `02_bronze`,
   with stable source keys such as `gus_bdl`, `gus_dbw`, `world_bank_wdi`, and
   `opendata_org`. Preserve immutable publication descriptors and existing SQL
@@ -53,6 +55,17 @@ Shared instructions for coding work in this repository. Run commands from the re
   multi-indicator filters and joins against the complete pinned relation, with
   integrity, authentication and resource checks. Do not mark it Done from naming,
   one-indicator tests, or a successful publication alone.
+
+- [ADR 0012](docs/decisions/0012-bronze-table-query-plane.md) now separates
+  authoritative retention from interactive query serving. Drive remains
+  authoritative. The target serving format is Apache Iceberg v2 on an explicitly
+  authorized range-capable object-storage contract; native DuckDB in Actions
+  remains the default writer/verifier and DuckDB-WASM the preferred portal reader
+  when that storage contract is proven. Do not implement Iceberg on Drive, invent
+  a serverless claim for GitHub Actions or Trino, adopt PySpark without measured
+  need, create an account/service, or copy production data before the owner
+  authorizes storage/access/cost. Fabric/Databricks remain managed alternatives,
+  not authorized dependencies.
 
 **Previous owner priority — 27 September 2026: portal Landing only.**
 
