@@ -319,16 +319,22 @@ try {
     if (method !== "OPTIONS" && headers.authorization !== `Bearer ${token}`)
       receipt.browser_http.unauthenticated_requests++;
     if (method === "GET") {
-      const match = /^bytes=(\d+)-(\d+)$/.exec(headers.range ?? "");
-      if (!match || Number(match[2]) < Number(match[1]) ||
-          Number(match[2]) >= selected.size ||
-          Number(match[2]) - Number(match[1]) + 1 > maxBrowserRangeBytes) {
-        return block(route, "invalid_drive_range");
+      const rangeHeader = headers.range ?? "";
+      const match = /^bytes=(\d+)-(\d+)$/.exec(rangeHeader);
+      if (!match) {
+        const category = !rangeHeader ? "missing_drive_range" :
+          /^bytes=\d+-$/.test(rangeHeader) ? "open_ended_drive_range" :
+            /^bytes=-\d+$/.test(rangeHeader) ? "suffix_drive_range" :
+              rangeHeader.includes(",") ? "multiple_drive_ranges" : "malformed_drive_range";
+        return block(route, category);
       }
+      if (Number(match[2]) < Number(match[1]) || Number(match[2]) >= selected.size)
+        return block(route, "out_of_bounds_drive_range");
+      if (Number(match[2]) - Number(match[1]) + 1 > maxBrowserRangeBytes)
+        return block(route, "oversized_drive_range");
       receipt.browser_http.requested_range_bytes += Number(match[2]) - Number(match[1]) + 1;
-      if (receipt.browser_http.requested_range_bytes > maxBrowserRequestedBytes) {
+      if (receipt.browser_http.requested_range_bytes > maxBrowserRequestedBytes)
         return block(route, "drive_range_budget");
-      }
     }
     return route.continue();
   });
