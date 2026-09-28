@@ -57,7 +57,8 @@ jobs:
             return 1
           }
 
-          ready http://127.0.0.1:9000/minio/health/live object-store
+          ready http://127.0.0.1:4566/_localstack/health object-store
+          docker compose -f "$compose" exec -T localstack awslocal s3 mb s3://warehouse
           ready http://127.0.0.1:8181/v1/config iceberg-rest
 
       - name: Run synthetic Iceberg contract
