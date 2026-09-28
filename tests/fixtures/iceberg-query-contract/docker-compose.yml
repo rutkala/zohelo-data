@@ -29,7 +29,7 @@ services:
         /usr/bin/mc mb --ignore-existing minio/warehouse
 
   rest:
-    image: apache/iceberg-rest-fixture:1.11.0
+    image: apache/iceberg-rest-fixture@sha256:db8de90b5b7693d4ac334c336f91d9bbe320d7b19f4f514d26de84cdfbcbfe8d
     depends_on:
       mc:
         condition: service_completed_successfully
