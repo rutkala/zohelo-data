@@ -188,6 +188,10 @@ try {
   result.expected_sources = candidates.filter((candidate) => candidate.expected).length;
   result.available_sources = available.length;
   phase = "sql";
+  stage = "sql_editor";
+  await page.getByRole("button", { name: "New SQL query", exact: true }).click();
+  const editor = page.locator(".monaco-editor .view-lines:visible").first();
+  await editor.waitFor();
   for (const candidate of available) {
     stage = `sql_${candidate.source}`;
     const c = `"02_bronze"."${candidate.canonical}"`;
@@ -204,13 +208,13 @@ try {
         EXCEPT ALL SELECT * FROM (SELECT * FROM ${c} ORDER BY ALL LIMIT 20))
       THEN '${sentinel}' ELSE 'MISMATCH' END AS ${column},
       (SELECT COUNT(*) FROM ${c}) AS row_count;`;
-    await page.getByRole("button", { name: "New SQL query", exact: true }).click();
-    const editor = page.locator(".monaco-editor .view-lines:visible").first();
-    await editor.waitFor();
+    stage = `sql_editor_${candidate.source}`;
     await editor.click();
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.insertText(sql);
+    stage = `sql_run_${candidate.source}`;
     await page.getByRole("button", { name: "Run Query", exact: true }).click();
+    stage = `sql_result_${candidate.source}`;
     const matchingRow = page.getByRole("row").filter({ has: page.getByRole("cell", {
       name: sentinel, exact: true,
     }) });
