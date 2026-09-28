@@ -122,9 +122,23 @@ authorization headers, but the newer `HTTPWasmClient` includes them. Upstream
 [PR #2191](https://github.com/duckdb/duckdb-wasm/pull/2191), merged on 24 March
 2026, added HTTP secret extra-header support. The troubleshooting page's blanket
 statement about unsupported HTTP authentication is insufficient evidence for this
-newer path. Local engine checks accepted `LOAD httpfs` and a scoped test HTTP
-secret; an actual browser fixture is needed to establish authentication, CORS and
-range behavior. That fixture does not itself prove private Drive or DBW acceptance.
+newer path. The actual Chromium worker passed the synthetic authenticated-range
+probe in [run 36401687536](https://github.com/rutkala/zohelo-data/actions/runs/36401687536)
+at reviewed head `a43b17ff1b78f19b6d67837ffb6843a82513f789`. A 250,000-row,
+9,067,817-byte Parquet fixture transferred 16,384 bytes for complete COUNT,
+1,018,661 bytes for the full `id` sum, and 58,158 bytes for the filtered count.
+The result includes successful authorization preflight, 206 ranges, rejection
+without a secret and after removal, and no credential leakage to a sibling path
+or other origin. Full-download fallback was disabled.
+
+This uses a temporary scoped `EXTRA_HTTP_HEADERS` secret. The earlier
+`BEARER_TOKEN` option was accepted by SQL but did not reach HTTP requests, producing
+401 responses; the upstream WASM bridge forwards custom headers. A separate first
+attempt stopped at a fixture-directory permission error, corrected before the
+browser test. The [dated receipt](audits/2026-09-28-duckdb-lazy-http.json) keeps these
+attempts and measured evidence. Synthetic success establishes engine feasibility,
+not private Drive, immutable revision access, independent range integrity, or DBW
+complete-table acceptance. No production loader changed in this increment.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No

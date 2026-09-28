@@ -27,8 +27,12 @@ Shared instructions for coding work in this repository. Run commands from the re
   a server. No hosting decision is a prerequisite for this feasibility work.
 - The installed DuckDB-WASM has a newer HTTP client with scoped HTTP-secret
   support; do not infer its capabilities from the older registered-file reader
-  or stale troubleshooting text. Test the exact browser path and actual Drive
-  behavior. Keep the specifically rejected ServiceWorker relay and disk-backed
+  or stale troubleshooting text. The synthetic Chromium probe passed with
+  temporary scoped `EXTRA_HTTP_HEADERS`; `BEARER_TOKEN` alone was accepted but
+  did not send Authorization. A 9,067,817-byte fixture required 16,384 bytes for
+  COUNT, 1,018,661 for a full column sum and 58,158 for a filtered count. Actual
+  Drive behavior and full DBW access remain unverified. Keep the specifically
+  rejected ServiceWorker relay and disk-backed
   adapter on hold; the upstream HTTP client is a distinct path. Preserve snapshot
   and byte-integrity guarantees rather than silently dropping whole-file checks.
 - Acceptance of DBW whole-table access requires ordinary LIMIT, complete counts,

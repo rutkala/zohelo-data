@@ -5,6 +5,9 @@ on:
     paths:
       - 'portal/scripts/verify-duckdb-lazy-http.mjs'
       - 'portal/scripts/fixtures/lazy-http-probe.*'
+      - 'portal/package.json'
+      - 'portal/package-lock.json'
+      - '.node-version'
       - '.github/workflows/duckdb-lazy-http-probe.yml'
   workflow_dispatch:
 

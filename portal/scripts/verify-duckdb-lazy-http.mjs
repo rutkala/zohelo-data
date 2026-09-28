@@ -5,12 +5,13 @@
  */
 import { createServer as createHttpServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { createServer as createViteServer } from "vite";
 import { chromium } from "@playwright/test";
 
 const require = createRequire(import.meta.url);
+const duckdbWasmVersion = JSON.parse(readFileSync(new URL("../node_modules/@duckdb/duckdb-wasm/package.json", import.meta.url))).version;
 const bearer = "fixture-only-bearer";
 const rowCount = 250_000;
 const parquet = await (async () => {
@@ -141,7 +142,9 @@ try {
       publicEvents.some((event) => event.authorization))
     throw new Error("bearer_leaked_to_public_origin");
   const summaries = Object.fromEntries(["count", "projection", "filter"].map((name) => [name, scenario(name)]));
-  console.log(JSON.stringify({ result: "pass", package: "@duckdb/duckdb-wasm@1.33.1-dev64.0",
+  if (summaries.filter.bytes >= summaries.projection.bytes / 2)
+    throw new Error("filter_did_not_prune_row_groups");
+  console.log(JSON.stringify({ result: "pass", package: `@duckdb/duckdb-wasm@${duckdbWasmVersion}`,
     parquetBytes: parquet.length, rows: rowCount, protected: summaries,
     unauthenticatedStatuses: protectedEvents.filter((event) => event.path.endsWith("unauthenticated.parquet")).map((event) => event.status),
     public: { requests: publicEvents.length, bearerHeaders: publicEvents.filter((event) => event.authorization).length } }));
