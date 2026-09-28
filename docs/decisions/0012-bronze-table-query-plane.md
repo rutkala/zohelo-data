@@ -1,8 +1,10 @@
 # ADR 0012: Separate authoritative retention from the Bronze query plane
 
-Status: Architecture decision, 28 September 2026. The serving-storage selection and
-any external account or spend still require owner authorization. Implementation and
-production evidence belong in [the delivery record](../deliverables.md).
+Status: Architecture decision, 28 September 2026. This ADR established the
+Bronze table/query contract. Its open provider/long-term Drive-authority decision
+was subsequently resolved by [ADR 0013](0013-cloudflare-first-storage.md), which
+selects the Cloudflare-first storage target. Implementation and production
+evidence belong in [the delivery record](../deliverables.md).
 
 ## Context
 
