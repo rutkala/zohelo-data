@@ -68,6 +68,10 @@ def required_env(name: str) -> str:
     return value
 
 
+def sql_string(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name("." + path.name + ".tmp")
@@ -302,18 +306,16 @@ def duckdb_catalog() -> duckdb.DuckDBPyConnection:
     con.execute("LOAD iceberg")
     token = required_env("CLOUDFLARE_R2_CATALOG_TOKEN")
     con.execute(
-        "CREATE SECRET r2_catalog_token (TYPE ICEBERG, TOKEN ?)",
-        [token],
+        f"CREATE SECRET r2_catalog_token (TYPE ICEBERG, TOKEN {sql_string(token)})"
     )
     con.execute(
-        """
-        ATTACH ? AS r2_catalog (
+        f"""
+        ATTACH {sql_string(required_env("R2_WAREHOUSE"))} AS r2_catalog (
             TYPE ICEBERG,
             SECRET r2_catalog_token,
-            ENDPOINT ?
+            ENDPOINT {sql_string(required_env("R2_CATALOG_URI"))}
         )
-        """,
-        [required_env("R2_WAREHOUSE"), required_env("R2_CATALOG_URI")],
+        """
     )
     return con
 
