@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import duckdb
 
@@ -14,6 +15,7 @@ import duckdb
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+import eurostat_bulk_decode as bulk_decode  # noqa: E402
 from eurostat_bulk_decode import (  # noqa: E402
     EurostatBulkDecodeError,
     decode_full_distribution,
@@ -124,6 +126,36 @@ class EurostatBulkDecodeTests(unittest.TestCase):
         self.assertEqual(rows[1][5:7], (True, "colon"))
         self.assertEqual(rows[2][2], "")
         self.assertEqual(rows[2][5:7], (True, "empty"))
+
+    def test_frame_append_preserves_rows_across_batch_boundary(self):
+        source, receipt = self._source(
+            (
+                "freq,unit,geo\\TIME_PERIOD\t2020 \t2021 \t2022 \n"
+                "A,NR,PL\t1\t2 p\t:\n"
+            ).encode("utf-8")
+        )
+        with patch.object(bulk_decode, "_BATCH_ROWS", 2):
+            report = self._decode(source, receipt)
+
+        self.assertEqual(report["observation_cells"], 3)
+        with duckdb.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT period_key, value_text, status_code, is_missing,
+                       source_period_position
+                FROM read_parquet(?)
+                ORDER BY source_period_position
+                """,
+                [str(self.root / "bronze.parquet")],
+            ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("2020", "1", None, False, 1),
+                ("2021", "2", "p", False, 2),
+                ("2022", ":", None, True, 3),
+            ],
+        )
 
     def test_header_only_distribution_produces_typed_empty_parquet(self):
         source, receipt = self._source(b"freq,geo\\TIME_PERIOD\t2025 \n")
