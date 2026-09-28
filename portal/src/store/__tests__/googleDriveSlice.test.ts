@@ -698,7 +698,17 @@ describe("immutable release selection", () => {
     vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
     vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-1"));
     await store.getState().refreshLakehouseCatalog();
-    await store.getState().selectLakehouseDataset("02_bronze", "br_dbw_observations__indicator_1");
+    await store.getState().selectLakehouseDataset("02_bronze", "gus_dbw_observations__indicator_1");
+    await store.getState().selectLakehouseFile("02_bronze", "gus_dbw_observations__indicator_1", "snapshot-1-part");
+    const parts = store.getState().lakehouseCatalog.find((layer) => layer.name === "02_bronze")
+      ?.children.find((table) => table.name === "gus_dbw_observations__indicator_1")?.children ?? [];
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValueOnce([
+      { datasetName: "br_dbw_observations__indicator_1", layerName: "02_bronze",
+        files: parts },
+    ]);
+    await store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "02_bronze"."br_dbw_observations__indicator_1"'
+    );
     const connection = (
       store.getState().currentSession as unknown as {
         local: { connection: { query: ReturnType<typeof vi.fn> } };
@@ -708,13 +718,19 @@ describe("immutable release selection", () => {
     connection.query.mockImplementation(async (sql: string) => ({
       toArray: () =>
         sql.startsWith("SELECT table_name")
-          ? [{ table_name: "br_dbw_observations__indicator_1" }, { table_name: "rates" }]
+          ? [{ table_name: "gus_dbw_observations__indicator_1" }, { table_name: "rates" }]
           : [],
     }));
     vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-2"));
 
     await store.getState().refreshLakehouseCatalog();
 
+    expect(connection.query).toHaveBeenCalledWith(
+      'DROP VIEW IF EXISTS "02_bronze"."gus_dbw_observations__indicator_1";'
+    );
+    expect(connection.query).toHaveBeenCalledWith(
+      'DROP VIEW IF EXISTS "02_bronze"."gus_dbw_observations__indicator_1__file_snapshot-1-part";'
+    );
     expect(connection.query).toHaveBeenCalledWith(
       'DROP VIEW IF EXISTS "02_bronze"."br_dbw_observations__indicator_1";'
     );
@@ -892,7 +908,8 @@ describe("immutable release selection", () => {
     const silverLayer = catalog.find((l) => l.name === "03_silver");
     const goldLayer = catalog.find((l) => l.name === "04_gold");
 
-    expect(bronzeLayer?.children.map((t) => t.name)).toContain("bdl_variables");
+    expect(bronzeLayer?.children.map((t) => t.name)).toContain("gus_bdl_variables");
+    expect(bronzeLayer?.children.map((t) => t.name)).not.toContain("bdl_variables");
     expect(silverLayer?.children.map((t) => t.name)).toContain("nbp_exchange_rates_table_a");
     expect(silverLayer?.children.map((t) => t.name)).toContain("bdl_variables");
     expect(goldLayer?.children.map((t) => t.name)).toContain("dim_bdl_variable");
@@ -959,7 +976,31 @@ describe("immutable release selection", () => {
 
     const catalog = store.getState().lakehouseCatalog;
     const bronzeLayer = catalog.find((l) => l.name === "02_bronze");
-    expect(bronzeLayer?.children.map((t) => t.name)).toContain("br_opendata_organizations");
+    expect(bronzeLayer?.children.map((t) => t.name)).toContain("opendata_org_organizations");
+  });
+
+  it("rejects a canonical Bronze name collision across modeled and retained sources", async () => {
+    const store = makeStore();
+    const modeled = {
+      kind: "release", fingerprint: "modeled-dbw", manifest: {
+        release_scope: "dbw_platform", release_id: "dbw-modeled",
+        datasets: [{ dataset_id: "bronze_dbw_indicators", layer: "02_bronze",
+          table_name: "dbw_indicators", columns: [], files: [] }],
+      },
+    } as unknown as DuckStoreState["lakehouseRelease"];
+    const retained = retainedDbwLanding("snapshot-1");
+    if (retained.snapshots[0].manifest.kind !== "retained_bronze_snapshot")
+      throw new Error("Expected retained DBW fixture");
+    retained.snapshots[0].manifest.datasets.push({
+      dataset_id: "taxonomy", layer: "02_bronze", table_name: "br_dbw_indicators",
+      columns: [], files: [],
+    });
+    vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(modeled!);
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retained);
+    await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(/ambiguous/);
+    expect(store.getState().lakehouseStatusMessage).toMatch(/ambiguous/);
+    expect(store.getState().lakehouseCatalog.find((layer) => layer.name === "02_bronze")
+      ?.children.some((table) => table.name === "gus_dbw_indicators")).not.toBe(true);
   });
 });
 
@@ -1327,5 +1368,76 @@ describe("lazy published-query loading", () => {
     expect(loadTablesIntoDuckDB).not.toHaveBeenCalled();
     await store.getState().preparePublishedTablesForQuery('SELECT * FROM "04_gold".dim_currency');
     expect(loadTablesIntoDuckDB).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves canonical and compatibility Bronze SQL to the same pinned files", async () => {
+    const store = makeStore();
+    const file = { id: "bdl-br-file", name: "bdl_variables.parquet", size: 10,
+      sha256: "c".repeat(64), tableName: "bdl_variables", layer: "02_bronze" };
+    store.setState({
+      lakehouseRelease: {
+        kind: "release", fingerprint: "bdl-1", manifest: {
+          release_scope: "bdl_platform", release_id: "bdl-1",
+          datasets: [{ dataset_id: "bronze_bdl_variables", layer: "02_bronze",
+            table_name: "bdl_variables", columns: [], files: [file] }],
+        },
+      } as unknown as DuckStoreState["lakehouseRelease"],
+    });
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValueOnce([
+      { datasetName: "gus_bdl_variables", layerName: "02_bronze", files: [file] },
+      { datasetName: "bdl_variables", layerName: "02_bronze", files: [file] },
+    ]);
+    await store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "02_bronze"."gus_bdl_variables" JOIN "02_bronze"."bdl_variables" USING (id)'
+    );
+    expect(resolvePublishedTableReferences).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.arrayContaining([
+        expect.objectContaining({ layer: "02_bronze", table_name: "gus_bdl_variables", files: [file] }),
+        expect.objectContaining({ layer: "02_bronze", table_name: "bdl_variables", files: [file] }),
+      ])
+    );
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(),
+      [{ datasetName: "gus_bdl_variables", tableFolderId: null, files: [file], layerName: "02_bronze" },
+        { datasetName: "bdl_variables", tableFolderId: null, files: [file], layerName: "02_bronze" }],
+      "fixture-token", expect.anything(), expect.any(Function)
+    );
+  });
+
+  it("rejects an unowned canonical Bronze relation after disconnect and a delayed old download", async () => {
+    const store = makeStore();
+    const file = { id: "bdl-file", name: "bdl.parquet", tableName: "bdl_variables", layer: "02_bronze" };
+    const release = { kind: "release", fingerprint: "bdl-1", manifest: {
+      release_scope: "bdl_platform", release_id: "bdl-1",
+      datasets: [{ dataset_id: "bronze_bdl_variables", layer: "02_bronze",
+        table_name: "bdl_variables", columns: [], files: [file] }],
+    } } as unknown as DuckStoreState["lakehouseRelease"];
+    store.setState({ lakehouseRelease: release, lakehouseCatalog: [{
+      type: "layer", name: "02_bronze", id: null, expanded: true, loaded: true,
+      children: [{ type: "table", name: "gus_bdl_variables", id: null,
+        layer: "02_bronze", expanded: false, loaded: true, children: [file] }],
+    }] } as unknown as Partial<DuckStoreState>);
+    let finish!: (value: { loadedFiles: string[]; queryTargets: string[] }) => void;
+    vi.mocked(loadTablesIntoDuckDB).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    const selecting = store.getState().selectLakehouseDataset("02_bronze", "gus_bdl_variables");
+    await vi.waitFor(() => expect(loadTablesIntoDuckDB).toHaveBeenCalledTimes(1));
+    store.getState().disconnectGoogleDrive();
+    finish({ loadedFiles: ["/old"], queryTargets: ['"02_bronze"."gus_bdl_variables"'] });
+    await selecting;
+    const connection = (store.getState().currentSession as unknown as {
+      local: { connection: { query: ReturnType<typeof vi.fn> } };
+    }).local.connection;
+    connection.query.mockResolvedValue({ toArray: () => [
+      { table_schema: "02_bronze", table_name: "gus_bdl_variables" },
+    ] });
+    store.setState({ lakehouseRelease: release, googleAuth: {
+      token: "new-account-token", isAuthenticated: true, authSource: "manual", error: null,
+    } } as Partial<DuckStoreState>);
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValueOnce([
+      { datasetName: "gus_bdl_variables", layerName: "02_bronze", files: [file] },
+    ]);
+    await expect(store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "02_bronze"."gus_bdl_variables"'
+    )).rejects.toThrow(/already exists in this local session/);
   });
 });

@@ -2,7 +2,29 @@
 
 Shared instructions for coding work in this repository. Run commands from the repository root unless stated otherwise.
 
-**Current owner priority — 27 September 2026: portal Landing only.**
+**Current owner priority — 28 September 2026: portal Bronze.**
+
+- The owner paused the object-storage migration discussion and moved to Bronze:
+  standardize the names of all available sources and make DBW observations a
+  complete logical table, without mandatory indicator or physical-part selection.
+  This supersedes the previous Landing-only priority below. Preserve the accepted
+  Landing browser and manual refresh; do not resume unrelated ingestion or layers.
+- Bronze portal SQL names use lowercase `<source_key>_<entity>` in `02_bronze`,
+  with stable source keys such as `gus_bdl`, `gus_dbw`, `world_bank_wdi`, and
+  `opendata_org`. Preserve immutable publication descriptors and existing SQL
+  references. Compatibility names must resolve the same pinned dataset membership.
+- Naming is independently deliverable, but does not complete DBW access. The
+  retained observations exceed the current browser's 512 MiB download budget;
+  removing the selector or publishing another copy does not solve that reader
+  constraint. Keep the specific rejected reader approaches recorded below on hold.
+  A native authenticated query service is a proposal requiring a hosting/access
+  decision, not an existing component or authorization for new paid infrastructure.
+- Acceptance of DBW whole-table access requires ordinary LIMIT, complete counts,
+  multi-indicator filters and joins against the complete pinned relation, with
+  integrity, authentication and resource checks. Do not mark it Done from naming,
+  one-indicator tests, or a successful publication alone.
+
+**Previous owner priority — 27 September 2026: portal Landing only.**
 
 - The owner has accepted the current Landing layout. The follow-up is metadata
   performance, especially a complete GUS BDL scan. The owner subsequently

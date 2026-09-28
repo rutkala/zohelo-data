@@ -209,9 +209,11 @@ export const loadFileIntoDuckDB = async (
   tableName: string,
   file: LakehouseFile,
   token: string,
-  downloadBudget?: DriveDownloadBudget
+  downloadBudget?: DriveDownloadBudget,
+  beforePublish?: () => void | Promise<void>
 ): Promise<{ filePath: string; queryTarget: string }> => {
   const filePath = await registerFile(db, file, token, downloadBudget ?? budgetFor(db));
+  await beforePublish?.();
   // A file preview must not replace the view for the complete dataset.
   const queryTarget = await publishViews(conn, file.layer, `${tableName}__file_${file.id}`, [
     filePath,

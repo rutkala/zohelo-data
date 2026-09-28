@@ -488,7 +488,7 @@ test("DBW v2 loads original Bronze files without a publication copy", async ({ p
   await profile.getByPlaceholder("Profile name").fill("DBW original references");
   await profile.getByRole("button", { name: "Create Profile", exact: true }).click();
   await expect(profile).toBeHidden();
-  await expect(page.getByText("br_dbw_indicators", { exact: true })).toBeVisible({ timeout: 60000 });
+  await expect(page.getByText("gus_dbw_indicators", { exact: true })).toBeVisible({ timeout: 60000 });
   const bronze = page.getByRole("button", { name: "02_bronze", exact: true });
   const indicatorSearch = page.getByPlaceholder("Search DBW indicator name or ID");
   await expect(bronze).toHaveAttribute("aria-expanded", "true");
@@ -504,7 +504,9 @@ test("DBW v2 loads original Bronze files without a publication copy", async ({ p
   await editor.click();
   await page.keyboard.press("ControlOrMeta+A");
   await page.keyboard.insertText(`SELECT CASE WHEN
-    (SELECT count(*) FROM "02_bronze"."br_dbw_observations__indicator_1" WHERE indicator_id=1)=1
+    (SELECT count(*) FROM "02_bronze"."gus_dbw_observations__indicator_1" WHERE indicator_id=1)=1
+    AND (SELECT count(*) FROM "02_bronze"."br_dbw_observations__indicator_1" WHERE indicator_id=1)=1
+    AND (SELECT count(*) FROM "02_bronze"."gus_dbw_indicators")=1550
     AND (SELECT count(*) FROM "02_bronze"."br_dbw_indicators")=1550
     AND (SELECT count(*) FROM "02_bronze"."br_dbw_metadata")=1
     AND (SELECT count(*) FROM "02_bronze"."br_dbw_dictionaries")=1
