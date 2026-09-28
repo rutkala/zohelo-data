@@ -1,0 +1,76 @@
+{
+  "observed_at_utc": "2026-09-28T20:27:26Z",
+  "scope": "cloudflare-r2-iceberg-v2-live-pilot",
+  "production_data": false,
+  "google_drive_accessed": false,
+  "workflow_run": 36479212904,
+  "branch_head": "fc7e48876794b48193e01103c922ae643a40e91c",
+  "cloudflare": {
+    "landing_bucket": "zohelo-landing-prod",
+    "lakehouse_bucket": "zohelo-lakehouse-prod",
+    "data_catalog_enabled": true,
+    "credentials_source": "github_actions_secrets",
+    "secret_values_retained": false
+  },
+  "landing_contract": {
+    "rows": 250000,
+    "object_bytes": 4753049,
+    "head_status": 200,
+    "range_status": 206,
+    "range_bytes": 16384,
+    "content_range_present": true
+  },
+  "iceberg_contract": {
+    "format_version": 2,
+    "rows": 160000,
+    "indicators": 8,
+    "data_files": 8,
+    "manifest_rows": 160000,
+    "snapshot_id": "3785763336382467885",
+    "metadata_location_scheme": "s3"
+  },
+  "queries": {
+    "preview": {
+      "rows": 1000,
+      "requests": 5,
+      "known_response_bytes": 820309,
+      "partial_gets": 2,
+      "elapsed_ms": 1815.634
+    },
+    "complete_count": {
+      "rows": 160000,
+      "requests": 3,
+      "known_response_bytes": 6589,
+      "partial_gets": 0,
+      "elapsed_ms": 731.75
+    },
+    "multi_indicator": {
+      "rows": 40000,
+      "requests": 7,
+      "known_response_bytes": 39463,
+      "partial_gets": 4,
+      "elapsed_ms": 1942.056
+    },
+    "join": {
+      "rows": 40000,
+      "requests": 7,
+      "known_response_bytes": 39463,
+      "partial_gets": 4,
+      "elapsed_ms": 1334.56
+    }
+  },
+  "cache": {
+    "after_first_repeat_bytes": 835884,
+    "after_second_repeat_bytes": 835884,
+    "repeat_first_known_response_bytes": 820309,
+    "repeat_second_known_response_bytes": 0
+  },
+  "cleanup": {
+    "landing_object_deleted": true,
+    "iceberg_table_dropped": true,
+    "iceberg_namespace_dropped": true
+  },
+  "max_rss_bytes": 279617536,
+  "result": "pass",
+  "conclusion": "Real Cloudflare R2 plus R2 Data Catalog satisfied the generated Landing range-read and Iceberg v2 DuckDB query contract. No Google Drive data was read or migrated."
+}
