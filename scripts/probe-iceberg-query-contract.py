@@ -12,7 +12,6 @@ import json
 import os
 import re
 import resource
-import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -54,7 +53,7 @@ def make_connection() -> duckdb.DuckDBPyConnection:
             KEY_ID 'admin',
             SECRET 'password',
             REGION 'us-east-1',
-            ENDPOINT '127.0.0.1:9000',
+            ENDPOINT '127.0.0.1:4566',
             URL_STYLE 'path',
             USE_SSL false
         )
@@ -146,38 +145,36 @@ def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
     }
 
 
-def mc_shell(script: str) -> subprocess.CompletedProcess[str]:
+def localstack_cli(*args: str) -> subprocess.CompletedProcess[str]:
     command = [
         "docker",
         "compose",
         "-f",
         str(COMPOSE_FILE),
-        "run",
-        "--rm",
-        "--no-deps",
+        "exec",
         "-T",
-        "--entrypoint",
-        "/bin/sh",
-        "mc",
-        "-c",
-        script,
+        "localstack",
+        "awslocal",
+        *args,
     ]
     return subprocess.run(command, check=True, capture_output=True, text=True)
 
 
 def object_store_parquet_bytes() -> int:
-    result = mc_shell(
-        "/usr/bin/mc alias set fixture http://minio:9000 admin password >/dev/null && "
-        "/usr/bin/mc ls --recursive --json fixture/warehouse"
+    result = localstack_cli(
+        "s3api",
+        "list-objects-v2",
+        "--bucket",
+        "warehouse",
+        "--output",
+        "json",
     )
-    total = 0
-    for line in result.stdout.splitlines():
-        try:
-            item = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if str(item.get("key", "")).endswith(".parquet"):
-            total += int(item.get("size", 0))
+    payload = json.loads(result.stdout)
+    total = sum(
+        int(item.get("Size", 0))
+        for item in payload.get("Contents", [])
+        if str(item.get("Key", "")).endswith(".parquet")
+    )
     if total <= 0:
         raise AssertionError("object_store_parquet_bytes_not_observed")
     return total
@@ -188,10 +185,13 @@ def remove_object(s3_path: str) -> None:
     if not s3_path.startswith(prefix):
         raise AssertionError(f"unexpected_data_path:{s3_path}")
     key = s3_path[len(prefix) :]
-    target = shlex.quote("fixture/warehouse/" + key)
-    mc_shell(
-        "/usr/bin/mc alias set fixture http://minio:9000 admin password >/dev/null && "
-        f"/usr/bin/mc rm {target}"
+    localstack_cli(
+        "s3api",
+        "delete-object",
+        "--bucket",
+        "warehouse",
+        "--key",
+        key,
     )
 
 
