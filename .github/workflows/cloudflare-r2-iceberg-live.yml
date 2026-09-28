@@ -1,12 +1,6 @@
 name: Probe Cloudflare R2 Iceberg live contract
 
 on:
-  push:
-    branches:
-      - 'pilot/cloudflare-r2-iceberg-20260928'
-    paths:
-      - 'scripts/probe-cloudflare-r2-iceberg.py'
-      - '.github/workflows/cloudflare-r2-iceberg-live.yml'
   workflow_dispatch:
 
 permissions:
