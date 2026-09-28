@@ -709,6 +709,16 @@ during cleanup, and the exact non-expiring owner
 `github-run-36388542439-attempt-1` remained held. This is a production timeout
 and recovery blocker, not a successful retained-Bronze batch.
 
+The independent three-dataset modeled path acquired the shared production lock
+after the Bronze cancellation and remained healthy. It passed all 38 dbt
+models/tests, published release `124bdff7-b506-4a36-850f-ad93e8e7fe56`, and its
+fresh-process verifier completed successfully at 10:34:53 Europe/Warsaw. That
+release records 7,058 validated current distributions out of the 21,154 catalogue
+entries (coverage ratio 0.3336484825564905), 9,212 accepted receipts and
+27,310,344,492 received raw bytes, while explicitly retaining
+`complete_official_catalogue=false`. This modeled-release success is independent
+of the cancelled retained-Bronze writer and is not its missing fresh verification.
+
 The repair branch replaces per-row DuckDB bindings with typed DataFrame batch
 appends, emits a flushed start/completion receipt for each distribution, gives the
 decoder an interrupt window before the job ceiling, and exposes only exact-match
