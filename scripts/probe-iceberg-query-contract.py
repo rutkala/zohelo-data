@@ -291,7 +291,7 @@ def main() -> int:
         f"""
         SELECT file_path, record_count
         FROM iceberg_metadata({sql_string(metadata_location)})
-        WHERE file_format = 'PARQUET' AND status <> 'DELETED'
+        WHERE content = 'EXISTING' AND status <> 'DELETED'
         ORDER BY file_path
         """
     ).fetchall()
