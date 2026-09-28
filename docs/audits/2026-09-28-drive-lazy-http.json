@@ -79,6 +79,54 @@
       }
     }
   ],
+  "second_attempt": {
+  "run_id": 36406808518,
+  "job_id": 108877411538,
+  "workflow_sha": "fbdf31edb8d0f140356fca68faf6c40d5b2b4530",
+  "outcome": "LOAD httpfs requested another URL on the official extensions host. Exact requested path not captured; no Drive browser requests or data reads occurred.",
+  "receipt": {
+    "format_version": 1,
+    "status": "failed",
+    "expected_git_sha": "fbdf31edb8d0f140356fca68faf6c40d5b2b4530",
+    "read_only": true,
+    "transport_only": true,
+    "whole_file_sha_verified": false,
+    "manifest_hash_verified": true,
+    "index_hash_verified": true,
+    "file_metadata_matches_manifest": true,
+    "candidate_size_bytes": 2251840,
+    "expected_rows": 370818,
+    "head_revision_present": true,
+    "revision_metadata_status": 200,
+    "revision_keep_forever": false,
+    "revision_metadata_matches_file": true,
+    "node_drive_requests": 11,
+    "node_metadata_bytes": 1342804,
+    "post_metadata_unchanged": false,
+    "head": null,
+    "revision": null,
+    "browser_http": {
+      "head": {},
+      "revision": {},
+      "blocked": 1,
+      "blocked_categories": {
+        "other_extension_url": 1
+      },
+      "httpfs_extension": {
+        "requests": 0,
+        "statuses": {}
+      },
+      "requests": 0,
+      "unauthenticated_requests": 0,
+      "requested_range_bytes": 0,
+      "body_bytes": 0,
+      "unknown_body_count": 0,
+      "content_range_mismatches": 0
+    },
+    "failure_stage": "browser_load_httpfs",
+    "failure_category": "unexpected_error"
+  }
+},
   "not_accepted": [
     "Complete DBW logical-table access",
     "1,000-row production preview",

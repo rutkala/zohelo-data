@@ -45,6 +45,7 @@ const { parquet, multiParquets } = await (async () => {
 })();
 
 const events = [];
+const extensionRequests = [];
 const cors = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, HEAD, OPTIONS",
@@ -114,7 +115,20 @@ try {
   await vite.listen();
   const appUrl = vite.resolvedUrls.local[0];
   browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const context = await browser.newContext();
+  context.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin !== "https://extensions.duckdb.org") return;
+    extensionRequests.push({ origin: url.origin, path: url.pathname, method: request.method(),
+      authorizationPresent: !!request.headers().authorization, status: null });
+  });
+  context.on("response", (response) => {
+    const url = new URL(response.url());
+    if (url.origin !== "https://extensions.duckdb.org") return;
+    const pending = extensionRequests.findLast((request) => request.path === url.pathname && request.status === null);
+    if (pending) pending.status = response.status();
+  });
+  const page = await context.newPage();
   stage = "loading_browser_worker";
   await page.goto(`${appUrl}scripts/fixtures/lazy-http-probe.html`);
   await page.waitForFunction(() => window.lazyHttpProbeReady === true, undefined, { timeout: 60_000 });
@@ -190,14 +204,19 @@ try {
   if (result.multiLimit !== 1000 || result.multiCount !== multiFileRows * 5 ||
       result.multiFiltered !== multiFileRows * 2)
     throw new Error("multi_file_query_result_mismatch");
+  if (!extensionRequests.some((request) => request.path.endsWith("/httpfs.duckdb_extension.wasm")) ||
+      extensionRequests.some((request) => request.authorizationPresent))
+    throw new Error("httpfs_extension_request_unverified");
   console.log(JSON.stringify({ result: "pass", package: `@duckdb/duckdb-wasm@${duckdbWasmVersion}`,
     parquetBytes: parquet.length, rows: rowCount, protected: summaries,
+    extensionRequests,
     multiFile: { files: multiParquets.length, totalBytes: multiTotalBytes, rows: multiFileRows * 5,
       scenarios: multiScenarios },
     unauthenticatedStatuses: protectedEvents.filter((event) => event.path.endsWith("unauthenticated.parquet")).map((event) => event.status),
     public: { requests: publicEvents.length, bearerHeaders: publicEvents.filter((event) => event.authorization).length } }));
 } catch (error) {
   console.error(JSON.stringify({ result: "fail", stage, category: error instanceof Error ? error.message.replaceAll(bearer, "[fixture-token]").replaceAll(/https?:\/\/[^\s]+/g, "[url]").slice(0, 160) : "unknown",
+    extensionRequests,
     requests: events.map(({ origin, method, status, range, bytes }) => ({ origin, method, status, ranged: !!range, bytes })) }));
   process.exitCode = 1;
 } finally {

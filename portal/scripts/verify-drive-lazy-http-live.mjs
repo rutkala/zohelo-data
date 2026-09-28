@@ -13,9 +13,13 @@ const rootId = process.env.DRIVE_ROOT_ID;
 const productionRootId = "1b9ucISOOUXQd6Ku-6qp6g373w9HJ2WOf";
 const sourceId = "gus_dbw_retained_bronze";
 const driveOrigin = "https://www.googleapis.com";
-// The pinned @duckdb/duckdb-wasm@1.33.1-dev64.0 reports DuckDB v1.5.5 on
-// wasm_eh. LOAD httpfs may fetch this signed upstream extension on demand.
-const httpfsExtensionUrl = "https://extensions.duckdb.org/duckdb-wasm/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm";
+// The pinned @duckdb/duckdb-wasm@1.33.1-dev64.0 browser probe observed these
+// exact unauthenticated GETs for DuckDB v1.5.5 on wasm_eh.
+const extensionOrigin = "https://extensions.duckdb.org";
+const extensionUrls = new Map([
+  [`${extensionOrigin}/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm`, "httpfs"],
+  [`${extensionOrigin}/v1.5.5/wasm_eh/parquet.duckdb_extension.wasm`, "parquet"],
+]);
 const duckdbWasmVersion = JSON.parse(readFileSync(new URL("../node_modules/@duckdb/duckdb-wasm/package.json", import.meta.url))).version;
 const maxMetadataBytes = 8 * 1024 * 1024;
 const minPartBytes = 2 * 1024 * 1024;
@@ -44,6 +48,7 @@ const receipt = { format_version: 1, status: "failed", expected_git_sha: expecte
   post_metadata_unchanged: false,
   head: null, revision: null, browser_http: { head: {}, revision: {}, blocked: 0,
     blocked_categories: {}, httpfs_extension: { requests: 0, statuses: {} },
+    parquet_extension: { requests: 0, statuses: {} },
     requests: 0, unauthenticated_requests: 0, requested_range_bytes: 0,
     body_bytes: 0, unknown_body_count: 0, content_range_mismatches: 0 } };
 let stage = "oauth";
@@ -291,19 +296,20 @@ try {
       if (request.headers().authorization) return block(route, "fixture_authorization");
       return route.continue();
     }
-    if (url.href === httpfsExtensionUrl) {
+    const extension = extensionUrls.get(url.href);
+    if (extension) {
       if (request.method() !== "GET" || request.headers().authorization)
-        return block(route, "httpfs_extension_invalid_request");
-      receipt.browser_http.httpfs_extension.requests++;
-      if (receipt.browser_http.httpfs_extension.requests > 1)
-        return block(route, "httpfs_extension_request_limit");
+        return block(route, "extension_invalid_request");
+      const metrics = receipt.browser_http[`${extension}_extension`];
+      metrics.requests++;
+      if (metrics.requests > 1) return block(route, "extension_request_limit");
       return route.continue();
     }
     const kind = allowed.get(url.href);
     const method = request.method();
     if (!kind || !["GET", "HEAD", "OPTIONS"].includes(method)) {
       if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") attemptedWrite = true;
-      return block(route, url.origin === new URL(httpfsExtensionUrl).origin ? "other_extension_url" :
+      return block(route, url.origin === extensionOrigin ? "other_extension_url" :
         url.origin === driveOrigin ? "unscoped_drive_url" : "other_origin_or_method");
     }
     if (++receipt.browser_http.requests > maxBrowserRequests || fullGetSeen) {
@@ -327,9 +333,10 @@ try {
   });
   const page = await context.newPage();
   page.on("response", (response) => {
-    if (response.url() === httpfsExtensionUrl) {
+    const extension = extensionUrls.get(response.url());
+    if (extension) {
       const key = `get_${response.status()}`;
-      const statuses = receipt.browser_http.httpfs_extension.statuses;
+      const statuses = receipt.browser_http[`${extension}_extension`].statuses;
       statuses[key] = (statuses[key] ?? 0) + 1;
       return;
     }

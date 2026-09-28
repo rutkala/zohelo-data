@@ -1,0 +1,126 @@
+{
+  "date": "2026-09-28",
+  "scope": "Synthetic Chromium transport and SQL feasibility; production portal unchanged",
+  "pr": 202,
+  "head_sha": "63ba1bff292b6047d8e869257d49e2d19a6bae94",
+  "merged_sha": "fbdf31edb8d0f140356fca68faf6c40d5b2b4530",
+  "run_id": 36406485967,
+  "job_id": 108876347238,
+  "measurement": {
+    "result": "pass",
+    "package": "@duckdb/duckdb-wasm@1.33.1-dev64.0",
+    "parquetBytes": 9067817,
+    "rows": 250000,
+    "protected": {
+      "count": {
+        "requests": 3,
+        "rangeGets": 1,
+        "bytes": 16384
+      },
+      "projection": {
+        "requests": 28,
+        "rangeGets": 26,
+        "bytes": 1018661
+      },
+      "filter": {
+        "requests": 4,
+        "rangeGets": 2,
+        "bytes": 58158
+      }
+    },
+    "multiFile": {
+      "files": 5,
+      "totalBytes": 9075465,
+      "rows": 250000,
+      "scenarios": {
+        "limit": {
+          "bind": {
+            "requests": 3,
+            "heads": 1,
+            "rangeGets": 1,
+            "bytes": 16384,
+            "filesRequested": 1
+          },
+          "query": {
+            "requests": 14,
+            "heads": 5,
+            "rangeGets": 5,
+            "bytes": 437510,
+            "filesRequested": 5
+          },
+          "totalBytes": 453894
+        },
+        "count": {
+          "bind": {
+            "requests": 3,
+            "heads": 1,
+            "rangeGets": 1,
+            "bytes": 16384,
+            "filesRequested": 1
+          },
+          "query": {
+            "requests": 13,
+            "heads": 5,
+            "rangeGets": 4,
+            "bytes": 65536,
+            "filesRequested": 5
+          },
+          "totalBytes": 81920
+        },
+        "filter": {
+          "bind": {
+            "requests": 3,
+            "heads": 1,
+            "rangeGets": 1,
+            "bytes": 16384,
+            "filesRequested": 1
+          },
+          "query": {
+            "requests": 23,
+            "heads": 5,
+            "rangeGets": 14,
+            "bytes": 66066,
+            "filesRequested": 5
+          },
+          "totalBytes": 82450
+        }
+      }
+    },
+    "unauthenticatedStatuses": [
+      401,
+      401
+    ],
+    "public": {
+      "requests": 2,
+      "bearerHeaders": 0
+    }
+  },
+  "interpretation": [
+    "The complete five-file relation supports an unfiltered 1000-row preview and exact complete and multi-indicator counts.",
+    "Binding reads one file; all scenarios subsequently touch metadata for all five files.",
+    "Preview transfer is about 5% of all fixture bytes, not proof of avoiding metadata requests or real Drive latency.",
+    "No production loader, publication, retention setting or integrity contract changed."
+  ],
+  "extension_diagnostic": {
+    "run_id": 36407201234,
+    "job_id": 108878686286,
+    "head_sha": "6d5926f4de2cf61ea3210e7e9ff3299ce213f20d",
+    "result": "pass",
+    "requests": [
+      {
+        "origin": "https://extensions.duckdb.org",
+        "path": "/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm",
+        "method": "GET",
+        "authorizationPresent": false,
+        "status": 200
+      },
+      {
+        "origin": "https://extensions.duckdb.org",
+        "path": "/v1.5.5/wasm_eh/parquet.duckdb_extension.wasm",
+        "method": "GET",
+        "authorizationPresent": false,
+        "status": 200
+      }
+    ]
+  }
+}

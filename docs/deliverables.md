@@ -154,6 +154,20 @@ in [run 36402148552](https://github.com/rutkala/zohelo-data/actions/runs/3640214
 with the same measured bytes. It now requires filtered transfer below half of the
 full-column scan and reruns when package manifests or the Node version change.
 
+[PR #202](https://github.com/rutkala/zohelo-data/pull/202), merged at
+`fbdf31edb8d0f140356fca68faf6c40d5b2b4530`, extends the browser probe to five
+same-schema files with distinct indicators, 250,000 rows and 9,075,465 bytes.
+Separate cold URL lists use the same complete membership. The
+[passing run](https://github.com/rutkala/zohelo-data/actions/runs/36406485967)
+at head `63ba1bff292b6047d8e869257d49e2d19a6bae94` measured 453,894 bytes for
+`SELECT * LIMIT 1000`, 81,920 for complete COUNT (250,000), and 82,450 for the
+two-indicator count (100,000), including view binding. Binding touched one file;
+each query subsequently touched metadata for all five. The preview therefore
+read about 5% of fixture bytes, but file-opening/metadata-request costs remain.
+The [multi-file receipt](audits/2026-09-28-duckdb-lazy-multifile.json) preserves
+phase counts and bytes. This proves synthetic query-driven transfer, not current
+Drive latency, whole-table DBW acceptance or a changed integrity contract.
+
 A separate, reviewed `Probe retained DBW lazy Drive reads` workflow was merged in
 [PR #200](https://github.com/rutkala/zohelo-data/pull/200) at
 `fe7ec23ff23bf1dae6469e83ecdccc58815005a0`, after the final data CI retry passed.
@@ -178,6 +192,22 @@ not evidence that Drive rejects authenticated ranges. The
 separate metadata-only inventory: 2,741 parts, 1,550 published indicators and
 879,999,727 declared rows. Its 5,519,834,917 declared bytes describe the current
 portal index, not the earlier native retained readback layout or a fresh recount.
+
+The [second live attempt](https://github.com/rutkala/zohelo-data/actions/runs/36406808518)
+repeated the metadata checks and isolated the failure to `LOAD httpfs`: the
+engine requested a different URL on the official extension host from the exact
+documented path permitted by the harness. That request remained blocked. No
+Drive browser requests or payload reads occurred, so Drive range/revision
+feasibility remains unverified. The next diagnostic must observe the actual
+extension path in the secret-free synthetic run before adjusting the live rule.
+
+The [secret-free diagnostic](https://github.com/rutkala/zohelo-data/actions/runs/36407201234)
+passed at `6d5926f4de2cf61ea3210e7e9ff3299ce213f20d` and observed HTTP 200,
+unauthenticated GETs for both `httpfs` and `parquet` under the actual public
+`https://extensions.duckdb.org/v1.5.5/wasm_eh/` path. The documented extra
+`duckdb-wasm/` segment was not used by the installed engine. The live harness
+can therefore permit those two exact observed files without allowing other
+extensions or forwarding Drive authorization. A live rerun is still required.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
