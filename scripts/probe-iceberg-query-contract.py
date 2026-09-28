@@ -12,11 +12,13 @@ import http.client
 import json
 import os
 import resource
-import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 import duckdb
 
@@ -215,33 +217,24 @@ def query_once(
         con.close()
 
 
-def moto_python(code: str) -> subprocess.CompletedProcess[str]:
-    command = [
-        "docker",
-        "compose",
-        "-f",
-        str(COMPOSE_FILE),
-        "exec",
-        "-T",
-        "moto",
-        "python",
-        "-c",
-        code,
-    ]
-    return subprocess.run(command, check=True, capture_output=True, text=True)
+def object_store_listing() -> list[dict[str, object]]:
+    request = Request("http://127.0.0.1:5000/warehouse?list-type=2")
+    with urlopen(request, timeout=30) as response:
+        payload = response.read()
+    root = ElementTree.fromstring(payload)
+    namespace = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    items: list[dict[str, object]] = []
+    for content in root.findall("s3:Contents", namespace):
+        key = content.findtext("s3:Key", default="", namespaces=namespace)
+        size_text = content.findtext("s3:Size", default="0", namespaces=namespace)
+        items.append({"Key": key, "Size": int(size_text)})
+    return items
 
 
 def object_store_parquet_bytes() -> int:
-    result = moto_python(
-        "import boto3,json; "
-        "c=boto3.client('s3',endpoint_url='http://127.0.0.1:5000',"
-        "aws_access_key_id='admin',aws_secret_access_key='password',region_name='us-east-1'); "
-        "print(json.dumps(c.list_objects_v2(Bucket='warehouse')))"
-    )
-    payload = json.loads(result.stdout)
     total = sum(
         int(item.get("Size", 0))
-        for item in payload.get("Contents", [])
+        for item in object_store_listing()
         if str(item.get("Key", "")).endswith(".parquet")
     )
     if total <= 0:
@@ -254,14 +247,13 @@ def remove_object(s3_path: str) -> None:
     if not s3_path.startswith(prefix):
         raise AssertionError(f"unexpected_data_path:{s3_path}")
     key = s3_path[len(prefix) :]
-    key_literal = json.dumps(key)
-    moto_python(
-        "import boto3; "
-        "c=boto3.client('s3',endpoint_url='http://127.0.0.1:5000',"
-        "aws_access_key_id='admin',aws_secret_access_key='password',region_name='us-east-1'); "
-        f"c.delete_object(Bucket='warehouse',Key={key_literal})"
+    request = Request(
+        "http://127.0.0.1:5000/warehouse/" + quote(key, safe="/"),
+        method="DELETE",
     )
-
+    with urlopen(request, timeout=30) as response:
+        if response.status not in (200, 204):
+            raise AssertionError(f"delete_failed:{response.status}")
 
 def main() -> int:
     writer = make_connection()
