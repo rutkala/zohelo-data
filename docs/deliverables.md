@@ -12,6 +12,15 @@ continues to preserve source-shaped rows; an observations relation does not impl
 that it has already been modeled as a Gold fact table. Existing ingestion schedules
 and the accepted Landing/manual-refresh behavior are outside this increment.
 
+**Owner correction — 28 September, 10:46 CEST: investigate lazy evaluation first.**
+The owner rejected the proposed new server. The earlier conclusion that a 4.7 GB
+DBW relation requires server-side execution was premature: it describes the
+current eager loader, not an inherent limit on querying a larger-than-memory
+dataset. One complete logical relation must remain available while SQL controls
+which files, columns and Parquet row groups are actually read. An indicator filter
+may improve pruning, but must not be a prerequisite for accessing the table.
+No hosting or object-storage decision is required for this feasibility work.
+
 **Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
 manifest identities, physical files and existing SQL references. Current mappings:
@@ -103,9 +112,33 @@ compressed observation bytes. It does not establish complete current-provider
 coverage or native-to-Bronze lineage. The current portal downloads whole files,
 checks SHA-256 and registers memory buffers before executing SQL, under a shared
 512 MiB budget. Even a small LIMIT therefore does not avoid loading the selected
-file set. OPFS database persistence does not change this loader. The current
-[DuckDB-WASM documentation](https://duckdb.org/docs/current/clients/wasm/troubleshoot)
-also states that direct HTTP authentication headers are unsupported.
+file set. OPFS database persistence does not change this loader. This is eager
+transport before a lazily executed SQL view: the query optimizer cannot prevent
+downloads that application code has already performed.
+
+The installed package is `@duckdb/duckdb-wasm` `1.33.1-dev64.0`; its packaged
+engine reports DuckDB `v1.5.5`. The old registered-file HTTP reader lacks general
+authorization headers, but the newer `HTTPWasmClient` includes them. Upstream
+[PR #2191](https://github.com/duckdb/duckdb-wasm/pull/2191), merged on 24 March
+2026, added HTTP secret extra-header support. The troubleshooting page's blanket
+statement about unsupported HTTP authentication is insufficient evidence for this
+newer path. The actual Chromium worker passed the synthetic authenticated-range
+probe in [run 36401687536](https://github.com/rutkala/zohelo-data/actions/runs/36401687536)
+at reviewed head `a43b17ff1b78f19b6d67837ffb6843a82513f789`. A 250,000-row,
+9,067,817-byte Parquet fixture transferred 16,384 bytes for complete COUNT,
+1,018,661 bytes for the full `id` sum, and 58,158 bytes for the filtered count.
+The result includes successful authorization preflight, 206 ranges, rejection
+without a secret and after removal, and no credential leakage to a sibling path
+or other origin. Full-download fallback was disabled.
+
+This uses a temporary scoped `EXTRA_HTTP_HEADERS` secret. The earlier
+`BEARER_TOKEN` option was accepted by SQL but did not reach HTTP requests, producing
+401 responses; the upstream WASM bridge forwards custom headers. A separate first
+attempt stopped at a fixture-directory permission error, corrected before the
+browser test. The [dated receipt](audits/2026-09-28-duckdb-lazy-http.json) keeps these
+attempts and measured evidence. Synthetic success establishes engine feasibility,
+not private Drive, immutable revision access, independent range integrity, or DBW
+complete-table acceptance. No production loader changed in this increment.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
@@ -113,23 +146,43 @@ specific corrective reason or later resolving decision was recovered. Those
 specific approaches remain held; this is not a blanket ban on DBW work, and the
 older publisher hold was superseded by its repaired original-reference route.
 
-A concrete alternative is a native, authenticated, read-only DuckDB query service
+A previously proposed alternative was a native, authenticated, read-only DuckDB query service
 over the existing verified Drive files. The portal already has a `duck-http`
 client, but no DBW query endpoint is deployed or configured. Delivery would still
 require a hosting/access decision, a bounded verified file cache, server-side
 read-only/resource enforcement, and portal routing from the Bronze table to that
-service. This is a design proposal, not a deployed service or a new paid-service
-authorization. GitHub Actions can run native checks; it is not currently an
+service. The owner rejected this proposal; it is not the current implementation
+direction, a deployed service, or a new paid-service authorization. GitHub Actions
+can run native checks; it is not currently an
 interactive SQL endpoint. A complete-table implementation must demonstrate LIMIT,
 exact counts, multi-indicator filters, joins, expiry and changed/missing-file
 behavior before removing the mandatory selector. Naming-only verification must
 explicitly leave this outcome incomplete.
 
-The OpenData people result above shows that this browser limit also affects a
-second full Bronze table. A native query service should support complete pinned
-datasets through the same ordinary SQL experience, with DBW as the first explicit
-acceptance target. The next owner question is whether an existing always-on server
-is available for this service; no host, subscription or access route is selected.
+The OpenData people result above shows that the current eager loader also affects
+a second full Bronze table. The revised direction is to validate the upstream
+authenticated HTTP path and query-driven Parquet reads before another
+infrastructure proposal. [Drive supports partial blob downloads](https://developers.google.com/workspace/drive/api/guides/manage-downloads)
+using `Range`; [DuckDB supports column/filter pushdown](https://duckdb.org/docs/current/data/parquet/overview)
+and [HTTP partial reads](https://duckdb.org/docs/current/core_extensions/httpfs/https).
+Neither capability alone establishes the complete browser integration.
+
+Acceptance for the lazy reader must measure actual transfer bytes and request
+ranges, including metadata/footer reads, and bound its cache and working memory
+separately from total dataset size. Test an unfiltered preview, projection,
+multi-indicator filters, complete counts and joins against the same pinned rows.
+A small LIMIT can stop a simple scan early; a global sort or aggregate may still
+need a large scan. Metadata-only COUNT is an optimization to verify, not a general
+promise or a replacement for ordinary SQL. Credentials must remain scoped to
+approved Drive URLs and be invalidated with the session.
+
+Snapshot/integrity handling remains explicit engineering work. A whole-file
+SHA-256 cannot verify bytes that were never read; Drive-reported checksums and
+before/after version checks do not establish independent per-range verification
+or an atomic cross-range snapshot. Do not silently remove the current protection
+or claim an untested conditional-header guarantee. The bounded browser fixture
+uses synthetic data and a test credential only; no existing rejected adapter,
+production mutation, new host or storage migration is part of that test.
 
 ### WDI scheduled publication incident — 28 September 2026
 

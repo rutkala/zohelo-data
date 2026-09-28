@@ -1,0 +1,38 @@
+name: Probe DuckDB WASM lazy authenticated HTTP
+
+on:
+  pull_request:
+    paths:
+      - 'portal/scripts/verify-duckdb-lazy-http.mjs'
+      - 'portal/scripts/fixtures/lazy-http-probe.*'
+      - 'portal/package.json'
+      - 'portal/package-lock.json'
+      - '.node-version'
+      - '.github/workflows/duckdb-lazy-http-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Probe scoped bearer and lazy Parquet ranges
+        run: node scripts/verify-duckdb-lazy-http.mjs

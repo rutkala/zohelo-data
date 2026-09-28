@@ -1,0 +1,73 @@
+{
+  "format_version": 1,
+  "recorded_at_utc": "2026-09-28T09:10:17Z",
+  "scope": "Synthetic Chromium feasibility of lazy authenticated Parquet reads; not production DBW acceptance",
+  "repository": "rutkala/zohelo-data",
+  "pull_request": 199,
+  "reviewed_head": "a43b17ff1b78f19b6d67837ffb6843a82513f789",
+  "browser_workflow_run": 36401687536,
+  "browser_job": 108860795265,
+  "result": "pass",
+  "package": "@duckdb/duckdb-wasm@1.33.1-dev64.0",
+  "parquetBytes": 9067817,
+  "rows": 250000,
+  "protected": {
+    "count": {
+      "requests": 3,
+      "rangeGets": 1,
+      "bytes": 16384
+    },
+    "projection": {
+      "requests": 28,
+      "rangeGets": 26,
+      "bytes": 1018661
+    },
+    "filter": {
+      "requests": 4,
+      "rangeGets": 2,
+      "bytes": 58158
+    }
+  },
+  "unauthenticatedStatuses": [
+    401,
+    401
+  ],
+  "public": {
+    "requests": 2,
+    "bearerHeaders": 0
+  },
+  "auth_configuration": "Temporary path-scoped HTTP secret with EXTRA_HTTP_HEADERS Authorization; full-download fallback disabled",
+  "failed_attempts": [
+    {
+      "run_id": 36400966199,
+      "head": "804d78cb2f9dff3ea372926fc6263d2c2f1e4045",
+      "category": "fixture_write_permission",
+      "resolution": "Generate fixture in an owned temporary directory and clean it up"
+    },
+    {
+      "run_id": 36401278690,
+      "head": "9271fe96e7b477f25476f1f40b6d40e242fb4f39",
+      "category": "bearer_option_not_forwarded",
+      "observed": "HEAD and ranged GET returned 401 with no authorization preflight after secret creation",
+      "resolution": "Use upstream-supported scoped EXTRA_HTTP_HEADERS and correct Arrow scalar access"
+    }
+  ],
+  "verified": [
+    "Complete synthetic COUNT equals 250000",
+    "Projection sum(id) equals expected full input sum",
+    "Filtered COUNT equals 11",
+    "Partial GET responses are 206 and each scenario transfers less than half the complete file",
+    "Protected reads fail without secret and after DROP SECRET",
+    "Authorization stays within protected path and is absent from sibling path and other origin",
+    "Authorization preflight succeeds"
+  ],
+  "not_established": [
+    "Google Drive transport compatibility",
+    "Complete retained DBW logical-table access",
+    "Current provider coverage",
+    "Snapshot consistency for mutable Drive heads",
+    "Independent cryptographic verification of unread ranges",
+    "Production authentication lifecycle and memory behavior"
+  ],
+  "production_changes": false
+}
