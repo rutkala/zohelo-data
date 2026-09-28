@@ -225,7 +225,6 @@ jobs:
     needs: collect_and_publish
     if: >-
       always() && github.ref == 'refs/heads/main' &&
-      needs.collect_and_publish.result == 'success' &&
       (github.event_name != 'push' || contains(github.event.head_commit.message, '[run-source-campaigns]') || contains(github.event.head_commit.message, '[run-eurostat]'))
     runs-on: ubuntu-latest
     timeout-minutes: 55
