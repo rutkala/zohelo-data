@@ -17,6 +17,13 @@ export interface LakehouseTableLoad {
   layerName: string;
 }
 
+export interface PublishedViewIdentity {
+  layerName: string;
+  viewName: string;
+  oid: string;
+  marker: string;
+}
+
 // File registrations belong to an engine, never to the application globally.
 const registeredFiles = new WeakMap<duckdb.AsyncDuckDB, Set<string>>();
 const defaultDownloadBudgets = new WeakMap<duckdb.AsyncDuckDB, DriveDownloadBudget>();
@@ -30,6 +37,27 @@ const budgetFor = (db: duckdb.AsyncDuckDB) => {
   return budget;
 };
 const pathPart = (value: string) => encodeURIComponent(value).replace(/\*/g, "%2A");
+const viewMarker = () => {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return `zohelo-published-view:v1:${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+};
+
+const markPublishedView = async (
+  conn: duckdb.AsyncDuckDBConnection, layerName: string, viewName: string
+): Promise<PublishedViewIdentity> => {
+  const target = `${sqlEscapeIdentifier(layerName)}.${sqlEscapeIdentifier(viewName)}`;
+  const marker = viewMarker();
+  await conn.query(`COMMENT ON VIEW ${target} IS '${sqlEscapeString(marker)}';`);
+  const result = await conn.query(
+    `SELECT view_oid, comment FROM duckdb_views() WHERE database_name = current_database() ` +
+      `AND schema_name = '${sqlEscapeString(layerName)}' AND view_name = '${sqlEscapeString(viewName)}'`
+  );
+  const rows = result.toArray();
+  if (rows.length !== 1 || rows[0].comment !== marker || rows[0].view_oid === undefined)
+    throw new Error(`Could not establish ownership of published view '${viewName}'.`);
+  return { layerName, viewName, oid: String(rows[0].view_oid), marker };
+};
 
 async function registerFile(
   db: duckdb.AsyncDuckDB,
@@ -73,7 +101,8 @@ async function publishViews(
   conn: duckdb.AsyncDuckDBConnection,
   layerName: string,
   viewName: string,
-  files: string[]
+  files: string[],
+  beforePublish?: () => void | Promise<void>
 ) {
   const target = `${sqlEscapeIdentifier(layerName)}.${sqlEscapeIdentifier(viewName)}`;
   // Use exactly these files. A wildcard can accidentally include an old selection.
@@ -83,11 +112,13 @@ async function publishViews(
     .join(" UNION ALL BY NAME ");
   await conn.query("BEGIN TRANSACTION;");
   try {
+    await beforePublish?.();
     await conn.query(`CREATE SCHEMA IF NOT EXISTS ${sqlEscapeIdentifier(layerName)};`);
     await conn.query(`CREATE OR REPLACE VIEW ${target} AS ${source};`);
+    const identity = await markPublishedView(conn, layerName, viewName);
     await conn.query(`CREATE OR REPLACE VIEW active_layer AS SELECT * FROM ${target};`);
     await conn.query("COMMIT;");
-    return target;
+    return { target, identity };
   } catch (error) {
     await conn.query("ROLLBACK;").catch(() => undefined);
     throw error;
@@ -96,7 +127,8 @@ async function publishViews(
 
 async function publishTableViews(
   conn: duckdb.AsyncDuckDBConnection,
-  tables: Array<{ datasetName: string; layerName: string; files: string[] }>
+  tables: Array<{ datasetName: string; layerName: string; files: string[] }>,
+  beforePublish?: () => void | Promise<void>
 ) {
   const targets = tables.map(
     ({ datasetName, layerName }) =>
@@ -104,6 +136,8 @@ async function publishTableViews(
   );
   await conn.query("BEGIN TRANSACTION;");
   try {
+    await beforePublish?.();
+    const identities: PublishedViewIdentity[] = [];
     for (let index = 0; index < tables.length; index += 1) {
       const table = tables[index];
       const target = targets[index];
@@ -112,13 +146,14 @@ async function publishTableViews(
         .join(" UNION ALL BY NAME ");
       await conn.query(`CREATE SCHEMA IF NOT EXISTS ${sqlEscapeIdentifier(table.layerName)};`);
       await conn.query(`CREATE OR REPLACE VIEW ${target} AS ${source};`);
+      identities.push(await markPublishedView(conn, table.layerName, table.datasetName));
     }
     // Keep the explorer's existing active-layer affordance useful after a grouped load.
     await conn.query(
       `CREATE OR REPLACE VIEW active_layer AS SELECT * FROM ${targets[targets.length - 1]};`
     );
     await conn.query("COMMIT;");
-    return targets;
+    return { targets, identities };
   } catch (error) {
     await conn.query("ROLLBACK;").catch(() => undefined);
     throw error;
@@ -150,7 +185,7 @@ export const loadTableIntoDuckDB = async (
   token: string,
   layerName: string,
   downloadBudget?: DriveDownloadBudget
-): Promise<{ loadedFiles: string[]; queryTarget: string }> => {
+): Promise<{ loadedFiles: string[]; queryTarget: string; identity: PublishedViewIdentity }> => {
   if (!token) throw new Error("Sign in to Google Drive before loading data.");
   const files = await filesForTable(
     { datasetName, tableFolderId, files: existingFiles, layerName },
@@ -159,8 +194,8 @@ export const loadTableIntoDuckDB = async (
   const activeBudget = downloadBudget ?? budgetFor(db);
   const loadedFiles: string[] = [];
   for (const file of files) loadedFiles.push(await registerFile(db, file, token, activeBudget));
-  const queryTarget = await publishViews(conn, layerName, datasetName, loadedFiles);
-  return { loadedFiles, queryTarget };
+  const { target: queryTarget, identity } = await publishViews(conn, layerName, datasetName, loadedFiles);
+  return { loadedFiles, queryTarget, identity };
 };
 
 /**
@@ -174,7 +209,7 @@ export const loadTablesIntoDuckDB = async (
   token: string,
   downloadBudget?: DriveDownloadBudget,
   beforePublish?: () => void | Promise<void>
-): Promise<{ loadedFiles: string[]; queryTargets: string[] }> => {
+): Promise<{ loadedFiles: string[]; queryTargets: string[]; identities: PublishedViewIdentity[] }> => {
   if (!token) throw new Error("Sign in to Google Drive before loading data.");
   if (tables.length === 0) throw new Error("Choose at least one dataset to prepare a SQL query.");
   const targets = new Set<string>();
@@ -198,9 +233,8 @@ export const loadTablesIntoDuckDB = async (
     }
     loadedTables.push({ datasetName: table.datasetName, layerName: table.layerName, files: paths });
   }
-  await beforePublish?.();
-  const queryTargets = await publishTableViews(conn, loadedTables);
-  return { loadedFiles, queryTargets };
+  const { targets: queryTargets, identities } = await publishTableViews(conn, loadedTables, beforePublish);
+  return { loadedFiles, queryTargets, identities };
 };
 
 export const loadFileIntoDuckDB = async (
@@ -211,12 +245,11 @@ export const loadFileIntoDuckDB = async (
   token: string,
   downloadBudget?: DriveDownloadBudget,
   beforePublish?: () => void | Promise<void>
-): Promise<{ filePath: string; queryTarget: string }> => {
+): Promise<{ filePath: string; queryTarget: string; identity: PublishedViewIdentity }> => {
   const filePath = await registerFile(db, file, token, downloadBudget ?? budgetFor(db));
-  await beforePublish?.();
   // A file preview must not replace the view for the complete dataset.
-  const queryTarget = await publishViews(conn, file.layer, `${tableName}__file_${file.id}`, [
+  const { target: queryTarget, identity } = await publishViews(conn, file.layer, `${tableName}__file_${file.id}`, [
     filePath,
-  ]);
-  return { filePath, queryTarget };
+  ], beforePublish);
+  return { filePath, queryTarget, identity };
 };

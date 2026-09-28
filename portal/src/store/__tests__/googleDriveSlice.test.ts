@@ -49,6 +49,9 @@ vi.mock("@/services/googleDrive", async (original) => ({
 }));
 
 const target = '"02_bronze"."rates"';
+const fixtureIdentity = (viewName = "rates", layerName = "02_bronze") => ({
+  viewName, layerName, oid: "1", marker: "fixture-published-view",
+});
 function makeStore() {
   const store = createStore<DuckStoreState>()(
     devtools(
@@ -57,7 +60,10 @@ function makeStore() {
           currentSession: {
             local: {
               db: {},
-              connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) },
+              connection: { query: vi.fn().mockImplementation(async (sql: string) => ({
+                toArray: () => sql.includes("duckdb_views()")
+                  ? [{ view_oid: "1", comment: "fixture-published-view" }] : [],
+              })) },
             },
           },
           fetchDatabasesAndTablesInfo: vi.fn().mockResolvedValue(undefined),
@@ -102,15 +108,17 @@ function makeStore() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(loadTableIntoDuckDB).mockResolvedValue({ loadedFiles: ["file"], queryTarget: target });
-  vi.mocked(loadFileIntoDuckDB).mockResolvedValue({
-    filePath: "file",
-    queryTarget: target + "__file",
-  });
-  vi.mocked(loadTablesIntoDuckDB).mockResolvedValue({
-    loadedFiles: ["file"],
-    queryTargets: [target],
-  });
+  vi.mocked(loadTableIntoDuckDB).mockImplementation(async (_db, _conn, name, _folder, _files, _token, layer) => ({
+    loadedFiles: ["file"], queryTarget: target, identity: fixtureIdentity(name, layer),
+  }));
+  vi.mocked(loadFileIntoDuckDB).mockImplementation(async (_db, _conn, name, file) => ({
+    filePath: "file", queryTarget: target + "__file",
+    identity: fixtureIdentity(`${name}__file_${file.id}`),
+  }));
+  vi.mocked(loadTablesIntoDuckDB).mockImplementation(async (_db, _conn, tables) => ({
+    loadedFiles: ["file"], queryTargets: [target],
+    identities: tables.map((table) => fixtureIdentity(table.datasetName, table.layerName)),
+  }));
   vi.mocked(resolvePublishedTableReferences).mockResolvedValue([]);
   vi.mocked(resolveReleaseCatalog).mockResolvedValue({ kind: "legacy" });
   vi.mocked(resolveLandingCatalog).mockResolvedValue({
@@ -338,7 +346,7 @@ describe("native Landing request fencing", () => {
 describe("Drive selection state", () => {
   it("publishes the selected dataset and exact SQL target only after loading succeeds", async () => {
     const store = makeStore();
-    let complete!: (value: { loadedFiles: string[]; queryTarget: string }) => void;
+    let complete!: (value: Awaited<ReturnType<typeof loadTableIntoDuckDB>>) => void;
     vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
       new Promise((resolve) => {
         complete = resolve;
@@ -346,7 +354,7 @@ describe("Drive selection state", () => {
     );
     const pending = store.getState().selectLakehouseDataset("02_bronze", "rates");
     expect(store.getState().activeLakehouseDataset).toBeNull();
-    complete({ loadedFiles: ["file"], queryTarget: target });
+    complete({ loadedFiles: ["file"], queryTarget: target, identity: fixtureIdentity() });
     expect(await pending).toBe(target);
     expect(store.getState().activeLakehouseDataset).toBe("rates");
     expect(store.getState().activeLakehouseLayer).toBe("02_bronze");
@@ -427,7 +435,7 @@ describe("Drive selection state", () => {
 
   it("serializes rapid selections", async () => {
     const store = makeStore();
-    let complete!: (value: { loadedFiles: string[]; queryTarget: string }) => void;
+    let complete!: (value: Awaited<ReturnType<typeof loadTableIntoDuckDB>>) => void;
     vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
       new Promise((resolve) => {
         complete = resolve;
@@ -436,13 +444,13 @@ describe("Drive selection state", () => {
     const first = store.getState().selectLakehouseDataset("02_bronze", "rates");
     expect(await store.getState().selectLakehouseDataset("02_bronze", "rates")).toBeNull();
     expect(loadTableIntoDuckDB).toHaveBeenCalledTimes(1);
-    complete({ loadedFiles: ["file"], queryTarget: target });
+    complete({ loadedFiles: ["file"], queryTarget: target, identity: fixtureIdentity() });
     expect(await first).toBe(target);
   });
 
   it("ignores a completed load if Drive was disconnected while waiting", async () => {
     const store = makeStore();
-    let complete!: (value: { loadedFiles: string[]; queryTarget: string }) => void;
+    let complete!: (value: Awaited<ReturnType<typeof loadTableIntoDuckDB>>) => void;
     vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
       new Promise((resolve) => {
         complete = resolve;
@@ -450,7 +458,7 @@ describe("Drive selection state", () => {
     );
     const pending = store.getState().selectLakehouseDataset("02_bronze", "rates");
     store.getState().disconnectGoogleDrive();
-    complete({ loadedFiles: ["file"], queryTarget: target });
+    complete({ loadedFiles: ["file"], queryTarget: target, identity: fixtureIdentity() });
     expect(await pending).toBeNull();
     expect(store.getState().activeLakehouseDataset).toBeNull();
     expect(store.getState().lakehouseStatusMessage).toMatch(/Disconnected/);
@@ -683,14 +691,48 @@ describe("immutable release selection", () => {
     await expect(store.getState().refreshLakehouseCatalog()).resolves.toBeUndefined();
 
     expect(connection.query).toHaveBeenCalledWith(
-      'DROP VIEW IF EXISTS "01_landing"."world_bank_wdi_responses";'
+      'DROP VIEW "01_landing"."world_bank_wdi_responses";'
     );
     expect(store.getState().lakehouseRelease).toMatchObject({
       kind: "release",
       manifest: { release_id: "release-1" },
     });
     expect(store.getState().activeLakehouseDataset).toBeNull();
-    expect(loadTableIntoDuckDB).toHaveBeenCalledTimes(1);
+    expect(loadTablesIntoDuckDB).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a replaced Landing snapshot view and rejects its reuse", async () => {
+    const store = makeStore();
+    vi.mocked(resolveReleaseCatalog).mockResolvedValue(release("release-1"));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(landing("snapshot-1"));
+    await store.getState().refreshLakehouseCatalog();
+    await store.getState().selectLakehouseDataset("01_landing", "world_bank_wdi_responses");
+    const connection = (store.getState().currentSession as unknown as {
+      local: { connection: { query: ReturnType<typeof vi.fn> } };
+    }).local.connection;
+    connection.query.mockClear();
+    connection.query.mockImplementation(async (sql: string) => ({
+      toArray: () => sql.includes("duckdb_views()")
+        ? [{ view_oid: "2", comment: "user replacement" }]
+        : sql.includes("information_schema.tables")
+          ? [{ table_schema: "01_landing", table_name: "world_bank_wdi_responses" }] : [],
+    }));
+    vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(landing("snapshot-2"));
+
+    await expect(store.getState().refreshLakehouseCatalog()).rejects.toThrow(/was replaced/);
+    expect(connection.query.mock.calls.some(([sql]) => String(sql).startsWith("DROP VIEW"))).toBe(false);
+    expect(connection.query).toHaveBeenCalledWith("ROLLBACK;");
+    expect(store.getState().lakehouseLanding?.snapshots[0].fingerprint).toContain("snapshot-1");
+    expect(await store.getState().selectLakehouseDataset(
+      "01_landing", "world_bank_wdi_responses"
+    )).toBeNull();
+    expect(store.getState().lakehouseStatusMessage).toContain("already exists");
+    vi.mocked(resolvePublishedTableReferences).mockResolvedValueOnce([{
+      datasetName: "world_bank_wdi_responses", layerName: "01_landing", files: [],
+    }]);
+    await expect(store.getState().preparePublishedTablesForQuery(
+      'SELECT * FROM "01_landing"."world_bank_wdi_responses"'
+    )).rejects.toThrow(/already exists/);
   });
 
   it("invalidates a changed retained DBW view and clears its badge while preserving NBP", async () => {
@@ -719,22 +761,23 @@ describe("immutable release selection", () => {
       toArray: () =>
         sql.startsWith("SELECT table_name")
           ? [{ table_name: "gus_dbw_observations__indicator_1" }, { table_name: "rates" }]
-          : [],
+          : sql.includes("duckdb_views()")
+            ? [{ view_oid: "1", comment: "fixture-published-view" }] : [],
     }));
     vi.mocked(resolveLandingCatalog).mockResolvedValueOnce(retainedDbwLanding("snapshot-2"));
 
     await store.getState().refreshLakehouseCatalog();
 
     expect(connection.query).toHaveBeenCalledWith(
-      'DROP VIEW IF EXISTS "02_bronze"."gus_dbw_observations__indicator_1";'
+      'DROP VIEW "02_bronze"."gus_dbw_observations__indicator_1";'
     );
     expect(connection.query).toHaveBeenCalledWith(
-      'DROP VIEW IF EXISTS "02_bronze"."gus_dbw_observations__indicator_1__file_snapshot-1-part";'
+      'DROP VIEW "02_bronze"."gus_dbw_observations__indicator_1__file_snapshot-1-part";'
     );
     expect(connection.query).toHaveBeenCalledWith(
-      'DROP VIEW IF EXISTS "02_bronze"."br_dbw_observations__indicator_1";'
+      'DROP VIEW "02_bronze"."br_dbw_observations__indicator_1";'
     );
-    expect(connection.query).not.toHaveBeenCalledWith('DROP VIEW IF EXISTS "02_bronze"."rates";');
+    expect(connection.query).not.toHaveBeenCalledWith('DROP VIEW "02_bronze"."rates";');
     expect(store.getState().activeLakehouseDataset).toBeNull();
     expect(store.getState().lakehouseRelease).toMatchObject({
       kind: "release",
@@ -782,7 +825,7 @@ describe("immutable release selection", () => {
     const store = makeStore();
     vi.mocked(resolveReleaseCatalog).mockResolvedValueOnce(release("release-1"));
     await store.getState().refreshLakehouseCatalog();
-    let complete!: (value: { loadedFiles: string[]; queryTarget: string }) => void;
+    let complete!: (value: Awaited<ReturnType<typeof loadTableIntoDuckDB>>) => void;
     vi.mocked(loadTableIntoDuckDB).mockReturnValueOnce(
       new Promise((resolve) => (complete = resolve))
     );
@@ -796,7 +839,7 @@ describe("immutable release selection", () => {
         local: { db: {}, connection: { query: vi.fn().mockResolvedValue({ toArray: () => [] }) } },
       },
     } as unknown as Partial<DuckStoreState>);
-    complete({ loadedFiles: ["file"], queryTarget: target });
+    complete({ loadedFiles: ["file"], queryTarget: target, identity: fixtureIdentity() });
     await expect(pending).resolves.toBeNull();
 
     // Switching back to the engine where the request published its view remains blocked.
@@ -1086,7 +1129,7 @@ describe("preparing a multi-table SQL query", () => {
   it("does not open SQL when Drive authorization changes during the grouped load", async () => {
     const store = makeStore();
     configurePinnedGoldRelease(store);
-    let complete!: (result: { loadedFiles: string[]; queryTargets: string[] }) => void;
+    let complete!: (result: Awaited<ReturnType<typeof loadTablesIntoDuckDB>>) => void;
     vi.mocked(loadTablesIntoDuckDB).mockReturnValueOnce(
       new Promise((resolve) => (complete = resolve))
     );
@@ -1099,7 +1142,7 @@ describe("preparing a multi-table SQL query", () => {
     store.setState({
       googleAuth: { token: "new-token", isAuthenticated: true, authSource: "manual", error: null },
     });
-    complete({ loadedFiles: ["file"], queryTargets: [target] });
+    complete({ loadedFiles: ["file"], queryTargets: [target], identities: [fixtureIdentity()] });
 
     await expect(pending).resolves.toBeNull();
     expect(store.getState().createTab).not.toHaveBeenCalled();
@@ -1339,6 +1382,7 @@ describe("lazy published-query loading", () => {
     vi.mocked(loadTablesIntoDuckDB).mockResolvedValue({
       loadedFiles: ["/google-drive/dbw-platform-observations"],
       queryTargets: ['"02_bronze"."br_dbw_observations"'],
+      identities: [fixtureIdentity("br_dbw_observations")],
     });
 
     await expect(
@@ -1417,12 +1461,13 @@ describe("lazy published-query loading", () => {
       children: [{ type: "table", name: "gus_bdl_variables", id: null,
         layer: "02_bronze", expanded: false, loaded: true, children: [file] }],
     }] } as unknown as Partial<DuckStoreState>);
-    let finish!: (value: { loadedFiles: string[]; queryTargets: string[] }) => void;
+    let finish!: (value: Awaited<ReturnType<typeof loadTablesIntoDuckDB>>) => void;
     vi.mocked(loadTablesIntoDuckDB).mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
     const selecting = store.getState().selectLakehouseDataset("02_bronze", "gus_bdl_variables");
     await vi.waitFor(() => expect(loadTablesIntoDuckDB).toHaveBeenCalledTimes(1));
     store.getState().disconnectGoogleDrive();
-    finish({ loadedFiles: ["/old"], queryTargets: ['"02_bronze"."gus_bdl_variables"'] });
+    finish({ loadedFiles: ["/old"], queryTargets: ['"02_bronze"."gus_bdl_variables"'],
+      identities: [fixtureIdentity("gus_bdl_variables")] });
     await selecting;
     const connection = (store.getState().currentSession as unknown as {
       local: { connection: { query: ReturnType<typeof vi.fn> } };
