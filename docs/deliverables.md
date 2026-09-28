@@ -245,9 +245,14 @@ blocked both full-file fallbacks. Zero Drive payload bytes were read, both SQL
 queries failed, and post-run metadata was unchanged. The separately dispatched
 [duplicate read-only run](https://github.com/rutkala/zohelo-data/actions/runs/36408968335)
 produced the identical sanitized artifact digest and adds no independent evidence.
-No further probe is authorized by this result alone. Efficient direct Drive
-lazy reads are not established; the specifically held relay/adapter approaches
-remain held and the owner-rejected query-server proposal is not revived.
+This establishes a concrete compatibility blocker for the installed direct HTTP
+path: the existing fallback settings did not prevent the client's attempted full
+GET, and no supported known-size override or metadata-cache seeding API was
+identified. Any next probe should test a specific supported fix rather than
+repeat this configuration. This finding does not establish that Drive refuses
+bounded ranges. Efficient direct Drive lazy reads are not established; the
+specifically held relay/adapter approaches remain held and the owner-rejected
+query-server proposal is not revived.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No

@@ -36,8 +36,16 @@ Shared instructions for coding work in this repository. Run commands from the re
   or stale troubleshooting text. The synthetic Chromium probe passed with
   temporary scoped `EXTRA_HTTP_HEADERS`; `BEARER_TOKEN` alone was accepted but
   did not send Authorization. A 9,067,817-byte fixture required 16,384 bytes for
-  COUNT, 1,018,661 for a full column sum and 58,158 for a filtered count. Actual
-  Drive behavior and full DBW access remain unverified. Keep the specifically
+  COUNT, 1,018,661 for a full column sum and 58,158 for a filtered count. A
+  five-file 250,000-row fixture returned the ordinary 1,000-row preview using
+  453,894 of 9,075,465 bytes; complete and multi-indicator counts passed, but
+  query execution touched metadata for all five files. The live Drive probe
+  reached authenticated media HEAD for current and revision URLs, both without
+  Content-Length; this client then attempted GET without Range. The guard
+  blocked both full downloads, so real partial reads and complete DBW access
+  remain unverified. No supported known-size override was identified in the
+  installed direct HTTP path. This does not establish that Drive refuses ranges.
+  Keep the specifically
   rejected ServiceWorker relay and disk-backed
   adapter on hold; the upstream HTTP client is a distinct path. Preserve snapshot
   and byte-integrity guarantees rather than silently dropping whole-file checks.
