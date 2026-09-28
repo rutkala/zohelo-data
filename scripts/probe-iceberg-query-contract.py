@@ -8,6 +8,9 @@ read production Drive data or create an external service.
 
 from __future__ import annotations
 
+import datetime
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -242,14 +245,78 @@ def object_store_parquet_bytes() -> int:
     return total
 
 
+def _sigv4_key(secret: str, date: str, region: str, service: str) -> bytes:
+    date_key = hmac.new(
+        ("AWS4" + secret).encode(),
+        date.encode(),
+        hashlib.sha256,
+    ).digest()
+    region_key = hmac.new(date_key, region.encode(), hashlib.sha256).digest()
+    service_key = hmac.new(region_key, service.encode(), hashlib.sha256).digest()
+    return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+
 def remove_object(s3_path: str) -> None:
     prefix = "s3://warehouse/"
     if not s3_path.startswith(prefix):
         raise AssertionError(f"unexpected_data_path:{s3_path}")
+
     key = s3_path[len(prefix) :]
+    canonical_uri = "/warehouse/" + quote(key, safe="/~")
+    host = "127.0.0.1:5000"
+    region = "us-east-1"
+    service = "s3"
+    access_key = "admin"
+    secret_key = "password"
+    now = datetime.datetime.now(datetime.UTC)
+    amz_date = now.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = now.strftime("%Y%m%d")
+    payload_hash = hashlib.sha256(b"").hexdigest()
+
+    canonical_headers = (
+        f"host:{host}\n"
+        f"x-amz-content-sha256:{payload_hash}\n"
+        f"x-amz-date:{amz_date}\n"
+    )
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(
+        [
+            "DELETE",
+            canonical_uri,
+            "",
+            canonical_headers,
+            signed_headers,
+            payload_hash,
+        ]
+    )
+    credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
+    string_to_sign = "\n".join(
+        [
+            "AWS4-HMAC-SHA256",
+            amz_date,
+            credential_scope,
+            hashlib.sha256(canonical_request.encode()).hexdigest(),
+        ]
+    )
+    signature = hmac.new(
+        _sigv4_key(secret_key, date_stamp, region, service),
+        string_to_sign.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    authorization = (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+
     request = Request(
-        "http://127.0.0.1:5000/warehouse/" + quote(key, safe="/"),
+        f"http://{host}{canonical_uri}",
         method="DELETE",
+        headers={
+            "Authorization": authorization,
+            "Host": host,
+            "x-amz-content-sha256": payload_hash,
+            "x-amz-date": amz_date,
+        },
     )
     with urlopen(request, timeout=30) as response:
         if response.status not in (200, 204):
