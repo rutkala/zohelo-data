@@ -13,6 +13,8 @@ window.runLazyHttpProbe = async ({ protectedBase, publicUrl, bearer }) => {
     await db.open({ filesystem: { allowFullHTTPReads: false, forceFullHTTPReads: false } });
     connection = await db.connect();
     await connection.query("LOAD httpfs");
+    await connection.query("SET auto_fallback_to_full_download=false");
+    await connection.query("SET force_download=false");
 
     // Before the secret exists, the protected endpoint must reject the engine.
     let unauthenticatedRejected = false;
@@ -24,7 +26,7 @@ window.runLazyHttpProbe = async ({ protectedBase, publicUrl, bearer }) => {
     if (!unauthenticatedRejected) throw new Error("unauthenticated_read_succeeded");
 
     await connection.query(
-      `CREATE SECRET fixture_http (TYPE http, SCOPE ${quote(protectedBase)}, BEARER_TOKEN ${quote(bearer)})`
+      `CREATE TEMPORARY SECRET fixture_http (TYPE http, SCOPE ${quote(protectedBase)}, EXTRA_HTTP_HEADERS MAP {'Authorization': ${quote(`Bearer ${bearer}`)}})`
     );
 
     const count = await connection.query(
@@ -55,7 +57,7 @@ window.runLazyHttpProbe = async ({ protectedBase, publicUrl, bearer }) => {
     }
     if (!afterDropRejected) throw new Error("after_drop_read_succeeded");
 
-    const scalar = (table) => Number(table.toArray()[0].get("n"));
+    const scalar = (table) => Number(table.toArray()[0].n);
     return {
       unauthenticatedRejected,
       count: scalar(count),
