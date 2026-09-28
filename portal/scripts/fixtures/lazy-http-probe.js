@@ -38,6 +38,20 @@ window.runLazyHttpProbe = async ({ protectedBase, publicUrl, bearer }) => {
     const filtered = await connection.query(
       `SELECT count(*) AS n FROM read_parquet(${quote(`${protectedBase}filter.parquet`)}) WHERE id BETWEEN 100 AND 110`
     );
+    const multiUrls = (name) => Array.from({ length: 5 }, (_, index) =>
+      quote(`${protectedBase}multi/${name}/part_${index + 1}.parquet`)).join(", ");
+    const multiView = async (name) => {
+      await window.markLazyPhase(`${name}_bind`);
+      await connection.query(`CREATE VIEW multi_${name} AS SELECT * FROM read_parquet([${multiUrls(name)}], union_by_name=false, hive_partitioning=false)`);
+      await window.markLazyPhase(`${name}_query`);
+    };
+    await multiView("limit");
+    const multiLimit = await connection.query("SELECT * FROM multi_limit LIMIT 1000");
+    await multiView("count");
+    const multiCount = await connection.query("SELECT count(*) AS n FROM multi_count");
+    await multiView("filter");
+    const multiFiltered = await connection.query("SELECT count(*) AS n FROM multi_filter WHERE indicator_id IN (2, 4)");
+    await window.markLazyPhase("multi_done");
     const unscoped = await connection.query(
       `SELECT count(*) AS n FROM read_parquet(${quote(publicUrl)})`
     );
@@ -63,6 +77,9 @@ window.runLazyHttpProbe = async ({ protectedBase, publicUrl, bearer }) => {
       count: scalar(count),
       projection: scalar(projection),
       filtered: scalar(filtered),
+      multiLimit: multiLimit.numRows,
+      multiCount: scalar(multiCount),
+      multiFiltered: scalar(multiFiltered),
       unscoped: scalar(unscoped),
       siblingRejected,
       afterDropRejected,

@@ -25,6 +25,12 @@ Shared instructions for coding work in this repository. Run commands from the re
   query-driven file, column and row-group reads. The current 512 MiB limit is an
   eager download allowance, not proof that the dataset must fit in RAM or needs
   a server. No hosting decision is a prerequisite for this feasibility work.
+- The owner clarified on 28 September at 11:37 CEST that lazy evaluation is
+  primarily for Bronze, with Landing metadata included only where useful and
+  feasible. Expose each complete logical table and generate an ordinary
+  `SELECT * FROM <table> LIMIT 1000` preview. Never require an indicator or
+  physical-part selection before querying; those are optional SQL filters.
+  A transport probe on one file is not acceptance of this user-facing behavior.
 - The installed DuckDB-WASM has a newer HTTP client with scoped HTTP-secret
   support; do not infer its capabilities from the older registered-file reader
   or stale troubleshooting text. The synthetic Chromium probe passed with
