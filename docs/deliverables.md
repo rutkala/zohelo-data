@@ -690,13 +690,36 @@ fresh read-only runner. The downstream job waits for the Eurostat intake job but
 does not require that job to succeed, so retained accepted receipts can advance
 during a provider or intake failure.
 
-This is merged code and fixture/CI evidence; production execution remains open. The
-merge-triggered Eurostat workflow was skipped by the existing explicit push guard,
-so no production Bronze output or checkpoint from this campaign is claimed, and the
-current progressive release still models only three datasets. Complete
-source-shaped delivery remains open until the serialized writer and fresh verifier
-pass in production, all retained current distributions are processed and audited,
-and fresh Silver/Gold/semantic consumers verify the published scope.
+The first current-main production execution is
+[run 36388542439](https://github.com/rutkala/zohelo-data/actions/runs/36388542439),
+started at 08:51:24 Europe/Warsaw on 28 September. Landing collection and both
+fresh Landing restores passed. The serialized retained-Bronze writer then committed
+four immutable source-shaped outputs: `AACT_ALI01`, `AACT_ALI01_R`,
+`AACT_ALI02` and `AACT_ALI02_R`. The durable pointer advanced at 09:29:58
+Europe/Warsaw to exactly 10 source receipts (4 data and 6 non-data), 41,976
+observation cells and 1,715,018 output bytes. Metadata and immutable-state reads
+rebound those totals to the four output objects; they did not reread every Parquet
+payload.
+
+The next distribution remained inside one atomic decode until GitHub cancelled the
+job at 10:20:33 Europe/Warsaw on the 55-minute job limit. The pointer did not
+advance beyond the four accepted outputs, and the fresh independent verifier was
+correctly skipped. GitHub reported the Python process as an orphan terminated
+during cleanup, and the exact non-expiring owner
+`github-run-36388542439-attempt-1` remained held. This is a production timeout
+and recovery blocker, not a successful retained-Bronze batch.
+
+The repair branch replaces per-row DuckDB bindings with typed DataFrame batch
+appends, emits a flushed start/completion receipt for each distribution, gives the
+decoder an interrupt window before the job ceiling, and exposes only exact-match
+owner recovery through the existing guarded recovery primitive. A cancelled-job
+fallback names that same run/attempt owner explicitly; it does not infer staleness
+from time. The accepted checkpoint, source receipts and original Landing bytes
+remain unchanged. Production recovery, CI/review, a successful rerun, fresh
+verification and complete downstream consumers remain open. The upstream state
+currently declares 9,212 accepted receipts and incomplete coverage; the 10-receipt
+Bronze cursor is not catalogue completion, and the current progressive release
+still models only three datasets.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
 
