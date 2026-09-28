@@ -125,7 +125,7 @@ try {
     extensionRequests.push(observed);
     extensionHeaderChecks.push(request.allHeaders().then((headers) => {
       observed.authorizationPresent = !!headers.authorization;
-    }));
+    }).catch(() => { observed.authorizationPresent = null; }));
   });
   context.on("response", (response) => {
     const url = new URL(response.url());
@@ -211,7 +211,7 @@ try {
       result.multiFiltered !== multiFileRows * 2)
     throw new Error("multi_file_query_result_mismatch");
   if (!extensionRequests.some((request) => request.path.endsWith("/httpfs.duckdb_extension.wasm")) ||
-      extensionRequests.some((request) => request.authorizationPresent))
+      extensionRequests.some((request) => request.authorizationPresent !== false))
     throw new Error("httpfs_extension_request_unverified");
   console.log(JSON.stringify({ result: "pass", package: `@duckdb/duckdb-wasm@${duckdbWasmVersion}`,
     parquetBytes: parquet.length, rows: rowCount, protected: summaries,
