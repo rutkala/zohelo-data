@@ -63,13 +63,16 @@ payloads and made no writes. No table was migrated, no service/account was
 created, no deployment changed and no SQL acceptance claim follows from this
 documentation increment.
 
-The concrete blocker is now an owner-authorized query-storage endpoint or service
-choice, including cost/access limits. After that choice, the next bounded pilot
-must bind every serving object to exact retained Drive identities and hashes, then
-prove ordinary LIMIT 1000, complete count, multi-indicator filter and join against
-one exact Iceberg snapshot in both native DuckDB and the portal. Authentication
-expiry, missing/changed objects, interrupted publication, bytes, requests, cache
-and memory must all fail or stay within explicit bounds before promotion.
+The concrete blocker applies to **live serving-copy publication and promotion**:
+an owner-authorized query-storage endpoint or service choice, including cost and
+access limits. It does not block local or synthetic feasibility work. The next
+permitted engineering step is a no-account, no-production-data Iceberg contract
+prototype using generated fixtures and local range-capable HTTP. It should prove
+DuckDB creation/readback, complete table membership, ordinary LIMIT 1000, complete
+count, multi-indicator filter, join, snapshot agreement and fail-closed missing
+objects while measuring bytes, requests, cache and memory. A later live pilot must
+add exact retained-Drive identity/hash lineage and authorized storage before any
+copy or pointer promotion.
 
 **Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
