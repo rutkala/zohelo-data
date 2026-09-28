@@ -56,16 +56,25 @@ Shared instructions for coding work in this repository. Run commands from the re
   integrity, authentication and resource checks. Do not mark it Done from naming,
   one-indicator tests, or a successful publication alone.
 
-- [ADR 0012](docs/decisions/0012-bronze-table-query-plane.md) now separates
-  authoritative retention from interactive query serving. Drive remains
-  authoritative. The target serving format is Apache Iceberg v2 on an explicitly
-  authorized range-capable object-storage contract; native DuckDB in Actions
-  remains the default writer/verifier and DuckDB-WASM the preferred portal reader
-  when that storage contract is proven. Do not implement Iceberg on Drive, invent
-  a serverless claim for GitHub Actions or Trino, adopt PySpark without measured
-  need, create an account/service, or copy production data before the owner
-  authorizes storage/access/cost. Fabric/Databricks remain managed alternatives,
-  not authorized dependencies.
+- [ADR 0012](docs/decisions/0012-bronze-table-query-plane.md) established the
+  complete-table/lazy-query contract. The owner has now authorized the
+  Cloudflare-first storage direction in
+  [ADR 0013](docs/decisions/0013-cloudflare-first-storage.md): R2 is the target
+  platform object store, with native Landing in `zohelo-landing-prod` and
+  Bronze/Silver/Gold Iceberg tables in `zohelo-lakehouse-prod` through R2 Data
+  Catalog. Current Drive data stays untouched and authoritative only until staged
+  migration/readback is accepted.
+- The generated-data live Cloudflare contract passed in run `36479212904`:
+  private R2 write/read, HEAD plus 206 range GET, Iceberg v2 REST-catalog commit,
+  ordinary LIMIT 1000, complete count, two-indicator filter, join, cache reuse and
+  cleanup all passed. No Drive data was read. The next permitted Bronze step is a
+  bounded real DBW serving-copy pilot with exact retained Drive identity/hash
+  lineage and no current-pointer change. Do not claim that the production
+  migration or portal reader is complete from the synthetic/live-provider proof.
+- Keep the CI writer credentials server-side in GitHub Actions only. Never place
+  `CLOUDFLARE_R2_CATALOG_TOKEN`, the R2 access key or secret key in portal code,
+  logs or artifacts. Browser/portal access needs a separate least-privilege
+  read-only design plus CORS verification before deployment.
 
 **Previous owner priority — 27 September 2026: portal Landing only.**
 
