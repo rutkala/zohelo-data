@@ -63,16 +63,34 @@ payloads and made no writes. No table was migrated, no service/account was
 created, no deployment changed and no SQL acceptance claim follows from this
 documentation increment.
 
-The concrete blocker applies to **live serving-copy publication and promotion**:
-an owner-authorized query-storage endpoint or service choice, including cost and
-access limits. It does not block local or synthetic feasibility work. The next
-permitted engineering step is a no-account, no-production-data Iceberg contract
-prototype using generated fixtures and local range-capable HTTP. It should prove
-DuckDB creation/readback, complete table membership, ordinary LIMIT 1000, complete
-count, multi-indicator filter, join, snapshot agreement and fail-closed missing
-objects while measuring bytes, requests, cache and memory. A later live pilot must
-add exact retained-Drive identity/hash lineage and authorized storage before any
-copy or pointer promotion.
+The concrete blocker now applies only to **live serving-copy publication and
+promotion**: an owner-authorized query-storage endpoint or service choice,
+including cost and access limits, plus retained-Drive lineage for the pilot.
+
+**Synthetic Iceberg v2 query contract verified — 28 September.**
+[PR #211](https://github.com/rutkala/zohelo-data/pull/211) merged as
+`9f0c43696c1e87986f756e3ca712544175f08bff` after both the normal data
+validation and the dedicated
+[Iceberg contract run](https://github.com/rutkala/zohelo-data/actions/runs/36453211950)
+passed on exact head `54d83ce67749bb309ecc4b938b745e6778880393`.
+The disposable no-account/no-production-data fixture created an Iceberg v2 table
+with 8 Parquet data files and 160,000 rows. The pinned snapshot returned an
+ordinary 1,000-row preview without a selector, an exact 160,000-row count, a
+40,000-row two-indicator filter and a 40,000-row representative join. The cold
+preview transferred 416,739 bytes from 3,249,977 physical Parquet bytes; complete
+COUNT transferred 7,902 bytes. Repeating the preview in the same reader transferred
+0 additional bytes after the cache was populated. Peak process RSS was
+304,001,024 bytes. Deleting one referenced data object caused the pinned snapshot
+read to fail closed as required. The dated receipt is
+[audits/2026-09-28-iceberg-query-contract.json](audits/2026-09-28-iceberg-query-contract.json).
+
+This proves the DuckDB/Iceberg table and query contract on range-capable object
+storage. It does **not** authorize or establish a production serving copy, a
+storage provider, browser authentication/CORS for that provider, retained-Drive
+lineage, or DBW live acceptance. The next owner decision is therefore the
+query-storage endpoint/service and its cost/access boundary; after that decision,
+the next engineering step is a bounded live DBW serving-copy pilot without
+changing the existing Drive pointer.
 
 **Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
