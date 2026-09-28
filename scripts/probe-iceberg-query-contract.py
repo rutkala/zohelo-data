@@ -8,11 +8,14 @@ read production Drive data or create an external service.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import resource
 import subprocess
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import duckdb
@@ -37,7 +40,7 @@ def sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def make_connection() -> duckdb.DuckDBPyConnection:
+def make_connection(endpoint_port: int = 5000) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect()
     con.execute("SET memory_limit='512MiB'")
     con.execute("SET enable_external_file_cache=true")
@@ -52,11 +55,11 @@ def make_connection() -> duckdb.DuckDBPyConnection:
             KEY_ID 'admin',
             SECRET 'password',
             REGION 'us-east-1',
-            ENDPOINT '127.0.0.1:5000',
+            ENDPOINT '127.0.0.1:{endpoint_port}',
             URL_STYLE 'path',
             USE_SSL false
         )
-        """
+        """.format(endpoint_port=endpoint_port)
     )
     return con
 
@@ -74,47 +77,93 @@ def attach_catalog(con: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-def profile(con: duckdb.DuckDBPyConnection, query: str) -> tuple[list[tuple], dict[str, object]]:
-    con.execute("CALL truncate_duckdb_logs()")
-    con.execute("CALL enable_logging(['HTTP', 'FileSystem'])")
+class CountingProxy:
+    def __init__(self, upstream_host: str = "127.0.0.1", upstream_port: int = 5000) -> None:
+        self.upstream_host = upstream_host
+        self.upstream_port = upstream_port
+        self._lock = threading.Lock()
+        self.requests = 0
+        self.bytes = 0
+        proxy = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def _forward(self) -> None:
+                body = None
+                content_length = int(self.headers.get("content-length", "0") or 0)
+                if content_length:
+                    body = self.rfile.read(content_length)
+                headers = {key: value for key, value in self.headers.items()}
+                connection = http.client.HTTPConnection(
+                    proxy.upstream_host, proxy.upstream_port, timeout=30
+                )
+                try:
+                    connection.request(self.command, self.path, body=body, headers=headers)
+                    upstream = connection.getresponse()
+                    payload = upstream.read()
+                    self.send_response(upstream.status)
+                    for key, value in upstream.getheaders():
+                        if key.lower() in {"connection", "transfer-encoding"}:
+                            continue
+                        self.send_header(key, value)
+                    self.send_header("content-length", str(len(payload)))
+                    self.end_headers()
+                    if self.command != "HEAD":
+                        self.wfile.write(payload)
+                    with proxy._lock:
+                        proxy.requests += 1
+                        if self.command != "HEAD":
+                            proxy.bytes += len(payload)
+                finally:
+                    connection.close()
+
+            def do_GET(self) -> None:
+                self._forward()
+
+            def do_HEAD(self) -> None:
+                self._forward()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = int(self.server.server_address[1])
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self) -> "CountingProxy":
+        self.thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def reset(self) -> None:
+        with self._lock:
+            self.requests = 0
+            self.bytes = 0
+
+    def snapshot(self) -> tuple[int, int]:
+        with self._lock:
+            return self.requests, self.bytes
+
+
+def profile(
+    con: duckdb.DuckDBPyConnection,
+    query: str,
+    proxy: CountingProxy,
+) -> tuple[list[tuple], dict[str, object]]:
+    proxy.reset()
     started = time.perf_counter()
     rows = con.execute(query).fetchall()
     elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
-    con.execute("CALL disable_logging()")
-
-    requests = int(
-        con.execute(
-            """
-            SELECT count(*)
-            FROM duckdb_logs_parsed('HTTP')
-            WHERE request.url LIKE '%127.0.0.1:5000/warehouse/%'
-            """
-        ).fetchone()[0]
-    )
-    fs_rows, transferred = con.execute(
-        """
-        SELECT count(*), coalesce(sum(bytes), 0)
-        FROM duckdb_logs_parsed('FileSystem')
-        WHERE path LIKE '%warehouse/%'
-          AND op IN ('READ', 'READ_AT', 'read', 'read_at')
-        """
-    ).fetchone()
-    # Some filesystems use different operation labels. Fall back to all positive
-    # byte events for the S3 warehouse while retaining the HTTP request count.
-    if int(fs_rows) == 0:
-        fs_rows, transferred = con.execute(
-            """
-            SELECT count(*), coalesce(sum(bytes), 0)
-            FROM duckdb_logs_parsed('FileSystem')
-            WHERE path LIKE '%warehouse/%' AND bytes > 0
-            """
-        ).fetchone()
-    con.execute("CALL enable_logging(['HTTP', 'FileSystem'])")
+    requests, transferred = proxy.snapshot()
     return rows, {
         "elapsed_ms": elapsed_ms,
         "requests": requests,
-        "filesystem_events": int(fs_rows),
-        "bytes": int(transferred),
+        "bytes": transferred,
     }
 
 def cache_stats(con: duckdb.DuckDBPyConnection) -> dict[str, int]:
@@ -267,16 +316,17 @@ def main() -> int:
     schema_catalog = writer.execute(f"DESCRIBE SELECT * FROM {TABLE}").fetchall()
     writer.close()
 
-    reader = make_connection()
-    source = f"iceberg_scan({sql_string(metadata_location)})"
-    direct_snapshots = reader.execute(
+    with CountingProxy() as proxy:
+        reader = make_connection(proxy.port)
+        source = f"iceberg_scan({sql_string(metadata_location)})"
+        direct_snapshots = reader.execute(
         f"SELECT snapshot_id FROM iceberg_snapshots({sql_string(metadata_location)}) "
         "ORDER BY sequence_number"
     ).fetchall()
-    if not direct_snapshots or int(direct_snapshots[-1][0]) != snapshot_id:
-        raise AssertionError("snapshot_disagreement")
+        if not direct_snapshots or int(direct_snapshots[-1][0]) != snapshot_id:
+            raise AssertionError("snapshot_disagreement")
 
-    direct_membership = reader.execute(
+        direct_membership = reader.execute(
         f"""
         SELECT file_path, record_count
         FROM iceberg_metadata({sql_string(metadata_location)})
@@ -284,71 +334,72 @@ def main() -> int:
         ORDER BY file_path
         """
     ).fetchall()
-    if direct_membership != membership:
-        raise AssertionError("membership_disagreement")
+        if direct_membership != membership:
+            raise AssertionError("membership_disagreement")
 
-    schema_direct = reader.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
-    if schema_direct != schema_catalog:
-        raise AssertionError("schema_disagreement")
+        schema_direct = reader.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()
+        if schema_direct != schema_catalog:
+            raise AssertionError("schema_disagreement")
 
-    queries = {
-        "preview": f"SELECT * FROM {source} LIMIT 1000",
-        "count": f"SELECT count(*) FROM {source}",
-        "multi_indicator": (
-            f"SELECT count(*) FROM {source} "
-            f"WHERE indicator_id IN ({FILTER_IDS[0]}, {FILTER_IDS[1]})"
-        ),
-        "join": (
-            f"SELECT count(*) FROM {source} AS o "
-            f"JOIN (VALUES ({FILTER_IDS[0]}, 'two'), ({FILTER_IDS[1]}, 'seven')) "
-            "AS d(indicator_id, label) USING (indicator_id)"
-        ),
-    }
+        queries = {
+            "preview": f"SELECT * FROM {source} LIMIT 1000",
+            "count": f"SELECT count(*) FROM {source}",
+            "multi_indicator": (
+                f"SELECT count(*) FROM {source} "
+                f"WHERE indicator_id IN ({FILTER_IDS[0]}, {FILTER_IDS[1]})"
+            ),
+            "join": (
+                f"SELECT count(*) FROM {source} AS o "
+                f"JOIN (VALUES ({FILTER_IDS[0]}, 'two'), ({FILTER_IDS[1]}, 'seven')) "
+                "AS d(indicator_id, label) USING (indicator_id)"
+            ),
+        }
 
-    profiled = {name: profile(reader, query) for name, query in queries.items()}
-    profiles = {name: values[1] for name, values in profiled.items()}
-    preview_rows = profiled["preview"][0]
-    count = profiled["count"][0][0]
-    filtered = profiled["multi_indicator"][0][0]
-    joined = profiled["join"][0][0]
-    if any(values["requests"] <= 0 for values in profiles.values()):
-        raise AssertionError("missing_http_requests")
-    if any(values["bytes"] <= 0 for values in profiles.values()):
-        raise AssertionError("missing_filesystem_bytes")
-    if len(preview_rows) != 1000:
-        raise AssertionError(f"preview_rows:{len(preview_rows)}")
-    if count != EXPECTED_ROWS:
-        raise AssertionError(f"direct_count:{count}")
-    if filtered != EXPECTED_FILTERED:
-        raise AssertionError(f"filtered_count:{filtered}")
-    if joined != EXPECTED_FILTERED:
-        raise AssertionError(f"join_count:{joined}")
+        profiled = {name: profile(reader, query, proxy) for name, query in queries.items()}
+        profiles = {name: values[1] for name, values in profiled.items()}
+        preview_rows = profiled["preview"][0]
+        count = profiled["count"][0][0]
+        filtered = profiled["multi_indicator"][0][0]
+        joined = profiled["join"][0][0]
+        if any(values["requests"] <= 0 for values in profiles.values()):
+            raise AssertionError("missing_http_requests")
+        if any(values["bytes"] <= 0 for values in profiles.values()):
+            raise AssertionError("missing_filesystem_bytes")
+        if len(preview_rows) != 1000:
+            raise AssertionError(f"preview_rows:{len(preview_rows)}")
+        if count != EXPECTED_ROWS:
+            raise AssertionError(f"direct_count:{count}")
+        if filtered != EXPECTED_FILTERED:
+            raise AssertionError(f"filtered_count:{filtered}")
+        if joined != EXPECTED_FILTERED:
+            raise AssertionError(f"join_count:{joined}")
 
-    cache_after_first = cache_stats(reader)
-    reader.execute(queries["preview"]).fetchall()
-    cache_after_repeat = cache_stats(reader)
-    physical_parquet_bytes = object_store_parquet_bytes()
-    preview_bytes = int(profiles["preview"]["bytes"])
-    if preview_bytes >= physical_parquet_bytes:
-        raise AssertionError(
-            f"preview_not_lazy:{preview_bytes}>={physical_parquet_bytes}"
-        )
-    if cache_after_first["bytes"] <= 0:
-        raise AssertionError("external_cache_empty")
-    reader.close()
+        cache_after_first = cache_stats(reader)
+        reader.execute(queries["preview"]).fetchall()
+        cache_after_repeat = cache_stats(reader)
+        physical_parquet_bytes = object_store_parquet_bytes()
+        preview_bytes = int(profiles["preview"]["bytes"])
+        if preview_bytes >= physical_parquet_bytes:
+            raise AssertionError(
+                f"preview_not_lazy:{preview_bytes}>={physical_parquet_bytes}"
+            )
+        if cache_after_first["bytes"] <= 0:
+            raise AssertionError("external_cache_empty")
+        reader.close()
 
     missing_path = str(membership[0][0])
     remove_object(missing_path)
-    fail_reader = make_connection()
-    missing_failed_closed = False
-    try:
-        fail_reader.execute(
+    with CountingProxy() as fail_proxy:
+        fail_reader = make_connection(fail_proxy.port)
+        missing_failed_closed = False
+        try:
+            fail_reader.execute(
             f"SELECT sum(value) FROM iceberg_scan({sql_string(metadata_location)})"
-        ).fetchone()
-    except duckdb.Error:
-        missing_failed_closed = True
-    finally:
-        fail_reader.close()
+            ).fetchone()
+        except duckdb.Error:
+            missing_failed_closed = True
+        finally:
+            fail_reader.close()
     if not missing_failed_closed:
         raise AssertionError("missing_object_did_not_fail_closed")
 
