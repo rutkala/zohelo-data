@@ -22,6 +22,7 @@ from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 import duckdb
+import pandas as pd
 
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -56,6 +57,7 @@ BRONZE_COLUMNS = (
     ("source_row_number", "BIGINT"),
     ("source_period_position", "BIGINT"),
 )
+_BRONZE_COLUMN_NAMES = tuple(name for name, _kind in BRONZE_COLUMNS)
 
 
 class EurostatBulkDecodeError(ValueError):
@@ -167,7 +169,6 @@ def _load_observations(
         dimension_names, periods = _parse_header(header)
         measurements["periods"] = len(periods)
         batch: list[tuple[Any, ...]] = []
-        placeholders = ",".join("?" for _ in BRONZE_COLUMNS)
         for line_number, row in enumerate(reader, start=2):
             if len(row) != len(header):
                 raise EurostatBulkDecodeError(
@@ -229,14 +230,23 @@ def _load_observations(
                 )
                 measurements["observation_cells"] += 1
                 if len(batch) >= _BATCH_ROWS:
-                    connection.executemany(
-                        f"INSERT INTO bronze VALUES ({placeholders})", batch
-                    )
-                    batch.clear()
+                    _append_batch(connection, batch)
         if batch:
-            connection.executemany(
-                f"INSERT INTO bronze VALUES ({placeholders})", batch
-            )
+            _append_batch(connection, batch)
+
+
+def _append_batch(
+    connection: duckdb.DuckDBPyConnection,
+    batch: list[tuple[Any, ...]],
+) -> None:
+    """Append one typed frame instead of binding every row through executemany."""
+    frame = pd.DataFrame.from_records(
+        batch,
+        columns=_BRONZE_COLUMN_NAMES,
+        coerce_float=False,
+    )
+    connection.append("bronze", frame)
+    batch.clear()
 
 
 def _parse_header(header: list[str]) -> tuple[list[str], list[str]]:

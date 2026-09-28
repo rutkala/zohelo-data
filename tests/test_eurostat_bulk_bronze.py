@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 from copy import deepcopy
 import gzip
 from hashlib import md5, sha256
+from io import StringIO
 import json
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import duckdb
 import yaml
@@ -17,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 CODE_SHA = "a" * 40
 
+import eurostat_bulk_bronze as bronze_module  # noqa: E402
 from eurostat_bulk_bronze import (  # noqa: E402
     EurostatBulkBronzeError,
     run_bronze_batch,
@@ -34,6 +38,7 @@ class StateStore:
         self.receipt_values = receipts or {}
         self.owner = None
         self.release_error = None
+        self.recovery = None
 
     def load(self):
         return deepcopy(self.state)
@@ -60,6 +65,12 @@ class StateStore:
         self.owner = None
         if self.release_error is not None:
             raise self.release_error
+
+    def recover_publication_owner(self, expected_owner, recovery_identity):
+        if self.owner != expected_owner:
+            raise RuntimeError("unexpected owner")
+        self.owner = None
+        self.recovery = (expected_owner, recovery_identity)
 
 
 class RawStore:
@@ -318,12 +329,45 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         self.assertIsNone(bronze.owner)
         self.assertEqual(self.output_store.put_calls, 0)
 
+    def test_cli_recovers_only_the_exact_named_owner(self):
+        source = StateStore()
+        bronze = StateStore()
+        bronze.owner = "github-run-123-attempt-1"
+        stdout = StringIO()
+        with patch.object(
+            bronze_module,
+            "_production_stores",
+            return_value=(source, None, bronze, None),
+        ):
+            with redirect_stdout(stdout):
+                result = bronze_module.main([
+                    "--allow-production-write",
+                    "--recover-owner", "github-run-123-attempt-1",
+                    "--recovery-identity", "github-recovery-run-456-attempt-1",
+                ])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(
+            bronze.recovery,
+            (
+                "github-run-123-attempt-1",
+                "github-recovery-run-456-attempt-1",
+            ),
+        )
+        self.assertEqual(
+            json.loads(stdout.getvalue())["status"],
+            "eurostat_bulk_bronze_owner_recovered",
+        )
+
     def test_workflow_serializes_writer_and_uses_fresh_read_only_verifier(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/source-eurostat.yml").read_text(),
             Loader=yaml.BaseLoader,
         )
         writer = workflow["jobs"]["full_distribution_bronze"]
+        recovery = workflow["jobs"][
+            "recover_cancelled_full_distribution_bronze_owner"
+        ]
         verifier = workflow["jobs"]["verify_full_distribution_bronze"]
         self.assertEqual(writer["needs"], "collect_and_publish")
         self.assertIn("always()", writer["if"])
@@ -332,8 +376,28 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         )
         self.assertEqual(writer["concurrency"]["group"], "zohelo-production-data")
         writer_command = writer["steps"][-1]["run"]
+        self.assertIn("timeout --signal=INT --kill-after=60s 2700s", writer_command)
         self.assertIn("--allow-production-write", writer_command)
         self.assertIn("--max-distributions 64", writer_command)
+        owner_step = writer["steps"][-2]
+        self.assertEqual(
+            owner_step["if"],
+            "inputs.bronze_recovery_owner != ''",
+        )
+        self.assertIn("--recover-owner", owner_step["run"])
+        self.assertEqual(recovery["needs"], "full_distribution_bronze")
+        self.assertIn(
+            "needs.full_distribution_bronze.result == 'cancelled'",
+            recovery["if"],
+        )
+        self.assertEqual(
+            recovery["concurrency"]["group"],
+            "zohelo-production-data",
+        )
+        self.assertIn(
+            '"github-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"',
+            recovery["steps"][-1]["run"],
+        )
         self.assertEqual(verifier["needs"], "full_distribution_bronze")
         self.assertEqual(
             verifier["steps"][-1]["run"],
