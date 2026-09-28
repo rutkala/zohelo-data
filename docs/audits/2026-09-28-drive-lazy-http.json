@@ -30,7 +30,7 @@
     },
     "not_proven": [
       "Actions credential identity",
-      "Drive browser HTTP behavior",
+      "Successful Drive browser range and payload behavior",
       "Revision media downloadability",
       "Independent payload byte integrity",
       "Fresh native row count"
