@@ -82,10 +82,12 @@ budgets are not hard wall-clock deadlines. The workflow has a 60-minute outer ti
 capacity, no-due-work and source failures stop collection without spinning or resetting
 provider history.
 
-After successful Eurostat Landing, the same workflow runs a separately checkpointed
-full-distribution Bronze batch inside the shared production-data concurrency group. It
-restores no more than 64 accepted TSV distributions (or the 40-minute session budget)
-and never calls the provider. A second fresh runner executes
+After the Eurostat Landing job finishes, the same workflow runs a separately
+checkpointed full-distribution Bronze batch inside the shared production-data
+concurrency group. The dependency enforces ordering but does not require Landing
+success, so retained accepted receipts can advance through a provider or intake
+failure. It restores no more than 64 accepted TSV distributions (or the 40-minute
+session budget) and never calls the provider. A second fresh runner executes
 `python src/eurostat_bulk_bronze.py --verify-current`; this verifies the exact
 Landing receipt prefix and newest output bytes, not every historical output or complete
 catalogue coverage. A held publication-owner record after an interrupted process is
