@@ -102,6 +102,7 @@ async function listen(server) {
 
 const protectedServer = dataServer(true);
 const publicServer = dataServer(false);
+const extensionHeaderChecks = [];
 let vite;
 let browser;
 let stage = "starting";
@@ -119,8 +120,12 @@ try {
   context.on("request", (request) => {
     const url = new URL(request.url());
     if (url.origin !== "https://extensions.duckdb.org") return;
-    extensionRequests.push({ origin: url.origin, path: url.pathname, method: request.method(),
-      authorizationPresent: !!request.headers().authorization, status: null });
+    const observed = { origin: url.origin, path: url.pathname, method: request.method(),
+      authorizationPresent: null, status: null };
+    extensionRequests.push(observed);
+    extensionHeaderChecks.push(request.allHeaders().then((headers) => {
+      observed.authorizationPresent = !!headers.authorization;
+    }));
   });
   context.on("response", (response) => {
     const url = new URL(response.url());
@@ -136,6 +141,7 @@ try {
   await page.exposeFunction("markLazyPhase", (name) => phaseMarks.push({ name, eventIndex: events.length }));
   stage = "reading_parquet";
   const result = await page.evaluate((input) => window.runLazyHttpProbe(input), { protectedBase, publicUrl, bearer });
+  await Promise.all(extensionHeaderChecks);
 
   const protectedEvents = events.filter((event) => event.origin === "protected");
   const publicEvents = events.filter((event) => event.origin === "public");

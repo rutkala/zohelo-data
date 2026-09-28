@@ -105,7 +105,9 @@
     "run_id": 36407201234,
     "job_id": 108878686286,
     "head_sha": "6d5926f4de2cf61ea3210e7e9ff3299ce213f20d",
-    "result": "pass",
+    "result": "path_and_status_passed_authorization_observation_superseded",
+    "authorization_observation_valid": false,
+    "authorization_observation_correction": "The original listener used Playwright request.headers(), which can omit security-sensitive headers. The recorded false values are preserved as original output but are not accepted as credential-leak evidence. Complete-header inspection is required before a live rerun.",
     "requests": [
       {
         "origin": "https://extensions.duckdb.org",
