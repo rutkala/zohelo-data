@@ -1,0 +1,55 @@
+{
+  "observed_at": "2026-09-28T16:45:10Z",
+  "scope": "synthetic-iceberg-v2-query-plane",
+  "production_data": false,
+  "external_account": false,
+  "pr": 211,
+  "merge_commit": "9f0c43696c1e87986f756e3ca712544175f08bff",
+  "workflow_run": 36453211950,
+  "workflow_name": "Probe Iceberg v2 query contract",
+  "workflow_conclusion": "success",
+  "platform_validation_run": 36453212017,
+  "platform_validation_conclusion": "success",
+  "iceberg_format_version": 2,
+  "data_files": 8,
+  "rows": 160000,
+  "indicators": 8,
+  "snapshot_id": "2579232672445318701",
+  "physical_parquet_bytes": 3249977,
+  "queries": {
+    "preview": {
+      "rows": 1000,
+      "bytes": 416739,
+      "requests": 6,
+      "elapsed_ms": 73.783
+    },
+    "complete_count": {
+      "rows": 160000,
+      "bytes": 7902,
+      "requests": 4,
+      "elapsed_ms": 60.684
+    },
+    "multi_indicator": {
+      "rows": 40000,
+      "bytes": 40804,
+      "requests": 8,
+      "elapsed_ms": 78.324
+    },
+    "join": {
+      "rows": 40000,
+      "bytes": 40804,
+      "requests": 8,
+      "elapsed_ms": 78.689
+    }
+  },
+  "cache": {
+    "cold_preview_bytes": 432312,
+    "repeat_preview_first_bytes": 416739,
+    "repeat_preview_second_bytes": 0,
+    "repeat_preview_first_requests": 6,
+    "repeat_preview_second_requests": 1
+  },
+  "max_rss_bytes": 304001024,
+  "missing_object_failed_closed": true,
+  "conclusion": "Synthetic DuckDB + Iceberg v2 contract proved. Live serving-copy publication remains gated on owner-authorized storage/access/cost and retained-Drive lineage."
+}
