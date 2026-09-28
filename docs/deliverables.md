@@ -30,6 +30,50 @@ SQL filters remain optional. The acceptance test must measure view binding,
 preview transfer and returned rows, then complete counts and multi-indicator SQL;
 a single-file transport test cannot establish the requested experience.
 
+**Architecture decision — 28 September, 13:34 CEST: separate Drive
+retention from the query-serving plane.** The live Drive evidence and current
+official engine/table documentation were reconciled in
+[ADR 0012](decisions/0012-bronze-table-query-plane.md). Parquet, table format,
+query engine and hosted service are distinct concerns. Iceberg or Delta metadata
+on the existing Drive files would not repair the missing size/range contract seen
+by the installed browser path. GitHub Actions remains batch compute and
+verification; it is not an interactive serverless SQL endpoint.
+
+The selected target is an **Apache Iceberg v2 derived serving copy** on an
+owner-authorized, range-capable object-storage contract. Google Drive remains
+authoritative for native source bytes, immutable evidence, release inputs and
+existing pointers. Native DuckDB in Actions remains the default transformation,
+writer and fresh verification engine. DuckDB-WASM remains the preferred portal
+reader if the selected storage proves scoped browser authentication, CORS,
+immutable object identity and bounded Range reads. PySpark is not adopted without
+a measured distributed-compute requirement.
+
+Delta Lake is held as the strongest option if Microsoft Fabric or Databricks is
+later authorized. DuckLake is held because it adds a catalog database and has a
+narrower independent-engine ecosystem. Trino is a valid open-source Iceberg
+engine, but operating it and a catalog is a server deployment, not a serverless
+claim. Fabric and Databricks provide managed storage/catalog/query combinations,
+but neither is authorized under the current no-new-account/no-paid-service
+boundary. The rejected custom query server remains held.
+
+A read-only Drive check at 13:30 CEST still found the production root and its
+seven top-level folders (`01_landing` through `06_control`, plus `releases`);
+`source_visibility_status` remained `access_not_verified`. This check read no
+payloads and made no writes. No table was migrated, no service/account was
+created, no deployment changed and no SQL acceptance claim follows from this
+documentation increment.
+
+The concrete blocker applies to **live serving-copy publication and promotion**:
+an owner-authorized query-storage endpoint or service choice, including cost and
+access limits. It does not block local or synthetic feasibility work. The next
+permitted engineering step is a no-account, no-production-data Iceberg contract
+prototype using generated fixtures and local range-capable HTTP. It should prove
+DuckDB creation/readback, complete table membership, ordinary LIMIT 1000, complete
+count, multi-indicator filter, join, snapshot agreement and fail-closed missing
+objects while measuring bytes, requests, cache and memory. A later live pilot must
+add exact retained-Drive identity/hash lineage and authorized storage before any
+copy or pointer promotion.
+
 **Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
 manifest identities, physical files and existing SQL references. Current mappings:

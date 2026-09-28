@@ -78,8 +78,40 @@ Value changes are observed source changes, not claims of an official correction 
 | Dagster / Prefect / Airflow | Hold migration: current daily dependencies already live in Actions YAML. A new orchestrator adds operated services/state. | Independently scheduled sources, asset-level backfills or dependency-aware operations justify it. [Dagster deployment components](https://docs.dagster.io/deployment/oss/oss-deployment-architecture). |
 | PySpark | Do not adopt for the current tens-of-MB input. | A benchmark establishes a distributed workload requirement. [Spark execution model](https://spark.apache.org/docs/latest/cluster-overview.html). |
 | Jupyter | Optional analysis client, not transformation/scheduling authority. | Exploration benefits from notebooks; durable logic is promoted into tested code. |
-| Object storage / transactional table format | Keep immutable Parquet on existing Drive. No active DuckDB file is maintained on Drive. | Multi-writer transactions, larger-scale pruning, automated retention or availability requirements justify migration. |
+| Object storage / transactional table format | Keep Drive authoritative; select Iceberg v2 for a future derived query plane only after a compatible storage endpoint is authorized and proven. No active DuckDB file is maintained on Drive. | Apply [ADR 0012](decisions/0012-bronze-table-query-plane.md); do not mistake a table format for a repair to Drive browser transport. |
 | Hosted semantic API | Hold: on-demand native MetricFlow and CSV are the present supported interface. | A specific BI/multi-user/always-on requirement supplies a hosting and authorization design. |
+
+## Bronze table and query plane
+
+[ADR 0012](decisions/0012-bronze-table-query-plane.md) separates the durable
+evidence plane from the interactive query plane. Google Drive remains authoritative
+for native bytes, retained release inputs and manifests. A complete logical table
+does not require one physical file, but every file in its pinned membership must be
+represented by one table snapshot.
+
+Parquet, table format, engine and service are separate choices. Parquet stores
+columnar data; Iceberg supplies snapshot/table metadata; DuckDB executes SQL; and
+GitHub Actions runs bounded batch jobs. Actions is not an interactive SQL endpoint.
+Adding Iceberg metadata to the current Drive paths would not supply the object size,
+range, conditional-read and catalog behavior missing from the live browser path.
+
+The selected future serving format is Apache Iceberg v2 on an owner-authorized
+object-storage contract. Native DuckDB in Actions remains the default writer and
+fresh verifier. DuckDB-WASM remains the preferred portal reader only if the
+storage path proves scoped browser authentication, CORS, immutable object identity
+and bounded Range reads. PySpark is not required by medallion architecture or
+Iceberg and remains conditional on a measured distributed-compute need.
+
+The serving copy is derived and disposable. Its snapshot metadata must bind every
+object to exact retained Drive input identities and hashes; publication cannot
+advance on partial lineage or ambiguous state. The authoritative Drive pointer is
+not replaced by a serving pointer. A new provider/account, data copy or paid
+managed endpoint is outside this decision.
+
+Microsoft Fabric and Databricks combine managed table/catalog/storage and SQL
+services, but require a separate cost and governance decision. Trino is an
+interoperable open-source Iceberg engine, not a serverless service: it and its
+catalog must be operated. The owner-rejected custom query server remains held.
 
 DuckDB can spill many operations to disk, but its memory setting does not bound every allocation. Browser download limits are not query-memory guarantees. [Workload guidance](https://duckdb.org/docs/lts/guides/performance/how_to_tune_workloads.html), [memory limitations](https://duckdb.org/docs/current/guides/performance/oom.html).
 
