@@ -366,6 +366,10 @@ try {
       !(receipt.browser_http.head.get_206 > 0) ||
       receipt.browser_http.head.body_bytes >= selected.size)
     throw new Error("head_range_not_verified");
+  if (result.revision?.status === "count_mismatch") throw new Error("revision_count_mismatch");
+  if (result.revision?.status === "preview_mismatch") throw new Error("revision_preview_mismatch");
+  if (!["verified", "query_error", "revision_unavailable"].includes(result.revision?.status))
+    throw new Error("revision_status_invalid");
   if (result.revision?.status === "verified" &&
       (!(receipt.browser_http.revision.get_206 > 0) ||
        receipt.browser_http.revision.body_bytes >= selected.size))
