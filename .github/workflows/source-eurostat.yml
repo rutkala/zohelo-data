@@ -22,6 +22,10 @@ on:
         description: 'Publish already-collected accepted responses without calling source APIs'
         type: boolean
         default: false
+      bronze_recovery_owner:
+        description: 'Exact terminal GitHub owner to recover before Bronze publication; empty normally'
+        type: string
+        default: ''
   push:
     branches: [main]
     paths:
@@ -239,7 +243,54 @@ jobs:
           cache-dependency-path: requirements.txt
       - name: Install pinned dependencies
         run: python -m pip install -r requirements.txt
+      - name: Recover one exact terminal Bronze owner
+        if: inputs.bronze_recovery_owner != ''
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+          BRONZE_RECOVERY_OWNER: ${{ inputs.bronze_recovery_owner }}
+        run: >-
+          python src/eurostat_bulk_bronze.py
+          --allow-production-write
+          --recover-owner "$BRONZE_RECOVERY_OWNER"
+          --recovery-identity
+          "github-recovery-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
       - name: Decode and checkpoint retained full distributions
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+        run: >-
+          timeout --signal=INT --kill-after=60s 2700s
+          python src/eurostat_bulk_bronze.py
+          --allow-production-write
+          --max-distributions 64
+          --session-seconds 2400
+
+  recover_cancelled_full_distribution_bronze_owner:
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
+      queue: max
+    needs: full_distribution_bronze
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      needs.full_distribution_bronze.result == 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Recover only this cancelled job's exact owner
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -247,8 +298,10 @@ jobs:
         run: >-
           python src/eurostat_bulk_bronze.py
           --allow-production-write
-          --max-distributions 64
-          --session-seconds 2400
+          --recover-owner
+          "github-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
+          --recovery-identity
+          "github-recovery-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}"
 
   verify_full_distribution_bronze:
     needs: full_distribution_bronze
