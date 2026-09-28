@@ -326,6 +326,10 @@ class EurostatBulkBronzeTests(unittest.TestCase):
         writer = workflow["jobs"]["full_distribution_bronze"]
         verifier = workflow["jobs"]["verify_full_distribution_bronze"]
         self.assertEqual(writer["needs"], "collect_and_publish")
+        self.assertIn("always()", writer["if"])
+        self.assertNotIn(
+            "needs.collect_and_publish.result == 'success'", writer["if"]
+        )
         self.assertEqual(writer["concurrency"]["group"], "zohelo-production-data")
         writer_command = writer["steps"][-1]["run"]
         self.assertIn("--allow-production-write", writer_command)
