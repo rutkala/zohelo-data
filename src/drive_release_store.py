@@ -5,6 +5,10 @@ import io
 from googleapiclient.http import MediaIoBaseUpload
 
 DRIVE_REPEATABLE_REQUEST_RETRIES = 4
+# Google requires resumable chunks to be a multiple of 256 KiB. Keep each
+# request well below the library's 100 MiB default so a slow large-object
+# upload can retry from a recent boundary instead of restarting a huge chunk.
+DRIVE_RESUMABLE_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 class DriveReleaseStore:
@@ -97,7 +101,10 @@ class DriveReleaseStore:
             raise ValueError("Drive did not allocate a release object ID")
         file_id = ids[0]
         mime = "application/json" if name.endswith(".json") else "application/octet-stream"
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=True)
+        media = MediaIoBaseUpload(
+            io.BytesIO(data), mimetype=mime,
+            chunksize=DRIVE_RESUMABLE_CHUNK_BYTES, resumable=True,
+        )
         try:
             created = self.files.create(
                 body={"id": file_id, "name": name, "parents": [parent_id], "mimeType": mime},
