@@ -196,5 +196,58 @@
       "failure_stage": "browser_revision_query",
       "failure_category": "head_range_not_verified"
     }
+  },
+  "fourth_attempt": {
+    "run_id": 36408963262,
+    "job_id": 108884339678,
+    "duplicate_run_id": 36408968335,
+    "duplicate_job_id": 108884354299,
+    "workflow_sha": "7cf505f821ccfdd8160873647bbe5d8172ae5d85",
+    "completed_at_warsaw": "2026-09-28T12:19:50+02:00",
+    "outcome": "Complete-header checks and exact extension requests passed. Authenticated Drive media HEAD returned 200 without Content-Length or Accept-Ranges for both current and revision URLs. DuckDB then attempted GET without Range for both targets; the guard blocked both full-file fallbacks. No Drive payload bytes were read and neither SQL query succeeded.",
+    "receipt_artifact_digest": "sha256:8730227fadb2486a1b34f3d7aa46f364235ace067fa2d723435b17bc10f118e7",
+    "duplicate_artifact_digest": "sha256:8730227fadb2486a1b34f3d7aa46f364235ace067fa2d723435b17bc10f118e7",
+    "manifest_hash_verified": true,
+    "index_hash_verified": true,
+    "file_metadata_matches_manifest": true,
+    "post_metadata_unchanged": true,
+    "extension_statuses": {
+      "httpfs": 200,
+      "parquet": 200
+    },
+    "drive_head": {
+      "current": {
+        "status": 200,
+        "content_length": "missing",
+        "accept_ranges": "missing",
+        "cors_allows_fixture": true
+      },
+      "revision": {
+        "status": 200,
+        "content_length": "missing",
+        "accept_ranges": "missing",
+        "cors_allows_fixture": true
+      }
+    },
+    "range_attempts": [
+      {
+        "target": "head",
+        "basic_shape": "missing",
+        "complete_shape": "missing"
+      },
+      {
+        "target": "revision",
+        "basic_shape": "missing",
+        "complete_shape": "missing"
+      }
+    ],
+    "browser_drive_requests": 4,
+    "unauthenticated_requests": 0,
+    "blocked_gets_without_range": 2,
+    "drive_payload_bytes": 0,
+    "head_query_status": "query_error",
+    "revision_query_status": "query_error",
+    "failure_stage": "browser_revision_query",
+    "failure_category": "head_range_not_verified"
   }
 }
