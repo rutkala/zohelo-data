@@ -179,6 +179,16 @@ separate metadata-only inventory: 2,741 parts, 1,550 published indicators and
 879,999,727 declared rows. Its 5,519,834,917 declared bytes describe the current
 portal index, not the earlier native retained readback layout or a fresh recount.
 
+The repaired [second live attempt](https://github.com/rutkala/zohelo-data/actions/runs/36406808518)
+at reviewed main `fbdf31edb8d0f140356fca68faf6c40d5b2b4530` again
+verified the same Drive metadata and made no Drive browser request or payload
+read. Its new phase/category evidence isolated the stop to `LOAD httpfs`: the
+gate blocked one same-origin extension URL because the allowlist used an obsolete
+`duckdb-wasm` path prefix. The exact canonical v1.5.5 `wasm_eh` URL is corrected
+without widening the origin, path, method, credential or request-count guards.
+Actual Drive range compatibility, immutable revision reads, payload integrity and
+the complete Bronze table remain unverified until the corrected main-only rerun.
+
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
 specific corrective reason or later resolving decision was recovered. Those
