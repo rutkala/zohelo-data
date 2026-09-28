@@ -14,11 +14,20 @@ if (!outputPath || !/^[a-f0-9]{40}$/.test(expectedSha ?? "") ||
 for (const key of ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN"])
   if (!process.env[key]) throw new Error("OAuth configuration missing");
 
+const sanitizedFailure = (value) => String(value)
+  .replace(/Bearer\\s+\\S+/gi, "Bearer [redacted]")
+  .replace(/ya29\\.[A-Za-z0-9._-]+/g, "[redacted]")
+  .replace(/https?:\\/\\/\\S+/g, "[url]")
+  .replace(/\\s+/g, " ")
+  .trim()
+  .slice(0, 500);
+
 const result = { format_version: 1, status: "failed", expected_deployed_sha: expectedSha,
   dbw_modeled_pointer: null, retained_dbw_snapshot_id: null,
   dbw_whole_table_verified: false, checked: [], read_only: false };
 let stage = "oauth";
 let browser;
+let attemptedWrite = false;
 try {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST", signal: AbortSignal.timeout(60000),
@@ -118,7 +127,6 @@ try {
     if (location.origin === "https://data.zohelo.com")
       sessionStorage.setItem("zohelo_gdrive_access_token", accessToken);
   }, token);
-  let attemptedWrite = false;
   let phase = "bootstrap";
   const mediaRequests = { bootstrap: 0, sql: 0 };
   let sqlMediaBytesKnown = 0;
@@ -220,8 +228,11 @@ try {
     }) });
     const deadline = Date.now() + 180000;
     while (Date.now() < deadline) {
-      if (await page.getByText("Query Error", { exact: true }).count())
-        throw new Error("Bronze SQL query failed");
+      const queryError = page.getByText("Query Error", { exact: true }).first();
+      if (await queryError.count()) {
+        const detail = await queryError.locator("..").textContent().catch(() => null);
+        throw new Error(`Bronze SQL query failed: ${detail ?? "Query Error"}`);
+      }
       if (await page.getByRole("columnheader", { name: column, exact: true }).count() &&
           await matchingRow.count()) break;
       await page.waitForTimeout(1000);
@@ -241,8 +252,12 @@ try {
   result.sql_media_responses_without_content_length = sqlMediaBytesUnknown;
   result.read_only = true;
   result.status = "verified";
-} catch {
+} catch (error) {
   result.failed_stage = stage;
+  result.failure_detail = sanitizedFailure(
+    error instanceof Error ? error.message : "Unknown verification failure"
+  );
+  result.read_only = !attemptedWrite;
   process.exitCode = 1;
 } finally {
   if (browser) await browser.close();
