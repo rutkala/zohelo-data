@@ -6,6 +6,7 @@ import type { Table } from "apache-arrow";
 import type * as duckdb from "@duckdb/duckdb-wasm";
 import { resultToJSON } from "@/services/duckdb/resultParser";
 import { loadFileIntoDuckDB, loadTableIntoDuckDB, loadTablesIntoDuckDB } from "../lakehouseBridge";
+import { nameBronzeDataset } from "../bronzeNames";
 import { sha256Hex } from "../releaseCatalog";
 import { fetchDriveFileBuffer, listDataFilesInFolder } from "../driveApi";
 import type { LakehouseFile } from "../types";
@@ -90,6 +91,107 @@ const load = (files: LakehouseFile[], dataset = "rates", layer = "02_bronze") =>
   loadTableIntoDuckDB(db, conn, dataset, null, files, "fixture-token", layer);
 
 describe("Drive data in the real DuckDB engine", () => {
+  it("marks published views with an OID and opaque comment that changes on replacement", async () => {
+    const name = `owned_view_${++counter}`;
+    const result = await load([file("SELECT 17 AS id")], name);
+    const catalog = () => resultToJSON(connection.query(
+      `SELECT view_oid, comment FROM duckdb_views() WHERE schema_name = '02_bronze' AND view_name = '${name}'`
+    )).data[0] as { view_oid: number | bigint; comment: string };
+    expect(String(catalog().view_oid)).toBe(result.identity.oid);
+    expect(catalog().comment).toBe(result.identity.marker);
+    expect(result.identity.marker).toMatch(/^zohelo-published-view:v1:[a-f0-9]{32}$/);
+
+    const other = engine.connect();
+    try {
+      other.query(`CREATE OR REPLACE VIEW "02_bronze"."${name}" AS SELECT 99 AS id`);
+      expect(String(catalog().view_oid)).not.toBe(result.identity.oid);
+      expect(catalog().comment).not.toBe(result.identity.marker);
+      expect(rows(result.queryTarget)).toEqual([{ id: 99 }]);
+    } finally {
+      other.close();
+    }
+  }, 15000);
+
+  it("preserves another connection's view created after the transaction checks occupancy", async () => {
+    const name = `occupied_view_${++counter}`;
+    const input = file("SELECT 20 AS id");
+    const other = engine.connect();
+    try {
+      await expect(loadTablesIntoDuckDB(db, conn, [{ datasetName: name,
+        tableFolderId: null, files: [input], layerName: "02_bronze" }], "fixture-token", undefined,
+      async () => {
+        expect(resultToJSON(connection.query(
+          `SELECT table_name FROM information_schema.tables WHERE table_schema = '02_bronze' AND table_name = '${name}'`
+        )).data).toEqual([]);
+        other.query(`CREATE VIEW "02_bronze"."${name}" AS SELECT 77 AS id`);
+      })).rejects.toThrow();
+      expect(rows(`"02_bronze"."${name}"`)).toEqual([{ id: 77 }]);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("rolls back a DROP when another connection replaces the checked view", async () => {
+    const name = `refresh_view_${++counter}`;
+    const loaded = await load([file("SELECT 21 AS id")], name);
+    const other = engine.connect();
+    try {
+      connection.query("BEGIN TRANSACTION;");
+      const seen = resultToJSON(connection.query(
+        `SELECT view_oid, comment FROM duckdb_views() WHERE schema_name = '02_bronze' AND view_name = '${name}'`
+      )).data[0] as { view_oid: number | bigint; comment: string };
+      expect(String(seen.view_oid)).toBe(loaded.identity.oid);
+      expect(seen.comment).toBe(loaded.identity.marker);
+      other.query(`CREATE OR REPLACE VIEW "02_bronze"."${name}" AS SELECT 88 AS id`);
+      expect(() => connection.query(`DROP VIEW "02_bronze"."${name}";`)).toThrow();
+      connection.query("ROLLBACK;");
+      expect(rows(loaded.queryTarget)).toEqual([{ id: 88 }]);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("queries canonical and old qualified Bronze names over the same complete pinned files", async () => {
+    const first = file("SELECT 1 AS id, 'one' AS label");
+    const second = file("SELECT 1 AS id, 'one' AS label UNION ALL SELECT 2, 'two'");
+    const named = nameBronzeDataset({
+      dataset_id: "bronze_bdl_variables", layer: "02_bronze", table_name: "bdl_variables",
+      columns: [], files: [first, second],
+    }, "gus_bdl");
+    await loadTablesIntoDuckDB(db, conn, [named.legacyName!, named.dataset.table_name].map(
+      (name) => ({ datasetName: name, tableFolderId: null, files: named.dataset.files,
+        layerName: "02_bronze" })
+    ), "fixture-token");
+    const canonical = '"02_bronze"."gus_bdl_variables"';
+    const legacy = '"02_bronze"."bdl_variables"';
+    expect(rows(canonical)).toEqual(rows(legacy));
+    expect(rows(canonical)).toEqual([
+      { id: 1, label: "one" }, { id: 1, label: "one" }, { id: 2, label: "two" },
+    ]);
+    expect(resultToJSON(connection.query(
+      `SELECT count(*) AS n FROM ${canonical} c JOIN ${legacy} l ON c.id = l.id`
+    )).data).toEqual([{ n: 5n }]);
+    expect(resultToJSON(connection.query(`SELECT CASE WHEN
+      (SELECT COUNT(*) FROM ${canonical}) = (SELECT COUNT(*) FROM ${legacy})
+      AND NOT EXISTS (SELECT * FROM ${canonical} EXCEPT ALL SELECT * FROM ${legacy})
+      AND NOT EXISTS (SELECT * FROM ${legacy} EXCEPT ALL SELECT * FROM ${canonical})
+      THEN 'BRONZE_MATCH' ELSE 'MISMATCH' END AS bronze_check,
+      (SELECT COUNT(*) FROM ${canonical}) AS row_count`)).data).toEqual([
+      { bronze_check: "BRONZE_MATCH", row_count: 3n },
+    ]);
+    expect(resultToJSON(connection.query(`SELECT CASE WHEN
+      (SELECT COUNT(*) FROM ${canonical}) = (SELECT COUNT(*) FROM ${legacy})
+      AND NOT EXISTS (SELECT * FROM (SELECT * FROM ${canonical} LIMIT 20)
+        EXCEPT ALL SELECT * FROM (SELECT * FROM ${legacy} LIMIT 20))
+      AND NOT EXISTS (SELECT * FROM (SELECT * FROM ${legacy} LIMIT 20)
+        EXCEPT ALL SELECT * FROM (SELECT * FROM ${canonical} LIMIT 20))
+      THEN 'MATCH_GUS_BDL' ELSE 'MISMATCH' END AS bronze_check_gus_bdl,
+      (SELECT COUNT(*) FROM ${canonical}) AS row_count`)).data).toEqual([
+      { bronze_check_gus_bdl: "MATCH_GUS_BDL", row_count: 3n },
+    ]);
+    expect(fetchDriveFileBuffer).toHaveBeenCalledTimes(2);
+  }, 30_000);
+
   it("queries every selected Parquet file, preserves duplicate rows and aligns columns by name", async () => {
     const first = file("SELECT 1 AS id, 'one' AS label");
     const second = file("SELECT 'one' AS label, 1 AS id UNION ALL SELECT 'two', 2");

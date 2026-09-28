@@ -462,7 +462,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
       {dbwSearchTerm && (
         <div className="max-h-48 space-y-1 overflow-y-auto">
           {matchingDbwIndicators.slice(0, 50).map((indicator) => {
-            const base = `br_dbw_observations__indicator_${indicator.indicator_id}`;
+            const base = `gus_dbw_observations__indicator_${indicator.indicator_id}`;
             const total = indicator.parts.reduce((sum, part) => sum + (part.size ?? 0), 0);
             const large = total > 64 * 1024 * 1024;
             return (
@@ -517,7 +517,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
       ) : (
         layer.children
           .filter((table) => {
-            return !table.name.startsWith("br_dbw_observations__indicator_");
+            return !table.name.startsWith("gus_dbw_observations__indicator_");
           })
           .map((table) => {
             const isActive =
@@ -559,8 +559,11 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                       className="truncate text-[11px]"
                       title={`${table.label ?? table.name} · SQL: ${table.name}`}
                     >
-                      {table.label ?? table.name}
+                      {layer.name === "02_bronze" ? table.name : (table.label ?? table.name)}
                     </span>
+                    {table.name === "gus_dbw_observations" && table.children.length === 0 && (
+                      <span className="text-[10px] text-muted-foreground">Full table unavailable</span>
+                    )}
                   </div>
 
                   <TableActions
@@ -888,7 +891,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                   <span className="ml-auto text-[10px] text-muted-foreground font-mono">
                     {
                       layer.children.filter(
-                        (table) => !table.name.startsWith("br_dbw_observations__indicator_")
+                        (table) => !table.name.startsWith("gus_dbw_observations__indicator_")
                       ).length
                     }
                   </span>

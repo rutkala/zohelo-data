@@ -69,13 +69,34 @@ depending on published release pointers. The former **Native Landing files**,
 combined into Landing. The retained DBW indicator search is inside expanded
 **02_bronze**.
 
+## Bronze table names
+
+Bronze tables in the explorer use lowercase `<source_key>_<entity>` names within
+`02_bronze`. Examples are `"02_bronze"."gus_bdl_variables"`,
+`"02_bronze"."gus_dbw_indicators"`, `"02_bronze"."world_bank_wdi_series"`, and
+`"02_bronze"."opendata_org_people"`. NBP and Eurostat retain their existing
+`nbp_` and `eurostat_` prefixes. The generated SQL and table actions use these names.
+
+Existing qualified names, such as `"02_bronze"."br_dbw_indicators"`, remain usable
+in saved SQL and load the same pinned data. Names do not change the original files
+or the model identities in the release-bound dbt catalogue. If a local relation
+already occupies one of the newly named Bronze relations, start a fresh browser database session
+instead of replacing that relation. See the [delivery record](deliverables.md)
+for deployment status.
+
+DBW's retained observations still require indicator/part selection under the
+current browser reader. Standardized names do not remove this limitation or make
+the entire observation collection queryable. Whole-table DBW access remains open
+in the delivery record; the smaller indicator, metadata and dictionary tables
+remain separate Bronze relations.
+
 ## SQL
 
 **Browser workspace** (previously labeled `memory`) is the temporary DuckDB database running in your browser. It holds tables loaded for your queries; Google Drive keeps the durable data. You do not need to manage this workspace or preload tables to join them.
 
 Write SQL against quoted physical names such as `"04_gold"."fact_gold_prices"`. On **Run**, the portal finds referenced published tables and loads their verified data automatically before SELECT or CREATE VIEW execution. This applies to ordinary queries, joins, unions, and common table expressions (CTEs); selecting tables in the Explorer or using a special join action is not required.
 
-Automatic loading is limited to a combined 64 MiB Google Drive download budget per browser DuckDB session. If the referenced released tables exceed that budget, the portal should explain the limit before running the query. This behavior is deployed in [PR 63](https://github.com/rutkala/zohelo-data/pull/63). Catalogue metadata has a separate 16 MiB download limit; query memory usage is not bounded by these download limits.
+Automatic loading is limited to a combined 512 MiB Google Drive download budget per browser DuckDB session. If the referenced released tables exceed that budget, the portal reports the limit. Files are downloaded before SQL executes, so a LIMIT clause does not avoid the dataset download. Catalogue metadata has a separate 16 MiB download limit; query memory usage is not bounded by these download limits.
 
 ```sql
 SELECT "effective_date", "price_pln_per_gram_1000"

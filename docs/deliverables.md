@@ -2,7 +2,67 @@
 
 Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
-## Current priority: one usable Landing browser — 27 September 2026
+## Current priority: consistent Bronze names and complete-table DBW access — 28 September 2026
+
+The owner paused object-storage migration and moved the active portal work from
+Landing to Bronze. All available Bronze sources should use consistent names.
+DBW observations must behave as a complete logical table with optional SQL
+filters, without requiring a single indicator or a physical file part. Bronze
+continues to preserve source-shaped rows; an observations relation does not imply
+that it has already been modeled as a Gold fact table. Existing ingestion schedules
+and the accepted Landing/manual-refresh behavior are outside this increment.
+
+**Naming implementation in progress; not yet merged or deployed.** The scoped
+portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
+manifest identities, physical files and existing SQL references. Current mappings:
+
+| Published name prefix | Portal Bronze SQL prefix |
+| --- | --- |
+| `nbp_` | `nbp_` |
+| `bdl_` | `gus_bdl_` |
+| `dbw_` / `br_dbw_` | `gus_dbw_` |
+| `wdi_` | `world_bank_wdi_` |
+| `eurostat_` | `eurostat_` |
+| `br_opendata_` | `opendata_org_` |
+
+The explorer and generated SQL use canonical names; an existing qualified SQL
+name remains a compatibility entry to the same pinned files. Refresh invalidates
+all session-owned loaded names for a changed snapshot. Unowned persisted relations
+fail closed and are not dropped. Name collisions must fail visibly rather
+than overwrite unrelated local relations or silently select one publication.
+If a modeled DBW release and retained DBW snapshot coexist, their common canonical
+names are ambiguous; source precedence must be resolved before that publication
+combination can be accepted. No modeled DBW publication is part of this change.
+
+**DBW complete-table access remains open.** The last recorded full retained
+readback covers 1,550 indicators and 879,999,727 observations in 4,737,200,817
+compressed observation bytes. It does not establish complete current-provider
+coverage or native-to-Bronze lineage. The current portal downloads whole files,
+checks SHA-256 and registers memory buffers before executing SQL, under a shared
+512 MiB budget. Even a small LIMIT therefore does not avoid loading the selected
+file set. OPFS database persistence does not change this loader. The current
+[DuckDB-WASM documentation](https://duckdb.org/docs/current/clients/wasm/troubleshoot)
+also states that direct HTTP authentication headers are unsupported.
+
+The 23 September automatic approval review rejected edits implementing a
+ServiceWorker range relay and a disk-backed authenticated read adapter. No
+specific corrective reason or later resolving decision was recovered. Those
+specific approaches remain held; this is not a blanket ban on DBW work, and the
+older publisher hold was superseded by its repaired original-reference route.
+
+A concrete alternative is a native, authenticated, read-only DuckDB query service
+over the existing verified Drive files. The portal already has a `duck-http`
+client, but no DBW query endpoint is deployed or configured. Delivery would still
+require a hosting/access decision, a bounded verified file cache, server-side
+read-only/resource enforcement, and portal routing from the Bronze table to that
+service. This is a design proposal, not a deployed service or a new paid-service
+authorization. GitHub Actions can run native checks; it is not currently an
+interactive SQL endpoint. A complete-table implementation must demonstrate LIMIT,
+exact counts, multi-indicator filters, joins, expiry and changed/missing-file
+behavior before removing the mandatory selector. Naming-only verification must
+explicitly leave this outcome incomplete.
+
+## Previous priority: one usable Landing browser — 27 September 2026
 
 **Owner accepted the layout and manual refresh; query optimization deployed and measured.**
 The owner confirmed the Landing presentation and reported that **Query file

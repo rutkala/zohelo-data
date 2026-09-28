@@ -3,6 +3,8 @@ import { toast } from "sonner";
 import { asLocalDuckSession } from "@/services/engine";
 import { sqlEscapeIdentifier } from "@/lib/sqlSanitize";
 import { listOwnedNativeMetadataTables } from "@/lib/nativeMetadataOwnership";
+import { nameBronzeDataset, type BronzeSourceKey } from "@/services/googleDrive/bronzeNames";
+import type { PublishedViewIdentity } from "@/services/googleDrive/lakehouseBridge";
 import {
   clearStoredToken,
   clearStoredTokenIfCurrent,
@@ -122,7 +124,7 @@ export const landingDatasets = (landing: LandingCatalogResolution | null): Publi
     });
     return [
       ...(observationRoot
-        ? [{ ...observationRoot, label: "DBW observations · choose an indicator" }]
+        ? [{ ...observationRoot, label: "DBW observations · full table unavailable in browser" }]
         : []),
       ...fixed,
       ...observations,
@@ -135,27 +137,78 @@ const snapshotForTable = (
   tableName: string
 ) =>
   landing?.snapshots.find((snapshot) =>
-    snapshot.manifest.kind === "retained_bronze_snapshot"
-      ? layerName === "02_bronze" &&
-        landingDatasets({
-          snapshots: [snapshot],
-          issues: [],
-          fingerprint: snapshot.fingerprint,
-        }).some((dataset) => dataset.table_name === tableName)
-      : snapshot.manifest.layer === layerName && snapshot.manifest.table_name === tableName
+    landingDatasets({ snapshots: [snapshot], issues: [], fingerprint: snapshot.fingerprint })
+      .some((dataset) => {
+        if (dataset.layer !== layerName) return false;
+        const source = bronzeSourceForSnapshot(snapshot.manifest.source_id);
+        const named = source ? nameBronzeDataset(dataset, source) : { dataset, legacyName: null };
+        return named.dataset.table_name === tableName || named.legacyName === tableName;
+      })
   );
+
+const bronzeSourceForScope = (scope: string): BronzeSourceKey | null => ({
+  nbp_platform: "nbp",
+  bdl_platform: "gus_bdl",
+  dbw_platform: "gus_dbw",
+  wdi_platform: "world_bank_wdi",
+  eurostat_progressive_api_platform: "eurostat",
+} as Record<string, BronzeSourceKey>)[scope] ?? null;
+
+const bronzeSourceForSnapshot = (sourceId: LandingSourceId): BronzeSourceKey | null => ({
+  gus_dbw_retained_bronze: "gus_dbw",
+  opendata_org_bronze: "opendata_org",
+  opendata_org_locations_bronze: "opendata_org",
+  opendata_org_people_bronze: "opendata_org",
+} as Partial<Record<LandingSourceId, BronzeSourceKey>>)[sourceId] ?? null;
+
+interface PublishedEntry {
+  dataset: PublishedDataset;
+  legacyName: string | null;
+}
+
+const publishedEntries = (
+  release: ReleaseCatalogResolution | null,
+  landing: LandingCatalogResolution | null
+): PublishedEntry[] => {
+  const entries: PublishedEntry[] = [];
+  if (release?.kind === "release") {
+    for (const item of release.releases?.length ? release.releases : [release]) {
+      const source = bronzeSourceForScope(item.manifest.release_scope);
+      for (const dataset of item.manifest.datasets)
+        entries.push(source ? nameBronzeDataset(dataset, source) : { dataset, legacyName: null });
+    }
+  }
+  for (const snapshot of landing?.snapshots ?? []) {
+    const source = bronzeSourceForSnapshot(snapshot.manifest.source_id);
+    for (const dataset of landingDatasets({
+      snapshots: [snapshot], issues: [], fingerprint: snapshot.fingerprint,
+    }))
+      entries.push(source ? nameBronzeDataset(dataset, source) : { dataset, legacyName: null });
+  }
+  const names = new Map<string, string>();
+  for (const entry of entries) {
+    for (const name of [entry.dataset.table_name, entry.legacyName].filter((n): n is string => !!n)) {
+      const key = `${entry.dataset.layer}.${name}`.toLowerCase();
+      const previous = names.get(key);
+      if (previous)
+        throw new Error(`Bronze SQL name '${name}' is ambiguous between '${previous}' and '${entry.dataset.dataset_id}'.`);
+      names.set(key, entry.dataset.dataset_id);
+    }
+  }
+  return entries;
+};
 
 const publishedDatasets = (
   release: ReleaseCatalogResolution | null,
   landing: LandingCatalogResolution | null
-): PublishedDataset[] => [
-  ...(release?.kind === "release"
-    ? release.releases && release.releases.length > 0
-      ? release.releases.flatMap((r) => r.manifest.datasets)
-      : release.manifest.datasets
-    : []),
-  ...landingDatasets(landing),
-];
+): PublishedDataset[] => publishedEntries(release, landing).map((entry) => entry.dataset);
+
+const sqlPublishedDatasets = (
+  release: ReleaseCatalogResolution | null,
+  landing: LandingCatalogResolution | null
+): PublishedDataset[] => publishedEntries(release, landing).flatMap(({ dataset, legacyName }) =>
+  legacyName ? [dataset, { ...dataset, table_name: legacyName }] : [dataset]
+);
 
 const landingStatus = (landing: LandingCatalogResolution) => {
   if (landing.issues.length === 0) return "";
@@ -261,7 +314,7 @@ function mergeLandingIntoTree(
   tree: LakehouseLayer[],
   landing: LandingCatalogResolution
 ): LakehouseLayer[] {
-  const datasets = landingDatasets(landing);
+  const datasets = publishedDatasets(null, landing);
   return tree.map((layer) => {
     const matching = datasets
       .filter((d) => d.layer === layer.name)
@@ -310,6 +363,8 @@ export const createGoogleDriveSlice: StateCreator<
   // DuckDB views survive disconnect; record their release per engine, not globally.
   const loadedReleaseFingerprints = new WeakMap<object, string>();
   const loadedLandingFingerprints = new WeakMap<object, Map<LandingSourceId, string>>();
+  const ownedPublishedViews = new WeakMap<object, Map<string, PublishedViewIdentity>>();
+  const loadedLandingViews = new WeakMap<object, Map<LandingSourceId, Set<string>>>();
   const downloadBudgets = new WeakMap<object, ReturnType<typeof createDriveDownloadBudget>>();
   const metadataRelations = new WeakMap<object, Set<string>>();
   let metadataInFlight: Promise<unknown> | null = null;
@@ -349,6 +404,8 @@ export const createGoogleDriveSlice: StateCreator<
     const session = get().currentSession;
     const handled = handleDriveAuthFailure(set, get, token, error);
     if (handled) {
+      const db = asLocalDuckSession(session)?.local.db;
+      if (db) ownedPublishedViews.delete(db);
       nativeGeneration += 1;
       abortMetadataScan();
       set({ nativeMetadataLoading: null, nativeMetadataProgress: null });
@@ -458,13 +515,50 @@ export const createGoogleDriveSlice: StateCreator<
     return budget;
   };
   const tableKey = (layerName: string, tableName: string) => `${layerName}\u0000${tableName}`;
+  const requiresPublishedViewIdentity = (
+    release: ReleaseCatalogResolution | null,
+    landing: LandingCatalogResolution | null,
+    layerName: string,
+    tableName: string
+  ) => Boolean(snapshotForTable(landing, layerName, tableName)) ||
+    publishedEntries(release, landing).some(({ dataset, legacyName }) =>
+      !!legacyName && dataset.layer === layerName &&
+      (dataset.table_name === tableName || legacyName === tableName));
+  const isOwnedPublishedView = async (
+    db: object,
+    conn: { query: (sql: string) => Promise<{ toArray: () => Array<Record<string, unknown>> }> },
+    layerName: string,
+    viewName: string
+  ): Promise<boolean> => {
+    const key = tableKey(layerName.toLowerCase(), viewName.toLowerCase());
+    const expected = ownedPublishedViews.get(db)?.get(key);
+    if (!expected) return false;
+    const result = await conn.query(
+      `SELECT view_oid, comment FROM duckdb_views() WHERE database_name = current_database() ` +
+      `AND schema_name = '${layerName.replace(/'/g, "''")}' ` +
+      `AND view_name = '${viewName.replace(/'/g, "''")}'`
+    );
+    const rows = result.toArray();
+    const valid = rows.length === 1 && String(rows[0].view_oid) === expected.oid &&
+      rows[0].comment === expected.marker;
+    if (!valid) ownedPublishedViews.get(db)?.delete(key);
+    return valid;
+  };
   const markLoadedTable = (
     db: object,
     layerName: string,
     tableName: string,
     release: ReleaseCatalogResolution | null,
-    landing: LandingCatalogResolution | null
+    landing: LandingCatalogResolution | null,
+    currentOwner = true,
+    viewName = tableName,
+    identity?: PublishedViewIdentity
   ) => {
+    if (identity && currentOwner) {
+      const names = ownedPublishedViews.get(db) ?? new Map<string, PublishedViewIdentity>();
+      names.set(tableKey(layerName.toLowerCase(), viewName.toLowerCase()), identity);
+      ownedPublishedViews.set(db, names);
+    }
     const snapshot = snapshotForTable(landing, layerName, tableName);
     if (snapshot) {
       let fingerprints = loadedLandingFingerprints.get(db);
@@ -473,6 +567,11 @@ export const createGoogleDriveSlice: StateCreator<
         loadedLandingFingerprints.set(db, fingerprints);
       }
       fingerprints.set(snapshot.manifest.source_id, snapshot.fingerprint);
+      const bySource = loadedLandingViews.get(db) ?? new Map<LandingSourceId, Set<string>>();
+      const names = bySource.get(snapshot.manifest.source_id) ?? new Set<string>();
+      names.add(viewName);
+      bySource.set(snapshot.manifest.source_id, names);
+      loadedLandingViews.set(db, bySource);
       return;
     }
     const fingerprint = releaseFingerprint(release);
@@ -514,7 +613,8 @@ export const createGoogleDriveSlice: StateCreator<
       lakehouseStatusMessage: `Loading '${label}' from Google Drive...`,
     });
     try {
-      if (tableName === "br_dbw_observations" && (!table || table.children.length === 0)) {
+      if ((tableName === "gus_dbw_observations" || tableName === "br_dbw_observations") &&
+          (!table || table.children.length === 0)) {
         throw new Error(
           "Search and choose a dated retained DBW indicator or explicit part before loading observations."
         );
@@ -526,31 +626,68 @@ export const createGoogleDriveSlice: StateCreator<
       }
       if (!table) throw new Error(`Dataset '${tableName}' was not found in the catalog.`);
       let queryTarget: string;
+      let identity: PublishedViewIdentity | undefined;
       if (fileId !== undefined) {
         if (!file) throw new Error("The requested file was not found in the catalog.");
-        ({ queryTarget } = await loadFileIntoDuckDB(
+        const viewName = `${tableName}__file_${file.id}`;
+        ({ queryTarget, identity } = await loadFileIntoDuckDB(
           local.db,
           local.connection,
           tableName,
           file,
           token ?? "",
-          budgetForEngine(local.db)
+          budgetForEngine(local.db),
+          async () => {
+            if (!current()) throw new Error("Google Drive session changed before file preview could be published.");
+            if (requiresPublishedViewIdentity(source, landing, layerName, tableName)) {
+              const relations = await local.connection.query(
+                `SELECT table_name FROM information_schema.tables WHERE table_schema = '${layerName.replace(/'/g, "''")}' AND lower(table_name) = lower('${viewName.replace(/'/g, "''")}')`
+              );
+              if (relations.toArray().length && !await isOwnedPublishedView(
+                local.db, local.connection, layerName, viewName))
+                throw new Error(`Published file preview '${viewName}' already exists in this local session. Start a fresh DuckDB session to preview the pinned file.`);
+            }
+            if (!current()) throw new Error("Google Drive session changed before file preview could be published.");
+          }
         ));
       } else {
-        ({ queryTarget } = await loadTableIntoDuckDB(
-          local.db,
-          local.connection,
-          tableName,
-          table.id,
-          table.children,
-          token ?? "",
-          layerName,
-          budgetForEngine(local.db)
-        ));
+        if (requiresPublishedViewIdentity(source, landing, layerName, tableName)) {
+          const relations = await local.connection.query(
+            `SELECT table_name FROM information_schema.tables WHERE table_schema = '${layerName.replace(/'/g, "''")}' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
+          );
+          const existed = relations.toArray().length > 0;
+          if (existed && !await isOwnedPublishedView(
+            local.db, local.connection, layerName, tableName))
+            throw new Error(`Published relation '${tableName}' already exists in this local session. Start a fresh DuckDB session to load the pinned release.`);
+          const loaded = await loadTablesIntoDuckDB(local.db, local.connection, [{
+            datasetName: tableName, tableFolderId: table.id, files: table.children, layerName,
+          }], token ?? "", budgetForEngine(local.db), async () => {
+            if (!current()) throw new Error("Google Drive session changed before the selected view could be published.");
+            if (existed && !await isOwnedPublishedView(
+              local.db, local.connection, layerName, tableName))
+              throw new Error(`Published relation '${tableName}' changed during loading. Start a fresh DuckDB session before retrying.`);
+            if (!existed) {
+              const now = await local.connection.query(
+                `SELECT table_name FROM information_schema.tables WHERE table_schema = '${layerName.replace(/'/g, "''")}' AND lower(table_name) = lower('${tableName.replace(/'/g, "''")}')`
+              );
+              if (now.toArray().length)
+                throw new Error(`Published relation '${tableName}' was created during loading. Start a fresh DuckDB session before retrying.`);
+            }
+            if (!current()) throw new Error("Google Drive session changed before the selected view could be published.");
+          });
+          identity = loaded.identities[0];
+          queryTarget = `${sqlEscapeIdentifier(layerName)}.${sqlEscapeIdentifier(tableName)}`;
+        } else {
+          ({ queryTarget, identity } = await loadTableIntoDuckDB(
+            local.db, local.connection, tableName, table.id, table.children,
+            token ?? "", layerName, budgetForEngine(local.db)
+          ));
+        }
       }
       // publishViews has completed at this point. Keep this engine pinned even if the
       // caller changed token/session while the request was in flight.
-      markLoadedTable(local.db, layerName, tableName, source, landing);
+      markLoadedTable(local.db, layerName, tableName, source, landing, current(),
+        file ? `${tableName}__file_${file.id}` : tableName, identity);
       if (!current()) return null;
       let schemaWarning = "";
       try {
@@ -658,25 +795,43 @@ export const createGoogleDriveSlice: StateCreator<
       lakehouseStatusMessage: `Loading ${selections.length} selected dataset(s) from Google Drive...`,
     });
     try {
-      await loadTablesIntoDuckDB(
+      const loaded = await loadTablesIntoDuckDB(
         local.db,
         local.connection,
         selections,
         token,
         budgetForEngine(local.db),
-        () => {
+        async () => {
           if (!current()) {
             throw new Error(
               "Google Drive session changed before the selected tables could be prepared."
             );
           }
+          const named = selections.filter((table) => requiresPublishedViewIdentity(
+            source, landing, table.layerName, table.datasetName));
+          if (named.length) {
+            const existing = await local.connection.query(
+              "SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = current_database()"
+            );
+            const occupied = new Set(existing.toArray().map((row) =>
+              tableKey(String(row.table_schema).toLowerCase(), String(row.table_name).toLowerCase())));
+            for (const table of named) {
+              const key = tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase());
+              if (occupied.has(key) && !await isOwnedPublishedView(
+                local.db, local.connection, table.layerName, table.datasetName))
+                throw new Error(`Published relation '${table.datasetName}' already exists in this local session. Start a fresh DuckDB session to load the pinned release.`);
+            }
+          }
+          if (!current()) throw new Error("Google Drive session changed before SQL views could be published.");
         }
       );
       // Views may exist on the old engine if a session or token changed while a
       // download was pending, but never open a tab whose SQL was not prepared
       // against the still-current pinned release.
-      for (const table of selections) {
-        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing);
+      for (let index = 0; index < selections.length; index++) {
+        const table = selections[index];
+        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing,
+          current(), table.datasetName, loaded.identities[index]);
       }
       if (!current()) return null;
       let schemaWarning = "";
@@ -737,7 +892,7 @@ export const createGoogleDriveSlice: StateCreator<
       columns: [],
       files: [],
     }));
-    const datasets = [...publishedDatasets(source, landing), ...metadataDatasets];
+    const datasets = [...sqlPublishedDatasets(source, landing), ...metadataDatasets];
     if (!local || datasets.length === 0) return;
     const current = () =>
       get().currentSession === session &&
@@ -780,7 +935,7 @@ export const createGoogleDriveSlice: StateCreator<
         publishedReferences.some(
           (table) =>
             table.layerName === "02_bronze" &&
-            table.datasetName === "br_dbw_observations" &&
+            ["gus_dbw_observations", "br_dbw_observations"].includes(table.datasetName) &&
             table.files.length === 0
         )
       ) {
@@ -791,7 +946,7 @@ export const createGoogleDriveSlice: StateCreator<
       if (
         publishedReferences.some(
           (table) =>
-            table.datasetName.startsWith("br_dbw_observations__indicator_") &&
+            /^(?:gus_dbw|br_dbw)_observations__indicator_/.test(table.datasetName) &&
             table.files.length === 0
         )
       ) {
@@ -825,10 +980,16 @@ export const createGoogleDriveSlice: StateCreator<
             tableKey(String(row.table_schema).toLowerCase(), String(row.table_name).toLowerCase())
           )
       );
-      const pending = publishedReferences.filter(
-        (table) =>
-          !existing.has(tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase()))
-      );
+      for (const table of publishedReferences) {
+        const key = tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase());
+        if (existing.has(key) && requiresPublishedViewIdentity(
+          source, landing, table.layerName, table.datasetName) &&
+          !await isOwnedPublishedView(local.db, local.connection,
+            table.layerName, table.datasetName))
+          throw new Error(`Published relation '${table.datasetName}' already exists in this local session. Start a fresh DuckDB session to query the pinned release.`);
+      }
+      const pending = publishedReferences.filter((table) =>
+        !existing.has(tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase())));
       if (pending.length === 0) return;
       if (!token)
         throw new Error("Sign in to Google Drive before querying published release data.");
@@ -838,7 +999,7 @@ export const createGoogleDriveSlice: StateCreator<
         isLakehouseLoading: true,
         lakehouseStatusMessage: `Loading ${pending.length} published dataset(s) referenced by this SQL query...`,
       });
-      await loadTablesIntoDuckDB(
+      const loaded = await loadTablesIntoDuckDB(
         local.db,
         local.connection,
         pending.map((table) => ({
@@ -849,19 +1010,30 @@ export const createGoogleDriveSlice: StateCreator<
         })),
         token,
         budgetForEngine(local.db),
-        () => {
+        async () => {
           if (!current()) {
             throw new Error(
               "Google Drive session changed before the referenced tables could be loaded."
             );
           }
+          const now = await local.connection.query(
+            "SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = current_database()"
+          );
+          const occupied = new Set(now.toArray().map((row) =>
+            tableKey(String(row.table_schema).toLowerCase(), String(row.table_name).toLowerCase())));
+          if (pending.some((table) => occupied.has(
+            tableKey(table.layerName.toLowerCase(), table.datasetName.toLowerCase()))))
+            throw new Error("A published SQL relation was created during loading. Start a fresh DuckDB session before retrying.");
+          if (!current()) throw new Error("Google Drive session changed before SQL views could be published.");
         }
       );
       if (!current()) {
         throw new Error("Google Drive session changed before the query could run.");
       }
-      for (const table of pending) {
-        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing);
+      for (let index = 0; index < pending.length; index++) {
+        const table = pending[index];
+        markLoadedTable(local.db, table.layerName, table.datasetName, source, landing,
+          current(), table.datasetName, loaded.identities[index]);
       }
       // Refresh visible workspace relations after lazy loading; a metadata
       // refresh failure must not discard verified data already available.
@@ -928,6 +1100,8 @@ export const createGoogleDriveSlice: StateCreator<
           lakehouseStatusMessage: "Requesting Google Sign-In authorization...",
         });
         const nextToken = await requestGoogleAccessToken({ promptConsent });
+        const db = asLocalDuckSession(get().currentSession)?.local.db;
+        if (db) ownedPublishedViews.delete(db);
         nativeGeneration += 1;
         abortMetadataScan();
         set({
@@ -957,6 +1131,8 @@ export const createGoogleDriveSlice: StateCreator<
         return false;
       }
       setStoredToken(trimmed);
+      const db = asLocalDuckSession(get().currentSession)?.local.db;
+      if (db) ownedPublishedViews.delete(db);
       nativeGeneration += 1;
       abortMetadataScan();
       set({
@@ -971,6 +1147,8 @@ export const createGoogleDriveSlice: StateCreator<
     },
 
     disconnectGoogleDrive: () => {
+      const db = asLocalDuckSession(get().currentSession)?.local.db;
+      if (db) ownedPublishedViews.delete(db);
       nativeGeneration += 1;
       abortMetadataScan();
       nativeActionSequence += 1;
@@ -1279,6 +1457,9 @@ export const createGoogleDriveSlice: StateCreator<
         if (local) {
           const loadedLanding = loadedLandingFingerprints.get(local.db);
           if (loadedLanding) {
+            const invalidations: Array<{
+              sourceId: LandingSourceId; targetLayer: string; names: Set<string>;
+            }> = [];
             for (const [sourceId, loadedFingerprint] of loadedLanding) {
               const selected = landing.snapshots.find(
                 ({ manifest }) => manifest.source_id === sourceId
@@ -1287,51 +1468,40 @@ export const createGoogleDriveSlice: StateCreator<
               const targetLayer =
                 selected?.manifest.layer ??
                 (sourceId.endsWith("_bronze") ? "02_bronze" : "01_landing");
-              if (sourceId === "gus_dbw_retained_bronze") {
-                const relations = await local.connection.query(
-                  "SELECT table_name FROM information_schema.tables WHERE table_schema = '02_bronze'"
-                );
-                const dropped = new Set<string>();
-                for (const row of relations.toArray()) {
-                  const name = String(row.table_name);
-                  if (
-                    name.startsWith("br_dbw_observations__indicator_") ||
-                    ["br_dbw_dictionaries", "br_dbw_metadata", "br_dbw_indicators"].includes(name)
-                  ) {
+              invalidations.push({ sourceId, targetLayer,
+                names: new Set(loadedLandingViews.get(local.db)?.get(sourceId)) });
+            }
+            if (invalidations.length) {
+              await local.connection.query("BEGIN TRANSACTION;");
+              try {
+                for (const { targetLayer, names } of invalidations) for (const name of names) {
+                  if (await isOwnedPublishedView(local.db, local.connection, targetLayer, name)) {
                     await local.connection.query(
-                      `DROP VIEW IF EXISTS "02_bronze"."${name.replace(/"/g, '""')}";`
+                      `DROP VIEW ${sqlEscapeIdentifier(targetLayer)}.${sqlEscapeIdentifier(name)};`
                     );
-                    dropped.add(name);
+                  } else {
+                    const replacement = await local.connection.query(
+                      `SELECT table_name FROM information_schema.tables WHERE table_schema = '${targetLayer.replace(/'/g, "''")}' AND lower(table_name) = lower('${name.replace(/'/g, "''")}')`
+                    );
+                    if (replacement.toArray().length)
+                      throw new Error(`Published relation '${name}' was replaced in this DuckDB session. Start a fresh session before refreshing its snapshot.`);
                   }
                 }
-                loadedLanding.delete(sourceId);
-                if (
-                  get().activeLakehouseLayer === "02_bronze" &&
-                  get().activeLakehouseDataset &&
-                  dropped.has(get().activeLakehouseDataset!)
-                ) {
-                  set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
-                }
-                continue;
+                await local.connection.query("COMMIT;");
+              } catch (error) {
+                await local.connection.query("ROLLBACK;").catch(() => undefined);
+                throw error;
               }
-              const tableName =
-                (selected && selected.manifest.kind !== "retained_bronze_snapshot"
-                  ? selected.manifest.table_name
-                  : undefined) ??
-                (sourceId === "opendata_org_bronze"
-                  ? "br_opendata_organizations"
-                  : sourceId === "opendata_org_locations_bronze"
-                    ? "br_opendata_locations"
-                    : sourceId === "opendata_org_people_bronze"
-                      ? "br_opendata_people"
-                      : sourceId.endsWith("_bulk")
-                        ? `${sourceId.slice(0, -"_bulk".length)}_distributions`
-                        : `${sourceId}_responses`);
-              await local.connection.query(`DROP VIEW IF EXISTS "${targetLayer}"."${tableName}";`);
+            }
+            for (const { sourceId, targetLayer, names } of invalidations) {
+              for (const name of names) ownedPublishedViews.get(local.db)?.delete(
+                tableKey(targetLayer.toLowerCase(), name.toLowerCase()));
+              loadedLandingViews.get(local.db)?.delete(sourceId);
               loadedLanding.delete(sourceId);
               if (
                 get().activeLakehouseLayer === targetLayer &&
-                get().activeLakehouseDataset === tableName
+                get().activeLakehouseDataset &&
+                names.has(get().activeLakehouseDataset!)
               ) {
                 set({ activeLakehouseLayer: null, activeLakehouseDataset: null });
               }
