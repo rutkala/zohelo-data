@@ -289,16 +289,17 @@ try {
       (receipt.browser_http.blocked_categories[category] ?? 0) + 1;
     return route.abort("blockedbyclient");
   };
-  await context.route("**/*", (route) => {
+  await context.route("**/*", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const headers = await request.allHeaders();
     if (url.origin === fixtureOrigin) {
-      if (request.headers().authorization) return block(route, "fixture_authorization");
+      if (headers.authorization) return block(route, "fixture_authorization");
       return route.continue();
     }
     const extension = extensionUrls.get(url.href);
     if (extension) {
-      if (request.method() !== "GET" || request.headers().authorization)
+      if (request.method() !== "GET" || headers.authorization)
         return block(route, "extension_invalid_request");
       const metrics = receipt.browser_http[`${extension}_extension`];
       metrics.requests++;
@@ -315,10 +316,10 @@ try {
     if (++receipt.browser_http.requests > maxBrowserRequests || fullGetSeen) {
       return block(route, "drive_request_limit_or_full_get");
     }
-    if (method !== "OPTIONS" && request.headers().authorization !== `Bearer ${token}`)
+    if (method !== "OPTIONS" && headers.authorization !== `Bearer ${token}`)
       receipt.browser_http.unauthenticated_requests++;
     if (method === "GET") {
-      const match = /^bytes=(\d+)-(\d+)$/.exec(request.headers().range ?? "");
+      const match = /^bytes=(\d+)-(\d+)$/.exec(headers.range ?? "");
       if (!match || Number(match[2]) < Number(match[1]) ||
           Number(match[2]) >= selected.size ||
           Number(match[2]) - Number(match[1]) + 1 > maxBrowserRangeBytes) {
