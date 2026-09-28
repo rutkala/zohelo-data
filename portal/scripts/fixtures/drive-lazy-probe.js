@@ -13,7 +13,9 @@ window.runDriveLazyProbe = async ({ scope, headUrl, revisionUrl, token, expected
     await db.instantiate(wasmUrl);
     await db.open({ filesystem: { allowFullHTTPReads: false, forceFullHTTPReads: false } });
     connection = await db.connect();
+    await window.markDriveProbePhase("load_httpfs");
     await connection.query("LOAD httpfs");
+    await window.markDriveProbePhase("configure_http");
     await connection.query("SET auto_fallback_to_full_download=false");
     await connection.query("SET force_download=false");
     await connection.query(
@@ -35,7 +37,9 @@ window.runDriveLazyProbe = async ({ scope, headUrl, revisionUrl, token, expected
         return { status: "query_error" };
       }
     };
+    await window.markDriveProbePhase("head_query");
     outcome.head = await probe(headUrl);
+    await window.markDriveProbePhase("revision_query");
     outcome.revision = await probe(revisionUrl);
     return outcome;
   } finally {

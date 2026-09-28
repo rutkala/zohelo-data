@@ -21,6 +21,15 @@ which files, columns and Parquet row groups are actually read. An indicator filt
 may improve pruning, but must not be a prerequisite for accessing the table.
 No hosting or object-storage decision is required for this feasibility work.
 
+**Owner clarification — 28 September, 11:37 CEST: complete Bronze tables and a
+1,000-row default preview.** Lazy evaluation is primarily for Bronze; Landing
+metadata can use it where useful and feasible. The expected default is ordinary
+`SELECT * FROM "02_bronze"."gus_dbw_observations" LIMIT 1000`, over the complete
+logical table. Indicator and physical-part selection must not be prerequisites.
+SQL filters remain optional. The acceptance test must measure view binding,
+preview transfer and returned rows, then complete counts and multi-indicator SQL;
+a single-file transport test cannot establish the requested experience.
+
 **Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
 manifest identities, physical files and existing SQL references. Current mappings:
@@ -145,8 +154,10 @@ in [run 36402148552](https://github.com/rutkala/zohelo-data/actions/runs/3640214
 with the same measured bytes. It now requires filtered transfer below half of the
 full-column scan and reruns when package manifests or the Node version change.
 
-A separate, reviewed `Probe retained DBW lazy Drive reads` workflow is prepared
-for manual execution from an exact reviewed main SHA and the existing production
+A separate, reviewed `Probe retained DBW lazy Drive reads` workflow was merged in
+[PR #200](https://github.com/rutkala/zohelo-data/pull/200) at
+`fe7ec23ff23bf1dae6469e83ecdccc58815005a0`, after the final data CI retry passed.
+It runs manually from an exact reviewed main SHA and the existing production
 Drive root. It verifies the pointer/manifest/index chain, selects one published
 2–8 MiB observation part, checks Drive's reported size/hash, and tests current-head
 and exact-revision URLs independently. It caps metadata requests/bytes and browser
@@ -154,8 +165,19 @@ Range requests/bytes, blocks other URLs and writes, checks response ranges, and
 records only sanitized outcomes. This is a transport probe, not a one-indicator
 implementation of the requested complete table. It makes no retention changes and
 does not hash unread payload bytes. Before/after metadata equality only detects
-observed changes; it is not an atomic snapshot guarantee. Actual Drive execution
-and its result remain pending.
+observed changes; it is not an atomic snapshot guarantee.
+
+The first [live attempt](https://github.com/rutkala/zohelo-data/actions/runs/36405849929)
+verified the manifest/index hashes, selected-file size/SHA and matching revision
+metadata in 11 metadata requests (1,342,804 bytes). The selected 2,251,840-byte
+part declares 370,818 rows; its current revision is not marked Keep Forever.
+Browser setup then failed before any Drive browser request, with one blocked
+request and no data bytes transferred. This is an unresolved harness failure,
+not evidence that Drive rejects authenticated ranges. The
+[receipt](audits/2026-09-28-drive-lazy-http.json) records this attempt and the
+separate metadata-only inventory: 2,741 parts, 1,550 published indicators and
+879,999,727 declared rows. Its 5,519,834,917 declared bytes describe the current
+portal index, not the earlier native retained readback layout or a fresh recount.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
