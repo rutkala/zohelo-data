@@ -719,17 +719,38 @@ entries (coverage ratio 0.3336484825564905), 9,212 accepted receipts and
 `complete_official_catalogue=false`. This modeled-release success is independent
 of the cancelled retained-Bronze writer and is not its missing fresh verification.
 
-The repair branch replaces per-row DuckDB bindings with typed DataFrame batch
-appends, emits a flushed start/completion receipt for each distribution, gives the
-decoder an interrupt window before the job ceiling, and exposes only exact-match
-owner recovery through the existing guarded recovery primitive. A cancelled-job
-fallback names that same run/attempt owner explicitly; it does not infer staleness
-from time. The accepted checkpoint, source receipts and original Landing bytes
-remain unchanged. Production recovery, CI/review, a successful rerun, fresh
-verification and complete downstream consumers remain open. The upstream state
-currently declares 9,212 accepted receipts and incomplete coverage; the 10-receipt
-Bronze cursor is not catalogue completion, and the current progressive release
-still models only three datasets.
+[PR #198](https://github.com/rutkala/zohelo-data/pull/198) merged the
+timeout repair as
+[`bb2b71bb45d6b35b5f6bf74c3d6f254891aa36c2`](https://github.com/rutkala/zohelo-data/commit/bb2b71bb45d6b35b5f6bf74c3d6f254891aa36c2)
+after [exact-head CI](https://github.com/rutkala/zohelo-data/actions/runs/36398386754)
+passed. It replaces per-row DuckDB bindings with typed DataFrame batch appends,
+emits flushed distribution receipts, gives the decoder an interrupt window before
+the job ceiling, and exposes only exact-match owner recovery through the existing
+guarded recovery primitive. The accepted checkpoint, source receipts and original
+Landing bytes remain authoritative.
+
+The [production recovery run](https://github.com/rutkala/zohelo-data/actions/runs/36399529104)
+completed successfully at 11:47:17 Europe/Warsaw on 28 September. It performed no
+source recollection. The exact held owner from run 36388542439 was released by the
+explicit recovery identity, the new run acquired its own non-expiring claim, and
+that claim was released at 11:36:53 after a bounded successful batch. The durable
+Bronze cursor advanced atomically from 10 to **92 source receipts**, including
+**45 decoded data receipts** and 47 non-data receipts, with **56,822,865
+observation cells** and **2,206,622,769 immutable output bytes**. The batch decoded
+41 new distributions and skipped 41 non-data receipts. The cancellation recovery
+job correctly skipped because the writer exited normally.
+
+A fresh independent runner verified the exact checkpoint and newest immutable
+output bytes at 11:39:57, including output SHA-256
+`ee2600d0941059acec3f4fe6cd534c1bf1e9ec91902095259d60857feb596dd6`.
+The same serialized workflow separately passed all 38 dbt models/tests, published
+modeled release `9ed633ea-77b2-49d8-ab05-1fd3875adb68`, and passed its fresh
+current-release verification. That release remains the complete reviewed
+three-dataset/81-series API contract only: the retained source still declares
+9,212 accepted receipts, 9,120 pending at the Bronze cursor, 20,931 pending
+distribution tasks, 7,058 validated current distributions out of a 21,154-entry
+catalogue and `complete_official_catalogue=false`. Neither the successful Bronze
+batch nor the modeled release is complete Eurostat catalogue coverage.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
 
