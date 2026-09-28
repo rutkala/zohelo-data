@@ -15,7 +15,7 @@ const sourceId = "gus_dbw_retained_bronze";
 const driveOrigin = "https://www.googleapis.com";
 // The pinned @duckdb/duckdb-wasm@1.33.1-dev64.0 reports DuckDB v1.5.5 on
 // wasm_eh. LOAD httpfs may fetch this signed upstream extension on demand.
-const httpfsExtensionUrl = "https://extensions.duckdb.org/duckdb-wasm/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm";
+const httpfsExtensionUrl = "https://extensions.duckdb.org/v1.5.5/wasm_eh/httpfs.duckdb_extension.wasm";
 const duckdbWasmVersion = JSON.parse(readFileSync(new URL("../node_modules/@duckdb/duckdb-wasm/package.json", import.meta.url))).version;
 const maxMetadataBytes = 8 * 1024 * 1024;
 const minPartBytes = 2 * 1024 * 1024;
