@@ -13,6 +13,13 @@ Shared instructions for coding work in this repository. Run commands from the re
   with stable source keys such as `gus_bdl`, `gus_dbw`, `world_bank_wdi`, and
   `opendata_org`. Preserve immutable publication descriptors and existing SQL
   references. Compatibility names must resolve the same pinned dataset membership.
+- Naming is merged and deployed at `121c32795b6efce85b62c2f1ce36226315b002af`.
+  The live catalog exposed 24 Bronze tables and all four renamed source groups.
+  Complete counts and bounded samples matched canonical/legacy SQL for BDL,
+  WDI and DBW indicators. OpenData people hit the browser download limit; its
+  independently checksum-verified current manifest declares 3,802,407,075 bytes
+  across 493 files, exceeding the 512 MiB session budget by itself. Do not claim
+  all-source SQL acceptance. See the dated Bronze receipt in `docs/deliverables.md`.
 - Naming is independently deliverable, but does not complete DBW access. The
   retained observations exceed the current browser's 512 MiB download budget;
   removing the selector or publishing another copy does not solve that reader

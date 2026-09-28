@@ -1,0 +1,158 @@
+{
+  "format_version": 1,
+  "status": "catalog_verified_sql_partial_runtime_blocked",
+  "origin": "https://data.zohelo.com",
+  "deployed_sha": "121c32795b6efce85b62c2f1ce36226315b002af",
+  "naming_convention": "02_bronze.<source_key>_<entity>",
+  "implementation": {
+    "pull_request": "https://github.com/rutkala/zohelo-data/pull/190",
+    "reviewed_head": "7c725b9d78532aa634a25726d923d3f060f3f772",
+    "portal_validation": "https://github.com/rutkala/zohelo-data/actions/runs/36377602679",
+    "data_validation": "https://github.com/rutkala/zohelo-data/actions/runs/36377602698",
+    "portal": {
+      "unit_tests": 806,
+      "browser_tests_per_base": 18,
+      "base_paths": [
+        "./",
+        "/zohelo-data/"
+      ],
+      "lint_errors": 0,
+      "existing_lint_warnings": 24,
+      "status": "success"
+    },
+    "ownership_review_thread": "PRRT_kwDOT_gP5s6miGCG"
+  },
+  "verifier_pull_requests": [
+    "https://github.com/rutkala/zohelo-data/pull/191",
+    "https://github.com/rutkala/zohelo-data/pull/194"
+  ],
+  "deployment": {
+    "run": "https://github.com/rutkala/zohelo-data/actions/runs/36380276544",
+    "build": "success",
+    "deploy": "success",
+    "live_marker": "verified",
+    "live_marker_verified_at_utc": "2026-09-28T05:06:26.6037219Z"
+  },
+  "live_verification": {
+    "run": "https://github.com/rutkala/zohelo-data/actions/runs/36380497428",
+    "receipt": {
+      "format_version": 1,
+      "status": "failed",
+      "expected_deployed_sha": "121c32795b6efce85b62c2f1ce36226315b002af",
+      "dbw_modeled_pointer": "absent",
+      "retained_dbw_snapshot_id": "8c10d951-1b2d-42cd-8378-315cdc14e2fa",
+      "dbw_whole_table_verified": false,
+      "checked": [
+        {
+          "source": "gus_bdl",
+          "canonical": "gus_bdl_variables",
+          "expected": true,
+          "available": true,
+          "verified": true,
+          "rows": 102,
+          "elapsed_ms": 1306
+        },
+        {
+          "source": "world_bank_wdi",
+          "canonical": "world_bank_wdi_country",
+          "expected": true,
+          "available": true,
+          "verified": true,
+          "rows": 264,
+          "elapsed_ms": 1284
+        },
+        {
+          "source": "gus_dbw",
+          "canonical": "gus_dbw_indicators",
+          "expected": true,
+          "available": true,
+          "verified": true,
+          "rows": 1550,
+          "elapsed_ms": 1248
+        },
+        {
+          "source": "opendata_org",
+          "canonical": "opendata_org_people",
+          "expected": true,
+          "available": true,
+          "verified": false
+        }
+      ],
+      "read_only": false,
+      "bronze_tables_visible": 24,
+      "expected_sources": 4,
+      "available_sources": 4,
+      "failure_category": "browser_download_limit",
+      "failed_stage": "sql_result_opendata_org",
+      "failed_source_elapsed_ms": 48773,
+      "media_requests": {
+        "bootstrap": 33,
+        "sql": 56
+      },
+      "sql_media_bytes_with_content_length": 0,
+      "sql_media_responses_without_content_length": 56,
+      "sql_media_http_status_counts": {
+        "200": 56
+      },
+      "sql_media_request_failures": 0,
+      "observed_at_utc": "2026-09-28T05:09:22.208Z"
+    },
+    "method": "Compare complete counts and two-way ORDER BY ALL LIMIT 20 EXCEPT ALL samples for one representative table per renamed source group.",
+    "limits": [
+      "This is not a full-content comparison of every Bronze table.",
+      "The read_only field is a success-only flag; failed verification leaves it false. The verifier blocks Drive mutations and uploads.",
+      "The observed DBW control pointer does not independently prove which manifest the portal loaded.",
+      "OpenData people exceeded the browser download limit; its SQL equivalence was not verified."
+    ]
+  },
+  "prior_attempts": [
+    {
+      "run": "https://github.com/rutkala/zohelo-data/actions/runs/36378758825",
+      "status": "failed",
+      "verified_sources": [
+        "gus_bdl"
+      ],
+      "cause": "Verifier navigation tried to reopen New SQL query from inactive Home; fixed by PR191."
+    },
+    {
+      "run": "https://github.com/rutkala/zohelo-data/actions/runs/36379742610",
+      "status": "failed",
+      "verified_sources": [
+        "gus_bdl",
+        "world_bank_wdi",
+        "gus_dbw"
+      ],
+      "failed_stage": "sql_result_opendata_org",
+      "cause": "Receipt lacked failure category; subsequent diagnostic run identified browser_download_limit."
+    }
+  ],
+  "opendata_metadata": {
+    "status": "verified_manifest_metadata",
+    "observed_at_utc": "2026-09-28T05:12:33.580842+00:00",
+    "source_id": "opendata_org_people_bronze",
+    "snapshot_id": "62e71c7c-a14d-4075-9f86-ce2db6e05e99",
+    "pointer_file_id": "1udbDF83wcanUu8CxAamE978v1--R5K5X",
+    "manifest_file_id": "1D4o-0W9kGDghySKsc8-yizzt2zqhx39R",
+    "manifest_sha256": "361a61cb91c4d8e21f5bb1616ddb739698196648a3cac0b6aff3239b6afe7248",
+    "manifest_size_bytes": 100809,
+    "manifest_identity_size_sha256_verified": true,
+    "declared_file_count": 493,
+    "declared_file_bytes": 3802407075,
+    "largest_declared_file_bytes": 14713049,
+    "declared_row_count": 101497382,
+    "browser_session_limit_bytes": 536870912,
+    "dataset_alone_exceeds_browser_budget": true,
+    "parquet_payloads_read": 0,
+    "live_portal_same_manifest_identity_verified": false
+  },
+  "dbw_whole_table": {
+    "status": "open_hosting_access_decision_required",
+    "verified": false,
+    "retained_snapshot_id": "8c10d951-1b2d-42cd-8378-315cdc14e2fa",
+    "last_recorded_observation_rows": 879999727,
+    "last_recorded_observation_bytes": 4737200817,
+    "indicators": 1550,
+    "coverage": "incomplete_retained_inventory / unresolved_native_to_bronze",
+    "next": "Select hosting/access for an authenticated native read-only query service; implement and validate full relation counts, multi-indicator filters and joins before removing mandatory selector."
+  }
+}
