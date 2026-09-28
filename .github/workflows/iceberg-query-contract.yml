@@ -57,8 +57,8 @@ jobs:
             return 1
           }
 
-          ready http://127.0.0.1:4566/_localstack/health object-store
-          docker compose -f "$compose" exec -T localstack awslocal s3 mb s3://warehouse
+          ready http://127.0.0.1:5000/ object-store
+          docker compose -f "$compose" exec -T moto python -c "import boto3; boto3.client('s3', endpoint_url='http://127.0.0.1:5000', aws_access_key_id='admin', aws_secret_access_key='password', region_name='us-east-1').create_bucket(Bucket='warehouse')"
           ready http://127.0.0.1:8181/v1/config iceberg-rest
 
       - name: Run synthetic Iceberg contract
