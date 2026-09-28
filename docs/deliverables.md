@@ -2,6 +2,357 @@
 
 Approved work programme, 6 September 2026. The owner approved this scope; that approval did not settle the business or architecture choices recorded below. The initial user is the owner. The NBP scope is all already-ingested history for Tables A, B, C and gold prices.
 
+## Current priority: consistent Bronze names and complete-table DBW access — 28 September 2026
+
+The owner paused object-storage migration and moved the active portal work from
+Landing to Bronze. All available Bronze sources should use consistent names.
+DBW observations must behave as a complete logical table with optional SQL
+filters, without requiring a single indicator or a physical file part. Bronze
+continues to preserve source-shaped rows; an observations relation does not imply
+that it has already been modeled as a Gold fact table. Existing ingestion schedules
+and the accepted Landing/manual-refresh behavior are outside this increment.
+
+**Naming merged and deployed; DBW complete-table access remains open.** The scoped
+portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
+manifest identities, physical files and existing SQL references. Current mappings:
+
+| Published name prefix | Portal Bronze SQL prefix |
+| --- | --- |
+| `nbp_` | `nbp_` |
+| `bdl_` | `gus_bdl_` |
+| `dbw_` / `br_dbw_` | `gus_dbw_` |
+| `wdi_` | `world_bank_wdi_` |
+| `eurostat_` | `eurostat_` |
+| `br_opendata_` | `opendata_org_` |
+
+The explorer and generated SQL use canonical names; an existing qualified SQL
+name remains a compatibility entry to the same pinned files. Refresh invalidates
+all session-owned loaded names for a changed snapshot. Unowned persisted relations
+fail closed and are not dropped. Name collisions must fail visibly rather
+than overwrite unrelated local relations or silently select one publication.
+If a modeled DBW release and retained DBW snapshot coexist, their common canonical
+names are ambiguous; source precedence must be resolved before that publication
+combination can be accepted. No modeled DBW publication is part of this change.
+
+[PR #190](https://github.com/rutkala/zohelo-data/pull/190) merged as
+`1bf5395aadd7c9b6b3b3a59e9bb3555fd85d2900`. Independent review and
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36377602679)
+verified the final implementation head `7c725b9d78532aa634a25726d923d3f060f3f772`:
+806 unit/engine tests and 18 browser tests under each of the `./` and
+`/zohelo-data/` bases, production builds/type checking, and lint with no errors
+(24 existing warnings). [Data CI](https://github.com/rutkala/zohelo-data/actions/runs/36377602698)
+also passed. Review corrected view ownership so a user replacement is preserved
+and a conflicting refresh rolls back without advancing the pinned snapshot.
+Packaged DuckDB tests include duplicate-preserving alias equivalence and
+concurrent publication/drop conflicts.
+
+The first [live check](https://github.com/rutkala/zohelo-data/actions/runs/36378758825)
+verified BDL, then failed because the verifier tried to reopen a SQL editor from
+the inactive Home screen. [PR #191](https://github.com/rutkala/zohelo-data/pull/191)
+corrected that navigation and merged as
+`10dab2bd4f61aae5c01d525445c70efd2c56a259`; it changed no production app code.
+The [deployment](https://github.com/rutkala/zohelo-data/actions/runs/36379537549)
+passed build, deploy and live-marker verification for that exact revision at
+04:55:29 UTC on 28 September. The second live check passed BDL, WDI and DBW
+indicators, then failed at the OpenData result stage. Verifier-only
+[PR #194](https://github.com/rutkala/zohelo-data/pull/194) added fixed failure
+categories and aggregate transfer metrics without retaining error text, URLs,
+payloads or credentials. It merged as `121c32795b6efce85b62c2f1ce36226315b002af`;
+the [current deployment](https://github.com/rutkala/zohelo-data/actions/runs/36380276544)
+passed all three jobs and verified that exact revision live at 05:06:26 UTC.
+
+**Live catalog verified; SQL verification is partial and runtime-blocked.** The
+authenticated [diagnostic check](https://github.com/rutkala/zohelo-data/actions/runs/36380497428)
+completed at 05:09:22 UTC with 24 visible Bronze tables and all four expected
+renamed source groups. It compared complete row counts and two-way deterministic
+20-row samples, preserving duplicates, under canonical and legacy SQL names:
+
+| Representative table | Published row count | Live SQL comparison |
+| --- | ---: | --- |
+| `gus_bdl_variables` | 102 | Passed |
+| `world_bank_wdi_country` | 264 | Passed |
+| `gus_dbw_indicators` | 1,550 | Passed |
+| `opendata_org_people` | Not obtained by this SQL check | Blocked by browser download limit |
+
+The three passing queries took 1.306, 1.284 and 1.248 seconds respectively.
+OpenData failed after 48.773 seconds. All 56 observed SQL media responses were
+HTTP 200, with no request failures; none provided Content-Length, so the network
+receipt cannot measure transferred bytes. The verifier blocks Drive mutations
+and uploads. Its `read_only` field is a success-only flag and remained false on
+failure; that flag does not report a Drive write.
+
+A separate metadata-only Drive read at 05:12:33 UTC verified the current OpenData
+people pointer and the exact manifest identity, 100,809-byte size and SHA-256.
+Snapshot `62e71c7c-a14d-4075-9f86-ce2db6e05e99` declares **493 files,
+3,802,407,075 bytes and 101,497,382 rows**; its largest file is 14,713,049 bytes.
+The table alone therefore exceeds the 536,870,912-byte browser session limit.
+No Parquet payloads were read by this metadata check, and declared row counts
+are not a fresh native recount. This independent pointer read does not prove the
+live portal loaded the identical manifest. No budget was raised, guard removed,
+or smaller table substituted to call the failed comparison successful.
+
+The [dated receipt](audits/2026-09-28-bronze-names-live.json) retains exact code,
+CI, deployment, failed attempts, partial SQL proof and metadata evidence. Naming
+delivery does not establish all-source SQL acceptance, owner acceptance of the
+revised Bronze experience, or completion of DBW whole-table access. NBP and
+Eurostat already follow the selected naming convention; their names did not change.
+
+**DBW complete-table access remains open.** The last recorded full retained
+readback covers 1,550 indicators and 879,999,727 observations in 4,737,200,817
+compressed observation bytes. It does not establish complete current-provider
+coverage or native-to-Bronze lineage. The current portal downloads whole files,
+checks SHA-256 and registers memory buffers before executing SQL, under a shared
+512 MiB budget. Even a small LIMIT therefore does not avoid loading the selected
+file set. OPFS database persistence does not change this loader. The current
+[DuckDB-WASM documentation](https://duckdb.org/docs/current/clients/wasm/troubleshoot)
+also states that direct HTTP authentication headers are unsupported.
+
+The 23 September automatic approval review rejected edits implementing a
+ServiceWorker range relay and a disk-backed authenticated read adapter. No
+specific corrective reason or later resolving decision was recovered. Those
+specific approaches remain held; this is not a blanket ban on DBW work, and the
+older publisher hold was superseded by its repaired original-reference route.
+
+A concrete alternative is a native, authenticated, read-only DuckDB query service
+over the existing verified Drive files. The portal already has a `duck-http`
+client, but no DBW query endpoint is deployed or configured. Delivery would still
+require a hosting/access decision, a bounded verified file cache, server-side
+read-only/resource enforcement, and portal routing from the Bronze table to that
+service. This is a design proposal, not a deployed service or a new paid-service
+authorization. GitHub Actions can run native checks; it is not currently an
+interactive SQL endpoint. A complete-table implementation must demonstrate LIMIT,
+exact counts, multi-indicator filters, joins, expiry and changed/missing-file
+behavior before removing the mandatory selector. Naming-only verification must
+explicitly leave this outcome incomplete.
+
+The OpenData people result above shows that this browser limit also affects a
+second full Bronze table. A native query service should support complete pinned
+datasets through the same ordinary SQL experience, with DBW as the first explicit
+acceptance target. The next owner question is whether an existing always-on server
+is available for this service; no host, subscription or access route is selected.
+
+## Previous priority: one usable Landing browser — 27 September 2026
+
+**Owner accepted the layout and manual refresh; query optimization deployed and measured.**
+The owner confirmed the Landing presentation and reported that **Query file
+metadata** for GUS BDL was still scanning. They initially asked about immediate
+file availability and suggested an object inventory with metadata and virtual
+folders, then explicitly accepted the existing manual-refresh behavior and
+prioritized faster metadata queries. Completed uploads are directly discoverable
+without a SQL publication gate; open listings and generated SQL tables remain
+cached until refresh. Automatic visibility is outside the current increment.
+
+The scoped optimization increases the bounded known-parent batch from 25
+to at most 100, measures the fully encoded request URL, requests only the fields
+used by each scan phase, and adds bounded scanner-specific retry/backoff. Eight
+workers passed the full live BDL check without retries or HTTP errors.
+The complete-scan, source-membership, cancellation and authentication cleanup
+rules remain in force. No persistent cross-login cache, ingestion changes or
+shared metadata publisher are included. The live verifier separates scan, SQL
+publication and displayed-query timings with approximately one-second phase
+sampling. The 2,503-folder fixture drops from 310 to 92 list requests. A local
+packaged DuckDB WASM benchmark of 26,666 metadata-shaped rows
+took 1,793 ms using existing 100-row inserts versus 1,525 ms with 500-row inserts.
+SQL insertion is unchanged because that small local gain does not address the
+measured 448-second cold query.
+
+[PR #188](https://github.com/rutkala/zohelo-data/pull/188) merged as
+`db5188cc403e340638c566937a2d3f1dee5b7e28` after independent review and final
+[CI](https://github.com/rutkala/zohelo-data/actions/runs/36337043673) on
+`a22a083418db256cd0f191533bfbbe02a5d4186f`. Both deployment bases passed lint,
+production builds/type checking, 789 unit tests and all 18 browser tests.
+Review corrected oversized-ID batch planning, retry-attempt accounting and
+older-browser cancellation compatibility. Scanner deadlines now cover response
+bodies using ordinary AbortController/timer logic. Local TypeScript and Vite
+bundling passed; the known local Workbox/terser early-exit limitation remained,
+while both CI builds and the production build succeeded. The
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36337370690)
+verified that exact merge commit live at 17:35:54 UTC.
+
+The authenticated [production check](https://github.com/rutkala/zohelo-data/actions/runs/36337612679)
+completed at **17:45:29 UTC** on 27 September against that deployment. Both
+measurements include the complete retained BDL inventory, confirmed with SQL
+`COUNT(*)`: **26,666 files across 9,064 folders**.
+
+| Measured result | PR #186 baseline | PR #188 deployed optimization |
+| --- | ---: | ---: |
+| Cold scan plus first displayed query | 448,268 ms | 210,140 ms |
+| Scanner list pages | 1,149 | 338 |
+| Total cold Drive requests | 1,155 | 344 |
+| Repeated same-session displayed query | 1,338 ms | 3,317 ms |
+| Drive requests for repeated query | 0 | 0 |
+| Attempted payload reads during metadata | 0 | 0 |
+
+The observed cold wait is **53.1% shorter**, with **70.2% fewer Drive requests**.
+All 344 responses were HTTP 200 and no retries were needed. Approximate phase
+observations were 65.6 seconds discovering folders, 82.4 seconds reading file
+metadata and 49.7 seconds checking the folder graph. Total sampled scan time,
+including boundary checks, was 203.6 seconds; SQL publication was about 5.8
+seconds and the first displayed preview another 0.8 seconds. These phases are
+sampled at roughly one-second intervals, not precise engine timings. The newer
+poll-based verifier also affects short query timings; the warm measurements
+establish zero-Drive reuse, not a stable performance SLA.
+
+The same run passed raw-file/managed-link checks across all 13 source folders,
+four-level BDL navigation, a supported preview and the 21,378,254,323-byte ZIP
+link, with read-only operation. The
+[new sanitized receipt](audits/2026-09-27-landing-metadata-query-speed.json)
+preserves the exact values; the earlier receipt remains below as the baseline.
+This closes implementation, review, deployment and measured before/after proof
+for the scoped optimization. **The first BDL query still takes several minutes**
+because it constructs a complete inventory from Drive; it is not instant, and
+the owner's assessment of the new wait remains separate. File byte sizes do
+not require payload downloads during this work. Subsequent metadata SQL uses
+the completed local table until manual refresh or authentication/session cleanup.
+No shared inventory or cross-login cache was introduced; those would require a
+separate update, reconciliation and access-invalidation design. The broader
+engineering queue remains paused, and no background engineering task is implied.
+
+**Earlier PR #186 baseline.** That performance change groups known-parent Drive searches, separates
+folder discovery from flat file-metadata reads, and rechecks the folder graph
+before publishing a complete local table. It adds progress and cancellation in
+the accepted source action area. No payload reads, ingestion changes, shared
+index publisher or object-storage migration are included. A maintained shared
+inventory could avoid first-use crawls but needs an explicit update and
+reconciliation design. The earlier NBP query below is not a BDL performance
+receipt.
+
+[PR #186](https://github.com/rutkala/zohelo-data/pull/186) merged as
+`d581cdb61c81608e59da1c8211f8505e0d6f819f` after independent review and exact-head
+[CI](https://github.com/rutkala/zohelo-data/actions/runs/36333495883). Both portal
+base configurations passed lint, production builds/type checking, 781 unit tests
+and all 18 browser tests. The
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36333832795)
+published that exact commit; the fresh live-marker check passed at 16:38:16 UTC.
+
+The authenticated [production check](https://github.com/rutkala/zohelo-data/actions/runs/36334009753)
+completed at 16:50:13 UTC on 27 September. Its full retained BDL inventory
+contained **26,666 files across 9,064 folders**, confirmed with SQL `COUNT(*)`.
+The cold scan plus first displayed query took **448,268 ms (7 minutes 28 seconds)**
+and made 1,149 scanner list requests plus six identity/membership requests.
+A second displayed query in the same session took **1,338 ms**, with **zero Drive
+requests**. Metadata access attempted **zero payload reads**. The same run also
+passed original-file/managed-link access across all 13 retained source folders,
+four-level BDL navigation, one supported preview and the 21,378,254,323-byte ZIP
+link. The [sanitized receipt](audits/2026-09-27-landing-metadata-performance.json)
+preserves the exact measurements.
+
+This earlier result verified the deployed scan and SQL reuse, while establishing
+that first-use latency was still too high. It did not establish full provider-data
+coverage. No pre-PR #186 complete BDL wall-time was measured, so no earlier
+percentage speedup is claimed. PR #188 above now provides a measured comparison
+against this baseline while keeping the accepted manual-refresh behavior.
+
+The PR #186 deep/wide fixture contains 2,503 folders within one source. That scanner
+uses 310 batched list pages, four identity reads and two project lookups, with
+zero payload reads. This establishes bounded request reduction in a fixture;
+it does not supply a before/after BDL wall-time measurement.
+
+**Owner clarification: SQL describes files.** The owner clarified that Landing
+must show original files and that its SQL tables should contain file metadata:
+one table per source folder, one row per file, with paths, timestamps and other
+technical information. [ADR 0011](decisions/0011-landing-file-metadata.md) records
+this boundary. The legacy response/archive indexes are not the requested SQL
+representation. The scoped portal change replaces that UI with metadata tables
+discovered from actual Drive source folders, including their nested files, while
+preserving stored artifacts and existing direct SQL compatibility.
+
+The implementation adds **Query file metadata** to each top-level source folder.
+Its browser-local table contains nested file paths, stable Drive IDs, sizes,
+formats, available checksums and separate Drive/scan timestamps. Metadata reads
+do not download source payloads. Source scans fail explicitly above 100,000 files
+or 20,000 folders, rather than returning a partial table. These bounds exceed the
+recorded existing source inventories; no arbitrary future-source capacity is
+claimed. Refresh/logout cleanup is awaited by SQL preparation, including queries
+through local views, and cleanup failure prevents stale results in that engine.
+
+Review added an exact ownership marker for generated tables and cleanup before a
+saved OPFS database is reopened for SQL or introspection. Unmarked user tables
+remain intact. Metadata scans now validate direct folder membership and perform
+a final consistency check, avoiding repeated ancestry walks for nested sources.
+The 254-folder fixture requires 253 listings, 761 metadata reads and two project
+lookups, with no payload downloads.
+
+**File metadata change deployed and verified.**
+[PR #184](https://github.com/rutkala/zohelo-data/pull/184) merged as
+`875a5e7d5bc93996b2bd73230be6ac0702be3b6a`. Independent review addressed saved
+database ownership and repeated ancestry reads. The latest fixes passed 104
+focused scanner, store, OPFS lifecycle and packaged DuckDB engine tests.
+Exact-head [CI](https://github.com/rutkala/zohelo-data/actions/runs/36329204143)
+passed lint, production builds/type checking, 774 unit tests and all 18 browser
+tests for each deployment base, including mobile/desktop metadata actions and
+legacy direct-SQL joins. The
+[production deployment](https://github.com/rutkala/zohelo-data/actions/runs/36329577482)
+published the merge commit and verified its exact live build marker at
+`https://data.zohelo.com/`.
+
+The authenticated [live check](https://github.com/rutkala/zohelo-data/actions/runs/36329793200)
+passed at 15:34:37 UTC on 27 September against that exact deployed commit. It
+verified original-file access across 13 source folders / 10 families, checked 13
+files and managed download links, and completed the new `nbp_gold_prices` metadata
+SQL query with zero source-payload reads during that scan. It also passed one
+supported native preview, four-level BDL navigation and the managed link for a
+21,378,254,323-byte ZIP. The sanitized receipt records 66 metadata pages and
+read-only operation. This verifies a representative live metadata query and
+existing raw-file actions, not an exhaustive metadata scan of every source or
+full provider-data coverage. No ingestion or downstream-layer work is included.
+
+The owner has narrowed active engineering to the portal, one layer at a time,
+starting with Landing. Their phone screenshots show three overlapping entry
+points: “Native Landing files”, “Files on Drive”, and `01_landing` with generated
+response/distribution tables. The earlier authenticated access receipt proves
+file access, but does not establish a satisfactory navigation experience.
+
+Acceptance for this correction is one **Landing** entry showing source folders
+and their original files, compact readable rows on phones and desktops, and
+working open/download/eligible preview actions. Technical indexes must not
+appear as a competing Landing folder. DBW's Bronze-specific selector belongs
+inside Bronze. Keep existing SQL references compatible and retain all source
+files and read-only verification behavior.
+
+**Landing navigation correction deployed and verified.**
+[PR #181](https://github.com/rutkala/zohelo-data/pull/181) merged as
+`dfc9e1a696a8fb1de1406fbc73ac4676d7ab25ff`. The portal now has one Landing
+source/file tree with compact rows and file actions/details on demand. Existing
+SQL indexes remain under the collapsed **File indexes (SQL)** option within
+Landing; their SQL names remain compatible. DBW search is inside expanded
+Bronze. The retired inventory panel and its unused background Drive scan are
+removed. Original source files are unchanged.
+
+Independent review found no remaining blocker after corrections to legacy
+index loading and keyboard access. The final
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36299588562)
+passed builds, 759 unit/engine tests and all 18 browser tests for each deployment
+base, including desktop/mobile Landing and keyboard navigation. The
+[production deployment](https://github.com/rutkala/zohelo-data/actions/runs/36299838734)
+built and published the merged commit and verified its exact live build marker.
+The first current authenticated
+[Landing verification](https://github.com/rutkala/zohelo-data/actions/runs/36300043637)
+resolved 13 source folders across 10 families, then timed out at
+`load_live_portal` before any UI file probe. Live folder/action acceptance remained
+pending at that point. [PR #182](https://github.com/rutkala/zohelo-data/pull/182)
+then made the fresh-profile and source-row waits explicit, retaining the same
+read-only checks. The UI source is unchanged from PR #181. The subsequent
+[deployment](https://github.com/rutkala/zohelo-data/actions/runs/36300372166)
+successfully built, published and verified exact commit
+`cb2b9a2405dbbaea077e48472c99e3f6e440d434`.
+
+The corrected authenticated
+[live check](https://github.com/rutkala/zohelo-data/actions/runs/36300506130)
+passed at 06:38 UTC on 27 September against that exact deployed commit. It
+verified one Landing entry, browsed all 13 source folders across 10 families,
+checked one file and its managed download link in each folder, followed four
+BDL folder levels, exercised one supported SQL preview and checked the managed
+link for a 21,378,254,323-byte ZIP. The receipt recorded 66 metadata pages and
+read-only access. This closes live navigation/file-action verification for this
+correction; the owner's assessment of the revised experience remains separate.
+
+This correction is limited to portal navigation and file access. It does not
+establish source completeness or downstream layer acceptance. For this portal
+correction, this 27 September entry supersedes the older native-reader receipt
+and status below. The broader engineering queue remains paused; existing
+authorized schedules remain separate.
+
 ## Existing-source takeover and acceptance reset — 26 September 2026
 
 **Status precedence:** this takeover section and the 26 September current-status
@@ -304,11 +655,21 @@ ordinary, flagged and missing cells, typed empty datasets, immutable
 receipt/provenance binding, partition identity, accepted empty leaves,
 hash/key/value failures and overwrite protection.
 
-This is code and fixture evidence only. No production file was downloaded or
-decoded, no Drive object or release pointer changed, and the current progressive
-release still models only three datasets. Complete source-shaped delivery remains
-open until the decoder is connected to an independently resumable Drive-backed
-Bronze publication/checkpoint, all retained current distributions are processed,
+[PR #180](https://github.com/rutkala/zohelo-data/pull/180) now connects the
+decoder to a bounded, independently resumable Drive-backed Bronze campaign in
+GitHub Actions. The implementation pins the exact accepted-receipt prefix, records
+the exact decoder commit and content-addressed output bytes before advancing its
+separate checkpoint, preserves a non-expiring publication owner, and verifies the
+checkpoint plus newest immutable output from a fresh read-only runner. The
+downstream job waits for the Eurostat intake job but does not require that job to
+succeed, so retained accepted receipts can advance during a provider or intake
+failure.
+
+This is implementation and fixture/CI evidence pending merge and production
+execution. No production Bronze output or checkpoint from this campaign is claimed,
+and the current progressive release still models only three datasets. Complete
+source-shaped delivery remains open until the serialized writer and fresh verifier
+pass in production, all retained current distributions are processed and audited,
 and fresh Silver/Gold/semantic consumers verify the published scope.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026
