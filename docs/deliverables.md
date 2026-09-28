@@ -655,11 +655,21 @@ ordinary, flagged and missing cells, typed empty datasets, immutable
 receipt/provenance binding, partition identity, accepted empty leaves,
 hash/key/value failures and overwrite protection.
 
-This is code and fixture evidence only. No production file was downloaded or
-decoded, no Drive object or release pointer changed, and the current progressive
-release still models only three datasets. Complete source-shaped delivery remains
-open until the decoder is connected to an independently resumable Drive-backed
-Bronze publication/checkpoint, all retained current distributions are processed,
+[PR #180](https://github.com/rutkala/zohelo-data/pull/180) now connects the
+decoder to a bounded, independently resumable Drive-backed Bronze campaign in
+GitHub Actions. The implementation pins the exact accepted-receipt prefix, records
+the exact decoder commit and content-addressed output bytes before advancing its
+separate checkpoint, preserves a non-expiring publication owner, and verifies the
+checkpoint plus newest immutable output from a fresh read-only runner. The
+downstream job waits for the Eurostat intake job but does not require that job to
+succeed, so retained accepted receipts can advance during a provider or intake
+failure.
+
+This is implementation and fixture/CI evidence pending merge and production
+execution. No production Bronze output or checkpoint from this campaign is claimed,
+and the current progressive release still models only three datasets. Complete
+source-shaped delivery remains open until the serialized writer and fresh verifier
+pass in production, all retained current distributions are processed and audited,
 and fresh Silver/Gold/semantic consumers verify the published scope.
 
 ### DBW complete retained-Bronze readback and modeled-release guard — 26 September 2026

@@ -27,9 +27,14 @@ status flags, explicit `:` missing values, empty cells, series/period positions,
 retrieval time, raw object identity and hash, and receipt object identity, hash and
 size are retained. Duplicate complete keys,
 receipt drift, malformed series arity, invalid numbers and stale output paths fail
-closed. This decoder is a downstream building block; complete catalogue Bronze
-publication still requires a resumable Drive checkpoint/publisher and independent
-fresh readback. A local decoder result does not establish modeled catalogue coverage.
+closed. Complete catalogue Bronze publication uses the independent bounded
+`src/eurostat_bulk_bronze.py` campaign. Its checkpoint is bound to the exact
+accepted-receipt prefix; each output is content-addressed and verified before the
+checkpoint advances. A fresh runner rebinds that checkpoint to Landing and streams
+the newest immutable output. This incremental verifier is not the final all-output
+readback, and neither a local result nor a caught-up retained prefix establishes
+complete official-catalogue or modeled coverage. Every completed output descriptor
+also records the exact Git commit that ran the decoder.
 
 Partition leaves retain the official dataset ID separately from the immutable
 synthetic distribution/leaf ID, partition ID and canonical partition selection, so
