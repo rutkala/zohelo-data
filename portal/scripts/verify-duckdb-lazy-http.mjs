@@ -5,6 +5,8 @@
  */
 import { createServer as createHttpServer } from "node:http";
 import { createRequire } from "node:module";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { createServer as createViteServer } from "vite";
 import { chromium } from "@playwright/test";
 
@@ -12,18 +14,24 @@ const require = createRequire(import.meta.url);
 const bearer = "fixture-only-bearer";
 const rowCount = 250_000;
 const parquet = await (async () => {
-  const duckdb = require("@duckdb/duckdb-wasm/dist/duckdb-node-blocking.cjs");
-  const db = await duckdb.createDuckDB({
-    mvp: { mainModule: require.resolve("@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm"), mainWorker: null },
-    eh: { mainModule: require.resolve("@duckdb/duckdb-wasm/dist/duckdb-eh.wasm"), mainWorker: null },
-  }, new duckdb.VoidLogger(), duckdb.NODE_RUNTIME);
-  await db.instantiate(() => {});
-  const conn = db.connect();
+  const directory = mkdtempSync(join(process.cwd(), "node_modules", ".lazy-http-parquet-"));
+  const parquetPath = join(directory, "fixture.parquet");
   try {
-    conn.query(`COPY (SELECT range AS id, md5(range::VARCHAR) AS payload FROM range(${rowCount})) TO '/lazy-http-fixture.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 10000)`);
-    return Buffer.from(db.copyFileToBuffer("/lazy-http-fixture.parquet"));
+    const duckdb = require("@duckdb/duckdb-wasm/dist/duckdb-node-blocking.cjs");
+    const db = await duckdb.createDuckDB({
+      mvp: { mainModule: require.resolve("@duckdb/duckdb-wasm/dist/duckdb-mvp.wasm"), mainWorker: null },
+      eh: { mainModule: require.resolve("@duckdb/duckdb-wasm/dist/duckdb-eh.wasm"), mainWorker: null },
+    }, new duckdb.VoidLogger(), duckdb.NODE_RUNTIME);
+    await db.instantiate(() => {});
+    const conn = db.connect();
+    try {
+      conn.query(`COPY (SELECT range AS id, md5(range::VARCHAR) AS payload FROM range(${rowCount})) TO '${parquetPath.replaceAll("'", "''")}' (FORMAT PARQUET, ROW_GROUP_SIZE 10000)`);
+      return Buffer.from(db.copyFileToBuffer(parquetPath));
+    } finally {
+      conn.close();
+    }
   } finally {
-    conn.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 })();
 
