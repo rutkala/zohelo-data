@@ -203,11 +203,19 @@ extension path in the secret-free synthetic run before adjusting the live rule.
 
 The [secret-free diagnostic](https://github.com/rutkala/zohelo-data/actions/runs/36407201234)
 passed at `6d5926f4de2cf61ea3210e7e9ff3299ce213f20d` and observed HTTP 200,
-unauthenticated GETs for both `httpfs` and `parquet` under the actual public
+GETs for both `httpfs` and `parquet` under the actual public
 `https://extensions.duckdb.org/v1.5.5/wasm_eh/` path. The documented extra
 `duckdb-wasm/` segment was not used by the installed engine. The live harness
 can therefore permit those two exact observed files without allowing other
-extensions or forwarding Drive authorization. A live rerun is still required.
+extensions. [PR #203](https://github.com/rutkala/zohelo-data/pull/203) merged
+that allowlist after exact-head browser CI passed, but a review finding arrived
+before merge and remained unresolved: Playwright's synchronous `headers()` can
+omit security-sensitive headers. The diagnostic's recorded
+`authorizationPresent: false` values are therefore not accepted as proof that
+credentials were absent, and the live route used the same incomplete inspection.
+The synthetic observer and live route must use complete asynchronous header
+inspection before dispatch. No post-merge live rerun or Drive browser read is
+claimed from this increment.
 
 The 23 September automatic approval review rejected edits implementing a
 ServiceWorker range relay and a disk-backed authenticated read adapter. No
