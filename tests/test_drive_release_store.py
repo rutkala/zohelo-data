@@ -2,10 +2,10 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from drive_release_store import DriveReleaseStore
+from drive_release_store import DRIVE_RESUMABLE_CHUNK_BYTES, DriveReleaseStore
 from transformation.bronze_builder import _get_zone_id, _list_files_recursively
 
 
@@ -29,6 +29,21 @@ class DriveReleaseStoreTests(unittest.TestCase):
         self.store.replace("pointer", b"{}")
         self.files.update.assert_called_once()
         self.files.delete.assert_not_called()
+
+    @patch("drive_release_store.MediaIoBaseUpload")
+    def test_create_uses_bounded_resumable_chunks(self, media_upload):
+        self.files.generateIds.return_value.execute.return_value = {"ids": ["reserved-id"]}
+        self.files.create.return_value.execute.return_value = {"id": "reserved-id"}
+
+        self.assertEqual(
+            self.store.create("candidate.parquet", b"contents", "release-folder"),
+            "reserved-id",
+        )
+
+        self.assertEqual(media_upload.call_args.kwargs["chunksize"], DRIVE_RESUMABLE_CHUNK_BYTES)
+        self.assertTrue(media_upload.call_args.kwargs["resumable"])
+        self.files.delete.assert_not_called()
+        self.files.update.assert_not_called()
 
     def test_reserved_create_identity_survives_lost_response(self):
         self.files.generateIds.return_value.execute.return_value = {"ids": ["reserved-id"]}
