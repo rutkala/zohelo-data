@@ -12,7 +12,7 @@ continues to preserve source-shaped rows; an observations relation does not impl
 that it has already been modeled as a Gold fact table. Existing ingestion schedules
 and the accepted Landing/manual-refresh behavior are outside this increment.
 
-**Naming implementation in progress; not yet merged or deployed.** The scoped
+**Naming merged and deployed; DBW complete-table access remains open.** The scoped
 portal change uses `<source_key>_<entity>` in `02_bronze`, preserving immutable
 manifest identities, physical files and existing SQL references. Current mappings:
 
@@ -33,6 +33,69 @@ than overwrite unrelated local relations or silently select one publication.
 If a modeled DBW release and retained DBW snapshot coexist, their common canonical
 names are ambiguous; source precedence must be resolved before that publication
 combination can be accepted. No modeled DBW publication is part of this change.
+
+[PR #190](https://github.com/rutkala/zohelo-data/pull/190) merged as
+`1bf5395aadd7c9b6b3b3a59e9bb3555fd85d2900`. Independent review and
+[portal CI](https://github.com/rutkala/zohelo-data/actions/runs/36377602679)
+verified the final implementation head `7c725b9d78532aa634a25726d923d3f060f3f772`:
+806 unit/engine tests and 18 browser tests under each of the `./` and
+`/zohelo-data/` bases, production builds/type checking, and lint with no errors
+(24 existing warnings). [Data CI](https://github.com/rutkala/zohelo-data/actions/runs/36377602698)
+also passed. Review corrected view ownership so a user replacement is preserved
+and a conflicting refresh rolls back without advancing the pinned snapshot.
+Packaged DuckDB tests include duplicate-preserving alias equivalence and
+concurrent publication/drop conflicts.
+
+The first [live check](https://github.com/rutkala/zohelo-data/actions/runs/36378758825)
+verified BDL, then failed because the verifier tried to reopen a SQL editor from
+the inactive Home screen. [PR #191](https://github.com/rutkala/zohelo-data/pull/191)
+corrected that navigation and merged as
+`10dab2bd4f61aae5c01d525445c70efd2c56a259`; it changed no production app code.
+The [deployment](https://github.com/rutkala/zohelo-data/actions/runs/36379537549)
+passed build, deploy and live-marker verification for that exact revision at
+04:55:29 UTC on 28 September. The second live check passed BDL, WDI and DBW
+indicators, then failed at the OpenData result stage. Verifier-only
+[PR #194](https://github.com/rutkala/zohelo-data/pull/194) added fixed failure
+categories and aggregate transfer metrics without retaining error text, URLs,
+payloads or credentials. It merged as `121c32795b6efce85b62c2f1ce36226315b002af`;
+the [current deployment](https://github.com/rutkala/zohelo-data/actions/runs/36380276544)
+passed all three jobs and verified that exact revision live at 05:06:26 UTC.
+
+**Live catalog verified; SQL verification is partial and runtime-blocked.** The
+authenticated [diagnostic check](https://github.com/rutkala/zohelo-data/actions/runs/36380497428)
+completed at 05:09:22 UTC with 24 visible Bronze tables and all four expected
+renamed source groups. It compared complete row counts and two-way deterministic
+20-row samples, preserving duplicates, under canonical and legacy SQL names:
+
+| Representative table | Published row count | Live SQL comparison |
+| --- | ---: | --- |
+| `gus_bdl_variables` | 102 | Passed |
+| `world_bank_wdi_country` | 264 | Passed |
+| `gus_dbw_indicators` | 1,550 | Passed |
+| `opendata_org_people` | Not obtained by this SQL check | Blocked by browser download limit |
+
+The three passing queries took 1.306, 1.284 and 1.248 seconds respectively.
+OpenData failed after 48.773 seconds. All 56 observed SQL media responses were
+HTTP 200, with no request failures; none provided Content-Length, so the network
+receipt cannot measure transferred bytes. The verifier blocks Drive mutations
+and uploads. Its `read_only` field is a success-only flag and remained false on
+failure; that flag does not report a Drive write.
+
+A separate metadata-only Drive read at 05:12:33 UTC verified the current OpenData
+people pointer and the exact manifest identity, 100,809-byte size and SHA-256.
+Snapshot `62e71c7c-a14d-4075-9f86-ce2db6e05e99` declares **493 files,
+3,802,407,075 bytes and 101,497,382 rows**; its largest file is 14,713,049 bytes.
+The table alone therefore exceeds the 536,870,912-byte browser session limit.
+No Parquet payloads were read by this metadata check, and declared row counts
+are not a fresh native recount. This independent pointer read does not prove the
+live portal loaded the identical manifest. No budget was raised, guard removed,
+or smaller table substituted to call the failed comparison successful.
+
+The [dated receipt](audits/2026-09-28-bronze-names-live.json) retains exact code,
+CI, deployment, failed attempts, partial SQL proof and metadata evidence. Naming
+delivery does not establish all-source SQL acceptance, owner acceptance of the
+revised Bronze experience, or completion of DBW whole-table access. NBP and
+Eurostat already follow the selected naming convention; their names did not change.
 
 **DBW complete-table access remains open.** The last recorded full retained
 readback covers 1,550 indicators and 879,999,727 observations in 4,737,200,817
@@ -61,6 +124,12 @@ interactive SQL endpoint. A complete-table implementation must demonstrate LIMIT
 exact counts, multi-indicator filters, joins, expiry and changed/missing-file
 behavior before removing the mandatory selector. Naming-only verification must
 explicitly leave this outcome incomplete.
+
+The OpenData people result above shows that this browser limit also affects a
+second full Bronze table. A native query service should support complete pinned
+datasets through the same ordinary SQL experience, with DBW as the first explicit
+acceptance target. The next owner question is whether an existing always-on server
+is available for this service; no host, subscription or access route is selected.
 
 ## Previous priority: one usable Landing browser — 27 September 2026
 
