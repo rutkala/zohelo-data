@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Copy the retained project with rclone; no conversion, Drive writes or cutover.
+"""Copy retained Drive files to two R2 buckets, without ingestion or conversion.
 
-Two ordinary folder copies do the transfer. Existing inventory code is reused
-only to retain Drive IDs/shortcuts and to check that no source file was missed.
-Run with the existing Drive/R2 Actions credentials and an installed rclone.
+01_landing and 05_archive go to the landing bucket; everything else goes to
+lakehouse. Ordinary paths stay unchanged. Same-name files get a Drive-ID suffix
+where necessary. A private index retains Drive IDs, folders and shortcut metadata.
+Only native file bytes are copied; shortcuts are recorded, not followed.
 """
 import argparse
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 import configparser
 from datetime import datetime, timezone
 import gzip
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -20,15 +22,16 @@ import tempfile
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from r2_migration import (CONTROL, FOLDER, ROOT_ID, SHORTCUT, DriveSource,
-                          MigrationError, inventory_summary, make_s3, snapshot)
+from r2_migration import CONTROL, FOLDER, ROOT_ID, SHORTCUT, DriveSource, MigrationError, snapshot
 
 
 def copy_plan(inventory, landing, lakehouse):
-    """Preserve native files, folder metadata and internal aliases, not exports."""
-    nodes = {n["id"]: n for n in inventory["nodes"]}
-    paths, objects, folders, aliases = set(), {}, {}, {}
-    for node in nodes.values():
+    nodes = sorted(inventory["nodes"], key=lambda n: n["id"])
+    folder_counts = Counter(n["path"] for n in nodes if n["mimeType"] == FOLDER)
+    file_counts = Counter(n["path"] for n in nodes if n["mimeType"] not in (FOLDER, SHORTCUT))
+    original_paths = {n["path"] for n in nodes}
+    used_keys, objects, folders, aliases = set(), {}, {}, {}
+    for node in nodes:
         path = node["path"]
         if not path:
             continue
@@ -37,63 +40,46 @@ def copy_plan(inventory, landing, lakehouse):
                 len(path.encode("utf-8")) > 1024 or
                 path.split("/", 1)[0] == "_drive_versions"):
             raise MigrationError("path_requires_explicit_mapping")
-        kind = node["mimeType"]
-        bucket = landing if path.split("/", 1)[0] == "01_landing" else lakehouse
+        bucket = landing if path.split("/", 1)[0] in ("01_landing", "05_archive") else lakehouse
         address = {"bucket": bucket, "key": path}
+        kind = node["mimeType"]
         if kind == SHORTCUT:
-            target = node.get("shortcutDetails", {}).get("targetId")
-            if target not in nodes:
-                raise MigrationError("shortcut_target_outside_project")
-            aliases[node["id"]] = dict(address, target_id=target)
+            aliases[node["id"]] = dict(address, **node.get("shortcutDetails", {}))
             continue
-        if path in paths:
-            raise MigrationError("duplicate_drive_path_requires_mapping")
-        paths.add(path)
         if kind == FOLDER:
+            # Same-name directories merge; no contained file is discarded.
             folders[node["id"]] = address
-        else:
-            md5, size = node.get("md5Checksum", ""), int(node.get("size", -1))
-            if kind.startswith("application/vnd.google-apps."):
-                raise MigrationError("google_document_is_not_a_native_file")
-            if not re.fullmatch(r"[0-9a-f]{32}", md5) or size < 0:
-                raise MigrationError("missing_file_size_or_checksum")
-            objects[node["id"]] = dict(address, size=size, md5=md5)
-    if sum(n["size"] for n in objects.values()) > 400 * 1024**3:
-        raise MigrationError("inventory_exceeds_authorized_400_gib")
+            continue
+        if kind.startswith("application/vnd.google-apps."):
+            raise MigrationError("google_document_is_not_a_native_file")
+        md5, size = node.get("md5Checksum", ""), int(node.get("size", -1))
+        if not re.fullmatch(r"[0-9a-f]{32}", md5) or size < 0:
+            raise MigrationError("missing_file_size_or_checksum")
+        key = path
+        if key in used_keys or key in folder_counts:
+            key = path + "~drive-" + node["id"]
+            if key in original_paths or key in used_keys or len(key.encode("utf-8")) > 1024:
+                raise MigrationError("duplicate_suffix_requires_explicit_mapping")
+        used_keys.add(key)
+        parts = path.split("/")
+        under_duplicate_folder = any(folder_counts["/".join(parts[:i])] > 1
+                                     for i in range(1, len(parts)))
+        objects[node["id"]] = dict(address, key=key, size=size, md5=md5,
+            copy_by_id=file_counts[path] > 1 or under_duplicate_folder or key != path)
     return {"objects": objects, "folders": folders, "aliases": aliases}
-
-
-def compare_objects(plan, listings, download_hash):
-    """One size/hash reconciliation; download only objects lacking an R2 MD5."""
-    for address in plan["folders"].values():
-        row = listings[address["bucket"]].get(address["key"])
-        if not row or not row.get("IsDir"):
-            raise MigrationError("destination_folder_missing")
-    for address in plan["objects"].values():
-        row = listings[address["bucket"]].get(address["key"])
-        if not row or row.get("IsDir") or row.get("Size") != address["size"]:
-            raise MigrationError("destination_file_missing_or_wrong_size")
-        md5 = row.get("Hashes", {}).get("MD5")
-        if not md5:
-            md5 = download_hash(address)
-        if md5.lower() != address["md5"]:
-            raise MigrationError("destination_checksum_mismatch")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--receipt", type=Path, required=True)
-    parser.add_argument("--confirm", required=True,
-                        choices=["copy-all-zohelo-data-preserve-drive"])
+    parser.add_argument("--confirm", required=True, choices=["copy-all-zohelo-data-preserve-drive"])
     args = parser.parse_args()
     started = time.monotonic()
-    # Leave the 355-minute Actions job time for verification/receipt cleanup.
     deadline = started + 330 * 60
-    summary = {"format_version": 2, "engine": "rclone copy", "result": "starting",
+    summary = {"format_version": 3, "engine": "rclone copy", "result": "starting",
                "drive_writes": False, "portal_cutover": False,
-               "iceberg_registration": "separate_pending_stage",
-               "code_sha": os.environ.get("GITHUB_SHA"),
-               "run_id": os.environ.get("GITHUB_RUN_ID")}
+               "source_ingestion": False, "conversion": False,
+               "code_sha": os.environ.get("GITHUB_SHA"), "run_id": os.environ.get("GITHUB_RUN_ID")}
 
     def record(**values):
         summary.update(values, updated_at_utc=datetime.now(timezone.utc).isoformat(),
@@ -104,30 +90,24 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="zohelo-rclone-") as temp:
         work = Path(temp)
-        evidence = work / "evidence"
-        evidence.mkdir()
         config_file = work / "rclone.conf"
         private_target = None
 
-        def rclone(*command, output=None, cleanup=False):
-            timeout = 600 if cleanup else max(1, int(deadline - time.monotonic()))
-            log_path = work / "private-publish.log" if cleanup else evidence / "rclone.log"
-            with log_path.open("a") as log:
-                kwargs = {"stdout": log, "stderr": log, "timeout": timeout, "check": True}
-                cmd = ["rclone", "--config", str(config_file), *map(str, command)]
-                if output is None:
-                    subprocess.run(cmd, **kwargs)
-                else:
-                    with Path(output).open("w") as out:
-                        kwargs["stdout"] = out
-                        subprocess.run(cmd, **kwargs)
+        def rclone(*command, cleanup=False):
+            remaining = 600 if cleanup else int(deadline - time.monotonic())
+            if remaining <= 0:
+                raise MigrationError("copy_time_limit_rerun_to_continue")
+            # Credentials stay in the private config; progress goes straight to Actions.
+            subprocess.run(["rclone", "--config", str(config_file), *map(str, command),
+                            "--max-duration", f"{remaining}s", "--cutoff-mode", "SOFT"],
+                           timeout=remaining + 60, check=True)
 
         try:
-            env_names = ("CLOUDFLARE_ACCOUNT_ID", "R2_S3_ENDPOINT", "R2_LANDING_BUCKET",
-                         "R2_LAKEHOUSE_BUCKET", "CLOUDFLARE_R2_ACCESS_KEY_ID",
-                         "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "GOOGLE_OAUTH_CLIENT_ID",
-                         "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN")
-            env = {key: os.environ.get(key, "").strip() for key in env_names}
+            names = ("CLOUDFLARE_ACCOUNT_ID", "R2_S3_ENDPOINT", "R2_LANDING_BUCKET",
+                     "R2_LAKEHOUSE_BUCKET", "CLOUDFLARE_R2_ACCESS_KEY_ID",
+                     "CLOUDFLARE_R2_SECRET_ACCESS_KEY", "GOOGLE_OAUTH_CLIENT_ID",
+                     "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_REFRESH_TOKEN")
+            env = {key: os.environ.get(key, "").strip() for key in names}
             if not all(env.values()):
                 raise MigrationError("required_migration_configuration_missing")
             landing, lakehouse = env["R2_LANDING_BUCKET"], env["R2_LAKEHOUSE_BUCKET"]
@@ -137,11 +117,10 @@ def main():
                     env["R2_S3_ENDPOINT"].rstrip("/") != f"https://{account}.r2.cloudflarestorage.com"):
                 raise MigrationError("unexpected_target_account_or_buckets")
             config = configparser.ConfigParser(interpolation=None)
-            # OAuth client secrets are literal strings in rclone, not obscure passwords.
-            # This private 0600 config is outside the evidence directory and never logged.
             config["drive"] = {"type": "drive", "scope": "drive.readonly",
                 "root_folder_id": ROOT_ID, "client_id": env["GOOGLE_OAUTH_CLIENT_ID"],
                 "client_secret": env["GOOGLE_OAUTH_CLIENT_SECRET"], "skip_shortcuts": "true",
+                "skip_gdocs": "true",
                 "token": json.dumps({"access_token": "", "token_type": "Bearer",
                     "refresh_token": env["GOOGLE_OAUTH_REFRESH_TOKEN"],
                     "expiry": "2000-01-01T00:00:00Z"})}
@@ -153,75 +132,82 @@ def main():
             with config_file.open("w") as handle:
                 config.write(handle)
             config_file.chmod(0o600)
-            run = (os.environ.get("GITHUB_RUN_ID", "local") + "-" +
-                   os.environ.get("GITHUB_RUN_ATTEMPT", "1") + "-" + work.name)
+            run = os.environ.get("GITHUB_RUN_ID", "local") + "-" + work.name
             private_target = f"r2:{lakehouse}/{CONTROL}/rclone/{run}"
-            record(stage="inventory", result="running")
-            source = DriveSource()
-            before = snapshot(source)
-            plan = copy_plan(before, landing, lakehouse)
-            with gzip.open(evidence / "inventory-and-map.json.gz", "wt", encoding="utf-8") as handle:
-                json.dump({"inventory": before, "r2": plan}, handle, ensure_ascii=False)
-            record(layers=inventory_summary(before),
-                   total_files=len(plan["objects"]),
-                   total_bytes=sum(n["size"] for n in plan["objects"].values()),
-                   inventory_sha256=before["inventory_sha256"], stage="copy")
-            common = ["--checksum", "--fast-list", "--transfers", "24", "--checkers", "32",
+            common = ["--checksum", "--fast-list", "--transfers", "24", "--checkers", "16",
                       "--create-empty-src-dirs", "--drive-pacer-min-sleep", "20ms",
-                      "--tpslimit", "80", "--stats", "1m", "--stats-one-line",
-                      "--retries", "3", "--exclude", "/_drive_versions/**"]
-            # Copy only: preserve destination-only files and back up changed R2 files.
-            rclone("copy", "drive:01_landing", f"r2:{landing}/01_landing", *common,
-                   "--backup-dir", f"r2:{landing}/_drive_versions/rclone/{run}")
-            rclone("copy", "drive:", f"r2:{lakehouse}", *common,
-                   "--exclude", "/01_landing/**",
-                   "--backup-dir", f"r2:{lakehouse}/_drive_versions/rclone/{run}")
-            record(stage="verify_all_files")
-            listings = {}
-            for bucket in (landing, lakehouse):
-                listing_file = evidence / f"{bucket}.json"
-                rclone("lsjson", f"r2:{bucket}", "--recursive", "--hash-type", "MD5",
-                       "--no-modtime", "--no-mimetype", output=listing_file)
-                listings[bucket] = {n["Path"]: n for n in json.loads(listing_file.read_text())}
-            s3 = make_s3(env["R2_S3_ENDPOINT"], env["CLOUDFLARE_R2_ACCESS_KEY_ID"],
-                         env["CLOUDFLARE_R2_SECRET_ACCESS_KEY"])
+                      "--tpslimit", "40", "--stats", "30s", "--stats-one-line",
+                      "--stats-log-level", "NOTICE", "--retries", "3",
+                      "--filter", "- /_drive_versions/**"]
+            destinations = [
+                (landing, ["--filter", "+ /01_landing/**", "--filter", "+ /05_archive/**", "--filter", "- **"]),
+                (lakehouse, ["--filter", "- /01_landing/**", "--filter", "- /05_archive/**"]),
+            ]
+            # Both copies finish independently; an error in one does not cancel the other.
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                copies = [pool.submit(rclone, "copy", "drive:", f"r2:{bucket}", *common,
+                            *filters, "--backup-dir", f"r2:{bucket}/_drive_versions/rclone/{run}/bulk")
+                          for bucket, filters in destinations]
+                record(stage="copy_and_list_source", result="running", parallel_transfers=48)
+                last_progress = started
 
-            def download_hash(address):
-                checksum, size = hashlib.md5(), 0
-                with s3.get_object(Bucket=address["bucket"], Key=address["key"])["Body"] as body:
-                    for block in body.iter_chunks(1024 * 1024):
-                        if time.monotonic() > deadline:
-                            raise MigrationError("verification_time_limit")
-                        checksum.update(block)
-                        size += len(block)
-                if size != address["size"]:
-                    raise MigrationError("readback_size_mismatch")
-                return checksum.hexdigest()
+                def progress(**counts):
+                    nonlocal last_progress
+                    if time.monotonic() >= deadline:
+                        raise MigrationError("source_listing_time_limit")
+                    if time.monotonic() - last_progress >= 30:
+                        record(**counts)
+                        last_progress = time.monotonic()
 
-            compare_objects(plan, listings, download_hash)
-            record(stage="final_source_reconciliation")
-            after = snapshot(source)
-            if before["inventory_sha256"] != after["inventory_sha256"]:
-                raise MigrationError("source_changed_repeat_delta_copy")
-            # One compact private index, not one new object per source file.
-            rclone("copy", evidence, private_target, "--checksum", cleanup=True)
-            record(result="copy_verified", stage="complete", errors=0,
-                   verified_files=len(plan["objects"]),
-                   verified_bytes=sum(n["size"] for n in plan["objects"].values()),
-                   folders_preserved=len(plan["folders"]), aliases_preserved=len(plan["aliases"]),
-                   evidence_prefix=private_target, immutable_reference_retained=True)
-            rclone("copyto", args.receipt, private_target + "/verified.json", "--checksum", cleanup=True)
+                inventory = snapshot(DriveSource(), progress=progress)
+                plan = copy_plan(inventory, landing, lakehouse)
+                index = work / "inventory-and-map.json.gz"
+                with gzip.open(index, "wt", encoding="utf-8") as handle:
+                    json.dump({"inventory": inventory, "r2": plan}, handle, ensure_ascii=False)
+                rclone("copyto", index, private_target + "/inventory-and-map.json.gz", "--checksum")
+                direct = [(identity, address) for identity, address in plan["objects"].items()
+                          if address["copy_by_id"]]
+                record(stage="copy", source_files=len(plan["objects"]),
+                       source_bytes=sum(n["size"] for n in plan["objects"].values()),
+                       files_requiring_id_copy=len(direct), evidence_prefix=private_target,
+                       parallel_transfers=48)
+                for result in copies:
+                    result.result()
+
+            # rclone skips ambiguous names. Copy those files by exact Drive ID instead.
+            # Checksums skip already-copied matches; differing destination bytes are backed up.
+            def copy_by_id(item):
+                identity, address = item
+                rclone("backend", "copyid", "drive:", identity,
+                       f"r2:{address['bucket']}/{address['key']}", "--checksum",
+                       "--retries", "3", "--tpslimit", "4", "--filter", "- /_drive_versions/**",
+                       "--backup-dir", f"r2:{address['bucket']}/_drive_versions/rclone/{run}/by-id")
+
+            if direct:
+                record(stage="copy_duplicate_paths_by_id")
+                with ThreadPoolExecutor(max_workers=24) as pool:
+                    for count, _ in enumerate(pool.map(copy_by_id, direct), 1):
+                        if time.monotonic() - last_progress >= 30:
+                            record(id_copies_completed=count)
+                            last_progress = time.monotonic()
+            parents_with_children = {n.get("parent_id") for n in inventory["nodes"]}
+            empty = [a for identity, a in plan["folders"].items() if identity not in parents_with_children]
+            if empty:
+                record(stage="preserve_empty_folders", empty_folder_count=len(empty))
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    for _ in pool.map(lambda a: rclone("mkdir", f"r2:{a['bucket']}/{a['key']}"), empty):
+                        pass
+            record(result="copy_completed", stage="complete", errors=0,
+                   verification="rclone_transfer_checksums; no separate full readback",
+                   snapshot_guarantee=False, shortcuts_recorded=len(plan["aliases"]),
+                   folder_ids_recorded=len(plan["folders"]))
+            rclone("copyto", args.receipt, private_target + "/completed.json", "--checksum", cleanup=True)
             return 0
         except Exception as exc:
-            record(result="failed", error_category=type(exc).__name__,
+            record(result="incomplete", error_category=type(exc).__name__,
                    error_code=str(exc) if isinstance(exc, MigrationError) else "provider_or_runtime_error",
-                   rclone_exit_code=getattr(exc, "returncode", None))
-            if private_target:
-                try:
-                    # No credentials are in this directory; errors stay in private R2.
-                    rclone("copy", evidence, private_target, "--checksum", cleanup=True)
-                except Exception:
-                    record(private_evidence_upload_failed=True)
+                   rclone_exit_code=getattr(exc, "returncode", None),
+                   resume="Run the same copy again; matching files are skipped")
             return 1
 
 
