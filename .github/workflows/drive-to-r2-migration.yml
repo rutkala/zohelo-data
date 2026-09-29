@@ -1,22 +1,7 @@
-name: Migrate all zohelo-data files from Drive to R2
+name: Copy Drive files to R2
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/r2_migration.py'
-      - 'scripts/migrate-drive-to-r2.py'
-      - '.github/workflows/drive-to-r2-migration.yml'
   workflow_dispatch:
-    inputs:
-      expected_code_sha:
-        description: 'Exact reviewed main SHA'
-        required: true
-        type: string
-      confirm:
-        description: 'Type copy-all-zohelo-data-preserve-drive'
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -31,10 +16,7 @@ env:
 
 jobs:
   migrate:
-    if: >-
-      github.repository == 'rutkala/zohelo-data' && github.ref == 'refs/heads/main' &&
-      ((github.event_name == 'push' && contains(github.event.head_commit.message, '[run-all-r2-migration]')) ||
-       (github.event_name == 'workflow_dispatch' && inputs.confirm == 'copy-all-zohelo-data-preserve-drive'))
+    if: github.repository == 'rutkala/zohelo-data' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 355
     concurrency:
@@ -45,23 +27,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Require exact reviewed revision
-        env:
-          EXPECTED_CODE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.expected_code_sha || github.sha }}
-        run: |
-          python - <<'PY'
-          import os, re, subprocess
-          expected = os.environ['EXPECTED_CODE_SHA']
-          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-          if not re.fullmatch(r'[0-9a-f]{40}', expected) or actual != expected:
-              raise SystemExit('Reviewed main SHA mismatch')
-          PY
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Install rclone and storage dependencies only
+      - name: Install rclone and storage dependencies
         run: |
           python -m pip install -c requirements.txt \
             google-api-python-client google-auth-oauthlib google-auth-httplib2 \
@@ -75,8 +46,7 @@ jobs:
           unzip -q rclone-v1.75.0-linux-amd64.zip
           install -m 755 rclone-v1.75.0-linux-amd64/rclone "$RUNNER_TEMP/rclone"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/rclone" version
-      - name: Rclone copy all retained files and verify; preserve Drive
+      - name: Copy retained files and verify the transfer; preserve Drive
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -91,7 +61,7 @@ jobs:
           python scripts/migrate-drive-to-r2.py \
             --confirm copy-all-zohelo-data-preserve-drive \
             --receipt "$RUNNER_TEMP/all-layer-r2-migration.json"
-      - name: Retain aggregate receipt only; full inventory stays private in R2
+      - name: Save transfer summary
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
