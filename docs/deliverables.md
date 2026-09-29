@@ -20,6 +20,29 @@ fallback to Drive. See [ADR 0014](decisions/0014-all-data-r2-cutover.md).
 pointers remain untouched. Keeping a reference is not authorization to run two
 uncoordinated production writers.
 
+### Recovery from the interrupted chat response — 29 September 2026
+
+The chat response failed, but its implementation was saved in
+[PR #218](https://github.com/rutkala/zohelo-data/pull/218). The full
+[repository validation](https://github.com/rutkala/zohelo-data/actions/runs/36544593685)
+passed on exact head `603939a2bb5c0d13be9175038cc10fbf33a9451c`, including the
+workflow safety policy. The transfer code, tests and workflow were reviewed on
+resume; PR #218 merged as `4aa6271d316ffcfb4f70b436e247699925782d4e`.
+
+The real all-layer copy launched at **09:07 UTC** in
+[run 36547081711](https://github.com/rutkala/zohelo-data/actions/runs/36547081711).
+The first observed job state was `in_progress`, with checkout, exact-revision
+validation and Python setup passed and dependency installation underway. This is
+launch evidence, not copied-file coverage or a completed migration. Check this
+run's current steps and aggregate receipt before quoting progress. Its script has
+a five-hour transfer envelope and reuses verified objects on a subsequent run.
+
+**The deployed portal has not switched to R2.** Object-copy verification, complete
+current-table registration, authenticated R2-only portal validation and producer
+cutover remain required. Do not claim that the whole platform migrated merely
+because this launch or its file-copy stage succeeds. Do not delete Drive data,
+retire the reference, expose buckets publicly or create a second active writer.
+
 ### Verified baseline
 
 - The R2 object/catalog generated-data contract passed in run `36479212904`.
@@ -42,7 +65,7 @@ uncoordinated production writers.
 
 | Stage | State / acceptance |
 | --- | --- |
-| Full project inventory and byte-preserving R2 copy | Implementation in `src/r2_migration.py` plus `scripts/migrate-drive-to-r2.py`; awaiting reviewed live execution in this change. All descendant pages are exhausted. No source-format parser or row transformation runs during copy. |
+| Full project inventory and byte-preserving R2 copy | Implementation merged via #218; run `36547081711` launched. All descendant pages must be exhausted. No source-format parser or row transformation runs during copy. Complete live coverage is not yet verified. |
 | Retained reference and reconciliation | Original Drive and reference branch retained. Before/after inventory must agree before a complete copy candidate is published. Missing/inaccessible/unsupported objects block a completion claim. |
 | All published Bronze/Silver/Gold Iceberg tables | Pending after object copy. Resolve each current release's exact file membership from verified manifests; do not glob all historical Parquet into one table. Existing DBW pilot is retained, not recopy/rewrite work. |
 | Existing portal reads only R2 | Pending backend/auth integration and browser acceptance. Preserve existing explorer/catalog functionality; do not expose writer secrets or mix old Drive data with R2 data. No production cutover has occurred. |
@@ -66,12 +89,14 @@ Drive IDs in its contents are resolved by the R2 index rather than followed to D
 
 ### Current implementation checks
 
-Twenty offline regression tests passed locally: all seven areas included, no
-re-download on resume, multipart integrity, checksum/truncation/oversize rejection,
-abort of incomplete multipart uploads, preservation of older destination versions,
-duplicate names, path escaping, empty folders, shortcut handling, source drift,
-project-root restriction and explicit time/storage-budget failures. Full repository
-CI and the live migration are distinct gates and are not claimed complete here.
+Twenty offline regression tests were recorded as passing in #218: all seven areas
+included, no re-download on resume, multipart integrity, checksum/truncation/oversize
+rejection, abort of incomplete multipart uploads, preservation of older destination
+versions, duplicate names, path escaping, empty folders, shortcut handling, source
+drift, project-root restriction and explicit time/storage-budget failures. The full
+repository CI passed in run `36544593685`. The live workflow reruns the focused
+transfer safeguards before receiving credentials. Live migration success remains
+a distinct gate; it has not yet been claimed.
 
 ### Subsequent user architecture decisions retained
 
