@@ -61,13 +61,22 @@ jobs:
           python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Install pinned dependencies
+      - name: Install rclone and storage dependencies only
         run: |
-          python -m pip install -r requirements.txt
-          python -m pip install boto3==1.43.103
-      - name: Verify transfer safeguards without credentials
-        run: python -m unittest discover -s tests -p test_r2_migration.py -v
-      - name: Copy all retained layers; preserve Drive; produce candidate index only
+          python -m pip install -c requirements.txt \
+            google-api-python-client google-auth-oauthlib google-auth-httplib2 \
+            requests PyYAML boto3==1.43.103
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 --proto '=https' \
+            https://downloads.rclone.org/v1.75.0/rclone-v1.75.0-linux-amd64.zip -o rclone-v1.75.0-linux-amd64.zip
+          curl -fsSL --retry 3 --proto '=https' \
+            https://downloads.rclone.org/v1.75.0/SHA256SUMS -o SHA256SUMS
+          grep ' rclone-v1.75.0-linux-amd64.zip$' SHA256SUMS | sha256sum --check --strict -
+          unzip -q rclone-v1.75.0-linux-amd64.zip
+          install -m 755 rclone-v1.75.0-linux-amd64/rclone "$RUNNER_TEMP/rclone"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/rclone" version
+      - name: Rclone copy all retained files and verify; preserve Drive
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
@@ -75,7 +84,6 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
           R2_LANDING_BUCKET: ${{ vars.R2_LANDING_BUCKET }}
           R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
