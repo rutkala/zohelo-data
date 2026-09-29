@@ -21,6 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument("--confirm", required=True, choices=["copy-all-zohelo-data-preserve-drive"])
+    parser.add_argument("--workers", type=int, choices=range(1, 17), default=16,
+                        help="Concurrent bulk transfers (1-16; default 16). Not a throughput guarantee.")
     args = parser.parse_args()
     summary = {"result": "starting", "drive_writes": False, "portal_cutover": False,
                "code_sha": os.environ.get("GITHUB_SHA"), "run_id": os.environ.get("GITHUB_RUN_ID")}
@@ -58,7 +60,7 @@ def main():
             lambda: make_s3(config["R2_S3_ENDPOINT"], config["CLOUDFLARE_R2_ACCESS_KEY_ID"],
                             config["CLOUDFLARE_R2_SECRET_ACCESS_KEY"]),
             config["R2_LANDING_BUCKET"], config["R2_LAKEHOUSE_BUCKET"],
-            workers=4, seconds=5 * 3600, max_bytes=400 * 1024**3, progress=record,
+            workers=args.workers, seconds=5 * 3600, max_bytes=400 * 1024**3, progress=record,
         )
         record(result)
         return 0 if result["result"] == "copy_verified" else 2
