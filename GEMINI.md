@@ -1,5 +1,4 @@
-# Gemini entrypoint
+# Gemini
 
-Follow [AGENTS.md](AGENTS.md) and the owner's current task.
-Read only task-relevant files. Historical plans are context, not an execution queue.
-Do not automatically run workflows, broad test suites or additional agents.
+Follow [AGENTS.md](AGENTS.md) and the current owner request.
+Do not restore removed tests, CI workflows or historical task queues.

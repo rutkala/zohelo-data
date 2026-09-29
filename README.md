@@ -1,32 +1,20 @@
 # zohelo-data
 
 Data platform for zohelo.com: ingestion, native Landing/Archive, Bronze, Silver,
-Gold, semantic models and a SQL portal.
+Gold, semantic models and a SQL portal at https://data.zohelo.com/.
 
-[Open the portal](https://data.zohelo.com/) · [Portal guide](docs/using-the-portal.md)
+## Operate
 
-## Operate the platform
+Only four Actions remain: **Ingestion**, **Transformations**, **Deploy portal**,
+and **Copy Drive files to R2**. Choose the source or operation you need.
+See [operating commands](docs/audits/2026-09-07-workflows.md).
 
-The [workflow inventory](docs/audits/2026-09-07-workflows.md) lists the current
-Actions and their actual commands. Start there, not with a historical pilot.
-Production Actions run existing Python/dbt code; they are not an agent framework.
-A copy operation copies files. It does not run the platform regression suite,
-convert files to Iceberg or deploy the portal.
+Repository test suites and automatic CI/check workflows have been removed.
+Data jobs run data commands, not repository regression suites or browser tests.
+Existing error handling, byte integrity, checkpoints and writer locks remain.
 
-R2 is the target durable store, with native Landing and Iceberg medallion tables.
-Existing Drive data and release pointers must remain intact until migration and
-cutover are verified. Repository cleanup does not establish that migration is done.
-
-## Develop
-
-Follow [AGENTS.md](AGENTS.md) and the current task. Prefer one direct command and
-only the checks relevant to what changed. PR automation checks Python syntax and
-workflow safety; a single Python test file can be selected manually. Full data or
-portal regression suites are explicit diagnostics, not routine execution steps.
+R2 is the target store, with native Landing and Iceberg medallion tables.
+Cleanup does not migrate data or switch existing Drive producers/readers.
 
 [Development](docs/development.md) · [Architecture](docs/architecture.md) ·
-[Current status](docs/deliverables.md) · [Google authorization](docs/google-authorization.md)
-
-Existing source adapters, dbt models, semantic definitions, storage and portal
-code remain in place. The operating surface is being simplified first; the
-source runners still contain legacy orchestration that needs focused cleanup.
+[Status](docs/deliverables.md) · [Agent guide](AGENTS.md)

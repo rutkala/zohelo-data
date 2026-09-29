@@ -12,9 +12,6 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "typecheck": "tsc -b --noEmit",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "playwright test",
     "prepare": "husky"
   },
   "dependencies": {
@@ -102,8 +99,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.67.0",
     "vite": "^7.3.6",
-    "vite-plugin-pwa": "^1.3.0",
-    "vitest": "^4.1.11"
+    "vite-plugin-pwa": "^1.3.0"
   },
   "description": "Zohelo Data's browser-based catalogue and DuckDB SQL workspace.",
   "repository": {

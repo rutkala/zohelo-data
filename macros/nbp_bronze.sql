@@ -186,16 +186,3 @@ from ranked
 cross join validation
 where current_row_number = 1 and validation.validation_result = 1
 {% endmacro %}
-
-{% test nbp_unique_combination(model, combination_of_columns) %}
-select
-    {% for column in combination_of_columns %}
-    {{ column }}{% if not loop.last %}, {% endif %}
-    {% endfor %}
-from {{ model }}
-group by
-    {% for column in combination_of_columns %}
-    {{ column }}{% if not loop.last %}, {% endif %}
-    {% endfor %}
-having count(*) > 1
-{% endtest %}
