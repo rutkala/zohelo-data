@@ -137,12 +137,11 @@ def main():
                     env["R2_S3_ENDPOINT"].rstrip("/") != f"https://{account}.r2.cloudflarestorage.com"):
                 raise MigrationError("unexpected_target_account_or_buckets")
             config = configparser.ConfigParser(interpolation=None)
-            # Obscure via stdin, never a credential in command arguments or logs.
-            secret = subprocess.check_output(["rclone", "obscure", "-"],
-                input=env["GOOGLE_OAUTH_CLIENT_SECRET"], text=True).strip()
+            # OAuth client secrets are literal strings in rclone, not obscure passwords.
+            # This private 0600 config is outside the evidence directory and never logged.
             config["drive"] = {"type": "drive", "scope": "drive.readonly",
                 "root_folder_id": ROOT_ID, "client_id": env["GOOGLE_OAUTH_CLIENT_ID"],
-                "client_secret": secret, "skip_shortcuts": "true",
+                "client_secret": env["GOOGLE_OAUTH_CLIENT_SECRET"], "skip_shortcuts": "true",
                 "token": json.dumps({"access_token": "", "token_type": "Bearer",
                     "refresh_token": env["GOOGLE_OAUTH_REFRESH_TOKEN"],
                     "expiry": "2000-01-01T00:00:00Z"})}
