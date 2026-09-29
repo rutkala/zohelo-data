@@ -1,9 +1,6 @@
-# Copilot repository instructions
+# Copilot instructions
 
-Read and follow the repository-root [AGENTS.md](../AGENTS.md) before making changes. It is the shared source for repository layout, setup, validation commands and data-handling guidance.
-
-Read [docs/architecture.md](../docs/architecture.md) for the proposed direction and open decisions. Implement the assigned task without treating every proposed milestone as already accepted or implemented.
-
-Read [docs/deliverables.md](../docs/deliverables.md) for the approved current scope and [docs/development.md](../docs/development.md) for the shared environment and fixture check command.
-
-Use local fixtures and mocks for routine PR checks. Report checks actually run and any limitations. Keep detailed guidance in AGENTS.md so GitHub and Codespaces agents use the same instructions.
+Follow [AGENTS.md](../AGENTS.md) and the owner's current task.
+Read only the implementation and supporting documentation needed for that task.
+Do not automatically resume historical plans or run existing workflows.
+Shared engineering and validation guidance belongs in AGENTS.md, not here.
