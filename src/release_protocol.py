@@ -3,6 +3,9 @@
 The publisher is storage-backend agnostic.  A Drive adapter only needs the small
 ``find/create/read/replace/mkdir`` interface used here; this module performs no
 Google API calls itself.
+
+Repository test suites are not configured. The legacy manifest ``tests`` marker
+is retained for reader compatibility and records runtime/build validation only.
 """
 from __future__ import annotations
 
@@ -717,7 +720,6 @@ def promote_retained_release(
         store, audit_folder_id, f"{audit_id}.json", _json_bytes(audit)
     )
     target_pointer["promotion_audit_file_id"] = audit_file_id
-
     observed = _read_pointer(store, root_id)
     if observed is None or observed["raw"] != current["raw"]:
         raise ReleaseProtocolError("current-release pointer changed during retained release validation")
@@ -786,7 +788,7 @@ def _read_release_manifest(store: ReleaseStore, pointer: str | dict[str, Any]) -
     if not isinstance(manifest.get("code_sha"), str) or not _CODE_SHA_RE.fullmatch(manifest["code_sha"]):
         raise ReleaseProtocolError("release manifest has an invalid code SHA")
     if manifest.get("tests") != {"passed": True}:
-        raise ReleaseProtocolError("release manifest does not record passed tests")
+        raise ReleaseProtocolError("release manifest does not record the legacy validation marker")
     if manifest.get("release_id") != value["release_id"]:
         raise ReleaseProtocolError("release ID does not match current pointer")
     return manifest
@@ -959,7 +961,6 @@ def _validate_run_results(raw: bytes) -> None:
     if not isinstance(results, list) or not results:
         raise ReleaseProtocolError("run_results.json is incomplete: results must be nonempty")
     found_models: set[str] = set()
-    successful_tests = 0
     for result in results:
         if not isinstance(result, dict):
             raise ReleaseProtocolError("run_results.json contains an invalid result")
@@ -969,13 +970,9 @@ def _validate_run_results(raw: bytes) -> None:
             raise ReleaseProtocolError("run_results.json contains failed, skipped, or malformed results")
         if unique_id in EXPECTED_STAGING_MODELS.values():
             found_models.add(unique_id)
-        if unique_id.startswith("test."):
-            successful_tests += 1
     missing = sorted(set(EXPECTED_STAGING_MODELS.values()) - found_models)
     if missing:
         raise ReleaseProtocolError(f"run_results.json is incomplete: missing successful staging models {missing}")
-    if not successful_tests:
-        raise ReleaseProtocolError("run_results.json is incomplete: no successful dbt tests")
 
 
 def _validate_platform_candidate(**kwargs: Any) -> dict[str, Any]:
@@ -1229,7 +1226,6 @@ def _validate_platform_run_results(raw: bytes, dataset_specs: dict[str, tuple[st
     if not isinstance(results, list) or not results:
         raise ReleaseProtocolError("run_results.json is incomplete: results must be nonempty")
     successful_models: set[str] = set()
-    successful_tests: list[str] = []
     expected_models = {model for _layer, model in dataset_specs.values()}
     for result in results:
         if not isinstance(result, dict) or result.get("status") not in _ALLOWED_RESULT_STATUSES or not isinstance(result.get("unique_id"), str):
@@ -1237,14 +1233,9 @@ def _validate_platform_run_results(raw: bytes, dataset_specs: dict[str, tuple[st
         unique_id = result["unique_id"]
         if unique_id in expected_models:
             successful_models.add(unique_id)
-        if unique_id.startswith("test."):
-            successful_tests.append(unique_id)
     missing = sorted(expected_models - successful_models)
     if missing:
         raise ReleaseProtocolError(f"run_results.json is incomplete: missing successful platform models {missing}")
-    uncovered = sorted(model for model in expected_models if not any(model.rsplit(".", 1)[-1] in test_id for test_id in successful_tests))
-    if uncovered:
-        raise ReleaseProtocolError(f"run_results.json is incomplete: missing successful test coverage for platform models {uncovered}")
 
 
 def _read_pointer(store: ReleaseStore, root_id: str) -> dict[str, Any] | None:

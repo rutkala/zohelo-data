@@ -1,69 +1,49 @@
-# Current GitHub Actions inventory
+# Operating commands
 
-Updated 29 September 2026. This is the current operating guide despite its
-historical filename. The previous version and removed workflows remain in Git
-history; do not recreate them from old audit or deployment instructions.
+Updated 29 September 2026. This guide supersedes older workflow/test instructions.
 
-## Available workflows
+## Four Actions
 
-| Workflow file | Purpose / existing command | Trigger |
+| Action | File | What it runs |
 | --- | --- | --- |
-| `data-validation.yml` | Python syntax and existing workflow-safety checker; optional one selected test file | PR or manual |
-| `daily-ingestion.yml` | NBP publication (`src/nbp_platform.py`) or explicit retained-release promotion | Existing daily schedule or manual |
-| `bdl-web-bootstrap.yml` | Checkpointed BDL Web ingestion with ten WireGuard workers | Manual; existing explicit continuation option |
-| `dbw-web-bootstrap.yml` | DBW native Web bulk extraction (`src/dbw_web_extractor.py`) | Manual |
-| `source-dbw.yml` | DBW API campaign (`src/source_campaign.py --source gus_dbw`) | Manual |
-| `source-world-bank.yml` | Existing WDI intake and modeled pipeline | Existing triggers unchanged |
-| `source-eurostat.yml` | Existing Eurostat intake, Bronze and modeled pipeline | Existing triggers unchanged |
-| `source-opendata.yml` | Existing OpenData source campaign | Existing triggers unchanged |
-| `dbw-bronze-release.yml` | Publish retained DBW Bronze | Existing triggers unchanged |
-| `dbw-modeled-release.yml` | Build/publish DBW modeled layers | Existing triggers unchanged |
-| `drive-to-r2-migration.yml` | Byte-preserving copy using `scripts/migrate-drive-to-r2.py` | Manual, main only |
-| `deploy-portal.yml` | Build portal and dbt Docs viewer, deploy Pages, check build identity | Portal-related main push or manual |
+| Ingestion | `ingestion.yml` | Select NBP, BDL Web, DBW Web/API, World Bank or Eurostat intake |
+| Transformations | `transform.yml` | Select WDI/Eurostat modeling, Eurostat Bronze, DBW modeled/Bronze publication or OpenData Bronze |
+| Deploy portal | `deploy-portal.yml` | Build and deploy Pages; retain build identity/output checks |
+| Copy Drive files to R2 | `drive-to-r2-migration.yml` | Existing non-destructive copy command; temporary migration operation |
 
-Choose one operation intentionally. A workflow name is not evidence that its
-internal source runner has already been made minimal. In particular, the WDI,
-Eurostat and DBW release paths still need stage-by-stage simplification. Their
-checkpoints, production ownership and schedules are unchanged in this increment.
+All are main-only. There is no PR, CI, test, preflight, probe or generic task-runner
+Action. The temporary branch cleanup Action was removed without executing.
+Removed Actions may remain visible in GitHub's historical runs; their YAML is gone.
 
-## What was removed
+Ingestion preserves the existing NBP daily, World Bank six-hour and Eurostat hourly
+intake cron offsets. BDL uses ten WireGuard routes and resumes checkpoints; it no
+longer automatically dispatches another run. DBW Web/API and BDL are manual.
+All data Actions share the production writer concurrency group.
 
-Fourteen standalone Actions entrypoints were removed: BDL Web preflight, Bronze
-naming live checks, Cloudflare synthetic Iceberg live checks, DBW Bronze release
-validation, DBW R2 direct copy, DBW R2 pilot, DBW release preflight, Drive folder
-reconciliation (`deploy.yml`), devcontainer validation, Drive lazy-HTTP live
-checks, synthetic DuckDB HTTP probe, Iceberg query-contract probe, native Landing
-live checks and portal validation. Their implementation scripts/tests and Git
-history remain available for an explicitly requested diagnostic; they are not
-routine operational buttons. DBW R2 copies use the retained all-project migration
-path rather than competing pilot workflows. Folder reconciliation remains
-`python src/storage_manager.py`, not an automatically scheduled operation.
+World Bank and Eurostat ingestion no longer automatically launches downstream
+modeling, post-publication consumer queries or platform-wide diagnostics. Their
+API campaign and full native catalogue retention commands remain. The bounded
+`--verify-state` operation between them retains the accepted provider ledger.
+NBP still uses its existing combined Python platform runner, not a new framework.
 
-## Validation is separate from execution
+Transformations is manual. It runs only the selected existing command(s). DBW
+retained Bronze preparation/publication and OpenData load/publication each retain
+their two actual processing stages. There is no separate reader-acceptance job,
+repeated environment install, broad suite or live browser validation.
 
-PRs run only Python syntax and the existing inexpensive workflow-safety check.
-`Code checks` accepts one existing `test_*.py` file under `tests/` when manually
-dispatched. An empty field does not run tests or install platform dependencies.
-For local targeted Python tests:
+## No repository tests
 
-```sh
-python -m unittest discover -s tests -p 'test_migration_plan_provenance.py'
-```
+Python and portal suites, test fixtures, browser tests/configurations, dbt test
+declarations and the generic test macro were deleted. Test commands, workflow
+check scripts and the devcontainer verification wrapper were removed. Publication
+requires successful model builds, not successful test counts or model-test coverage.
+No replacement test framework or renamed acceptance suite was added.
 
-Select an actual test file relevant to the change. Broad diagnostics remain
-available as `bash scripts/check-data.sh` and the commands in `portal/package.json`;
-run them only for an explicitly selected purpose. Production input/output checks,
-byte integrity and safe publication remain inside the actual data code.
+Existing data integrity checks, checkpoints, writer locks and source/model code
+remain. Historical release formats still contain a `tests` compatibility marker;
+this does not indicate that a deleted suite executed. BDL's browser dependency is
+retained because real ingestion imports it. Dependency lock metadata is unchanged.
 
-NBP no longer adds full-release restore queries, optional raw replay, platform
-health scans or health artifacts after normal publication. These commands remain
-available under `scripts/` when needed. Portal deployment no longer runs lint and
-unit/engine regressions; its build and deployed-identity check remain. It installs
-only the constrained dbt-core dependency tree for the Docs viewer, not the entire
-data/semantic environment. Migration no longer has commit-message launch tags or
-manual SHA/confirmation fields: selecting the main-only copy Action is the explicit
-operation; the transfer's existing non-destructive checks remain unchanged.
-
-No retained data, source checkpoint, release pointer, source schedule or portal
-runtime was changed by this repository cleanup. Removed workflow histories may
-still be visible in GitHub's historical runs; they are not active YAML definitions.
+Repository cleanup does not copy data, publish a release, deploy the portal or
+establish complete source coverage. Internal source runners have not been broadly
+rewritten. Use their existing CLI directly for advanced operations not in the menus.

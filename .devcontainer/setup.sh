@@ -30,5 +30,5 @@ JS
 python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 npm --prefix portal ci --ignore-scripts --no-audit --no-fund
-echo 'Development setup complete. Local data checks: bash scripts/check-data.sh'
+echo 'Development setup complete. Run the command needed for your task; no test suite is configured.'
 echo 'Start Codex CLI explicitly with codex; retry any installation warning above. See docs/development.md.'
