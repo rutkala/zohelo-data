@@ -32,11 +32,11 @@ jobs:
           python-version-file: .python-version
           cache: pip
           cache-dependency-path: requirements.txt
-      - name: Install rclone and storage dependencies
+      - name: Install rclone and Drive listing dependencies
         run: |
           python -m pip install -c requirements.txt \
             google-api-python-client google-auth-oauthlib google-auth-httplib2 \
-            requests PyYAML boto3==1.43.103
+            requests PyYAML
           cd "$RUNNER_TEMP"
           curl -fsSL --retry 3 --proto '=https' \
             https://downloads.rclone.org/v1.75.0/rclone-v1.75.0-linux-amd64.zip -o rclone-v1.75.0-linux-amd64.zip
@@ -46,7 +46,7 @@ jobs:
           unzip -q rclone-v1.75.0-linux-amd64.zip
           install -m 755 rclone-v1.75.0-linux-amd64/rclone "$RUNNER_TEMP/rclone"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Copy retained files and verify the transfer; preserve Drive
+      - name: Copy all retained files to their buckets
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
