@@ -34,7 +34,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
-from pyiceberg.exceptions import NamespaceAlreadyExistsError
+from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -278,18 +278,37 @@ def catalog() -> RestCatalog:
 
 
 def ensure_table(cat: RestCatalog):
+    """Create/load the pilot table using only Cloudflare-supported table creation.
+
+    Cloudflare's R2 Data Catalog rejects some generic Iceberg table properties
+    during CREATE TABLE. Do not use create_table_if_not_exists here because a
+    catalog-side 409 validation error can be surfaced by PyIceberg as
+    TableAlreadyExistsError and then incorrectly fall through to load_table().
+    """
     try:
         cat.create_namespace(NAMESPACE)
     except NamespaceAlreadyExistsError:
         pass
-    return cat.create_table_if_not_exists(
-        (NAMESPACE, TABLE_NAME),
-        schema=iceberg_schema(),
-        properties={
-            "format-version": "2",
-            "write.metadata.metrics.default": "full",
-        },
-    )
+
+    identifier = (NAMESPACE, TABLE_NAME)
+    try:
+        table = cat.load_table(identifier)
+    except NoSuchTableError:
+        table = cat.create_table(
+            identifier,
+            schema=iceberg_schema(),
+        )
+
+    if int(table.metadata.format_version) < 2:
+        with table.transaction() as tx:
+            tx.upgrade_table_version(2)
+        table = cat.load_table(identifier)
+
+    if int(table.metadata.format_version) != 2:
+        raise DirectCopyError(
+            f"unexpected_iceberg_format_version:{table.metadata.format_version}"
+        )
+    return table
 
 
 def referenced_paths(table: Any) -> set[str]:
