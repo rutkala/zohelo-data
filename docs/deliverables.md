@@ -5,6 +5,111 @@ preserved byte-for-byte in [the dated historical record](deliverables-before-r2-
 That archive preserves all source-specific evidence, questions and holds; its dated
 "current" and "running" statements are not current operational status.
 
+## Autonomous continuation and execution plan — 29 September 2026
+
+The owner requested independent engineering for the next 24 hours, advancing the
+next approved task after each verified outcome rather than waiting for routine
+reassignment. This is not permission to bypass execution safeguards, exhaust paid
+quotas, introduce new providers/products, delete retained data or claim continuous
+execution where only scheduled sessions exist.
+
+**Actual continuation configured:** 24 hourly ChatGPT task invocations, first at
+29 September 14:45:30 Europe/Warsaw, last at 30 September 13:45:30 Europe/Warsaw.
+The task expires after those occurrences. They are scheduled engineering sessions,
+not an always-running agent, and remain subject to permissions and usage limits.
+Work this week and next week is a prioritized roadmap, not an additional unbounded
+background-work promise. Source decisions and the current migration priority below
+supersede stale Drive-only and Copilot/AGY directions in older agent instructions.
+
+### Verified starting position and immediate implementation
+
+- Current main was `29f942782f34c06395f17c78501e9b3da47381d8` at inspection.
+  PRs #218 and #219 are merged; there were no open PRs before this increment.
+- All-layer migration run `36547081711`, job `109335973750`, was still in its
+  copy command when checked at approximately 11:46 UTC on 29 September.
+  The live-log download returned BlobNotFound. Running status is NOT a verified
+  copied-file count, and no copied-byte estimate is inferred from elapsed time.
+- Do not restart or duplicate that job. Its existing production serialization and
+  five-hour transfer envelope remain in force. Inspect the final receipt when
+  available and resume only after the previous run is terminal.
+- Open issues #130 (roadmap), #131 (BDL), #132 (DBW), #133 (WDI), #134 (Eurostat)
+  and #135 (orchestration) were reviewed as the existing work containers. Their
+  historical Drive-specific wording is not authorization to revert R2 migration
+  or recreate already-verified WDI/NBP functionality. Do not close them based only
+  on migration success or old count estimates.
+- First proposed engineering increment: a bounded, read-only R2 progress observer
+  using the existing private aggregate checkpoint, with explicit unknown/stale
+  states and no payload reads, remote writes or automatic restart. Twenty-six
+  offline tests passed in the assistant's disposable workspace.
+- **Execution hold:** the attempt to create `src/r2_migration_status.py` on
+  `feat/r2-migration-observer-20260929` was blocked by OpenAI safeguards.
+  The runtime observer was NOT committed, deployed or run against R2. Do not
+  replay that blocked write through a different tool, encoding, scheduled task
+  or another agent. This documentation-only plan is independent of that held
+  runtime publication. A schedule is not resolution of an execution safeguard.
+
+### Today and the next 24 hours: 29–30 September
+
+| Order | Work | Acceptance / next dependency |
+| --- | --- | --- |
+| P0 | Establish exact all-layer migration progress from permitted run/receipt reads; diagnose terminal failures and resumability gaps. | Report actual files/bytes/errors per available evidence, distinguish discovered from copied, preserve every successful R2 object and all Drive originals; no duplicate writer. |
+| P1 | Finish all retained-object copy and before/after reconciliation, including Archive, Control, releases, empty folders and shortcuts. | Complete source inventory and verified destination mapping; explicit blockers for missing/unsupported objects; candidate only, not a portal cutover. |
+| P2 | Resolve each current published table from accepted release manifests and register complete Bronze/Silver/Gold Iceberg membership. | No glob of historical releases into a current table; exact schema/count/membership tests and a fresh reader; retain DBW's already-verified table without recopying it. |
+| P3 | Implement the authenticated R2-only data-access boundary for the existing comparison portal. | Preserve the accepted UI, prevent Drive fallback, keep credentials server-side, protect preview/production routes, and prove browser Range/auth behavior before switching live traffic. |
+| P4 | Prepare producer output cutover one source at a time. | Fixture-tested native Landing storage adapter, independent downstream stages, recovery/replay and one serialized writer; do not let old schedules create an untracked divergent source after cutover. |
+
+These are execution priorities, not guaranteed completion times. While an external
+job runs or a specific action is held, use independent approved work: tests,
+source contracts, read-only failure analysis, current instruction reconciliation
+or the Actions audit. Do not manufacture unrelated features to appear busy.
+
+### This week: 29 September–4 October
+
+1. Complete migration reconciliation, accepted table registration and R2-only
+   comparison-portal verification before declaring the storage cutover done.
+2. Move existing producer outputs to R2 in reviewed, source-specific increments;
+   preserve native transfer versus Landing-to-Bronze parsing versus dbt stages.
+   Carry forward all partial-coverage and native-lineage limitations.
+3. Review all current Actions against the new architecture: triggers, duplicate
+   paths, dependency installation, timeouts, safe resumption, production locks,
+   permissions, pinned actions and useful failure/progress receipts. Disable or
+   remove obsolete pilot paths only after proving they are no longer needed and
+   preserving their evidence; no blind mass deletion or schedule cancellation.
+4. Align AGENTS.md, collaboration.md, architecture.md and developer instructions
+   with the current R2 direction, sole AI-subscription budget and one-owner rule.
+5. Measure object/catalog/request costs and unrestricted SQL previews, exact
+   counts, multi-indicator queries and representative joins. Keep compaction a
+   separate measured change; it must not invalidate migration identity proof.
+
+### Next week: 5–11 October
+
+1. Close remaining existing-source completeness and lineage gaps, using issues
+   #131–#135 rather than onboarding new sources. BDL retains the approved ten
+   WireGuard routes and correct checkpoint/ownership checks when intake resumes.
+2. Complete missing source-shaped Bronze, conformed Silver, analytical Gold and
+   documented semantic definitions with explicit grain, units and coverage.
+3. Validate failure recovery, idempotency, fresh-consumer snapshot consistency and
+   human-operable runbooks without dependence on an AI session or devcontainer.
+4. Consolidate redundant workflows/adapters and stale instructions only when
+   behavior and rollback evidence are preserved. Reassess spend from measured
+   usage rather than assumed free-tier coverage.
+5. Evaluate a minimal read-only data delivery service only where required for
+   approved consumers; no speculative public SQL endpoint or new portal rebuild.
+   BI/Evidence/Dash and the separate zohelo website remain deferred.
+
+### Autonomy boundaries and handoff
+
+One implementation owner and one active engineering branch at a time. Current-head
+CI, behavioral tests, PR review, merge, deployment and data acceptance are separate
+gates. Continue routine approved work without asking for repeated permission.
+Escalate only a consequential business decision, unavailable credential or actual
+execution/access/cost boundary. Never bypass a denial or move a held operation to
+another mechanism. Do not delete Drive, reset checkpoints, expose private buckets,
+force-push, enable paid APIs/overages or add subscriptions. End each session with
+actual completed work, active external jobs, unmerged changes and concrete blockers.
+At the end of the 24-hour window, start no new long-running work and leave a final
+handoff; ongoing safely launched jobs are reported honestly, not silently cancelled.
+
 ## Current owner priority — 29 September 2026: migrate ALL project data to R2
 
 The owner authorized migration of the entire existing `zohelo-data` Drive root,
