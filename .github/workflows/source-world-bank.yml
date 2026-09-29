@@ -59,6 +59,10 @@ concurrency:
 
 jobs:
   collect_and_publish:
+    concurrency:
+      group: zohelo-production-data
+      cancel-in-progress: false
+      queue: max
     if: >-
       github.ref == 'refs/heads/main' &&
       inputs.transform_only != true &&
