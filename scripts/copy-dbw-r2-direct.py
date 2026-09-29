@@ -323,6 +323,28 @@ def duckdb_catalog() -> duckdb.DuckDBPyConnection:
     con.execute("LOAD httpfs")
     con.execute("INSTALL iceberg")
     con.execute("LOAD iceberg")
+
+    # add_files() preserves the external objects as s3://bucket/key paths in
+    # Iceberg metadata. Teach DuckDB that those S3-shaped paths are served by
+    # Cloudflare R2 rather than AWS S3.
+    endpoint = urlsplit(required_env("R2_S3_ENDPOINT"))
+    if endpoint.scheme != "https" or not endpoint.hostname:
+        raise DirectCopyError("invalid_r2_endpoint_for_duckdb")
+    con.execute(
+        f"""
+        CREATE SECRET r2_s3_files (
+            TYPE S3,
+            KEY_ID {sql_string(required_env("CLOUDFLARE_R2_ACCESS_KEY_ID"))},
+            SECRET {sql_string(required_env("CLOUDFLARE_R2_SECRET_ACCESS_KEY"))},
+            REGION 'auto',
+            ENDPOINT {sql_string(endpoint.netloc)},
+            URL_STYLE 'path',
+            USE_SSL true,
+            SCOPE {sql_string("s3://" + required_env("R2_LAKEHOUSE_BUCKET"))}
+        )
+        """
+    )
+
     token = required_env("CLOUDFLARE_R2_CATALOG_TOKEN")
     con.execute(
         f"CREATE SECRET r2_catalog_token (TYPE ICEBERG, TOKEN {sql_string(token)})"
