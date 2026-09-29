@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import base64
 from collections import Counter, defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import hashlib
 import json
 import math
@@ -270,10 +270,44 @@ def inventory_summary(inventory):
     return dict(totals)
 
 
+def rolling_transfers(copy, items, *, workers, deadline):
+    """Continuously refill a bounded transfer queue; never wait for a batch tail.
+
+    Futures are returned to the caller so individual failures remain attributable.
+    A deadline stops new submissions; in-flight copies retain their own deadline
+    and checksum/abort handling. At most twice the worker count is submitted.
+    """
+    if isinstance(workers, bool) or not isinstance(workers, int) or not 1 <= workers <= 16:
+        raise MigrationError("invalid_transfer_workers")
+    items = iter(items)
+    pending = {}
+    exhausted = False
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        def refill():
+            nonlocal exhausted
+            while not exhausted and len(pending) < workers * 2 and time.monotonic() < deadline:
+                try:
+                    node = next(items)
+                except StopIteration:
+                    exhausted = True
+                    break
+                pending[pool.submit(copy, node)] = node
+
+        refill()
+        while pending:
+            completed, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for future in completed:
+                node = pending.pop(future)
+                # Keep transfers progressing while the caller records receipts.
+                refill()
+                yield node, future
+
+
 def migrate(source_factory, s3_factory, landing, lakehouse, *, workers=4,
             seconds=18000, max_bytes=400 * 1024**3, progress=lambda value: None):
     """Run all layers. A stable, complete copy gets an index, not automatic cutover."""
-    if workers not in range(1, 9) or landing == lakehouse:
+    if (isinstance(workers, bool) or not isinstance(workers, int) or
+            not 1 <= workers <= 16 or landing == lakehouse):
         raise MigrationError("invalid_migration_configuration")
     deadline = time.monotonic() + seconds
     source, s3 = source_factory(), s3_factory()
@@ -290,8 +324,9 @@ def migrate(source_factory, s3_factory, landing, lakehouse, *, workers=4,
         raise MigrationError("inventory_exceeds_explicit_storage_budget")
     nodes = {x["id"]: x for x in before["nodes"]}
     payloads = [x for x in before["nodes"] if x["mimeType"] not in (FOLDER, SHORTCUT)]
-    # Release/control records first; every layer is still included.
-    payloads.sort(key=lambda x: (x["key_path"].split("/", 1)[0] == "01_landing", int(x.get("size", 0))))
+    # Small objects first across ALL layers; Landing is no longer postponed.
+    # Destination mapping and the complete inventory remain unchanged.
+    payloads.sort(key=lambda x: int(x.get("size", 0)))
     local = threading.local()
     mappings, errors = {}, []
 
@@ -312,24 +347,31 @@ def migrate(source_factory, s3_factory, landing, lakehouse, *, workers=4,
                     raise
                 time.sleep(2 ** attempt)
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for offset in range(0, len(payloads), 100):
-            if time.monotonic() >= deadline:
-                break
-            futures = {pool.submit(copy, node): node for node in payloads[offset:offset + 100]}
-            for future in as_completed(futures):
-                node = futures[future]
-                try:
-                    value = future.result()
-                    mappings[node["id"]] = value
-                    receipt["reused_files" if value["reused"] else "copied_files"] += 1
-                    receipt["verified_bytes"] += value["size"]
-                except Exception as exc:
-                    errors.append({"id": node["id"], "category": type(exc).__name__,
-                                   "code": str(exc) if isinstance(exc, MigrationError) else "provider_error"})
-            receipt.update(verified_files=len(mappings), total_files=len(payloads), errors=len(errors))
+    completed_files = 0
+    last_checkpoint = time.monotonic()
+    receipt.update(verified_files=0, total_files=len(payloads), errors=0,
+                   workers=workers, transfer_mode="continuous_bulk_queue")
+    progress(dict(receipt))
+    for node, future in rolling_transfers(copy, payloads, workers=workers, deadline=deadline):
+        try:
+            value = future.result()
+            mappings[node["id"]] = value
+            receipt["reused_files" if value["reused"] else "copied_files"] += 1
+            receipt["verified_bytes"] += value["size"]
+        except Exception as exc:
+            errors.append({"id": node["id"], "category": type(exc).__name__,
+                           "code": str(exc) if isinstance(exc, MigrationError) else "provider_error"})
+        completed_files += 1
+        receipt.update(verified_files=len(mappings), total_files=len(payloads), errors=len(errors))
+        now = time.monotonic()
+        # The checkpoint cadence must not become a transfer-batch barrier.
+        if completed_files % 100 == 0 or now - last_checkpoint >= 15:
             put_json(s3, lakehouse, prefix + "/progress.json", receipt)
             progress(dict(receipt))
+            last_checkpoint = now
+    receipt.update(verified_files=len(mappings), total_files=len(payloads), errors=len(errors))
+    put_json(s3, lakehouse, prefix + "/progress.json", receipt)
+    progress(dict(receipt))
     # Preserve shortcut meaning but do not follow links outside the authorized root.
     for node in nodes.values():
         if node["mimeType"] == SHORTCUT:
