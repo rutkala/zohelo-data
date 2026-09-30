@@ -340,8 +340,7 @@ def run_full_campaign(store, raw_store, quota_store, source_id, settings, workdi
                       max_seconds=1200, max_requests=24, code_sha="unknown",
                       clock=time.time, fetcher=None, inspector=None, planner=None, inventory_planner=None,
                       publish=None, on_progress=None):
-    from ingestion.bulk_transport import (fetch_to_file, DriveIntegrityError,
-                                          DriveCapacityError, LocalDiskCapacityError)
+    from ingestion.bulk_transport import fetch_to_file, BulkTransportError
     from ingestion.source_campaign_store import CampaignStoreError
     from ingestion.full_source_adapters import initial_distributions, inspect_distribution, distributions_from_inventory
     fetcher = fetcher or fetch_to_file
@@ -622,8 +621,7 @@ def run_full_campaign(store, raw_store, quota_store, source_id, settings, workdi
             candidate["last_error"] = None
         except Exception as exc:
             # Never continue after an uncertain durable write/promotion.
-            if getattr(exc, "uncertain", False) or isinstance(exc, (CampaignStoreError, DriveIntegrityError,
-                                                                    DriveCapacityError, LocalDiskCapacityError)):
+            if getattr(exc, "uncertain", False) or isinstance(exc, (CampaignStoreError, BulkTransportError)):
                 raise
             failure = {"task_id": task["id"], "dataset_id": spec["dataset_id"],
                        "error_type": type(exc).__name__, "detail": str(exc)[:300]}
