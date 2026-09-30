@@ -1,17 +1,39 @@
-name: Transformations (paused for R2 cutover)
+name: Transformations (R2 inventory)
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/inventory-r2-lakehouse.py'
+      - '.github/workflows/transform.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  paused:
+  inventory:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 15
     steps:
-      - name: R2 cutover hold
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version-file: .python-version
+      - name: Inventory R2 without modifying data
+        env:
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
+          R2_LANDING_BUCKET: ${{ vars.R2_LANDING_BUCKET }}
+          R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
         run: |
-          echo "Drive-era transformations/publication are paused while the R2/Iceberg lakehouse is rebuilt."
-          echo "This workflow performs no ingestion, transformation, Google Drive write, or R2 write."
+          python -m pip install boto3
+          python scripts/inventory-r2-lakehouse.py | tee "$RUNNER_TEMP/r2-inventory.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r2-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/r2-inventory.json
+          retention-days: 14
