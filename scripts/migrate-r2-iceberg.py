@@ -443,10 +443,7 @@ def parquet_footer(
     last_error: Exception | None = None
     for attempt in range(1, 7):
         try:
-            metadata = pq.read_metadata(f"{bucket}/{item.key}", filesystem=fs)
-            if metadata.num_rows <= 0:
-                raise MigrationError(f"parquet_file_empty:{item.key}")
-            return metadata
+            return pq.read_metadata(f"{bucket}/{item.key}", filesystem=fs)
         except OSError as exc:
             last_error = exc
             if attempt >= 6:
@@ -498,29 +495,45 @@ def append_existing_parquet_batch(
     items: list[ObjectInfo],
     expected_schema: Any,
     snapshot_properties: dict[str, str],
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     data_files: list[DataFile] = []
     rows = 0
+    empty_paths: list[str] = []
     for item in items:
         metadata = parquet_footer(fs, bucket, item)
         schema = metadata.schema.to_arrow_schema()
         if not schema.equals(expected_schema, check_metadata=False):
             raise MigrationError(f"parquet_schema_mismatch:{item.key}")
+        if int(metadata.num_rows) == 0:
+            empty_paths.append(item.uri)
+            print(
+                json.dumps(
+                    {
+                        "operation": "iceberg_empty_parquet_schema_only",
+                        "table": ".".join(table.identifier),
+                        "key": item.key,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            continue
         rows += int(metadata.num_rows)
         data_files.append(minimal_data_file(table=table, item=item, metadata=metadata))
 
-    with table.transaction() as tx:
-        if tx.table_metadata.name_mapping() is None:
-            tx.set_properties(
-                **{
-                    TableProperties.DEFAULT_NAME_MAPPING:
-                    tx.table_metadata.schema().name_mapping.model_dump_json()
-                }
-            )
-        with tx.update_snapshot(snapshot_properties=snapshot_properties).fast_append() as append:
-            for data_file in data_files:
-                append.append_data_file(data_file)
-    return len(data_files), rows
+    if data_files:
+        with table.transaction() as tx:
+            if tx.table_metadata.name_mapping() is None:
+                tx.set_properties(
+                    **{
+                        TableProperties.DEFAULT_NAME_MAPPING:
+                        tx.table_metadata.schema().name_mapping.model_dump_json()
+                    }
+                )
+            with tx.update_snapshot(snapshot_properties=snapshot_properties).fast_append() as append:
+                for data_file in data_files:
+                    append.append_data_file(data_file)
+    return len(data_files), rows, empty_paths
 
 
 def create_or_load_table(
@@ -584,10 +597,12 @@ def migrate_group(
     reference_schema = parquet_footer(
         fs, bucket, group.objects[0]
     ).schema.to_arrow_schema()
+    empty_paths: set[str] = set()
+    appended_total = 0
     for offset in range(0, len(missing), ADD_FILES_BATCH):
         batch_paths = missing[offset : offset + ADD_FILES_BATCH]
         batch_items = [object_by_uri[path] for path in batch_paths]
-        appended_files, appended_rows = append_existing_parquet_batch(
+        appended_files, appended_rows, batch_empty = append_existing_parquet_batch(
             table=table,
             fs=fs,
             bucket=bucket,
@@ -598,6 +613,8 @@ def migrate_group(
                 "zohelo.source": group.origin,
             },
         )
+        appended_total += appended_files
+        empty_paths.update(batch_empty)
         print(
             json.dumps(
                 {
@@ -605,7 +622,8 @@ def migrate_group(
                     "table": f"{group.namespace}.{group.table}",
                     "batch_files": appended_files,
                     "batch_rows": appended_rows,
-                    "completed_missing_files": min(offset + appended_files, len(missing)),
+                    "batch_empty_files": len(batch_empty),
+                    "processed_missing_files": min(offset + len(batch_paths), len(missing)),
                     "missing_files_at_start": len(missing),
                 },
                 sort_keys=True,
@@ -615,22 +633,26 @@ def migrate_group(
         table = cat.load_table(group.identifier)
 
     final = table_files(table)
-    if set(final) != expected:
+    effective_expected = expected - empty_paths
+    if set(final) != effective_expected:
         raise MigrationError(
             f"iceberg_membership_mismatch:{group.namespace}.{group.table}:"
-            f"{len(final)}:{len(expected)}"
+            f"{len(final)}:{len(effective_expected)}"
         )
     total_rows = sum(row_count for row_count, _ in final.values())
     total_bytes = sum(file_size for _, file_size in final.values())
-    if len(final) != len(group.objects):
+    expected_registered_bytes = sum(
+        item.size for item in group.objects if item.uri in effective_expected
+    )
+    if len(final) != len(effective_expected):
         raise MigrationError(f"iceberg_file_count_mismatch:{group.namespace}.{group.table}")
-    if total_bytes != group.expected_bytes:
+    if total_bytes != expected_registered_bytes:
         raise MigrationError(
             f"iceberg_byte_count_mismatch:{group.namespace}.{group.table}:"
-            f"{total_bytes}:{group.expected_bytes}"
+            f"{total_bytes}:{expected_registered_bytes}"
         )
-    if total_rows <= 0:
-        raise MigrationError(f"iceberg_table_empty:{group.namespace}.{group.table}")
+    if total_rows == 0 and effective_expected:
+        raise MigrationError(f"iceberg_table_unexpected_zero_rows:{group.namespace}.{group.table}")
 
     if group.identifier == ("bronze", "dbw_observations"):
         if len(final) != DBW_EXPECTED_FILES or total_rows != DBW_EXPECTED_ROWS:
@@ -643,12 +665,16 @@ def migrate_group(
         "namespace": group.namespace,
         "table": group.table,
         "origin": group.origin,
+        "source_files": len(group.objects),
+        "source_bytes": group.expected_bytes,
         "data_files": len(final),
         "rows": total_rows,
         "bytes": total_bytes,
+        "empty_source_files": len(empty_paths),
+        "empty_source_bytes": sum(object_by_uri[path].size for path in empty_paths),
         "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
-        "added_files": len(missing),
-        "reused_files": len(final) - len(missing),
+        "added_files": appended_total,
+        "reused_files": len(final) - appended_total,
         "format_version": int(table.metadata.format_version),
     }
 
@@ -826,8 +852,12 @@ def main() -> int:
             "completed_at_utc": datetime.now(timezone.utc).isoformat(),
             "selected_legacy_releases": selected_releases,
             "table_counts": observed_counts,
-            "source_files": sum(item["data_files"] for item in results),
-            "source_bytes": sum(item["bytes"] for item in results),
+            "source_files": sum(item["source_files"] for item in results),
+            "source_bytes": sum(item["source_bytes"] for item in results),
+            "iceberg_data_files": sum(item["data_files"] for item in results),
+            "iceberg_data_bytes": sum(item["bytes"] for item in results),
+            "empty_source_files": sum(item["empty_source_files"] for item in results),
+            "empty_source_bytes": sum(item["empty_source_bytes"] for item in results),
             "rows_from_parquet_metadata": sum(item["rows"] for item in results),
             "tables": results,
             "pilot_catalog_cleanup": pilot_cleanup,
