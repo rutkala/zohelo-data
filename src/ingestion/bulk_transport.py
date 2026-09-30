@@ -11,7 +11,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 from typing import Any, Mapping
@@ -701,6 +701,252 @@ class BulkDriveRawStore:
         except Exception as exc:
             raise DriveIntegrityError("bulk raw Drive bytes could not be streamed for verification") from exc
 
+
+
+class BulkR2RawStore:
+    """Immutable, content-addressed R2 store for large raw source distributions."""
+
+    def __init__(
+        self,
+        source_id: str,
+        *,
+        prefix: str | None = None,
+        chunk_size: int = DEFAULT_DRIVE_CHUNK_BYTES,
+    ) -> None:
+        if not isinstance(source_id, str) or _SOURCE_ID_RE.fullmatch(source_id) is None:
+            raise ValueError("source_id must be a lowercase source identifier")
+        self.source_id = source_id
+        self.chunk_size = _positive_int(chunk_size, "chunk_size")
+        self.bucket = os.environ.get("R2_LANDING_BUCKET", "").strip()
+        endpoint = os.environ.get("R2_S3_ENDPOINT", "").strip()
+        access_key = os.environ.get("CLOUDFLARE_R2_ACCESS_KEY_ID", "").strip()
+        secret_key = os.environ.get("CLOUDFLARE_R2_SECRET_ACCESS_KEY", "").strip()
+        if not all((self.bucket, endpoint, access_key, secret_key)):
+            raise BulkTransportError("R2 bulk storage configuration is incomplete")
+        if prefix is None:
+            prefix = f"01_landing/{source_id}/bulk/"
+        prefix = prefix.strip("/") + "/"
+        if ".." in PurePosixPath(prefix).parts:
+            raise BulkTransportError("R2 bulk prefix is unsafe")
+        self.prefix = prefix
+
+        import boto3
+        from boto3.s3.transfer import TransferConfig
+        from botocore.config import Config
+
+        self.client = boto3.client(
+            "s3",
+            endpoint_url=endpoint.rstrip("/"),
+            region_name="auto",
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            config=Config(
+                signature_version="s3v4",
+                retries={"max_attempts": 10, "mode": "standard"},
+            ),
+        )
+        self.transfer_config = TransferConfig(
+            multipart_threshold=64 * 1024 * 1024,
+            multipart_chunksize=max(self.chunk_size, 8 * 1024 * 1024),
+            max_concurrency=4,
+            use_threads=True,
+        )
+        # Folder markers are optional in object storage but make the raw
+        # namespace immediately visible in the portal/R2 explorer.
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=self.prefix)
+        except Exception:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=self.prefix,
+                Body=b"",
+                ContentType="application/x-directory",
+            )
+
+    def put_file(
+        self,
+        path: str | os.PathLike[str],
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        local_path = Path(path)
+        if local_path.is_symlink() or not local_path.is_file():
+            raise ValueError("bulk raw path must be a regular file")
+        observed = _hash_file(local_path, self.chunk_size)
+        if observed["size_bytes"] <= 0:
+            raise ValueError("bulk raw file must be nonempty")
+        durable_metadata = _safe_metadata(metadata)
+        name = f"raw-{observed['sha256']}.bin"
+        key = self.prefix + name
+        descriptor = {
+            "id": f"r2://{self.bucket}/{key}",
+            "sha256": observed["sha256"],
+            "md5": observed["md5"],
+            "size_bytes": observed["size_bytes"],
+            "name": name,
+            "metadata": durable_metadata,
+        }
+
+        if self._head_matches(key, descriptor):
+            return self.verify(descriptor)
+
+        upload_error: Exception | None = None
+        try:
+            self.client.upload_file(
+                str(local_path),
+                self.bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": "application/octet-stream",
+                    "Metadata": {
+                        "sha256": observed["sha256"],
+                        "md5": observed["md5"],
+                    },
+                },
+                Config=self.transfer_config,
+            )
+        except Exception as exc:
+            upload_error = exc
+
+        try:
+            verified = self.verify(descriptor)
+        except Exception as verify_error:
+            if upload_error is not None:
+                raise BulkTransportError(
+                    "R2 bulk upload failed and its outcome could not be verified"
+                ) from verify_error
+            raise
+        return verified
+
+    def read_to_file(
+        self,
+        descriptor: Mapping[str, Any],
+        path: str | os.PathLike[str],
+    ) -> dict[str, Any]:
+        expected = _r2_bulk_descriptor(descriptor, self.bucket, self.prefix)
+        destination = Path(path)
+        if destination.exists() and (destination.is_symlink() or not destination.is_file()):
+            raise BulkTransportError("bulk restore destination must be a regular file")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        _require_disk_headroom(destination.parent, expected["size_bytes"])
+        temporary = destination.with_name(f".{destination.name}.{os.getpid()}.part")
+        try:
+            self._stream_verified(expected, temporary)
+            os.replace(temporary, destination)
+            return dict(descriptor)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def verify(self, descriptor: Mapping[str, Any]) -> dict[str, Any]:
+        expected = _r2_bulk_descriptor(descriptor, self.bucket, self.prefix)
+        if not self._head_matches(expected["key"], expected):
+            raise BulkTransportError("R2 bulk object metadata does not match its descriptor")
+        self._stream_verified(expected, None)
+        return dict(descriptor)
+
+    def _head_matches(self, key: str, expected: Mapping[str, Any]) -> bool:
+        try:
+            head = self.client.head_object(Bucket=self.bucket, Key=key)
+        except Exception:
+            return False
+        metadata = head.get("Metadata") or {}
+        return (
+            int(head.get("ContentLength", -1)) == int(expected["size_bytes"])
+            and metadata.get("sha256") == expected["sha256"]
+            and metadata.get("md5") == expected["md5"]
+        )
+
+    def _stream_verified(
+        self,
+        expected: Mapping[str, Any],
+        destination: Path | None,
+    ) -> None:
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=expected["key"])
+            body = response["Body"]
+            sha = hashlib.sha256()
+            md5 = hashlib.md5(usedforsecurity=False)
+            size = 0
+            handle = destination.open("xb") if destination is not None else None
+            try:
+                while True:
+                    chunk = body.read(self.chunk_size)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > expected["size_bytes"]:
+                        raise BulkTransportError(
+                            "R2 bulk object exceeded its declared descriptor size"
+                        )
+                    sha.update(chunk)
+                    md5.update(chunk)
+                    if handle is not None:
+                        handle.write(chunk)
+                if handle is not None:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                if handle is not None:
+                    handle.close()
+                body.close()
+        except BulkTransportError:
+            raise
+        except Exception as exc:
+            raise BulkTransportError("R2 bulk object could not be streamed") from exc
+        if (
+            size != expected["size_bytes"]
+            or sha.hexdigest() != expected["sha256"]
+            or md5.hexdigest() != expected["md5"]
+        ):
+            raise BulkTransportError("R2 bulk bytes do not match their descriptor")
+
+
+def _r2_bulk_descriptor(
+    value: Any,
+    expected_bucket: str,
+    expected_prefix: str,
+) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise BulkTransportError("R2 bulk descriptor must be a mapping")
+    object_id = value.get("id")
+    name = value.get("name")
+    sha = value.get("sha256")
+    md5 = value.get("md5")
+    size = value.get("size_bytes")
+    if (
+        not isinstance(object_id, str)
+        or not object_id.startswith("r2://")
+        or not isinstance(name, str)
+        or not isinstance(sha, str)
+        or _SHA256_RE.fullmatch(sha) is None
+        or not isinstance(md5, str)
+        or _MD5_RE.fullmatch(md5) is None
+        or type(size) is not int
+        or size <= 0
+        or name != f"raw-{sha}.bin"
+    ):
+        raise BulkTransportError("R2 bulk descriptor is invalid")
+    rest = object_id[5:]
+    bucket, sep, key = rest.partition("/")
+    if (
+        not sep
+        or bucket != expected_bucket
+        or not key.startswith(expected_prefix)
+        or PurePosixPath(key).name != name
+        or ".." in PurePosixPath(key).parts
+    ):
+        raise BulkTransportError("R2 bulk descriptor escaped its source namespace")
+    return {
+        "id": object_id,
+        "key": key,
+        "name": name,
+        "sha256": sha,
+        "md5": md5,
+        "size_bytes": size,
+        "metadata": _safe_metadata(value.get("metadata")),
+    }
 
 def _allowed_hosts(values: Any) -> frozenset[str]:
     if not isinstance(values, (set, frozenset, tuple, list)) or not values:
