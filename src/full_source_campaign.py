@@ -1,11 +1,11 @@
-"""Collect and verify full official source distributions into private Landing."""
+"""Collect and verify full official source distributions into private R2 Landing."""
 import argparse
 import json
 import os
 from pathlib import Path
 import tempfile
 
-from source_campaign import load_settings, production_storage
+from source_campaign import load_settings
 from ingestion.full_source_campaign import SOURCES, coverage, run_full_campaign
 
 
@@ -23,19 +23,16 @@ def main():
     if not args.verify_current and not settings.get("enabled", True):
         print(json.dumps({"source_id": args.source, "status": "disabled"}), flush=True)
         return 0
-    from ingestion.source_campaign_store import DriveCampaignStore, _CampaignStore
-    from ingestion.drive_state_store import DriveStateStore
-    from ingestion.bulk_transport import BulkDriveRawStore
-    storage = production_storage(args.allow_production_write)
-    root = storage.resolve_root(create=False)
+    if not args.verify_current and not args.allow_production_write:
+        parser.error("R2 production ingestion requires --allow-production-write")
+    from ingestion.source_campaign_store import R2CampaignStore
+    from ingestion.bulk_transport import BulkR2RawStore
     campaign_id = args.source + "_bulk"
-    control = storage.get_or_create_nested_folder(
-        ["06_control", "source_campaigns", campaign_id], root_id=root)
-    landing = storage.resolve_zone("landing", create=True)
-    raw_root = storage.get_or_create_nested_folder([args.source, "bulk"], root_id=landing)
-    transport = DriveStateStore(storage, root, control, allow_landing_pointer=True)
-    store = _CampaignStore(transport, campaign_id, control, raw_root)
-    raw_store = BulkDriveRawStore(storage, args.source, responses_root_id=raw_root)
+    # Full-distribution campaign state and publication indexes live in the
+    # lakehouse control bucket. Large native payloads are streamed separately
+    # to 01_landing/<source>/bulk/ in the private landing bucket.
+    store = R2CampaignStore(campaign_id, publication_only=True)
+    raw_store = BulkR2RawStore(args.source)
     from ingestion.bulk_publication import publish_bulk_index, verify_bulk_index
     if args.verify_current:
         state = store.load()
@@ -57,7 +54,7 @@ def main():
             **coverage(state),
         }), flush=True)
         return 0
-    quota_store = DriveCampaignStore(storage, args.source)
+    quota_store = R2CampaignStore(args.source, publication_only=True)
     with tempfile.TemporaryDirectory(prefix="zohelo-full-source-") as directory:
         report = run_full_campaign(
             store, raw_store, quota_store, args.source, settings, Path(directory),
