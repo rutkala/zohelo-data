@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'scripts/promote-current-r2.py'
       - 'scripts/optimize-r2-promotions.py'
       - '.github/workflows/transform.yml'
   workflow_dispatch:
