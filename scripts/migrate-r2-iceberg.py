@@ -3,7 +3,7 @@
 
 This is a non-destructive, idempotent cutover:
 - source objects are never deleted or rewritten;
-- existing Parquet files are committed with PyIceberg add_files();
+- existing Parquet files are committed as Iceberg DataFiles without rewriting them;
 - legacy current/release metadata is used only to select the latest legacy
   release during this one-time consolidation;
 - duplicate DBW query_parts/retained copies are deliberately excluded;
@@ -31,8 +31,9 @@ from botocore.exceptions import ClientError
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
-from pyiceberg.conversions import to_bytes
-from pyiceberg.types import StringType
+from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
+from pyiceberg.table import TableProperties
+from pyiceberg.typedef import Record
 from pyiceberg.exceptions import (
     NamespaceAlreadyExistsError,
     NoSuchNamespaceError,
@@ -49,15 +50,6 @@ ADD_FILES_BATCH = 200
 
 class MigrationError(RuntimeError):
     pass
-
-
-# Compatibility for Parquet JSON/string statistics. Some legacy files expose
-# UTF-8 BYTE_ARRAY min/max values as Python bytes. PyIceberg's StringType
-# serializer assumes str and calls .encode(), even though those bytes are
-# already the exact Iceberg binary encoding required for string bounds.
-@to_bytes.register(StringType)
-def _string_stat_to_bytes(_: StringType, value: str | bytes) -> bytes:
-    return value if isinstance(value, bytes) else value.encode("utf-8")
 
 
 @dataclass
@@ -442,6 +434,66 @@ def read_arrow_schema(fs: pafs.S3FileSystem, bucket: str, key: str):
     return pq.read_schema(f"{bucket}/{key}", filesystem=fs)
 
 
+def parquet_footer(
+    fs: pafs.S3FileSystem, bucket: str, item: ObjectInfo
+) -> pq.FileMetaData:
+    metadata = pq.read_metadata(f"{bucket}/{item.key}", filesystem=fs)
+    if metadata.num_rows <= 0:
+        raise MigrationError(f"parquet_file_empty:{item.key}")
+    return metadata
+
+
+def minimal_data_file(
+    *,
+    table: Any,
+    item: ObjectInfo,
+    metadata: pq.FileMetaData,
+) -> DataFile:
+    return DataFile.from_args(
+        _table_format_version=int(table.metadata.format_version),
+        content=DataFileContent.DATA,
+        file_path=item.uri,
+        file_format=FileFormat.PARQUET,
+        partition=Record(),
+        record_count=int(metadata.num_rows),
+        file_size_in_bytes=item.size,
+        spec_id=int(table.metadata.default_spec_id),
+    )
+
+
+def append_existing_parquet_batch(
+    *,
+    table: Any,
+    fs: pafs.S3FileSystem,
+    bucket: str,
+    items: list[ObjectInfo],
+    expected_schema: Any,
+    snapshot_properties: dict[str, str],
+) -> tuple[int, int]:
+    data_files: list[DataFile] = []
+    rows = 0
+    for item in items:
+        metadata = parquet_footer(fs, bucket, item)
+        schema = metadata.schema.to_arrow_schema()
+        if not schema.equals(expected_schema, check_metadata=False):
+            raise MigrationError(f"parquet_schema_mismatch:{item.key}")
+        rows += int(metadata.num_rows)
+        data_files.append(minimal_data_file(table=table, item=item, metadata=metadata))
+
+    with table.transaction() as tx:
+        if tx.table_metadata.name_mapping() is None:
+            tx.set_properties(
+                **{
+                    TableProperties.DEFAULT_NAME_MAPPING:
+                    tx.table_metadata.schema().name_mapping.model_dump_json()
+                }
+            )
+        with tx.update_snapshot(snapshot_properties=snapshot_properties).fast_append() as append:
+            for data_file in data_files:
+                append.append_data_file(data_file)
+    return len(data_files), rows
+
+
 def create_or_load_table(
     cat: RestCatalog,
     fs: pafs.S3FileSystem,
@@ -499,23 +551,32 @@ def migrate_group(
         )
 
     missing = sorted(expected - set(existing))
+    object_by_uri = {item.uri: item for item in group.objects}
+    reference_schema = pq.read_metadata(
+        f"{bucket}/{group.objects[0].key}", filesystem=fs
+    ).schema.to_arrow_schema()
     for offset in range(0, len(missing), ADD_FILES_BATCH):
-        batch = missing[offset : offset + ADD_FILES_BATCH]
-        table.add_files(
-            file_paths=batch,
+        batch_paths = missing[offset : offset + ADD_FILES_BATCH]
+        batch_items = [object_by_uri[path] for path in batch_paths]
+        appended_files, appended_rows = append_existing_parquet_batch(
+            table=table,
+            fs=fs,
+            bucket=bucket,
+            items=batch_items,
+            expected_schema=reference_schema,
             snapshot_properties={
                 "zohelo.migration": "r2-production-iceberg-cutover",
                 "zohelo.source": group.origin,
             },
-            check_duplicate_files=True,
         )
         print(
             json.dumps(
                 {
-                    "operation": "iceberg_add_files",
+                    "operation": "iceberg_append_existing_parquet",
                     "table": f"{group.namespace}.{group.table}",
-                    "batch_files": len(batch),
-                    "completed_missing_files": min(offset + len(batch), len(missing)),
+                    "batch_files": appended_files,
+                    "batch_rows": appended_rows,
+                    "completed_missing_files": min(offset + appended_files, len(missing)),
                     "missing_files_at_start": len(missing),
                 },
                 sort_keys=True,
@@ -747,7 +808,7 @@ def main() -> int:
             "legacy_current_release_cleanup_performed": False,
             "notes": [
                 "Legacy release/current metadata was read only to select one-time canonical sources.",
-                "Existing Parquet files were registered into Iceberg without rewriting them.",
+                "Existing Parquet files were registered as Iceberg DataFiles without rewriting them.",
                 "Legacy R2 current/release objects remain until a separate reconciliation/deletion gate.",
                 "Non-Parquet medallion objects are not represented as Iceberg table data.",
             ],
