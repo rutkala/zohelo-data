@@ -27,7 +27,7 @@ jobs:
         with:
           python-version-file: .python-version
       - name: Install Iceberg migration dependencies
-        run: python -m pip install "pyiceberg==0.12.0" pyarrow boto3
+        run: python -m pip install "pyiceberg==0.12.0" "pyarrow==20.0.0" boto3
       - name: Consolidate production R2 Parquet into Iceberg
         env:
           R2_DATA_CATALOG_TOKEN: ${{ secrets.R2_DATA_CATALOG_TOKEN }}
