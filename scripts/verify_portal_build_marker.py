@@ -15,7 +15,8 @@ from typing import Any
 
 EXPECTED_CAPABILITIES = {
     "supported_release_formats": [1, 2],
-    "supported_drive_layouts": ["canonical-release-roots-v1"],
+    "supported_drive_layouts": [],
+    "data_source": "cloudflare-r2",
     "supported_retained_bronze_formats": [1, 2],
 }
 
