@@ -21,6 +21,9 @@ import sys
 import tempfile
 import time
 
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from r2_migration import CONTROL, FOLDER, ROOT_ID, SHORTCUT, DriveSource, MigrationError, snapshot
 
@@ -116,14 +119,24 @@ def main():
                     not re.fullmatch(r"[0-9a-f]{32}", account) or
                     env["R2_S3_ENDPOINT"].rstrip("/") != f"https://{account}.r2.cloudflarestorage.com"):
                 raise MigrationError("unexpected_target_account_or_buckets")
+            # rclone's legacy-token fallback drops refresh_token when access_token
+            # is empty. Exchange the existing refresh token before writing config.
+            credentials = Credentials(
+                token=None, token_uri="https://oauth2.googleapis.com/token",
+                client_id=env["GOOGLE_OAUTH_CLIENT_ID"],
+                client_secret=env["GOOGLE_OAUTH_CLIENT_SECRET"],
+                refresh_token=env["GOOGLE_OAUTH_REFRESH_TOKEN"])
+            credentials.refresh(Request())
+            if not credentials.token or credentials.expiry is None:
+                raise MigrationError("google_token_refresh_incomplete")
             config = configparser.ConfigParser(interpolation=None)
             config["drive"] = {"type": "drive", "scope": "drive.readonly",
                 "root_folder_id": ROOT_ID, "client_id": env["GOOGLE_OAUTH_CLIENT_ID"],
                 "client_secret": env["GOOGLE_OAUTH_CLIENT_SECRET"], "skip_shortcuts": "true",
                 "skip_gdocs": "true",
-                "token": json.dumps({"access_token": "", "token_type": "Bearer",
-                    "refresh_token": env["GOOGLE_OAUTH_REFRESH_TOKEN"],
-                    "expiry": "2000-01-01T00:00:00Z"})}
+                "token": json.dumps({"access_token": credentials.token, "token_type": "Bearer",
+                    "refresh_token": credentials.refresh_token,
+                    "expiry": credentials.expiry.replace(tzinfo=timezone.utc).isoformat()})}
             config["r2"] = {"type": "s3", "provider": "Cloudflare", "region": "auto",
                 "endpoint": env["R2_S3_ENDPOINT"], "no_check_bucket": "true",
                 "access_key_id": env["CLOUDFLARE_R2_ACCESS_KEY_ID"],
@@ -153,6 +166,10 @@ def main():
 
                 def progress(**counts):
                     nonlocal last_progress
+                    # Do not finish a full inventory after a copy has already failed.
+                    for result in copies:
+                        if result.done():
+                            result.result()
                     if time.monotonic() >= deadline:
                         raise MigrationError("source_listing_time_limit")
                     if time.monotonic() - last_progress >= 30:
