@@ -1,11 +1,6 @@
 name: Ingestion (R2 manual)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/r2-ingestion-smoke.py'
-      - '.github/workflows/ingestion.yml'
   workflow_dispatch:
 
 permissions:
