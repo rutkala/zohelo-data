@@ -1,9 +1,10 @@
 # ADR 0013: Cloudflare-first storage and lakehouse services
 
-Status: Architecture decision, 28 September 2026. The owner authorized the
-Cloudflare-first direction and created the production-named R2 Landing and
-lakehouse buckets plus R2 Data Catalog. Migration remains staged; existing Google
-Drive data is not deleted or repointed until the replacement path is verified.
+Status: Implemented production architecture. Decision adopted 28 September 2026;
+R2 cutover completed 30 September 2026. Cloudflare R2 is now the production
+storage backend, R2 Data Catalog is the production Iceberg catalog, Google Drive
+has been retired from the Zohelo data platform, and ingestion/transformation
+schedules remain disabled pending explicit re-enablement.
 
 ## Context
 
@@ -120,3 +121,28 @@ instruction to enable every service.
   the CI writer credential must never be shipped to browser code.
 - Provider-specific APIs belong at the storage/catalog boundary. Models and
   analytical SQL should remain portable Iceberg/DuckDB/dbt assets.
+
+
+## Implementation completion — 30 September 2026
+
+The staged migration described above is complete:
+
+- the private portal reads the live R2 buckets rather than a release pointer;
+- production Iceberg namespaces are `bronze`, `silver`, and `gold`;
+- legacy `releases/` and layer `current/` objects were removed only after
+  Iceberg data files were relocated and R2 SQL passed before/after cleanup;
+- Google Drive `zohelo-data` is no longer present;
+- the shared source-campaign transport now has an R2 backend and a live-source
+  R2 state/raw-response smoke passed;
+- ingestion and transformation workflows are manual-only.
+
+The operational lifecycle is now:
+
+`Landing raw -> Bronze Iceberg -> compressed Archive -> Silver Iceberg -> Gold Iceberg`.
+
+Landing removal is permitted only after both Bronze acceptance and Archive
+verification. Already-compressed provider objects are not recompressed merely
+to satisfy the Archive convention. Silver/Gold may temporarily use zero-copy
+Iceberg references when the current partial-data promotion is intentionally
+pass-through; any transformation that changes rows must materialize independent
+data files.
