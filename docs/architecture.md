@@ -14,7 +14,7 @@ The initial user is the owner. Git stores definitions and tests. Current product
 | Dated extraction, retry and recovery policy | Validated YAML plus source-specific Python adapter | `config/nbp-platform.yaml`, `src/ingestion/` |
 | Transformations, keys, tests, dimensional models | dbt Core SQL/YAML on native DuckDB | `models/`, `macros/`, `dbt_tests/` |
 | Daily source metrics | MetricFlow YAML and a query interface enforcing non-additive grain | `models/semantic/`, `scripts/query_metrics.py` |
-| Durable files | Current: existing Drive. Target: R2 native Landing + Iceberg medallion tables under ADR 0013 | `config/storage.yaml`, storage/catalog adapters |
+| Durable files | Cloudflare R2: source-native Landing/Archive + Iceberg Bronze/Silver/Gold in R2 Data Catalog | `config/storage.yaml`, storage/catalog adapters |
 | Publication and recovery | Staged validation, immutable releases, explicit promotion | `src/release_protocol.py`, `src/release_validation.py` |
 | Batch orchestration | GitHub Actions YAML, serialized production operations | [Workflow inventory](audits/2026-09-07-workflows.md) |
 | SQL and discovery | React, DuckDB-WASM, one native dbt Docs viewer | `portal/`; [user guide](using-the-portal.md) |
@@ -232,3 +232,31 @@ claim acquired atomically before Drive namespace mutation. Explicit expected-SHA
 protect acquisition/release, and the reviewed audit hashes are enforced before either
 Git/Drive owner is acquired. See [ADR 0010](decisions/0010-retained-dbw-publication-ownership.md).
 Other source writers retain their own documented coordination boundaries.
+
+
+## Production data lifecycle
+
+The production storage path is intentionally simple:
+
+1. **Landing** — persist the provider response/file in native format in
+   `zohelo-landing-prod/01_landing`; checksum and source identity are verified
+   before downstream use.
+2. **Bronze** — parse/source-shape the accepted Landing input into an Apache
+   Iceberg v2 table in the `bronze` namespace. Landing is never removed before
+   this commit is validated.
+3. **Archive** — after Bronze acceptance, retain the original provider payload
+   under `05_archive`. Compress text-like raw formats with Zstandard when that
+   actually reduces size; preserve already-compressed ZIP/GZIP/etc. byte-for-byte.
+   Verify archived size/hash/identity before removing the transient Landing copy.
+4. **Silver** — typed, deduplicated and conformed Iceberg tables. During the
+   current partial-data phase, explicitly marked pass-through promotions may use
+   zero-copy Iceberg data-file references rather than duplicate unchanged bytes.
+5. **Gold** — business-facing facts, dimensions and marts. A Gold table that
+   changes rows must own transformed data files; source-oriented pass-through
+   tables may remain zero-copy until their business transformation is defined.
+
+Iceberg snapshots provide table history. Archive is therefore for original
+provider payloads, not duplicate copies of Bronze/Silver/Gold.
+
+Ingestion and transformation workflows remain manual-only until explicitly
+scheduled after the R2 cutover acceptance period.
