@@ -1,28 +1,20 @@
-name: Copy Drive files to R2
+name: One-time Google Drive cleanup
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/delete-google-drive-zohelo-data.py'
+      - '.github/workflows/drive-to-r2-migration.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: zohelo-drive-to-r2-migration
-  cancel-in-progress: false
-
-env:
-  PYTHONUNBUFFERED: '1'
-  PYTHONDONTWRITEBYTECODE: '1'
-
 jobs:
-  migrate:
-    if: github.repository == 'rutkala/zohelo-data' && github.ref == 'refs/heads/main'
+  delete:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
-    concurrency:
-      group: zohelo-production-data
-      cancel-in-progress: false
-      queue: max
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -30,42 +22,11 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: requirements.txt
-      - name: Install rclone and Drive listing dependencies
-        run: |
-          python -m pip install -c requirements.txt \
-            google-api-python-client google-auth-oauthlib google-auth-httplib2 \
-            requests PyYAML
-          cd "$RUNNER_TEMP"
-          curl -fsSL --retry 3 --proto '=https' \
-            https://downloads.rclone.org/v1.75.0/rclone-v1.75.0-linux-amd64.zip -o rclone-v1.75.0-linux-amd64.zip
-          curl -fsSL --retry 3 --proto '=https' \
-            https://downloads.rclone.org/v1.75.0/SHA256SUMS -o SHA256SUMS
-          grep ' rclone-v1.75.0-linux-amd64.zip$' SHA256SUMS | sha256sum --check --strict -
-          unzip -q rclone-v1.75.0-linux-amd64.zip
-          install -m 755 rclone-v1.75.0-linux-amd64/rclone "$RUNNER_TEMP/rclone"
-          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-      - name: Copy all retained files to their buckets
+      - name: Install Drive client
+        run: python -m pip install google-api-python-client google-auth
+      - name: Permanently remove migrated zohelo-data from Drive
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
-          R2_LANDING_BUCKET: ${{ vars.R2_LANDING_BUCKET }}
-          R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
-        run: |
-          python scripts/migrate-drive-to-r2.py \
-            --confirm copy-all-zohelo-data-preserve-drive \
-            --receipt "$RUNNER_TEMP/all-layer-r2-migration.json"
-      - name: Save transfer summary
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: all-layer-r2-migration-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/all-layer-r2-migration.json
-          if-no-files-found: warn
-          retention-days: 14
+        run: python scripts/delete-google-drive-zohelo-data.py
