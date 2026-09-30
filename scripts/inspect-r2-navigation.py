@@ -41,7 +41,7 @@ def main() -> int:
         config=Config(signature_version="s3v4", retries={"max_attempts": 5, "mode": "standard"}),
     )
     bucket = required("R2_LAKEHOUSE_BUCKET")
-    result: dict[str, Any] = {"navigation": {}, "release_pointers": {}}
+    result: dict[str, Any] = {"navigation": {}, "release_pointers": {}, "direct_bronze": {}}
 
     for layer in ("02_bronze", "03_silver", "04_gold"):
         for source in ("bdl", "eurostat", "nbp", "wdi"):
@@ -55,6 +55,23 @@ def main() -> int:
         payload = get_json(client, bucket, key)
         if payload is not None:
             result["release_pointers"][key] = payload
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix="02_bronze/"):
+        for item in page.get("Contents", []):
+            key = str(item["Key"])
+            if "/current/" in key or not key.lower().endswith(".parquet"):
+                continue
+            parts = key.split("/")
+            if len(parts) < 3:
+                continue
+            # Parent directory is the safest first grouping signal. Keep samples only.
+            parent = "/".join(parts[:-1])
+            rows = groups.setdefault(parent, [])
+            if len(rows) < 20:
+                rows.append({"key": key, "bytes": int(item.get("Size", 0))})
+    result["direct_bronze"] = groups
 
     print(json.dumps(result, sort_keys=True))
     return 0
