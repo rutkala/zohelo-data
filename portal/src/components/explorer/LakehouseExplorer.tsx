@@ -14,14 +14,12 @@ import {
   LogIn,
   LogOut,
   Layers,
-  Loader2,
   Table as TableIcon,
   EllipsisVertical,
 } from "lucide-react";
 import { useDuckStore } from "@/store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { qualifyTable } from "@/lib/sqlSanitize";
 import { setSqlRelationDragData } from "@/lib/sqlTableActions";
@@ -55,10 +53,8 @@ const sourceLabels: Record<string, string> = {
 export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProps) {
   const googleAuth = useDuckStore((s) => s.googleAuth);
   const lakehouseCatalog = useDuckStore((s) => s.lakehouseCatalog);
-  const lakehouseRelease = useDuckStore((s) => s.lakehouseRelease);
   const lakehouseLanding = useDuckStore((s) => s.lakehouseLanding);
   const isLakehouseLoading = useDuckStore((s) => s.isLakehouseLoading);
-  const lakehouseStatusMessage = useDuckStore((s) => s.lakehouseStatusMessage);
   const activeLakehouseDataset = useDuckStore((s) => s.activeLakehouseDataset);
   const activeLakehouseLayer = useDuckStore((s) => s.activeLakehouseLayer);
   const nativeRoot = useDuckStore((s) => s.nativeLandingRoot);
@@ -141,11 +137,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
     }
     return `${value.toFixed(value >= 10 ? 1 : 2)} ${unit}`;
   };
-  const baseUrl = import.meta.env.BASE_URL === "./" ? "/" : (import.meta.env.BASE_URL ?? "/");
-  const privacyUrl = `${baseUrl.replace(/\/$/, "")}/privacy.html`;
-  const sourceAccessGuideUrl =
-    "https://github.com/rutkala/zohelo-data/blob/main/docs/source-accounts.md";
-  const encryptedSecretsUrl = "https://github.com/rutkala/zohelo-data/settings/secrets/actions";
 
   const handleApplyManualToken = async () => {
     if (!manualToken.trim()) return;
@@ -714,97 +705,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
           )}
         </div>
       </div>
-
-      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex items-center gap-1">
-        <span>Google sign-in verifies your identity only; all portal data is read from private Cloudflare R2.</span>
-        <a
-          href={privacyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline underline-offset-2 hover:text-foreground"
-        >
-          Privacy
-        </a>
-      </div>
-
-      <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-        <span>Source access:</span>
-        <a
-          href={sourceAccessGuideUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline underline-offset-2 hover:text-foreground"
-        >
-          setup guide
-        </a>
-        <span aria-hidden="true">·</span>
-        <a
-          href={encryptedSecretsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline underline-offset-2 hover:text-foreground"
-        >
-          GitHub encrypted secrets
-        </a>
-      </div>
-
-      {/* Auth Status & Notification Pill */}
-      <div className="px-3 py-1.5 bg-muted/20 border-b flex items-center justify-between text-[11px]">
-        <div className="flex items-center gap-1.5 truncate">
-          {googleAuth.isAuthenticated ? (
-            <>
-              <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
-              <span className="text-emerald-600 dark:text-emerald-400 font-medium truncate">
-                R2 access authorized ({googleAuth.authSource === "manual" ? "Manual" : "Google"})
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
-              <span className="text-muted-foreground truncate">Sign in to access private R2 data</span>
-            </>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1 min-w-0">
-          {lakehouseRelease?.kind === "release" &&
-            (lakehouseRelease.releases ?? [lakehouseRelease]).map((rel) => (
-              <Badge
-                key={rel.manifest.release_id}
-                variant="secondary"
-                className="text-[10px] h-4 font-mono px-1.5 shrink-0 max-w-48 truncate"
-                title={`${rel.manifest.release_id} / ${rel.manifest.release_scope} / ${rel.manifest.status}`}
-              >
-                {rel.manifest.release_id} / {rel.manifest.release_scope} / {rel.manifest.status}
-              </Badge>
-            ))}
-          {lakehouseRelease?.kind === "legacy" && (
-            <Badge variant="secondary" className="text-[10px] h-4 font-mono px-1.5 shrink-0">
-              legacy / unversioned
-            </Badge>
-          )}
-          {activeLakehouseDataset && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] h-4 font-mono px-1.5 shrink-0"
-              title="Active Layer Dataset"
-            >
-              {activeLakehouseDataset}
-            </Badge>
-          )}
-        </div>
-      </div>
-
-      {/* Status or Progress Feedback */}
-      {lakehouseStatusMessage && (
-        <div
-          role="status"
-          className="px-3 py-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-[11px] flex items-center gap-1.5 border-b"
-        >
-          {isLakehouseLoading && <Loader2 className="h-3 w-3 animate-spin shrink-0" />}
-          <span className="break-words min-w-0">{lakehouseStatusMessage}</span>
-        </div>
-      )}
 
       {/* Lakehouse Medallion Layers Tree */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5 text-xs">
