@@ -121,6 +121,7 @@ export const createProfileSlice: StateCreator<
           "settings",
           "catalog",
           "review",
+          "explorer",
         ]);
         const tabs = (JSON.parse(workspace.tabs) as EditorTab[])
           .filter((tab) => validTypes.has(tab.type))

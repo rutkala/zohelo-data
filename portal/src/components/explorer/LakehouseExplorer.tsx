@@ -29,8 +29,14 @@ import {
   isNativeFolder,
   nativePreviewFormat,
   NATIVE_PREVIEW_LIMIT_BYTES,
+  resolveLayerFolderId,
   type NativeLandingFile,
 } from "@/services/googleDrive";
+import {
+  decodeR2ExplorerTabState,
+  encodeR2ExplorerTabState,
+  type R2ExplorerCrumb,
+} from "@/lib/r2ExplorerTabs";
 
 interface LakehouseExplorerProps {
   onSqlAction?: () => void;
@@ -84,6 +90,8 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const selectLakehouseFile = useDuckStore((s) => s.selectLakehouseFile);
 
   const createTab = useDuckStore((s) => s.createTab);
+  const tabs = useDuckStore((s) => s.tabs);
+  const setActiveTab = useDuckStore((s) => s.setActiveTab);
   const executeQuery = useDuckStore((s) => s.executeQuery);
 
   const [manualToken, setManualToken] = useState("");
@@ -173,6 +181,31 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
     await openPreview(target, `${layerName}/${tableName}/${fileName}`);
   };
 
+  const openExplorerTab = (crumbs: R2ExplorerCrumb[], title: string) => {
+    const path = crumbs[crumbs.length - 1]?.path ?? "";
+    const existing = tabs.find((tab) => {
+      if (tab.type !== "explorer") return false;
+      const decoded = decodeR2ExplorerTabState(tab.content);
+      return (decoded.crumbs[decoded.crumbs.length - 1]?.path ?? "") === path;
+    });
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    createTab("explorer", encodeR2ExplorerTabState(crumbs), title);
+  };
+
+  const openLayerExplorer = async (layerName: string, title: string, knownId?: string | null) => {
+    if (!googleAuth.token) return;
+    try {
+      const id = knownId || (await resolveLayerFolderId(layerName, googleAuth.token));
+      if (!id) return;
+      openExplorerTab([{ id, name: layerName, path: layerName }], title);
+    } catch (error) {
+      console.error("[R2] Could not open layer explorer:", error);
+    }
+  };
+
   const handleNativeAction = async (file: NativeLandingFile, action: "open" | "download") => {
     setPopupBlocked(false);
     setUnavailableAction(null);
@@ -196,7 +229,8 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const renderNativeFolder = (
     folderId: string,
     depth = 0,
-    parentPath = "01_landing"
+    parentPath = "01_landing",
+    parentCrumbs: R2ExplorerCrumb[] = []
   ): React.ReactNode => {
     const state = nativeChildren[folderId];
     if (!state) return null;
@@ -229,6 +263,9 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
             const label =
               folder && depth === 0 ? (sourceLabels[file.name] ?? file.name) : file.name;
             const logicalPath = `${parentPath}/${file.name}`;
+            const folderCrumbs = folder
+              ? [...parentCrumbs, { id: file.id, name: file.name, path: logicalPath }]
+              : parentCrumbs;
             const toggleDetails = () =>
               setNativeDetails(detailsOpen ? null : { root: nativeRoot, id: file.id });
             return (
@@ -242,31 +279,39 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                   className={`flex min-w-0 items-center gap-1 rounded hover:bg-muted/60 ${detailsOpen ? "bg-muted/60" : ""}`}
                 >
                   {folder ? (
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      aria-label={`${expanded ? "Collapse" : "Expand"} ${file.name}`}
-                      title={logicalPath}
-                      className="flex min-h-11 sm:min-h-9 flex-1 items-center gap-1.5 py-1 text-left min-w-0"
-                      onClick={() => {
-                        setFolderExpansion(() => {
-                          const next = new Set(openFolders);
-                          if (next.has(file.id)) next.delete(file.id);
-                          else next.add(file.id);
-                          return { root: nativeRoot, ids: next };
-                        });
-                        if (!loadedChild?.loaded && !loadedChild?.loading)
-                          void loadNativeFolder(file.id);
-                      }}
-                    >
-                      {expanded ? (
-                        <ChevronDown className="h-3 w-3 shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-3 w-3 shrink-0" />
-                      )}
-                      <Folder className="h-4 w-4 shrink-0 text-amber-500" />
-                      <span className="break-words min-w-0">{label}</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-label={`${expanded ? "Collapse" : "Expand"} ${file.name}`}
+                        className="flex h-11 w-7 sm:h-9 shrink-0 items-center justify-center rounded hover:bg-muted"
+                        onClick={() => {
+                          setFolderExpansion(() => {
+                            const next = new Set(openFolders);
+                            if (next.has(file.id)) next.delete(file.id);
+                            else next.add(file.id);
+                            return { root: nativeRoot, ids: next };
+                          });
+                          if (!loadedChild?.loaded && !loadedChild?.loading)
+                            void loadNativeFolder(file.id);
+                        }}
+                      >
+                        {expanded ? (
+                          <ChevronDown className="h-3 w-3 shrink-0" />
+                        ) : (
+                          <ChevronRight className="h-3 w-3 shrink-0" />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        title={logicalPath}
+                        className="flex min-h-11 sm:min-h-9 flex-1 items-center gap-1.5 py-1 text-left min-w-0"
+                        onClick={() => openExplorerTab(folderCrumbs, label)}
+                      >
+                        <Folder className="h-4 w-4 shrink-0 text-amber-500" />
+                        <span className="break-words min-w-0">{label}</span>
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -451,7 +496,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     )}
                   </div>
                 )}
-                {folder && expanded && renderNativeFolder(file.id, depth + 1, logicalPath)}
+                {folder && expanded && renderNativeFolder(file.id, depth + 1, logicalPath, folderCrumbs)}
               </div>
             );
           })}
@@ -729,8 +774,9 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
             <div className="flex items-center gap-1 px-1.5 font-medium">
               <button
                 type="button"
-                className="flex min-h-11 sm:min-h-9 flex-1 items-center gap-1.5 text-left"
+                className="flex h-11 w-7 sm:h-9 shrink-0 items-center justify-center rounded hover:bg-muted"
                 aria-expanded={nativeOpen}
+                aria-label={nativeOpen ? "Collapse Landing" : "Expand Landing"}
                 onClick={() => setNativeOpen((value) => !value)}
               >
                 {nativeOpen ? (
@@ -738,6 +784,12 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 ) : (
                   <ChevronRight className="h-3.5 w-3.5" />
                 )}
+              </button>
+              <button
+                type="button"
+                className="flex min-h-11 sm:min-h-9 flex-1 items-center gap-1.5 text-left"
+                onClick={() => void openLayerExplorer("01_landing", "Landing", nativeRoot?.id)}
+              >
                 <Folder className="h-4 w-4 text-amber-500" />
                 Landing
               </button>
@@ -770,7 +822,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     </Button>
                   </div>
                 )}
-                {nativeRoot && renderNativeFolder(nativeRoot.id, 0, "01_landing")}
+                {nativeRoot &&
+                  renderNativeFolder(
+                    nativeRoot.id,
+                    0,
+                    "01_landing",
+                    [{ id: nativeRoot.id, name: "01_landing", path: "01_landing" }]
+                  )}
                 {nativeMetadataError && (
                   <div role="alert" className="px-2 text-destructive">
                     {nativeMetadataError}
@@ -797,24 +855,39 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
           .map((layer) => (
             <div key={layer.name} className="select-none">
               {/* Layer Row */}
-              <button
-                type="button"
-                aria-label={layer.name}
-                aria-expanded={layer.expanded}
-                className={`flex w-full items-center gap-1.5 py-1 px-1.5 rounded text-left hover:bg-muted/70 cursor-pointer ${
+              <div
+                className={`flex w-full items-center gap-1 rounded hover:bg-muted/70 ${
                   layer.expanded ? "font-medium" : "text-muted-foreground"
                 }`}
-                onClick={() => toggleLakehouseLayer(layer.name)}
               >
-                {layer.expanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                <span className="truncate">{layer.name}</span>
+                <button
+                  type="button"
+                  aria-label={layer.expanded ? `Collapse ${layer.name}` : `Expand ${layer.name}`}
+                  aria-expanded={layer.expanded}
+                  className="flex h-9 w-7 shrink-0 items-center justify-center rounded hover:bg-muted"
+                  onClick={() => toggleLakehouseLayer(layer.name)}
+                >
+                  {layer.expanded ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
+                  onClick={() =>
+                    void openLayerExplorer(
+                      layer.name,
+                      layer.name.replace(/^0\d_/, "").replace(/_/g, " ")
+                    )
+                  }
+                >
+                  <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                  <span className="truncate">{layer.name}</span>
+                </button>
                 {layer.children.length > 0 && (
-                  <span className="ml-auto text-[10px] text-muted-foreground font-mono">
+                  <span className="mr-1 text-[10px] text-muted-foreground font-mono">
                     {
                       layer.children.filter(
                         (table) => !table.name.startsWith("gus_dbw_observations__indicator_")
@@ -822,7 +895,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     }
                   </span>
                 )}
-              </button>
+              </div>
 
               {/* Datasets / Tables in Layer */}
               {layer.expanded && (

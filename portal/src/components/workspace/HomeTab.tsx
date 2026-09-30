@@ -14,7 +14,7 @@ import {
 } from "@/services/persistence/repositories/savedQueryRepository";
 import PlatformInfoLinks from "@/components/PlatformInfoLinks";
 import { useTheme } from "@/components/theme/theme-provider";
-import R2LakehouseBrowser from "@/components/workspace/R2LakehouseBrowser";
+import R2ExplorerLauncher from "@/components/workspace/R2ExplorerLauncher";
 
 const HomeTab = () => {
   const createTab = useDuckStore((state) => state.createTab);
@@ -27,7 +27,6 @@ const HomeTab = () => {
   const lakehouseStatusMessage = useDuckStore((state) => state.lakehouseStatusMessage);
   const { theme } = useTheme();
   const [savedQueries, setSavedQueries] = useState<SavedQuery[] | null>(null);
-  const [lakehouseExplorerFullScreen, setLakehouseExplorerFullScreen] = useState(false);
 
   const recentItems = useMemo(
     () =>
@@ -58,15 +57,8 @@ const HomeTab = () => {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div
-        className={
-          lakehouseExplorerFullScreen
-            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
-            : "mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 overflow-auto p-6 sm:p-8"
-        }
-      >
-        {!lakehouseExplorerFullScreen && (
+    <div className="flex h-full flex-col">
+      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8 overflow-auto p-6 sm:p-8">
         <header className="flex items-center gap-3">
           <img src={theme === "dark" ? Logo : LogoLight} alt="Zohelo-data" className="h-10" />
           <div>
@@ -76,16 +68,9 @@ const HomeTab = () => {
             </p>
           </div>
         </header>
-        )}
 
-        <R2LakehouseBrowser
-          fullScreen={lakehouseExplorerFullScreen}
-          onEnterFullScreen={() => setLakehouseExplorerFullScreen(true)}
-          onExitFullScreen={() => setLakehouseExplorerFullScreen(false)}
-        />
+        <R2ExplorerLauncher />
 
-        {!lakehouseExplorerFullScreen && (
-        <>
         <section
           className="grid gap-4 rounded-lg border bg-card p-5 sm:grid-cols-[1fr_auto] sm:items-center"
           aria-label="Zohelo-data workspace"
@@ -206,8 +191,6 @@ const HomeTab = () => {
         </Tabs>
 
         <PlatformInfoLinks className="mt-auto text-xs text-muted-foreground" />
-        </>
-        )}
       </div>
     </div>
   );

@@ -12,6 +12,7 @@ import {
   BookOpen,
   Layers,
   ClipboardList,
+  FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDuckStore, type EditorTabType } from "@/store";
@@ -109,6 +110,8 @@ const SortableTab = React.memo(function SortableTab({ tab, isActive }: SortableT
               <Layers className="h-4 w-4" />
             ) : tab.type === "review" ? (
               <ClipboardList className="h-4 w-4" />
+            ) : tab.type === "explorer" ? (
+              <FolderOpen className="h-4 w-4" />
             ) : null}
           </div>
           <span className="truncate text-xs">{tab.title}</span>

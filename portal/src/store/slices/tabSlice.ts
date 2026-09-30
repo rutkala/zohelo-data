@@ -62,7 +62,12 @@ export const createTabSlice: StateCreator<
         ? content
         : serializeCells([createDefaultCell("sql")])
       : content;
-    const defaultTitle = isNotebook ? "Untitled Notebook" : "Untitled Query";
+    const defaultTitle =
+      type === "notebook"
+        ? "Untitled Notebook"
+        : type === "explorer"
+          ? "R2 Explorer"
+          : "Untitled Query";
 
     const newTab: EditorTab = {
       id: generateUUID(),

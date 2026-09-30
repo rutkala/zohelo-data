@@ -3,7 +3,7 @@ import { useMemo, useEffect, lazy, Suspense } from "react";
 import { Tabs, TabsList, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Plus, XSquareIcon, Loader2, Terminal, BookOpen } from "lucide-react";
+import { Plus, XSquareIcon, Loader2, Terminal, BookOpen, FolderOpen } from "lucide-react";
 import { useQueryFromURL } from "@/hooks/useQueryFromURL";
 import { useWorkspaceViewFromURL } from "@/hooks/useWorkspaceViewFromURL";
 import {
@@ -66,6 +66,7 @@ const ConnectionsTab = lazy(() => import("@/components/workspace/ConnectionsTab"
 const SettingsTab = lazy(() => import("@/components/workspace/SettingsTab"));
 const CatalogDocsTab = lazy(() => import("@/components/workspace/CatalogDocsTab"));
 const ReviewDecisionsTab = lazy(() => import("@/components/workspace/ReviewDecisionsTab"));
+const R2ExplorerTab = lazy(() => import("@/components/workspace/R2ExplorerTab"));
 
 const TabFallback = () => (
   <div className="h-full flex items-center justify-center">
@@ -127,6 +128,10 @@ export default function WorkspaceTabs() {
     createTab("notebook");
   };
 
+  const addNewExplorerTab = () => {
+    createTab("explorer", "", "R2 Explorer");
+  };
+
   return (
     <div className="flex flex-col h-full">
       <Tabs
@@ -154,6 +159,10 @@ export default function WorkspaceTabs() {
               <DropdownMenuItem onClick={addNewNotebookTab}>
                 <BookOpen className="h-4 w-4 mr-2" />
                 Notebook
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={addNewExplorerTab}>
+                <FolderOpen className="h-4 w-4 mr-2" />
+                R2 Explorer
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -187,6 +196,10 @@ export default function WorkspaceTabs() {
                 <ContextMenuItem onClick={addNewNotebookTab}>
                   <BookOpen className="h-4 w-4 mr-2" />
                   New Notebook
+                </ContextMenuItem>
+                <ContextMenuItem onClick={addNewExplorerTab}>
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  New R2 Explorer
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={closeAllTabs} className="text-red-600">
@@ -222,6 +235,8 @@ export default function WorkspaceTabs() {
                     <CatalogDocsTab />
                   ) : tab.type === "review" ? (
                     <ReviewDecisionsTab />
+                  ) : tab.type === "explorer" ? (
+                    <R2ExplorerTab tabId={tab.id} />
                   ) : null}
                 </Suspense>
               </ErrorBoundary>
