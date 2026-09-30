@@ -31,6 +31,8 @@ from botocore.exceptions import ClientError
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
+from pyiceberg.conversions import to_bytes
+from pyiceberg.types import StringType
 from pyiceberg.exceptions import (
     NamespaceAlreadyExistsError,
     NoSuchNamespaceError,
@@ -47,6 +49,15 @@ ADD_FILES_BATCH = 200
 
 class MigrationError(RuntimeError):
     pass
+
+
+# Compatibility for Parquet JSON/string statistics. Some legacy files expose
+# UTF-8 BYTE_ARRAY min/max values as Python bytes. PyIceberg's StringType
+# serializer assumes str and calls .encode(), even though those bytes are
+# already the exact Iceberg binary encoding required for string bounds.
+@to_bytes.register(StringType)
+def _string_stat_to_bytes(_: StringType, value: str | bytes) -> bytes:
+    return value if isinstance(value, bytes) else value.encode("utf-8")
 
 
 @dataclass
@@ -458,19 +469,6 @@ def create_or_load_table(
             f"{table.metadata.format_version}"
         )
 
-    # Existing legacy Parquet includes JSON logical columns whose physical
-    # statistics may be byte-valued. PyIceberg's default truncate metrics try
-    # to serialize lower/upper bounds and can fail on that representation.
-    # Counts-only metrics preserve useful null/value counts while avoiding
-    # incompatible bounds during zero-copy add_files().
-    if table.properties.get("write.metadata.metrics.default") != "counts":
-        with table.transaction() as tx:
-            tx.set_properties({"write.metadata.metrics.default": "counts"})
-        table = cat.load_table(identifier)
-    if table.properties.get("write.metadata.metrics.default") != "counts":
-        raise MigrationError(
-            f"iceberg_metrics_policy_not_applied:{group.namespace}.{group.table}"
-        )
     return table
 
 
