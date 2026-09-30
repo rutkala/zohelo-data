@@ -1,11 +1,6 @@
 name: Transformations (R2)
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/promote-current-r2.py'
-      - '.github/workflows/transform.yml'
   workflow_dispatch:
 
 permissions:
