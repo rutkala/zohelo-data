@@ -173,7 +173,7 @@ export default function CatalogDocsTab() {
       )}
       {!token || release?.kind !== "release" ? (
         <p className="p-6 text-sm text-muted-foreground">
-          Connect Google Drive to view the catalogue for your published data release.
+          Sign in to view the catalogue from private Cloudflare R2.
         </p>
       ) : error ? (
         <div className="m-6 max-w-xl space-y-2" role="alert">

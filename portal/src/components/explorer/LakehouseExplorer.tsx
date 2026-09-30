@@ -1,5 +1,5 @@
 /**
- * Google Drive Lakehouse Explorer Component
+ * Cloudflare R2 Lakehouse Explorer Component
  * Integrates Medallion Architecture (landing, bronze, silver, gold, archive)
  * with DuckDB-WASM in-browser execution.
  */
@@ -27,6 +27,7 @@ import { qualifyTable } from "@/lib/sqlSanitize";
 import { setSqlRelationDragData } from "@/lib/sqlTableActions";
 import { TableActions } from "./TableActions";
 import {
+  driveRequest,
   isNativeFolder,
   nativePreviewFormat,
   NATIVE_PREVIEW_LIMIT_BYTES,
@@ -37,7 +38,7 @@ interface LakehouseExplorerProps {
   onSqlAction?: () => void;
 }
 
-// Display aliases only: discovery and identity always use the actual Drive objects.
+// Display aliases only: discovery and identity use the migrated source objects.
 const sourceLabels: Record<string, string> = {
   eurostat: "Eurostat",
   gleif: "GLEIF",
@@ -74,7 +75,6 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const loadNativeMetadataTable = useDuckStore((s) => s.loadNativeMetadataTable);
   const cancelNativeMetadataScan = useDuckStore((s) => s.cancelNativeMetadataScan);
   const loadNativeFolder = useDuckStore((s) => s.loadNativeLandingFolder);
-  const verifyNativeFile = useDuckStore((s) => s.verifyNativeLandingFile);
   const previewNativeFile = useDuckStore((s) => s.previewNativeLandingFile);
   const refreshNative = useDuckStore((s) => s.refreshNativeLanding);
 
@@ -183,22 +183,33 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   };
 
   const handleNativeAction = async (file: NativeLandingFile, action: "open" | "download") => {
-    // Reserve the tab in the click's user activation; metadata reads are asynchronous.
-    const tab = window.open("about:blank", "_blank");
-    setPopupBlocked(!tab);
+    setPopupBlocked(false);
     setUnavailableAction(null);
-    const links = await verifyNativeFile(file.parentId, file.id);
-    const link = links?.[action];
-    if (!link) {
-      tab?.close();
-      if (links) setUnavailableAction(`${file.id}:${action}`);
-      return;
+    try {
+      if (!googleAuth.token) throw new Error("Sign in before reading private R2 data.");
+      const response = await driveRequest(
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`,
+        googleAuth.token
+      );
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      if (action === "open") {
+        const tab = window.open(objectUrl, "_blank", "noopener,noreferrer");
+        if (!tab) setPopupBlocked(true);
+      } else {
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = file.name;
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (error) {
+      console.error("[R2] File action failed:", error);
+      setUnavailableAction(`${file.id}:${action}`);
     }
-    if (tab) {
-      tab.opener = null;
-      tab.location.replace(link);
-    }
-    // Retry the action with popups permitted to recheck current Drive identity.
   };
 
   const renderNativeFolder = (folderId: string, depth = 0): React.ReactNode => {
@@ -329,7 +340,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                         className="min-h-9 h-auto whitespace-normal text-xs"
                         onClick={() => void handleNativeAction(file, "open")}
                       >
-                        Open in Drive
+                        Open from R2
                       </Button>
                       {file.capabilities?.canDownload && (
                         <Button
@@ -338,7 +349,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                           className="min-h-9 h-auto whitespace-normal text-xs"
                           onClick={() => void handleNativeAction(file, "download")}
                         >
-                          Download via Drive
+                          Download from R2
                         </Button>
                       )}
                       {!folder && preview && (
@@ -368,13 +379,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                           cancelling: "Cancelling" }[nativeMetadataProgress.phase]}:
                         {" "}{nativeMetadataProgress.folders.toLocaleString()} folders,
                         {" "}{nativeMetadataProgress.files.toLocaleString()} files,
-                        {" "}{nativeMetadataProgress.listPages.toLocaleString()} Drive list pages;
+                        {" "}{nativeMetadataProgress.listPages.toLocaleString()} R2 index pages;
                         {" "}{Math.round((Date.now() - nativeMetadataProgress.startedAtMs) / 1000)}s elapsed.
                       </p>
                     )}
                     {!folder && !preview && (
                       <p className="text-muted-foreground">
-                        Preview unavailable for this file. Open or download the original in Drive.
+                        Preview unavailable for this file. Open or download the original from R2.
                       </p>
                     )}
                     <details className="text-muted-foreground">
@@ -385,7 +396,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                           <dd className="inline">{file.name}</dd>
                         </div>
                         <div>
-                          <dt className="inline font-medium">Drive ID: </dt>
+                          <dt className="inline font-medium">Source lineage ID: </dt>
                           <dd className="inline">{file.id}</dd>
                         </div>
                         <div>
@@ -423,13 +434,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     )}
                     {selected && unavailableAction?.startsWith(`${file.id}:`) && (
                       <div role="alert" className="text-destructive">
-                        Drive did not provide a safe{" "}
+                        R2 could not provide a safe{" "}
                         {unavailableAction.endsWith(":download") ? "download" : "view"} link for
                         this file.
                       </div>
                     )}
                     {selected && nativeLinks?.fileId === file.id && popupBlocked && (
-                      <p className="text-muted-foreground">Allow popups and retry to open Drive.</p>
+                      <p className="text-muted-foreground">Allow popups and retry to open the R2 object.</p>
                     )}
                   </div>
                 )}
@@ -622,7 +633,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
             className="h-7 w-7"
             onClick={() => refreshLakehouseCatalog().catch(() => undefined)}
             disabled={isLakehouseLoading}
-            title="Refresh Google Drive Lakehouse"
+            title="Refresh Cloudflare R2 lakehouse"
           >
             <RefreshCw
               className={`h-3.5 w-3.5 ${isLakehouseLoading ? "animate-spin text-amber-500" : ""}`}
@@ -636,7 +647,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                title="Set Manual Google Access Token"
+                title="Set manual Google identity token"
               >
                 <Key className="h-3.5 w-3.5" />
               </Button>
@@ -645,10 +656,10 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-xs font-medium">
                   <Key className="h-3.5 w-3.5 text-amber-500" />
-                  <span>Manual Google Access Token</span>
+                  <span>Manual Google identity token</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  Paste a temporary Google OAuth 2.0 access token to authenticate Drive queries.
+                  Paste a temporary Google OAuth 2.0 access token to authorize this private R2 portal.
                 </p>
                 <Input
                   type="password"
@@ -685,7 +696,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-destructive"
               onClick={disconnectGoogleDrive}
-              title="Disconnect Google Drive"
+              title="Sign out of portal"
             >
               <LogOut className="h-3.5 w-3.5" />
             </Button>
@@ -705,7 +716,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
       </div>
 
       <div className="px-3 py-1 text-[11px] text-muted-foreground border-b flex items-center gap-1">
-        <span>Google sign-in uses read-only Google Drive access.</span>
+        <span>Google sign-in verifies your identity only; all portal data is read from private Cloudflare R2.</span>
         <a
           href={privacyUrl}
           target="_blank"
@@ -744,13 +755,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
             <>
               <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
               <span className="text-emerald-600 dark:text-emerald-400 font-medium truncate">
-                Drive Connected ({googleAuth.authSource === "manual" ? "Manual" : "OAuth"})
+                R2 access authorized ({googleAuth.authSource === "manual" ? "Manual" : "Google"})
               </span>
             </>
           ) : (
             <>
               <span className="h-2 w-2 rounded-full bg-amber-500 shrink-0" />
-              <span className="text-muted-foreground truncate">Google Drive not connected</span>
+              <span className="text-muted-foreground truncate">Sign in to access private R2 data</span>
             </>
           )}
         </div>
@@ -852,14 +863,13 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 <details className="px-2 pt-1 text-[11px] text-muted-foreground">
                   <summary className="cursor-pointer py-2">About these files</summary>
                   <p className="pb-2">
-                    Browse the original files currently stored in Drive. Open or download them
-                    through Drive. Supported files up to {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}{" "}
+                    Browse the migrated original files in private Cloudflare R2. Open or download them
+                    from R2. Supported files up to {formatBytes(NATIVE_PREVIEW_LIMIT_BYTES)}{" "}
                     can be previewed in SQL. Each preview replaces the previous one and is cleared
                     on refresh or disconnect. A folder listing does not establish complete source
                     coverage. Query file metadata on a source folder to scan its full nested tree
-                    into a browser-local SQL table. A row describes one original file; Drive
-                    creation/modification dates are not provider refresh dates. Shortcuts are
-                    excluded.
+                    into a browser-local SQL table. A row describes one original file; source creation/modification dates are not
+                    provider refresh dates. Migrated shortcut aliases are resolved through the R2 index.
                   </p>
                 </details>
               </div>

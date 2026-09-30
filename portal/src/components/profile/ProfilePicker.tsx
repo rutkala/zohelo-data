@@ -117,7 +117,7 @@ export default function ProfilePicker({
         </Button>
         <p className="text-xs text-muted-foreground">
           Profiles are stored locally on your device. Zohelo-data runs in your browser; optional
-          connections such as Google Drive or remote services can send data when you enable them.
+          connections such as Cloudflare R2 or remote services can send data when you enable them.
         </p>
         <PlatformInfoLinks className="text-xs text-muted-foreground" />
       </div>

@@ -789,10 +789,10 @@ export async function resolveReleaseCatalog(
 ): Promise<ReleaseCatalogResolution> {
   const roots = await findFoldersByName(DRIVE_ROOT, "root", token);
   if (roots.length === 0) {
-    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' not found in Google Drive root.`);
+    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' not found in the R2 portal index.`);
   }
   if (roots.length !== 1) {
-    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in Google Drive root.`);
+    throw new Error(`Master Lakehouse folder '${DRIVE_ROOT}' is ambiguous in the R2 portal index.`);
   }
   const rootId = roots[0].id;
   // 1. Canonical layout under releases/
@@ -800,7 +800,7 @@ export async function resolveReleaseCatalog(
     (folder) => folder.name === "releases"
   );
   if (releasesFolders.length > 1) {
-    throw new Error("Folder 'releases' is ambiguous in Google Drive root.");
+    throw new Error("Folder 'releases' is ambiguous in the R2 portal index.");
   }
   const releasesFolderId = releasesFolders.length === 1 ? releasesFolders[0].id : undefined;
 

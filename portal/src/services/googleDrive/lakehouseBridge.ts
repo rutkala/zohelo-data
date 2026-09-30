@@ -65,13 +65,13 @@ async function registerFile(
   token: string,
   downloadBudget: DriveDownloadBudget
 ) {
-  if (!token) throw new Error("Sign in to Google Drive before loading data.");
+  if (!token) throw new Error("Sign in before loading Cloudflare R2 data.");
   if (!file.id || file.id === "demo_file" || !file.name) {
     throw new Error("The catalog entry does not identify a real Drive file.");
   }
   // The digest is part of the cache identity. A reused Drive ID with different
   // declared release bytes must be downloaded and verified again.
-  const path = `/google-drive/${pathPart(file.id)}/${pathPart(file.sha256 ?? "legacy")}/${pathPart(file.name)}`;
+  const path = `/r2/${pathPart(file.id)}/${pathPart(file.sha256 ?? "legacy")}/${pathPart(file.name)}`;
   let registered = registeredFiles.get(db);
   if (!registered) {
     registered = new Set();
@@ -186,7 +186,7 @@ export const loadTableIntoDuckDB = async (
   layerName: string,
   downloadBudget?: DriveDownloadBudget
 ): Promise<{ loadedFiles: string[]; queryTarget: string; identity: PublishedViewIdentity }> => {
-  if (!token) throw new Error("Sign in to Google Drive before loading data.");
+  if (!token) throw new Error("Sign in before loading Cloudflare R2 data.");
   const files = await filesForTable(
     { datasetName, tableFolderId, files: existingFiles, layerName },
     token
@@ -210,7 +210,7 @@ export const loadTablesIntoDuckDB = async (
   downloadBudget?: DriveDownloadBudget,
   beforePublish?: () => void | Promise<void>
 ): Promise<{ loadedFiles: string[]; queryTargets: string[]; identities: PublishedViewIdentity[] }> => {
-  if (!token) throw new Error("Sign in to Google Drive before loading data.");
+  if (!token) throw new Error("Sign in before loading Cloudflare R2 data.");
   if (tables.length === 0) throw new Error("Choose at least one dataset to prepare a SQL query.");
   const targets = new Set<string>();
   for (const table of tables) {

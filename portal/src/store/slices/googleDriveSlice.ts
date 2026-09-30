@@ -232,7 +232,7 @@ const handleDriveAuthFailure = (
   });
   set({
     googleAuth: { token: null, isAuthenticated: false, authSource: "none", error: error.message },
-    lakehouseStatusMessage: "Google Drive authorization expired or was revoked. Sign in again.",
+    lakehouseStatusMessage: "Portal authorization expired or was denied. Sign in again.",
     nativeLandingRoot: null,
     nativeLandingFolders: {},
     nativeLandingChildren: {},
@@ -638,7 +638,7 @@ export const createGoogleDriveSlice: StateCreator<
           token ?? "",
           budgetForEngine(local.db),
           async () => {
-            if (!current()) throw new Error("Google Drive session changed before file preview could be published.");
+            if (!current()) throw new Error("Portal session changed before file preview could be published.");
             if (requiresPublishedViewIdentity(source, landing, layerName, tableName)) {
               const relations = await local.connection.query(
                 `SELECT table_name FROM information_schema.tables WHERE table_schema = '${layerName.replace(/'/g, "''")}' AND lower(table_name) = lower('${viewName.replace(/'/g, "''")}')`
@@ -647,7 +647,7 @@ export const createGoogleDriveSlice: StateCreator<
                 local.db, local.connection, layerName, viewName))
                 throw new Error(`Published file preview '${viewName}' already exists in this local session. Start a fresh DuckDB session to preview the pinned file.`);
             }
-            if (!current()) throw new Error("Google Drive session changed before file preview could be published.");
+            if (!current()) throw new Error("Portal session changed before file preview could be published.");
           }
         ));
       } else {
@@ -707,7 +707,7 @@ export const createGoogleDriveSlice: StateCreator<
       const authFailure = handleAuthFailure(token ?? "", error);
       if (current()) {
         const message = authFailure
-          ? "Google Drive authorization expired or was revoked. Sign in again."
+          ? "Portal authorization expired or was denied. Sign in again."
           : `Error loading '${label}': ${messageOf(error)}`;
         set({ lakehouseStatusMessage: message });
         toast.error(message);
@@ -854,7 +854,7 @@ export const createGoogleDriveSlice: StateCreator<
       const authFailure = handleAuthFailure(token, error);
       if (current()) {
         const message = authFailure
-          ? "Google Drive authorization expired or was revoked. Sign in again."
+          ? "Portal authorization expired or was denied. Sign in again."
           : `Error preparing SQL query: ${messageOf(error)}`;
         set({ lakehouseStatusMessage: message });
         toast.error(message);
@@ -1050,7 +1050,7 @@ export const createGoogleDriveSlice: StateCreator<
       if (current()) {
         set({
           lakehouseStatusMessage: authFailure
-            ? "Google Drive authorization expired or was revoked. Sign in again."
+            ? "Portal authorization expired or was denied. Sign in again."
             : `Could not load published query data: ${messageOf(error)}`,
         });
       }
@@ -1539,7 +1539,7 @@ export const createGoogleDriveSlice: StateCreator<
         const authFailure = handleAuthFailure(activeToken, error);
         if (get().googleAuth.token === activeToken && get().currentSession === activeSession) {
           const message = authFailure
-            ? "Google Drive authorization expired or was revoked. Sign in again."
+            ? "Portal authorization expired or was denied. Sign in again."
             : `Catalog refresh error: ${messageOf(error)}`;
           set({ lakehouseStatusMessage: message });
           toast.error(message);
@@ -1585,7 +1585,7 @@ export const createGoogleDriveSlice: StateCreator<
         if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure
-              ? "Google Drive authorization expired or was revoked. Sign in again."
+              ? "Portal authorization expired or was denied. Sign in again."
               : `Error loading '${layerName}': ${messageOf(error)}`,
           });
         }
@@ -1641,7 +1641,7 @@ export const createGoogleDriveSlice: StateCreator<
         if (get().googleAuth.token === activeToken) {
           set({
             lakehouseStatusMessage: authFailure
-              ? "Google Drive authorization expired or was revoked. Sign in again."
+              ? "Portal authorization expired or was denied. Sign in again."
               : `Error loading '${tableName}': ${messageOf(error)}`,
           });
         }
