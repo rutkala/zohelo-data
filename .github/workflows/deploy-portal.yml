@@ -76,6 +76,7 @@ jobs:
           test -n "$api_url"
           echo "DUCK_UI_R2_API_BASE=${api_url%/}" >> "$GITHUB_ENV"
           printf '%s' "$PORTAL_ALLOWED_GOOGLE_EMAIL" | npx --yes wrangler@latest secret put ALLOWED_GOOGLE_EMAIL --config worker/wrangler.toml
+          openssl rand -hex 32 | npx --yes wrangler@latest secret put DOWNLOAD_SIGNING_KEY --config worker/wrangler.toml
       - name: Install portal dependencies
         working-directory: portal
         run: npm ci --ignore-scripts --no-audit --no-fund

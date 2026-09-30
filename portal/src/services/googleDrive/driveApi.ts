@@ -70,6 +70,26 @@ export const driveRequest = async (url: string, token: string, signal?: AbortSig
   return response;
 };
 
+export const getR2ObjectUrl = async (
+  fileId: string,
+  token: string,
+  mode: "open" | "download"
+): Promise<string> => {
+  const url = new URL(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}`);
+  url.searchParams.set("alt", "r2-url");
+  url.searchParams.set("mode", mode);
+  const payload = await (await driveRequest(url.toString(), token)).json();
+  if (!payload || typeof payload.url !== "string") {
+    throw new Error("R2 portal did not return a download URL.");
+  }
+  const target = new URL(payload.url);
+  const api = new URL(r2ApiBase());
+  if (target.origin !== api.origin || !target.pathname.startsWith("/r2/object/")) {
+    throw new Error("R2 portal returned an unexpected download URL.");
+  }
+  return target.toString();
+};
+
 export interface DriveFileMetadata {
   id: string;
   name: string;

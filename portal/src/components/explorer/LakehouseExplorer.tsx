@@ -25,7 +25,7 @@ import { qualifyTable } from "@/lib/sqlSanitize";
 import { setSqlRelationDragData } from "@/lib/sqlTableActions";
 import { TableActions } from "./TableActions";
 import {
-  driveRequest,
+  getR2ObjectUrl,
   isNativeFolder,
   nativePreviewFormat,
   NATIVE_PREVIEW_LIMIT_BYTES,
@@ -176,34 +176,28 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
   const handleNativeAction = async (file: NativeLandingFile, action: "open" | "download") => {
     setPopupBlocked(false);
     setUnavailableAction(null);
+    const tab = window.open("about:blank", "_blank");
+    if (!tab) {
+      setPopupBlocked(true);
+      return;
+    }
+    tab.opener = null;
     try {
       if (!googleAuth.token) throw new Error("Sign in before reading private R2 data.");
-      const response = await driveRequest(
-        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media`,
-        googleAuth.token
-      );
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      if (action === "open") {
-        const tab = window.open(objectUrl, "_blank", "noopener,noreferrer");
-        if (!tab) setPopupBlocked(true);
-      } else {
-        const anchor = document.createElement("a");
-        anchor.href = objectUrl;
-        anchor.download = file.name;
-        anchor.rel = "noopener";
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-      }
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      const url = await getR2ObjectUrl(file.id, googleAuth.token, action);
+      tab.location.replace(url);
     } catch (error) {
+      tab.close();
       console.error("[R2] File action failed:", error);
       setUnavailableAction(`${file.id}:${action}`);
     }
   };
 
-  const renderNativeFolder = (folderId: string, depth = 0): React.ReactNode => {
+  const renderNativeFolder = (
+    folderId: string,
+    depth = 0,
+    parentPath = "01_landing"
+  ): React.ReactNode => {
     const state = nativeChildren[folderId];
     if (!state) return null;
     return (
@@ -234,6 +228,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
             const detailsOpen = nativeDetails?.root === nativeRoot && nativeDetails?.id === file.id;
             const label =
               folder && depth === 0 ? (sourceLabels[file.name] ?? file.name) : file.name;
+            const logicalPath = `${parentPath}/${file.name}`;
             const toggleDetails = () =>
               setNativeDetails(detailsOpen ? null : { root: nativeRoot, id: file.id });
             return (
@@ -251,7 +246,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                       type="button"
                       aria-expanded={expanded}
                       aria-label={`${expanded ? "Collapse" : "Expand"} ${file.name}`}
-                      title={file.name}
+                      title={logicalPath}
                       className="flex min-h-11 sm:min-h-9 flex-1 items-center gap-1.5 py-1 text-left min-w-0"
                       onClick={() => {
                         setFolderExpansion(() => {
@@ -277,7 +272,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                       type="button"
                       aria-expanded={detailsOpen}
                       aria-label={`File ${file.name}`}
-                      title={file.name}
+                      title={logicalPath}
                       className="flex min-h-11 sm:min-h-9 min-w-0 flex-1 items-center gap-1.5 py-1 text-left"
                       onClick={toggleDetails}
                     >
@@ -302,6 +297,25 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                 </div>
                 {detailsOpen && (
                   <div className="mb-2 space-y-2 rounded bg-muted/30 p-2 text-[11px]">
+                    <div className="flex items-start justify-between gap-2 rounded border bg-background/50 px-2 py-1.5">
+                      <div className="min-w-0">
+                        <div className="font-medium text-foreground">R2 location</div>
+                        <div className="break-all text-muted-foreground">
+                          <span className="font-medium">Bucket:</span> zohelo-landing-prod
+                        </div>
+                        <div className="break-all font-mono text-muted-foreground">
+                          {logicalPath}{folder ? "/" : ""}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 shrink-0 px-2 text-[10px]"
+                        onClick={() => void navigator.clipboard?.writeText(logicalPath)}
+                      >
+                        Copy path
+                      </Button>
+                    </div>
                     <div className="flex flex-wrap gap-1.5">
                       {folder && depth === 0 && nativeMetadataTables[file.id] && (
                         <Button
@@ -325,15 +339,17 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                           disabled={nativeMetadataProgress?.phase === "cancelling"}
                           onClick={cancelNativeMetadataScan}>Cancel scan</Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="min-h-9 h-auto whitespace-normal text-xs"
-                        onClick={() => void handleNativeAction(file, "open")}
-                      >
-                        Open from R2
-                      </Button>
-                      {file.capabilities?.canDownload && (
+                      {!folder && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-9 h-auto whitespace-normal text-xs"
+                          onClick={() => void handleNativeAction(file, "open")}
+                        >
+                          Open from R2
+                        </Button>
+                      )}
+                      {!folder && file.capabilities?.canDownload && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -435,7 +451,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     )}
                   </div>
                 )}
-                {folder && expanded && renderNativeFolder(file.id, depth + 1)}
+                {folder && expanded && renderNativeFolder(file.id, depth + 1, logicalPath)}
               </div>
             );
           })}
@@ -754,7 +770,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
                     </Button>
                   </div>
                 )}
-                {nativeRoot && renderNativeFolder(nativeRoot.id)}
+                {nativeRoot && renderNativeFolder(nativeRoot.id, 0, "01_landing")}
                 {nativeMetadataError && (
                   <div role="alert" className="px-2 text-destructive">
                     {nativeMetadataError}

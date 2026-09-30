@@ -113,6 +113,61 @@ async function listFiles(url,env) {
   const next=offset+pageSize<rows.length?String(offset+pageSize):undefined;
   return {files:page,nextPageToken:next,incompleteSearch:false};
 }
+function base64Url(bytes) {
+  let binary="";
+  for (const byte of bytes) binary+=String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+}
+function fromBase64Url(value) {
+  const base64=value.replace(/-/g,"+").replace(/_/g,"/")+"===".slice((value.length+3)%4);
+  const binary=atob(base64);
+  return Uint8Array.from(binary, c=>c.charCodeAt(0));
+}
+async function signingKey(env,usage) {
+  const secret=(env.DOWNLOAD_SIGNING_KEY||"").trim();
+  if (!secret) throw new Error("Download signing key is not configured.");
+  return crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    {name:"HMAC",hash:"SHA-256"},
+    false,
+    usage
+  );
+}
+function signedPayload(id,mode,expires) {
+  return new TextEncoder().encode(id+"\n"+mode+"\n"+expires);
+}
+async function signObjectUrl(env,id,mode,expires) {
+  const key=await signingKey(env,["sign"]);
+  const signature=await crypto.subtle.sign("HMAC",key,signedPayload(id,mode,expires));
+  return base64Url(new Uint8Array(signature));
+}
+async function verifyObjectUrl(env,id,mode,expires,signature) {
+  if (!signature || !Number.isSafeInteger(expires) || expires < Math.floor(Date.now()/1000)) return false;
+  if (expires > Math.floor(Date.now()/1000)+600) return false;
+  const key=await signingKey(env,["verify"]);
+  try {
+    return await crypto.subtle.verify(
+      "HMAC",
+      key,
+      fromBase64Url(signature),
+      signedPayload(id,mode,expires)
+    );
+  } catch {
+    return false;
+  }
+}
+async function issueObjectUrl(request,env,id,mode) {
+  const expires=Math.floor(Date.now()/1000)+180;
+  const signature=await signObjectUrl(env,id,mode,expires);
+  const url=new URL(request.url);
+  url.pathname="/r2/object/"+encodeURIComponent(id);
+  url.search="";
+  url.searchParams.set("mode",mode);
+  url.searchParams.set("expires",String(expires));
+  url.searchParams.set("signature",signature);
+  return url.toString();
+}
 async function resolveAddress(env,record) {
   if (!record) return null;
   if (record.r2) return record.r2;
@@ -134,7 +189,7 @@ function rangeSpec(header,size) {
   const length=Math.min(suffix,size);
   return {offset:size-length,length};
 }
-async function media(request,env,record,origin) {
+async function media(request,env,record,origin,mode="open") {
   const address=await resolveAddress(env,record);
   if (!address) return json({error:{status:"NOT_FOUND",message:"No R2 object is mapped to this file."}},404,origin);
   const bucket=address.bucket==="zohelo-landing-prod"?env.LANDING:env.LAKEHOUSE;
@@ -151,6 +206,9 @@ async function media(request,env,record,origin) {
   object.writeHttpMetadata(h);
   h.set("etag",object.httpEtag);
   h.set("accept-ranges","bytes");
+  const filename=record?.meta?.name || "download";
+  h.set("content-disposition",(mode==="download"?"attachment":"inline")+"; filename*=UTF-8''"+encodeURIComponent(filename));
+  h.set("referrer-policy","no-referrer");
   if (range) {
     h.set("content-length",String(range.length));
     h.set("content-range","bytes "+range.offset+"-"+(range.offset+range.length-1)+"/"+head.size);
@@ -163,6 +221,20 @@ export default {
     if (origin && !ORIGINS.has(origin)) return new Response("Origin not allowed",{status:403});
     if (request.method==="OPTIONS") return new Response(null,{status:204,headers:cors(origin)});
     if (!["GET","HEAD"].includes(request.method)) return json({error:{status:"METHOD_NOT_ALLOWED"}},405,origin);
+    const unsignedUrl=new URL(request.url);
+    const direct=/^\/r2\/object\/([^/]+)$/.exec(unsignedUrl.pathname);
+    if (direct) {
+      const id=decodeURIComponent(direct[1]);
+      const mode=unsignedUrl.searchParams.get("mode")==="download"?"download":"open";
+      const expires=Number(unsignedUrl.searchParams.get("expires")||"0");
+      const signature=unsignedUrl.searchParams.get("signature")||"";
+      if (!(await verifyObjectUrl(env,id,mode,expires,signature))) {
+        return json({error:{status:"PERMISSION_DENIED",message:"Download link expired or is invalid."}},403,origin);
+      }
+      const record=await byId(env,id);
+      if (!record) return json({error:{status:"NOT_FOUND",message:"File ID is not present in the R2 migration index."}},404,origin);
+      return media(request,env,record,origin,mode);
+    }
     const auth=await authorize(request,env);
     if (!auth.ok) return json({error:{status:auth.status===401?"UNAUTHENTICATED":"PERMISSION_DENIED",message:auth.message}},auth.status,origin);
     try {
@@ -175,6 +247,10 @@ export default {
       const record=await byId(env,id);
       if (!record) return json({error:{status:"NOT_FOUND",message:"File ID is not present in the R2 migration index."}},404,origin);
       if (url.searchParams.get("alt")==="media") return media(request,env,record,origin);
+      if (url.searchParams.get("alt")==="r2-url") {
+        const mode=url.searchParams.get("mode")==="download"?"download":"open";
+        return json({url:await issueObjectUrl(request,env,id,mode),expires_in:180},200,origin);
+      }
       return json(record.meta,200,origin);
     } catch (error) {
       return json({error:{status:"INTERNAL",message:error instanceof Error?error.message:String(error)}},500,origin);
