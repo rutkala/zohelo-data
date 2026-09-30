@@ -152,6 +152,26 @@ def promote(cat,client,bucket,src_id,dst_id,layer):
         return {"source":".".join(src_id),"target":".".join(dst_id),
                 "files":len(existing_tasks),"rows":existing_rows,"zero_copy":True}
 
+    # During the one-time zero-copy transition an upstream table can change
+    # its file paths without changing any rows/bytes. A downstream table may
+    # therefore still own the earlier physical promotion objects whose hash
+    # names were derived from the previous upstream paths. Accept that exact
+    # transitional state; the optimizer will atomically replace it with the
+    # current source references and reclaim those copies.
+    target_prefix=f"s3://{bucket}/{PREFIX[layer]}/{dst_id[1]}/data/"
+    if (
+        existing_tasks
+        and len(existing_tasks)==len(source_tasks)
+        and (existing_rows,existing_bytes)==(source_rows,source_bytes)
+        and all(path.startswith(target_prefix) for path in existing_paths)
+    ):
+        print(json.dumps({"result":"promoted_physical_transition","source":".".join(src_id),
+                          "target":".".join(dst_id),"files":len(existing_tasks),
+                          "rows":existing_rows}),flush=True)
+        return {"source":".".join(src_id),"target":".".join(dst_id),
+                "files":len(existing_tasks),"rows":existing_rows,
+                "zero_copy":False,"transitional_physical":True}
+
     expected={}
     jobs=[]
     for task in source_tasks:
