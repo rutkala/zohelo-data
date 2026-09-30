@@ -10,7 +10,7 @@ interface R2ExplorerTabState {
 }
 
 export const encodeR2ExplorerTabState = (crumbs: readonly R2ExplorerCrumb[]): string =>
-  JSON.stringify({ version: 1, crumbs } satisfies R2ExplorerTabState);
+  JSON.stringify({ version: 1, crumbs: [...crumbs] } satisfies R2ExplorerTabState);
 
 export const decodeR2ExplorerTabState = (
   content: string | { database?: string; table?: string } | undefined
