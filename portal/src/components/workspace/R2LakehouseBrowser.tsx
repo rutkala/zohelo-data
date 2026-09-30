@@ -9,6 +9,7 @@ import {
   Home,
   Loader2,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { useDuckStore } from "@/store";
 import { Button } from "@/components/ui/button";
@@ -74,7 +75,17 @@ const fetchAllChildren = async (folderId: string, token: string) => {
   });
 };
 
-export default function R2LakehouseBrowser() {
+type R2LakehouseBrowserProps = {
+  fullScreen?: boolean;
+  onEnterFullScreen?: () => void;
+  onExitFullScreen?: () => void;
+};
+
+export default function R2LakehouseBrowser({
+  fullScreen = false,
+  onEnterFullScreen,
+  onExitFullScreen,
+}: R2LakehouseBrowserProps) {
   const googleAuth = useDuckStore((state) => state.googleAuth);
   const signInWithGoogle = useDuckStore((state) => state.signInWithGoogle);
 
@@ -141,6 +152,7 @@ export default function R2LakehouseBrowser() {
 
   const openFolder = (entry: DriveFileMetadata) => {
     if (!current || entry.mimeType !== FOLDER_MIME) return;
+    onEnterFullScreen?.();
     const path = current.path ? `${current.path}/${entry.name}` : entry.name;
     const crumb = { id: entry.id, name: entry.name, path };
     void loadFolder(crumb, [...crumbs, crumb]);
@@ -168,7 +180,10 @@ export default function R2LakehouseBrowser() {
 
   if (!googleAuth.isAuthenticated) {
     return (
-      <section className="rounded-lg border bg-card p-6" aria-label="R2 lakehouse explorer">
+      <section
+        className={fullScreen ? "flex h-full min-h-0 flex-col bg-card p-6" : "rounded-lg border bg-card p-6"}
+        aria-label="R2 lakehouse explorer"
+      >
         <div className="flex flex-col items-start gap-3">
           <div>
             <h2 className="text-lg font-semibold">R2 Lakehouse Explorer</h2>
@@ -183,14 +198,44 @@ export default function R2LakehouseBrowser() {
   }
 
   return (
-    <section className="overflow-hidden rounded-lg border bg-card" aria-label="R2 lakehouse explorer">
-      <div className="flex flex-col gap-3 border-b p-4">
+    <section
+      className={
+        fullScreen
+          ? "flex h-full min-h-0 flex-col bg-card"
+          : "overflow-hidden rounded-lg border bg-card"
+      }
+      aria-label="R2 lakehouse explorer"
+    >
+      {fullScreen && (
+        <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
+          <div className="flex items-center gap-2 font-medium">
+            <Folder className="h-4 w-4 text-emerald-600" />
+            <span>Files</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onExitFullScreen}
+            title="Close explorer and return to Home"
+            aria-label="Close explorer"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      <div className={`flex shrink-0 flex-col gap-3 border-b ${fullScreen ? "px-5 py-4" : "p-4"}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">R2 Lakehouse Explorer</h2>
-            <p className="text-sm text-muted-foreground">
-              Navigate the lakehouse like a file system. Folders open in place.
-            </p>
+            <h2 className={fullScreen ? "text-xl font-semibold" : "text-lg font-semibold"}>
+              R2 Lakehouse Explorer
+            </h2>
+            {!fullScreen && (
+              <p className="text-sm text-muted-foreground">
+                Select a folder to open the full lakehouse explorer.
+              </p>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={() => void loadRoot()} disabled={loading}>
             <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -252,14 +297,14 @@ export default function R2LakehouseBrowser() {
         </div>
       )}
 
-      <div className="min-h-72 max-h-[32rem] overflow-auto">
+      <div className={fullScreen ? "min-h-0 flex-1 overflow-auto" : "min-h-72 max-h-[32rem] overflow-auto"}>
         {loading && entries.length === 0 ? (
-          <div className="flex min-h-72 items-center justify-center text-muted-foreground">
+          <div className={`flex items-center justify-center text-muted-foreground ${fullScreen ? "h-full min-h-72" : "min-h-72"}`}>
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />
             Loading R2 folder…
           </div>
         ) : visibleEntries.length === 0 ? (
-          <div className="flex min-h-48 items-center justify-center text-sm text-muted-foreground">
+          <div className={`flex items-center justify-center text-sm text-muted-foreground ${fullScreen ? "h-full min-h-48" : "min-h-48"}`}>
             {filter ? "No matching items." : "This folder is empty."}
           </div>
         ) : (
@@ -271,7 +316,7 @@ export default function R2LakehouseBrowser() {
               return (
                 <div
                   key={entry.id}
-                  className={`grid min-w-[720px] grid-cols-[minmax(280px,1fr)_140px_150px_auto] items-center gap-3 px-4 py-2 text-sm ${folder ? "cursor-pointer hover:bg-accent/50" : ""}`}
+                  className={`grid min-w-[720px] grid-cols-[minmax(320px,1fr)_160px_140px_auto] items-center gap-3 px-5 py-2.5 text-sm ${folder ? "cursor-pointer hover:bg-accent/50" : "hover:bg-muted/30"}`}
                   onClick={() => folder && openFolder(entry)}
                 >
                   <div className="flex min-w-0 items-center gap-2">
@@ -316,7 +361,7 @@ export default function R2LakehouseBrowser() {
         )}
       </div>
 
-      <div className="border-t px-4 py-2 text-xs text-muted-foreground">
+      <div className="shrink-0 border-t px-5 py-2 text-xs text-muted-foreground">
         {visibleEntries.length.toLocaleString()} item{visibleEntries.length === 1 ? "" : "s"}
         {filter && ` of ${entries.length.toLocaleString()}`}
       </div>
