@@ -510,7 +510,7 @@ def append_existing_parquet_batch(
                 json.dumps(
                     {
                         "operation": "iceberg_empty_parquet_schema_only",
-                        "table": ".".join(table.identifier),
+                        "table": ".".join(getattr(table, "_identifier", ("unknown",))),
                         "key": item.key,
                     },
                     sort_keys=True,
