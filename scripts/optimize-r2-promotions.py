@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
+import time
 from urllib.parse import urlsplit
 
 import boto3
@@ -120,12 +121,24 @@ def clone_ref(table, source_file):
 def sql(query: str):
     url=(f"https://api.sql.cloudflarestorage.com/api/v1/accounts/"
          f"{req('CLOUDFLARE_ACCOUNT_ID')}/r2-sql/query/{req('R2_LAKEHOUSE_BUCKET')}")
-    r=requests.post(url,headers={
-        "Authorization":f"Bearer {req('R2_DATA_CATALOG_TOKEN')}",
-        "Content-Type":"application/json"},json={"query":query},timeout=120)
-    if r.status_code!=200: raise RuntimeError(f"R2 SQL {r.status_code}: {r.text[:300]}")
-    payload=r.json()
-    if not payload.get("success",False): raise RuntimeError(f"R2 SQL failed: {payload}")
+    last=None
+    for attempt in range(1,6):
+        try:
+            r=requests.post(url,headers={
+                "Authorization":f"Bearer {req('R2_DATA_CATALOG_TOKEN')}",
+                "Content-Type":"application/json"},json={"query":query},timeout=120)
+            if r.status_code!=200: raise RuntimeError(f"R2 SQL {r.status_code}: {r.text[:300]}")
+            payload=r.json()
+            if not payload.get("success",False): raise RuntimeError(f"R2 SQL failed: {payload}")
+            return
+        except requests.RequestException as exc:
+            last=exc
+            if attempt==5: break
+            delay=min(2**(attempt-1),16)
+            print(json.dumps({"result":"retry","operation":"r2_sql","attempt":attempt,
+                              "delay_seconds":delay,"error":str(exc)[:240]}),flush=True)
+            time.sleep(delay)
+    raise RuntimeError(f"R2 SQL connection failed after retries: {last}")
 
 
 def optimize(cat, client, source_id, target_id):
@@ -182,13 +195,44 @@ def optimize(cat, client, source_id, target_id):
             "bytes_reclaimed":reclaimed,"already_zero_copy":False}
 
 
+def optimize_with_retry(client, source_id, target_id):
+    last=None
+    for attempt in range(1,6):
+        try:
+            # Use a fresh REST catalog/session on each attempt so a stale HTTP
+            # keep-alive connection cannot poison the remainder of the run.
+            return optimize(catalog(),client,source_id,target_id)
+        except requests.RequestException as exc:
+            last=exc
+        except Exception as exc:
+            # PyIceberg may surface requests/urllib3 connection failures through
+            # a wrapper exception. Retry only recognizable transport failures;
+            # deterministic membership/row/schema errors still fail immediately.
+            text=str(exc)
+            if not any(token in text for token in (
+                "Connection aborted","RemoteDisconnected","Connection reset",
+                "Read timed out","ConnectTimeout","Max retries exceeded",
+            )):
+                raise
+            last=exc
+        if attempt==5:
+            break
+        delay=min(2**(attempt-1),16)
+        print(json.dumps({"result":"retry","operation":"optimize",
+                          "source":".".join(source_id),"target":".".join(target_id),
+                          "attempt":attempt,"delay_seconds":delay,
+                          "error":str(last)[:240]}),flush=True)
+        time.sleep(delay)
+    raise RuntimeError(f"catalog connection failed after retries for {target_id}: {last}")
+
+
 def main():
-    cat=catalog(); client=s3(); results=[]
+    client=s3(); results=[]
     for bronze,silver in SILVER.items():
-        results.append(optimize(cat,client,("bronze",bronze),("silver",silver)))
+        results.append(optimize_with_retry(client,("bronze",bronze),("silver",silver)))
     for bronze,gold in GOLD.items():
         silver=SILVER[bronze]
-        results.append(optimize(cat,client,("silver",silver),("gold",gold)))
+        results.append(optimize_with_retry(client,("silver",silver),("gold",gold)))
 
     for q in [
       "SELECT * FROM silver.dbw_observations LIMIT 1;",
