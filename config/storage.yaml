@@ -1,14 +1,63 @@
 # config/storage.yaml
 storage:
-  # Google Drive is the supported durable backend. Another backend requires
-  # a transport implementation and recovery tests, not just a setting change.
-  protocol: "gdrive" 
-  base_path: "gdrive://zohelo-data"
-  
+  protocol: "r2"
+  provider: "cloudflare"
+
+  buckets:
+    landing: "zohelo-landing-prod"
+    lakehouse: "zohelo-lakehouse-prod"
+
   zones:
-    landing: "01_landing"
-    archive: "05_archive"
-    bronze: "02_bronze"
-    silver: "03_silver"
-    gold: "04_gold"
-    control: "06_control"
+    landing:
+      bucket: "zohelo-landing-prod"
+      prefix: "01_landing"
+      format: "source-native"
+    archive:
+      bucket: "zohelo-landing-prod"
+      prefix: "05_archive"
+      format: "source-native-compressed"
+    bronze:
+      bucket: "zohelo-lakehouse-prod"
+      prefix: "02_bronze"
+      table_format: "iceberg-v2"
+      catalog: "r2-data-catalog"
+    silver:
+      bucket: "zohelo-lakehouse-prod"
+      prefix: "03_silver"
+      table_format: "iceberg-v2"
+      catalog: "r2-data-catalog"
+    gold:
+      bucket: "zohelo-lakehouse-prod"
+      prefix: "04_gold"
+      table_format: "iceberg-v2"
+      catalog: "r2-data-catalog"
+    control:
+      bucket: "zohelo-lakehouse-prod"
+      prefix: "06_control"
+
+  lifecycle:
+    # Raw provider bytes are first persisted and checksum-verified in Landing.
+    landing_to_bronze:
+      requirement: "accepted raw response plus successful Bronze Iceberg commit"
+      delete_landing_before_bronze_acceptance: false
+
+    # Archive is the long-term source-native history. Compression is applied
+    # only when it reduces storage; already compressed provider files are copied
+    # byte-for-byte without recompression.
+    landing_to_archive:
+      after: "bronze acceptance"
+      compression: "zstd-or-native"
+      preserve_provider_identity_and_sha256: true
+      remove_landing_after_archive_verification: true
+
+    bronze_to_silver:
+      requirement: "typed/deduplicated/conformed transformation or explicit zero-copy partial promotion"
+      table_format: "iceberg-v2"
+
+    silver_to_gold:
+      requirement: "business-facing fact/dimension/mart contract"
+      table_format: "iceberg-v2"
+
+  scheduling:
+    ingestion: "manual"
+    transformations: "manual"
