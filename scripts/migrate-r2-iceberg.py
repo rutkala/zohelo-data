@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import PurePosixPath, Path
 import re
+import time
 from typing import Any, Iterable
 from urllib.parse import urlsplit
 
@@ -29,6 +30,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 import pyarrow.fs as pafs
+from pyarrow.fs import AwsStandardS3RetryStrategy
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
 from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
@@ -123,6 +125,7 @@ def arrow_fs() -> pafs.S3FileSystem:
         region="auto",
         endpoint_override=endpoint.netloc,
         scheme="https",
+        retry_strategy=AwsStandardS3RetryStrategy(max_attempts=8),
     )
 
 
@@ -437,10 +440,36 @@ def read_arrow_schema(fs: pafs.S3FileSystem, bucket: str, key: str):
 def parquet_footer(
     fs: pafs.S3FileSystem, bucket: str, item: ObjectInfo
 ) -> pq.FileMetaData:
-    metadata = pq.read_metadata(f"{bucket}/{item.key}", filesystem=fs)
-    if metadata.num_rows <= 0:
-        raise MigrationError(f"parquet_file_empty:{item.key}")
-    return metadata
+    last_error: Exception | None = None
+    for attempt in range(1, 7):
+        try:
+            metadata = pq.read_metadata(f"{bucket}/{item.key}", filesystem=fs)
+            if metadata.num_rows <= 0:
+                raise MigrationError(f"parquet_file_empty:{item.key}")
+            return metadata
+        except OSError as exc:
+            last_error = exc
+            if attempt >= 6:
+                break
+            delay = min(2 ** (attempt - 1), 16)
+            print(
+                json.dumps(
+                    {
+                        "operation": "parquet_footer_retry",
+                        "key": item.key,
+                        "attempt": attempt,
+                        "next_delay_seconds": delay,
+                        "error": str(exc)[:300],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            time.sleep(delay)
+    raise MigrationError(
+        f"parquet_footer_network_failure:{item.key}:{type(last_error).__name__}:"
+        f"{str(last_error)[:300]}"
+    )
 
 
 def minimal_data_file(
@@ -552,8 +581,8 @@ def migrate_group(
 
     missing = sorted(expected - set(existing))
     object_by_uri = {item.uri: item for item in group.objects}
-    reference_schema = pq.read_metadata(
-        f"{bucket}/{group.objects[0].key}", filesystem=fs
+    reference_schema = parquet_footer(
+        fs, bucket, group.objects[0]
     ).schema.to_arrow_schema()
     for offset in range(0, len(missing), ADD_FILES_BATCH):
         batch_paths = missing[offset : offset + ADD_FILES_BATCH]
