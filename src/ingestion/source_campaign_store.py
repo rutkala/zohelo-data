@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 from typing import Any, Protocol
 from uuid import uuid4
@@ -1526,6 +1526,233 @@ class DriveCampaignStore(_CampaignStore):
         return super().put_raw(body, metadata)
 
 
+
+class R2CampaignStore(_CampaignStore):
+    """Campaign transport using private Cloudflare R2 buckets.
+
+    Control/state objects live in the lakehouse bucket under
+    06_control/source_campaigns/<source_id>/. Exact raw provider responses live
+    in the landing bucket under 01_landing/<source_id>/responses/.
+    """
+
+    def __init__(
+        self,
+        source_id: str,
+        *,
+        max_materialized_bytes: int | None = None,
+        publication_only: bool = False,
+    ) -> None:
+        source_id = _require_source_id(source_id)
+        if type(publication_only) is not bool:
+            raise CampaignStoreError("publication_only must be a boolean")
+        self._publication_only = publication_only
+        transport = _R2ObjectStore.from_env()
+        control_root = transport.ensure_path(
+            transport.lakehouse_bucket,
+            ["06_control", "source_campaigns", source_id],
+        )
+        responses_root = (
+            control_root
+            if publication_only
+            else transport.ensure_path(
+                transport.landing_bucket,
+                ["01_landing", source_id, "responses"],
+            )
+        )
+        super().__init__(
+            transport,
+            source_id,
+            control_root,
+            responses_root,
+            max_materialized_bytes=max_materialized_bytes,
+        )
+
+    def put_raw(self, body: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
+        if self._publication_only:
+            raise CampaignStoreError("Publication-only storage cannot receive source responses")
+        return super().put_raw(body, metadata)
+
+
+class _R2ObjectStore:
+    """Small S3-compatible implementation of the campaign object-store protocol."""
+
+    def __init__(self, client: Any, *, landing_bucket: str, lakehouse_bucket: str) -> None:
+        self.client = client
+        self.landing_bucket = _require_object_id(landing_bucket, "R2 landing bucket")
+        self.lakehouse_bucket = _require_object_id(lakehouse_bucket, "R2 lakehouse bucket")
+
+    @classmethod
+    def from_env(cls) -> "_R2ObjectStore":
+        import boto3
+        from botocore.config import Config
+
+        def env(name: str) -> str:
+            value = os.environ.get(name, "").strip()
+            if not value:
+                raise CampaignStoreError(f"missing R2 configuration: {name}")
+            return value
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=env("R2_S3_ENDPOINT").rstrip("/"),
+            region_name="auto",
+            aws_access_key_id=env("CLOUDFLARE_R2_ACCESS_KEY_ID"),
+            aws_secret_access_key=env("CLOUDFLARE_R2_SECRET_ACCESS_KEY"),
+            config=Config(
+                signature_version="s3v4",
+                retries={"max_attempts": 8, "mode": "standard"},
+            ),
+        )
+        return cls(
+            client,
+            landing_bucket=env("R2_LANDING_BUCKET"),
+            lakehouse_bucket=env("R2_LAKEHOUSE_BUCKET"),
+        )
+
+    def ensure_path(self, bucket: str, segments: list[str]) -> str:
+        for segment in segments:
+            _require_segment(segment)
+        prefix = "/".join(segments).strip("/") + "/"
+        marker = self._id(bucket, prefix)
+        try:
+            self.client.head_object(Bucket=bucket, Key=prefix)
+        except Exception:
+            self.client.put_object(
+                Bucket=bucket,
+                Key=prefix,
+                Body=b"",
+                ContentType="application/x-directory",
+            )
+        return marker
+
+    def find(self, name: str, parent_id: str) -> list[str]:
+        _require_segment(name)
+        bucket, parent = self._parse(parent_id)
+        parent = parent.rstrip("/") + "/"
+        result: list[str] = []
+        for key in (parent + name, parent + name + "/"):
+            try:
+                self.client.head_object(Bucket=bucket, Key=key)
+            except Exception:
+                continue
+            result.append(self._id(bucket, key))
+        return result
+
+    def create(self, name: str, data: bytes, parent_id: str) -> str:
+        _require_segment(name)
+        if not isinstance(data, bytes) or not data:
+            raise CampaignStoreError("campaign objects must contain bytes")
+        bucket, parent = self._parse(parent_id)
+        key = parent.rstrip("/") + "/" + name
+        try:
+            self.client.head_object(Bucket=bucket, Key=key)
+        except Exception:
+            pass
+        else:
+            raise CampaignStoreError("campaign object already exists")
+        self.client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=data,
+            ContentType="application/json" if name.endswith(".json") else "application/octet-stream",
+            Metadata={"sha256": sha256(data).hexdigest()},
+        )
+        return self._id(bucket, key)
+
+    def read(self, file_id: str) -> bytes:
+        bucket, key = self._parse(file_id)
+        response = self.client.get_object(Bucket=bucket, Key=key)
+        size = int(response.get("ContentLength", 0))
+        if size > MAX_RAW_BYTES:
+            raise CampaignCapacityError("R2 campaign object exceeds the 8 MiB read limit")
+        raw = response["Body"].read(MAX_RAW_BYTES + 1)
+        if len(raw) > MAX_RAW_BYTES:
+            raise CampaignCapacityError("R2 campaign object exceeds the 8 MiB read limit")
+        return raw
+
+    def replace(self, file_id: str, data: bytes) -> None:
+        if not isinstance(data, bytes) or not data:
+            raise CampaignStoreError("campaign pointer must contain bytes")
+        bucket, key = self._parse(file_id)
+        name = PurePosixPath(key).name
+        if name not in {_POINTER_NAME, _LANDING_POINTER_NAME, _PUBLICATION_OWNER_NAME}:
+            raise CampaignStoreError("R2 campaign replace is limited to mutable pointer objects")
+        self.client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=data,
+            ContentType="application/json",
+            CacheControl="no-store",
+            Metadata={"sha256": sha256(data).hexdigest()},
+        )
+
+    def mkdir(self, name: str, parent_id: str) -> str:
+        _require_segment(name)
+        bucket, parent = self._parse(parent_id)
+        key = parent.rstrip("/") + "/" + name + "/"
+        try:
+            self.client.head_object(Bucket=bucket, Key=key)
+        except Exception:
+            self.client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=b"",
+                ContentType="application/x-directory",
+            )
+        return self._id(bucket, key)
+
+    def list_metadata(self, parent_id: str) -> list[dict[str, Any]]:
+        bucket, parent = self._parse(parent_id)
+        prefix = parent.rstrip("/") + "/"
+        response = self.client.list_objects_v2(
+            Bucket=bucket,
+            Prefix=prefix,
+            Delimiter="/",
+            MaxKeys=1000,
+        )
+        result: list[dict[str, Any]] = []
+        for item in response.get("Contents", []):
+            key = str(item["Key"])
+            if key == prefix:
+                continue
+            result.append(
+                {
+                    "id": self._id(bucket, key),
+                    "name": key[len(prefix):],
+                    "size": int(item.get("Size", 0)),
+                    "trashed": False,
+                    "kind": "application/json" if key.endswith(".json") else "application/octet-stream",
+                }
+            )
+        for common in response.get("CommonPrefixes", []):
+            key = str(common["Prefix"])
+            result.append(
+                {
+                    "id": self._id(bucket, key),
+                    "name": key[len(prefix):].rstrip("/"),
+                    "size": 0,
+                    "trashed": False,
+                    "kind": "application/vnd.zohelo.folder",
+                }
+            )
+        return result
+
+    @staticmethod
+    def _id(bucket: str, key: str) -> str:
+        return f"r2://{bucket}/{key}"
+
+    @staticmethod
+    def _parse(value: str) -> tuple[str, str]:
+        value = _require_object_id(value, "R2 campaign object id")
+        if not value.startswith("r2://"):
+            raise CampaignStoreError("unsafe R2 campaign object id")
+        rest = value[5:]
+        bucket, sep, key = rest.partition("/")
+        if not sep or not bucket or not key or ".." in PurePosixPath(key).parts:
+            raise CampaignStoreError("unsafe R2 campaign object id")
+        return bucket, key
+
+
 class LocalCampaignStore(_CampaignStore):
     """Filesystem campaign transport; it never initializes or calls Drive."""
 
@@ -1826,6 +2053,7 @@ __all__ = [
     "CampaignCapacityError",
     "CampaignStoreError",
     "DriveCampaignStore",
+    "R2CampaignStore",
     "LocalCampaignStore",
     "MAX_RAW_BYTES",
     "MAX_LANDING_FILE_BYTES",
