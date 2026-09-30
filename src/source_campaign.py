@@ -81,7 +81,7 @@ def main():
     operation.add_argument("--verify-landing", action="store_true")
     operation.add_argument("--publish-only", action="store_true")
     parser.add_argument("--retry-validation-failures", action="store_true")
-    parser.add_argument("--backend", choices=("local", "drive"), default="local")
+    parser.add_argument("--backend", choices=("local", "drive", "r2"), default="local")
     parser.add_argument("--local-root", type=Path)
     parser.add_argument("--allow-production-write", action="store_true")
     parser.add_argument("--pause-history", action="store_true")
@@ -131,10 +131,16 @@ def main():
     if adapter.SOURCE_ID != args.source:
         raise ValueError("Adapter source identity mismatch")
     if args.backend == "drive":
-        # Current protocol relies on workflow serialization, not a Drive CAS primitive.
+        # Legacy backend retained only for historical recovery. New production
+        # ingestion writes to R2.
         from ingestion.source_campaign_store import DriveCampaignStore
         storage = production_storage(args.allow_production_write)
         store = DriveCampaignStore(storage, args.source)
+    elif args.backend == "r2":
+        if not args.allow_production_write:
+            raise ValueError("R2 production ingestion requires --allow-production-write")
+        from ingestion.source_campaign_store import R2CampaignStore
+        store = R2CampaignStore(args.source)
     else:
         if args.local_root is None:
             raise ValueError("Local ingestion requires an explicit --local-root")
