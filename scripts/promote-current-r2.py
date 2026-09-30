@@ -131,6 +131,27 @@ def promote(cat,client,bucket,src_id,dst_id,layer):
               "zohelo.ready":"partial-current-data"})
         except TableAlreadyExistsError: target=cat.load_table(dst_id)
     source_tasks=list(source.scan().plan_files())
+    source_paths={str(task.file.file_path) for task in source_tasks}
+    source_rows=sum(int(task.file.record_count) for task in source_tasks)
+    source_bytes=sum(int(task.file.file_size_in_bytes) for task in source_tasks)
+
+    existing_tasks=list(target.scan().plan_files())
+    existing_paths={str(task.file.file_path) for task in existing_tasks}
+    existing_rows=sum(int(task.file.record_count) for task in existing_tasks)
+    existing_bytes=sum(int(task.file.file_size_in_bytes) for task in existing_tasks)
+
+    # The optimizer deliberately replaces physical promotion copies with direct
+    # references to the source Iceberg data files. Treat that as the preferred
+    # idempotent state on every later run rather than trying to recreate copies.
+    if existing_paths == source_paths:
+        if (existing_rows, existing_bytes) != (source_rows, source_bytes):
+            raise RuntimeError(f"zero-copy row/byte mismatch {'.'.join(dst_id)}")
+        print(json.dumps({"result":"promoted_zero_copy","source":".".join(src_id),
+                          "target":".".join(dst_id),"files":len(existing_tasks),
+                          "rows":existing_rows}),flush=True)
+        return {"source":".".join(src_id),"target":".".join(dst_id),
+                "files":len(existing_tasks),"rows":existing_rows,"zero_copy":True}
+
     expected={}
     jobs=[]
     for task in source_tasks:
