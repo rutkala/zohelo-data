@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only inventory of Zohelo R2 storage for Iceberg cutover planning."""
+"""Read-only inventory of Zohelo R2 storage for Iceberg cutover planning.
+
+This script never writes, deletes, copies, or rewrites R2 objects.
+"""
 
 from __future__ import annotations
 
