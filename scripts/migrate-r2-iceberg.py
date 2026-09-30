@@ -457,6 +457,20 @@ def create_or_load_table(
             f"unexpected_iceberg_format_version:{group.namespace}.{group.table}:"
             f"{table.metadata.format_version}"
         )
+
+    # Existing legacy Parquet includes JSON logical columns whose physical
+    # statistics may be byte-valued. PyIceberg's default truncate metrics try
+    # to serialize lower/upper bounds and can fail on that representation.
+    # Counts-only metrics preserve useful null/value counts while avoiding
+    # incompatible bounds during zero-copy add_files().
+    if table.properties.get("write.metadata.metrics.default") != "counts":
+        with table.transaction() as tx:
+            tx.set_properties({"write.metadata.metrics.default": "counts"})
+        table = cat.load_table(identifier)
+    if table.properties.get("write.metadata.metrics.default") != "counts":
+        raise MigrationError(
+            f"iceberg_metrics_policy_not_applied:{group.namespace}.{group.table}"
+        )
     return table
 
 
