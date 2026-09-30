@@ -696,16 +696,15 @@ def cleanup_pilot_catalogs(cat: RestCatalog, dbw_result: dict[str, Any] | None) 
         try:
             cat.drop_table(identifier)
             dropped_table = True
-        except NoSuchTableError:
+        except Exception:
+            # Cloudflare may return Forbidden rather than NotFound for an
+            # already-removed pilot table. Pilot cleanup is never a production
+            # acceptance gate.
             pass
         try:
             cat.drop_namespace(namespace)
             dropped_namespace = True
-        except NoSuchNamespaceError:
-            pass
         except Exception as exc:
-            # A non-empty namespace is not a production migration failure. Keep
-            # the exact status in the receipt instead of deleting anything else.
             result.append(
                 {
                     "namespace": namespace,
