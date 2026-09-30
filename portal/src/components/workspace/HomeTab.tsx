@@ -14,6 +14,7 @@ import {
 } from "@/services/persistence/repositories/savedQueryRepository";
 import PlatformInfoLinks from "@/components/PlatformInfoLinks";
 import { useTheme } from "@/components/theme/theme-provider";
+import R2LakehouseBrowser from "@/components/workspace/R2LakehouseBrowser";
 
 const HomeTab = () => {
   const createTab = useDuckStore((state) => state.createTab);
@@ -67,6 +68,8 @@ const HomeTab = () => {
             </p>
           </div>
         </header>
+
+        <R2LakehouseBrowser />
 
         <section
           className="grid gap-4 rounded-lg border bg-card p-5 sm:grid-cols-[1fr_auto] sm:items-center"
