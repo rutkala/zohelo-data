@@ -6,6 +6,7 @@ on:
     paths:
       - 'scripts/promote-current-r2.py'
       - 'scripts/optimize-r2-promotions.py'
+      - 'scripts/normalize-eurostat-bin-parquet.py'
       - '.github/workflows/transform.yml'
   workflow_dispatch:
 
@@ -51,3 +52,14 @@ jobs:
           R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
           R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
         run: python scripts/optimize-r2-promotions.py
+      - name: Normalize legacy Eurostat Bronze Parquet objects
+        env:
+          R2_DATA_CATALOG_TOKEN: ${{ secrets.R2_DATA_CATALOG_TOKEN }}
+          R2_CATALOG_URI: ${{ vars.R2_CATALOG_URI }}
+          R2_WAREHOUSE: ${{ vars.R2_WAREHOUSE }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
+          R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
+        run: python scripts/normalize-eurostat-bin-parquet.py
