@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'portal/**'
+      - 'worker/**'
+      - 'scripts/publish-r2-portal-index.py'
       - '!portal/scripts/**'
       - 'scripts/prepare_dbt_viewer.py'
       - 'scripts/verify_portal_build_marker.py'
@@ -25,7 +27,7 @@ jobs:
   build:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       pages: read
@@ -47,11 +49,33 @@ jobs:
         run: |
           rm -rf portal/public/docs
           python scripts/prepare_dbt_viewer.py
+      - name: Publish the private R2 portal index
+        env:
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
+          R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
+        run: |
+          python -m pip install boto3
+          python scripts/publish-r2-portal-index.py
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: portal/package-lock.json
+      - name: Deploy the private R2 read API
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          PORTAL_ALLOWED_GOOGLE_EMAIL: ${{ secrets.PORTAL_ALLOWED_GOOGLE_EMAIL }}
+        run: |
+          set -euo pipefail
+          output="$(npx --yes wrangler@latest deploy --config worker/wrangler.toml 2>&1)"
+          printf '%s\n' "$output"
+          api_url="$(printf '%s\n' "$output" | grep -Eo 'https://[^[:space:]]+\.workers\.dev' | tail -1)"
+          test -n "$api_url"
+          echo "DUCK_UI_R2_API_BASE=${api_url%/}" >> "$GITHUB_ENV"
+          printf '%s' "$PORTAL_ALLOWED_GOOGLE_EMAIL" | npx --yes wrangler@latest secret put ALLOWED_GOOGLE_EMAIL --config worker/wrangler.toml
       - name: Install portal dependencies
         working-directory: portal
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -60,6 +84,7 @@ jobs:
         env:
           DUCK_UI_BASEPATH: ${{ steps.pages.outputs.base_path }}/
           DUCK_UI_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          DUCK_UI_R2_API_BASE: ${{ env.DUCK_UI_R2_API_BASE }}
         run: npm run build
       - name: Write the build identity and check required output
         run: |
@@ -69,7 +94,8 @@ jobs:
           Path('portal/dist/portal-build.json').write_text(json.dumps({
               'git_commit': os.environ['GITHUB_SHA'],
               'supported_release_formats': [1, 2],
-              'supported_drive_layouts': ['canonical-release-roots-v1'],
+              'supported_drive_layouts': [],
+              'data_source': 'cloudflare-r2',
               'supported_retained_bronze_formats': [1, 2],
           }) + '\n')
           PYCODE

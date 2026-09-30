@@ -610,7 +610,7 @@ export default function LakehouseExplorer({ onSqlAction }: LakehouseExplorerProp
         <div className="flex items-center gap-2">
           <Layers className="h-4 w-4 text-amber-500" />
           <span className="text-xs font-semibold uppercase tracking-wider">
-            Lakehouse (Google Drive)
+            Lakehouse (Cloudflare R2)
           </span>
         </div>
 

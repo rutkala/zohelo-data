@@ -1,5 +1,6 @@
 /**
- * Google Drive REST API Client for Lakehouse Catalog & File Storage
+ * R2-backed compatibility client for the existing Lakehouse catalogue code.
+ * Google Identity supplies authentication only; no runtime data read falls back to Drive.
  */
 import { DRIVE_ROOT, isStoredTokenExpired, LAKEHOUSE_LAYERS } from "./auth";
 import type { LakehouseLayer } from "./types";
@@ -24,17 +25,25 @@ export class GoogleDriveApiError extends Error {
 export const isGoogleDriveAuthError = (error: unknown): error is GoogleDriveAuthError =>
   error instanceof GoogleDriveAuthError;
 
-export const driveRequest = async (url: string, token: string, signal?: AbortSignal): Promise<Response> => {
-  if (!token) {
-    throw new Error("No Google Drive OAuth token available");
-  }
-  if (isStoredTokenExpired(token)) {
-    throw new GoogleDriveAuthError(
-      "Google Drive authorization expired or was revoked. Sign in again."
-    );
-  }
+const r2ApiBase = (): string => {
+  const value = import.meta.env.DUCK_UI_R2_API_BASE?.trim().replace(/\/+$/, "");
+  if (!value) throw new Error("Cloudflare R2 portal API is not configured for this build.");
+  return value;
+};
 
-  const response = await fetch(url, {
+const r2PortalUrl = (url: string): string => {
+  const source = new URL(url);
+  if (source.origin !== "https://www.googleapis.com" || !source.pathname.startsWith("/drive/v3/")) {
+    throw new Error("The portal blocked a non-R2 data request.");
+  }
+  return `${r2ApiBase()}${source.pathname}${source.search}`;
+};
+
+export const driveRequest = async (url: string, token: string, signal?: AbortSignal): Promise<Response> => {
+  if (!token) throw new Error("No portal authentication token available");
+  if (isStoredTokenExpired(token)) throw new GoogleDriveAuthError("Portal authorization expired. Sign in again.");
+
+  const response = await fetch(r2PortalUrl(url), {
     signal,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -44,9 +53,7 @@ export const driveRequest = async (url: string, token: string, signal?: AbortSig
   if (!response.ok) {
     const errorBody = await response.text().catch(() => "");
     if (response.status === 401) {
-      throw new GoogleDriveAuthError(
-        "Google Drive authorization expired or was revoked. Sign in again."
-      );
+      throw new GoogleDriveAuthError("Portal authorization expired or was denied. Sign in again.");
     }
     let reason: string | null = null;
     try {
@@ -55,7 +62,7 @@ export const driveRequest = async (url: string, token: string, signal?: AbortSig
       if (typeof value === "string") reason = value;
     } catch { /* Non-JSON errors retain the existing message. */ }
     throw new GoogleDriveApiError(
-      `Google Drive API error (${response.status}): ${errorBody || response.statusText}`,
+      `Cloudflare R2 portal API error (${response.status}): ${errorBody || response.statusText}`,
       response.status, reason
     );
   }
@@ -96,11 +103,11 @@ const nativeMetadata = (
   item: DriveFileMetadata & { size?: string | number }
 ): DriveFileMetadata => {
   if (!item || typeof item.id !== "string" || typeof item.name !== "string") {
-    throw new Error("Drive returned invalid native file metadata.");
+    throw new Error("R2 portal index returned invalid native file metadata.");
   }
   const size = item.size === undefined ? undefined : Number(item.size);
   if (size !== undefined && (!Number.isSafeInteger(size) || size < 0)) {
-    throw new Error("Drive returned an invalid native file size.");
+    throw new Error("R2 portal index returned an invalid native file size.");
   }
   return { ...item, size };
 };
@@ -122,7 +129,7 @@ export const listNativeChildrenPage = async (
     !Array.isArray(payload?.files) ||
     (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string")
   ) {
-    throw new Error("Drive returned an incomplete native folder page.");
+    throw new Error("R2 portal index returned an incomplete native folder page.");
   }
   return { files: payload.files.map(nativeMetadata), nextPageToken: payload.nextPageToken || null };
 };
@@ -202,11 +209,11 @@ export const listNativeMetadataBatchPage = async (
 ): Promise<{ files: DriveFileMetadata[]; nextPageToken: string | null }> => {
   const url = buildNativeMetadataBatchUrl(parentIds, kind, pageToken);
   const payload = await scannerPage(url, token, signal);
-  if (payload?.incompleteSearch === true) throw new Error("Drive returned an incomplete Landing metadata search.");
+  if (payload?.incompleteSearch === true) throw new Error("R2 portal index returned an incomplete Landing metadata search.");
   if (!Array.isArray(payload?.files) ||
       (payload.nextPageToken !== undefined && typeof payload.nextPageToken !== "string") ||
       (payload.incompleteSearch !== undefined && typeof payload.incompleteSearch !== "boolean"))
-    throw new Error("Drive returned an incomplete Landing metadata page.");
+    throw new Error("R2 portal index returned an incomplete Landing metadata page.");
   return { files: payload.files.map(nativeMetadata), nextPageToken: payload.nextPageToken || null };
 };
 
@@ -308,8 +315,7 @@ export const findNamedFilesInFolderById = async (
       sha256Checksum: item.sha256Checksum,
     };
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("Google Drive API error (404)"))
-      return null;
+    if (error instanceof GoogleDriveApiError && error.status === 404) return null;
     throw error;
   }
 };
@@ -447,18 +453,18 @@ export const fetchDriveFileBuffer = async (
   const response = await driveRequest(url, token);
   const length = response.headers.get("content-length");
   if (maxBytes !== undefined && length && Number(length) > maxBytes) {
-    throw new Error(`Drive download exceeds its declared ${maxBytes} byte limit.`);
+    throw new Error(`R2 download exceeds its declared ${maxBytes} byte limit.`);
   }
   if (!response.body) {
     if (
       maxBytes !== undefined &&
       (!length || !Number.isSafeInteger(Number(length)) || Number(length) > maxBytes)
     ) {
-      throw new Error("Drive did not provide a bounded stream or a safe content length.");
+      throw new Error("R2 did not provide a bounded stream or a safe content length.");
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (maxBytes !== undefined && bytes.byteLength > maxBytes) {
-      throw new Error(`Drive download exceeds its declared ${maxBytes} byte limit.`);
+      throw new Error(`R2 download exceeds its declared ${maxBytes} byte limit.`);
     }
     return bytes;
   }
@@ -472,7 +478,7 @@ export const fetchDriveFileBuffer = async (
       total += next.value.byteLength;
       if (maxBytes !== undefined && total > maxBytes) {
         await reader.cancel();
-        throw new Error(`Drive download exceeds its declared ${maxBytes} byte limit.`);
+        throw new Error(`R2 download exceeds its declared ${maxBytes} byte limit.`);
       }
       chunks.push(next.value);
     }

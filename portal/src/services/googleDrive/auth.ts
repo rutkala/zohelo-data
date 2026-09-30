@@ -1,9 +1,9 @@
 /**
- * Google Identity Services (GIS) OAuth 2.0 Client for Google Drive
+ * Google Identity Services (GIS) authentication for the private R2 portal
  */
 import type { GoogleOAuthTokenResponse, GoogleTokenClient } from "./types";
 
-export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+export const DRIVE_SCOPE = "openid email";
 export const DRIVE_ROOT = "zohelo-data";
 export const LAKEHOUSE_LAYERS = [
   "01_landing",
@@ -13,8 +13,8 @@ export const LAKEHOUSE_LAYERS = [
   "05_archive",
 ] as const;
 
-const STORAGE_KEY = "zohelo_gdrive_access_token";
-const EXPIRY_STORAGE_KEY = "zohelo_gdrive_access_token_expires_at";
+const STORAGE_KEY = "zohelo_portal_auth_token";
+const EXPIRY_STORAGE_KEY = "zohelo_portal_auth_token_expires_at";
 
 let tokenClientInstance: GoogleTokenClient | null = null;
 let currentAccessToken: string | null = null;
@@ -49,7 +49,7 @@ export const getRequiredGoogleClientId = (): string => {
     return clientId;
   }
   throw new Error(
-    "Google OAuth client ID is missing. Set DUCK_UI_GOOGLE_CLIENT_ID (mapped from GOOGLE_OAUTH_CLIENT_ID in workflows) before attempting Google Drive sign-in."
+    "Google OAuth client ID is missing. Set DUCK_UI_GOOGLE_CLIENT_ID (mapped from GOOGLE_OAUTH_CLIENT_ID in workflows) before attempting portal sign-in."
   );
 };
 
