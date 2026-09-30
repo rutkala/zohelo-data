@@ -2,15 +2,6 @@ name: Ingestion (R2 manual)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'scripts/r2-campaign-store-smoke.py'
-      - 'scripts/r2-bulk-store-smoke.py'
-      - 'src/full_source_campaign.py'
-      - 'src/ingestion/bulk_transport.py'
-      - 'src/ingestion/full_source_campaign.py'
-      - '.github/workflows/ingestion.yml'
 
 permissions:
   contents: read
