@@ -27,7 +27,50 @@ from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
 from pyiceberg.typedef import Record
 import requests
 
-from promote_current_r2 import SILVER, GOLD
+SILVER = {
+ "biala_lista_header":"biala_lista_header",
+ "biala_lista_masks":"biala_lista_masks",
+ "biala_lista_taxpayers":"biala_lista_taxpayers",
+ "dbw_dictionaries":"dbw_dictionaries",
+ "dbw_indicators":"dbw_indicators",
+ "dbw_metadata":"dbw_metadata",
+ "dbw_observations":"dbw_observations",
+ "gleif_lei2":"gleif_lei2",
+ "gleif_relationship_records":"gleif_relationship_records",
+ "gleif_reporting_exceptions":"gleif_reporting_exceptions",
+ "opendata_org_locations":"opendata_org_locations",
+ "opendata_org_organizations":"opendata_org_organizations",
+ "opendata_org_people":"opendata_org_people",
+ "prg_counties":"prg_counties",
+ "prg_country":"prg_country",
+ "prg_municipalities":"prg_municipalities",
+ "prg_voivodeships":"prg_voivodeships",
+ "teryt_simc":"teryt_simc",
+ "teryt_terc":"teryt_terc",
+ "teryt_ulic":"teryt_ulic",
+}
+GOLD = {
+ "biala_lista_header":"dim_vat_header",
+ "biala_lista_masks":"dim_vat_masks",
+ "biala_lista_taxpayers":"dim_vat_taxpayer_account",
+ "dbw_dictionaries":"dim_dbw_dictionary",
+ "dbw_indicators":"dim_dbw_indicator",
+ "dbw_metadata":"dim_dbw_metadata",
+ "dbw_observations":"fact_dbw_observations",
+ "gleif_lei2":"dim_corporate_entity",
+ "gleif_relationship_records":"fact_corporate_relationships",
+ "gleif_reporting_exceptions":"fact_corporate_reporting_exceptions",
+ "opendata_org_locations":"dim_opendata_location",
+ "opendata_org_organizations":"dim_opendata_organization",
+ "opendata_org_people":"dim_opendata_person",
+ "prg_counties":"dim_prg_county",
+ "prg_country":"dim_prg_country",
+ "prg_municipalities":"dim_prg_municipality",
+ "prg_voivodeships":"dim_prg_voivodeship",
+ "teryt_simc":"dim_locality",
+ "teryt_terc":"dim_territory",
+ "teryt_ulic":"dim_street",
+}
 
 
 def req(name: str) -> str:
