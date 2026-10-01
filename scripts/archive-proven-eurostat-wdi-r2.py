@@ -242,6 +242,20 @@ def main()->int:
     digest=sha256(json.dumps(
         [{"key":x["source_key"],"size":x["size"],"sha256":x["sha256"]} for x in archived],
         sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    receipt_key=f"06_control/lineage/{args.source}/partial-{digest}.json"
+    try:
+        existing_receipt=json.loads(client.get_object(Bucket=lakehouse_bucket,Key=receipt_key)["Body"].read())
+    except Exception:
+        existing_receipt=None
+    stable_archived=[
+        {key:value for key,value in item.items() if key!="copied_this_run"}
+        for item in archived
+    ]
+    observed_at=(
+        existing_receipt.get("observed_at_utc")
+        if isinstance(existing_receipt,dict) and isinstance(existing_receipt.get("observed_at_utc"),str)
+        else datetime.now(timezone.utc).isoformat()
+    )
     receipt={
         "format_version":1,
         "kind":"partial_landing_bronze_lineage_receipt",
@@ -250,16 +264,15 @@ def main()->int:
         "coverage_scope":"only_landing_hashes_proven_by_current_iceberg_provenance",
         "proof":proof,
         "landing_inputs":selected,
-        "archive":archived,
+        "archive":stable_archived,
         "archive_readback_verified":True,
         "landing_deleted":False,
         "landing_delete_eligible":False,
         "blocking_control_references":active,
         "unproven_landing_objects":len(meta)-len(selected),
         "unproven_landing_bytes":sum(int(item["size"]) for d,item in meta.items() if d not in proven),
-        "observed_at_utc":datetime.now(timezone.utc).isoformat(),
+        "observed_at_utc":observed_at,
     }
-    receipt_key=f"06_control/lineage/{args.source}/partial-{digest}.json"
     immutable_json(client,lakehouse_bucket,receipt_key,receipt)
     print(json.dumps({
         "result":"pass","operation":"archive-proven-r2-lineage","source":args.source,
