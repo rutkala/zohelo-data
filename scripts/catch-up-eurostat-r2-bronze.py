@@ -257,7 +257,7 @@ def data_file(table, uri: str, rows: int, size: int) -> DataFile:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--max-distributions", type=int, default=32)
+    parser.add_argument("--max-distributions", type=int, default=64)
     parser.add_argument("--session-seconds", type=int, default=3000)
     args = parser.parse_args()
     if not 1 <= args.max_distributions <= 64:
