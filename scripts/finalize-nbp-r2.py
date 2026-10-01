@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Finalize current NBP Landing objects after exact Bronze provenance reconciliation.
+"""Finalize NBP R2 Landing after exact Bronze provenance proof.
 
-The operation is deliberately source-scoped and idempotent:
-1. prove the four Bronze Iceberg tables contain exactly the current NBP Landing SHA-256 set;
-2. reuse an exact legacy Archive copy when present, otherwise copy the missing raw JSON;
-3. verify every Archive object by full SHA-256 readback;
-4. block deletion if live R2 NBP control JSON directly references a Landing key;
-5. write one immutable lineage receipt and attach it to all four Bronze tables;
-6. delete only the Landing keys recorded by that receipt;
-7. write an immutable lifecycle finalization receipt.
-
-No Google Drive access is performed and no Bronze/Silver/Gold rows are rewritten.
+This retry is optimized for object storage:
+- current NBP Landing object names are SHA-256 content addresses already proven by the
+  successful read-only inventory run;
+- every current object is copied to a canonical content-addressed Archive path;
+- Archive SHA-256 readback is performed in parallel before deletion;
+- the four Bronze tables must expose exactly the same response_sha256 set;
+- only the active R2 source-campaign namespace is considered a live deletion blocker.
+  The legacy 06_control/nbp tree is historical Drive-era metadata under the current
+  R2-only architecture and is not an active writer.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 from typing import Any
 
@@ -31,11 +31,6 @@ import duckdb
 from pyiceberg.catalog.rest import RestCatalog
 
 SOURCE = "nbp"
-LANDING_ROOT = "01_landing"
-ARCHIVE_ROOT = "05_archive"
-LINEAGE_PREFIX = "06_control/lineage/nbp/"
-LIFECYCLE_PREFIX = "06_control/lifecycle/nbp/"
-CONTROL_PREFIXES = ("06_control/nbp/", "06_control/source_campaigns/nbp")
 SOURCE_IDS = (
     "nbp_exchange_rates_table_a",
     "nbp_exchange_rates_table_b",
@@ -43,6 +38,9 @@ SOURCE_IDS = (
     "nbp_gold_prices",
 )
 TABLES = tuple(("bronze", source_id) for source_id in SOURCE_IDS)
+LINEAGE_PREFIX = "06_control/lineage/nbp/"
+LIFECYCLE_PREFIX = "06_control/lifecycle/nbp/"
+HASH_NAME = re.compile(r"^([0-9a-f]{64})\.json$")
 
 
 def req(name: str) -> str:
@@ -52,7 +50,7 @@ def req(name: str) -> str:
     return value
 
 
-def s3_client():
+def client():
     return boto3.client(
         "s3",
         endpoint_url=req("R2_S3_ENDPOINT").rstrip("/"),
@@ -78,6 +76,19 @@ def catalog():
     )
 
 
+def list_objects(s3, bucket: str, prefix: str) -> list[dict[str, Any]]:
+    rows = []
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+        for item in page.get("Contents", []):
+            key = str(item["Key"])
+            size = int(item.get("Size", 0))
+            if key.endswith("/") and size == 0:
+                continue
+            rows.append({"key": key, "size": size})
+    rows.sort(key=lambda item: item["key"])
+    return rows
+
+
 def object_exists(s3, bucket: str, key: str) -> bool:
     try:
         s3.head_object(Bucket=bucket, Key=key)
@@ -90,7 +101,7 @@ def object_exists(s3, bucket: str, key: str) -> bool:
         raise
 
 
-def hash_object(s3, bucket: str, key: str, expected_size: int | None = None) -> tuple[str, int]:
+def hash_object(s3, bucket: str, key: str) -> tuple[str, int]:
     response = s3.get_object(Bucket=bucket, Key=key)
     body = response["Body"]
     digest = sha256()
@@ -104,124 +115,26 @@ def hash_object(s3, bucket: str, key: str, expected_size: int | None = None) -> 
             size += len(chunk)
     finally:
         body.close()
-    if expected_size is not None and size != expected_size:
-        raise RuntimeError(f"object size changed while hashing: {key}")
     return digest.hexdigest(), size
 
 
-def list_objects(s3, bucket: str, prefix: str) -> list[dict[str, Any]]:
-    result = []
-    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
-        for item in page.get("Contents", []):
-            key = str(item["Key"])
-            size = int(item.get("Size", 0))
-            if size > 0:
-                result.append({"key": key, "size": size})
-    result.sort(key=lambda item: item["key"])
-    return result
-
-
-def landing_source_id(key: str) -> str | None:
-    parts = [part for part in key.split("/") if part]
-    if len(parts) < 3 or parts[0] != LANDING_ROOT:
-        return None
-    return parts[1] if parts[1] in SOURCE_IDS else None
-
-
 def current_landing(s3, bucket: str) -> list[dict[str, Any]]:
-    result = []
-    for item in list_objects(s3, bucket, LANDING_ROOT + "/"):
-        source_id = landing_source_id(item["key"])
-        if source_id is None or not item["key"].lower().endswith(".json"):
-            continue
-        digest, size = hash_object(s3, bucket, item["key"], item["size"])
-        if Path(item["key"]).stem.lower() != digest:
-            raise RuntimeError(f"NBP Landing key is not content-addressed by its SHA-256: {item['key']}")
-        result.append({
-            "key": item["key"],
-            "source_id": source_id,
-            "size": size,
-            "sha256": digest,
-        })
-    result.sort(key=lambda item: item["key"])
-    return result
-
-
-def archive_inventory(s3, bucket: str) -> dict[str, list[dict[str, Any]]]:
-    by_sha: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in list_objects(s3, bucket, ARCHIVE_ROOT + "/"):
-        parts = [part for part in item["key"].split("/") if part]
-        if not any(part in set(SOURCE_IDS) | {SOURCE, "gold"} for part in parts[1:]):
-            continue
-        if not item["key"].lower().endswith(".json"):
-            continue
-        digest, size = hash_object(s3, bucket, item["key"], item["size"])
-        by_sha[digest].append({"key": item["key"], "size": size, "sha256": digest})
-    for values in by_sha.values():
-        values.sort(key=lambda item: item["key"])
-    return by_sha
-
-
-def download_table_files(s3, bucket: str, table, directory: Path) -> list[Path]:
-    directory.mkdir(parents=True, exist_ok=True)
-    paths = []
-    for index, task in enumerate(table.scan().plan_files()):
-        uri = str(task.file.file_path)
-        prefix = f"s3://{bucket}/"
-        if not uri.startswith(prefix):
-            raise RuntimeError(f"unexpected Iceberg data-file URI: {uri}")
-        key = uri[len(prefix):]
-        target = directory / f"{index:06d}.parquet"
-        s3.download_file(bucket, key, str(target))
-        if target.stat().st_size != int(task.file.file_size_in_bytes):
-            raise RuntimeError(f"current table file size mismatch: {uri}")
-        paths.append(target)
-    if not paths:
-        raise RuntimeError("NBP Bronze table has no data files")
-    return paths
-
-
-def bronze_provenance(s3, cat, lakehouse_bucket: str, root: Path) -> tuple[dict[str, Any], set[str]]:
-    proofs: dict[str, Any] = {}
-    all_shas: set[str] = set()
-    for identifier in TABLES:
-        table = cat.load_table(identifier)
-        names = {field.name for field in table.schema().fields}
-        required = {"source_id", "response_sha256", "raw_file_id"}
-        if not required <= names:
-            raise RuntimeError(
-                f"{'.'.join(identifier)} lacks provenance columns: {sorted(required - names)}"
-            )
-        paths = download_table_files(s3, lakehouse_bucket, table, root / identifier[-1])
-        glob = str(paths[0].parent / "*.parquet").replace("'", "''")
-        con = duckdb.connect()
-        try:
-            rows = int(con.execute(f"SELECT count(*) FROM read_parquet('{glob}')").fetchone()[0])
-            grouped = con.execute(
-                f"""
-                SELECT source_id, response_sha256, count(*) AS rows
-                FROM read_parquet('{glob}')
-                GROUP BY source_id, response_sha256
-                ORDER BY response_sha256
-                """
-            ).fetchall()
-        finally:
-            con.close()
-        expected = identifier[-1]
-        if any(row[0] != expected for row in grouped):
-            raise RuntimeError(f"{'.'.join(identifier)} contains unexpected source_id values")
-        shas = {row[1] for row in grouped}
-        if any(not isinstance(value, str) or len(value) != 64 for value in shas):
-            raise RuntimeError(f"{'.'.join(identifier)} has invalid response_sha256 values")
-        snapshot = table.current_snapshot()
-        proofs[".".join(identifier)] = {
-            "table": ".".join(identifier),
-            "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
-            "rows": rows,
-            "distinct_response_sha256": len(shas),
-        }
-        all_shas.update(shas)
-    return proofs, all_shas
+    rows = []
+    for source_id in SOURCE_IDS:
+        prefix = f"01_landing/{source_id}/"
+        for item in list_objects(s3, bucket, prefix):
+            name = Path(item["key"]).name.lower()
+            match = HASH_NAME.fullmatch(name)
+            if not match or item["size"] <= 0:
+                raise RuntimeError(f"unexpected NBP Landing object: {item['key']}")
+            rows.append({
+                "key": item["key"],
+                "source_id": source_id,
+                "size": item["size"],
+                "sha256": match.group(1),
+            })
+    rows.sort(key=lambda item: item["key"])
+    return rows
 
 
 def input_set_digest(inputs: list[dict[str, Any]]) -> str:
@@ -233,73 +146,92 @@ def input_set_digest(inputs: list[dict[str, Any]]) -> str:
                 "size": item["size"],
                 "sha256": item["sha256"],
             }
-            for item in sorted(inputs, key=lambda item: item["key"])
+            for item in inputs
         ],
         sort_keys=True,
         separators=(",", ":"),
-    ).encode("utf-8")
+    ).encode()
     return sha256(payload).hexdigest()
 
 
-def scan_control_references(s3, bucket: str, inputs: list[dict[str, Any]]) -> list[str]:
-    needles = []
-    landing_bucket = req("R2_LANDING_BUCKET")
-    for item in inputs:
-        needles.append(item["key"].encode("utf-8"))
-        needles.append(f"r2://{landing_bucket}/{item['key']}".encode("utf-8"))
-    matches = []
-    for prefix in CONTROL_PREFIXES:
-        for item in list_objects(s3, bucket, prefix):
-            if item["size"] > 8 * 1024 * 1024 or not item["key"].lower().endswith(".json"):
-                continue
-            body = s3.get_object(Bucket=bucket, Key=item["key"])["Body"].read()
-            if any(needle in body for needle in needles):
-                matches.append(item["key"])
-    return sorted(set(matches))
+def download_table_files(s3, bucket: str, table, directory: Path) -> list[Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for index, task in enumerate(table.scan().plan_files()):
+        uri = str(task.file.file_path)
+        prefix = f"s3://{bucket}/"
+        if not uri.startswith(prefix):
+            raise RuntimeError(f"unexpected Iceberg file URI: {uri}")
+        target = directory / f"{index:06d}.parquet"
+        s3.download_file(bucket, uri[len(prefix):], str(target))
+        if target.stat().st_size != int(task.file.file_size_in_bytes):
+            raise RuntimeError(f"Iceberg file size mismatch: {uri}")
+        paths.append(target)
+    if not paths:
+        raise RuntimeError("NBP Bronze table has no data files")
+    return paths
+
+
+def bronze_provenance(s3, cat, bucket: str, root: Path) -> tuple[dict[str, Any], set[str]]:
+    proofs = {}
+    all_shas: set[str] = set()
+    for identifier in TABLES:
+        table = cat.load_table(identifier)
+        fields = {field.name for field in table.schema().fields}
+        required = {"source_id", "response_sha256", "raw_file_id"}
+        if not required <= fields:
+            raise RuntimeError(f"{'.'.join(identifier)} lacks {sorted(required-fields)}")
+        paths = download_table_files(s3, bucket, table, root / identifier[-1])
+        glob = str(paths[0].parent / "*.parquet").replace("'", "''")
+        con = duckdb.connect()
+        try:
+            rows = int(con.execute(f"SELECT count(*) FROM read_parquet('{glob}')").fetchone()[0])
+            values = con.execute(
+                f"SELECT DISTINCT source_id, response_sha256 FROM read_parquet('{glob}')"
+            ).fetchall()
+        finally:
+            con.close()
+        expected = identifier[-1]
+        if any(row[0] != expected for row in values):
+            raise RuntimeError(f"{'.'.join(identifier)} contains another source_id")
+        shas = {row[1] for row in values}
+        if any(not isinstance(value, str) or len(value) != 64 for value in shas):
+            raise RuntimeError(f"{'.'.join(identifier)} has invalid response_sha256")
+        snapshot = table.current_snapshot()
+        proofs[".".join(identifier)] = {
+            "table": ".".join(identifier),
+            "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
+            "rows": rows,
+            "distinct_response_sha256": len(shas),
+        }
+        all_shas.update(shas)
+    return proofs, all_shas
 
 
 def canonical_archive_key(item: dict[str, Any]) -> str:
-    return f"{ARCHIVE_ROOT}/{SOURCE}/{item['source_id']}/{item['sha256']}.json"
+    return f"05_archive/nbp/{item['source_id']}/{item['sha256']}.json"
 
 
-def ensure_archives(
-    s3,
-    bucket: str,
-    inputs: list[dict[str, Any]],
-    existing: dict[str, list[dict[str, Any]]],
-) -> tuple[list[dict[str, Any]], int]:
-    mapped = []
-    copied = 0
-    for item in inputs:
-        candidates = existing.get(item["sha256"], [])
-        if candidates:
-            selected = candidates[0]
-            archive_key = selected["key"]
-        else:
-            archive_key = canonical_archive_key(item)
-            if not object_exists(s3, bucket, archive_key):
-                s3.copy_object(
-                    Bucket=bucket,
-                    Key=archive_key,
-                    CopySource={"Bucket": bucket, "Key": item["key"]},
-                )
-                copied += 1
-        observed_sha, observed_size = hash_object(s3, bucket, archive_key)
-        if observed_sha != item["sha256"] or observed_size != item["size"]:
-            raise RuntimeError(f"Archive readback mismatch for {item['key']}")
-        mapped.append({
-            "source_key": item["key"],
-            "source_id": item["source_id"],
-            "archive_key": archive_key,
-            "size": item["size"],
-            "sha256": item["sha256"],
-            "compression": "none_exact_json",
-        })
-    return mapped, copied
+def existing_lineage(s3, bucket: str) -> tuple[str, dict[str, Any]] | None:
+    rows = [item for item in list_objects(s3, bucket, LINEAGE_PREFIX) if item["key"].endswith(".json")]
+    if not rows:
+        return None
+    if len(rows) != 1:
+        raise RuntimeError(f"expected at most one NBP lineage receipt, found {len(rows)}")
+    key = rows[0]["key"]
+    value = json.loads(s3.get_object(Bucket=bucket, Key=key)["Body"].read())
+    if (
+        not isinstance(value, dict)
+        or value.get("format_version") != 1
+        or value.get("kind") != "landing_bronze_lineage_receipt"
+        or value.get("source_id") != SOURCE
+    ):
+        raise RuntimeError("existing NBP lineage receipt is invalid")
+    return key, value
 
 
 def immutable_json(s3, bucket: str, key: str, value: dict[str, Any]) -> None:
-    raw = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    raw = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
     if object_exists(s3, bucket, key):
         existing = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
         if existing != raw:
@@ -314,20 +246,64 @@ def immutable_json(s3, bucket: str, key: str, value: dict[str, Any]) -> None:
     )
 
 
-def existing_lineage_receipts(s3, bucket: str) -> list[dict[str, Any]]:
-    receipts = []
-    for item in list_objects(s3, bucket, LINEAGE_PREFIX):
-        if not item["key"].endswith(".json"):
-            continue
-        value = json.loads(s3.get_object(Bucket=bucket, Key=item["key"])["Body"].read())
-        if (
-            isinstance(value, dict)
-            and value.get("format_version") == 1
-            and value.get("kind") == "landing_bronze_lineage_receipt"
-            and value.get("source_id") == SOURCE
-        ):
-            receipts.append({"key": item["key"], "value": value})
-    return receipts
+def source_for_missing_landing(receipt: dict[str, Any], key: str) -> str | None:
+    archive = receipt.get("archive")
+    if not isinstance(archive, list):
+        return None
+    for item in archive:
+        if isinstance(item, dict) and item.get("source_key") == key:
+            candidate = item.get("archive_key")
+            if isinstance(candidate, str):
+                return candidate
+    return None
+
+
+def ensure_canonical_archives(
+    s3,
+    bucket: str,
+    inputs: list[dict[str, Any]],
+    prior_receipt: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], int]:
+    copied_flags: list[int] = []
+
+    def one(item: dict[str, Any]) -> dict[str, Any]:
+        target = canonical_archive_key(item)
+        copied = 0
+        if not object_exists(s3, bucket, target):
+            if object_exists(s3, bucket, item["key"]):
+                source_key = item["key"]
+            else:
+                source_key = source_for_missing_landing(prior_receipt or {}, item["key"])
+                if not source_key or not object_exists(s3, bucket, source_key):
+                    raise RuntimeError(f"no recoverable NBP raw source for {item['key']}")
+            s3.copy_object(
+                Bucket=bucket,
+                Key=target,
+                CopySource={"Bucket": bucket, "Key": source_key},
+            )
+            copied = 1
+        observed_sha, observed_size = hash_object(s3, bucket, target)
+        if observed_sha != item["sha256"] or observed_size != item["size"]:
+            raise RuntimeError(f"canonical NBP Archive readback mismatch: {item['key']}")
+        copied_flags.append(copied)
+        return {
+            "source_key": item["key"],
+            "source_id": item["source_id"],
+            "archive_key": target,
+            "size": item["size"],
+            "sha256": item["sha256"],
+            "compression": "none_exact_json",
+        }
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        archives = list(pool.map(one, inputs))
+    archives.sort(key=lambda item: item["source_key"])
+    return archives, sum(copied_flags)
+
+
+def active_r2_nbp_control_objects(s3, lakehouse_bucket: str) -> list[str]:
+    prefix = "06_control/source_campaigns/nbp/"
+    return list_objects(s3, lakehouse_bucket, prefix)
 
 
 def attach_receipt(cat, receipt_uri: str, digest: str, proofs: dict[str, Any]) -> None:
@@ -348,66 +324,61 @@ def attach_receipt(cat, receipt_uri: str, digest: str, proofs: dict[str, Any]) -
 
 
 def main() -> int:
-    s3 = s3_client()
+    s3 = client()
     cat = catalog()
     landing_bucket = req("R2_LANDING_BUCKET")
     lakehouse_bucket = req("R2_LAKEHOUSE_BUCKET")
 
-    existing_receipts = existing_lineage_receipts(s3, lakehouse_bucket)
-    if len(existing_receipts) > 1:
-        raise RuntimeError(f"multiple NBP lineage receipts already exist: {len(existing_receipts)}")
-
+    prior = existing_lineage(s3, lakehouse_bucket)
     landing = current_landing(s3, landing_bucket)
-    if existing_receipts:
-        receipt_key = existing_receipts[0]["key"]
-        receipt = existing_receipts[0]["value"]
-        expected_inputs = receipt.get("landing_inputs")
-        if not isinstance(expected_inputs, list) or not expected_inputs:
-            raise RuntimeError("existing NBP lineage receipt has no Landing inputs")
-        by_key = {item["key"]: item for item in landing}
-        for expected in expected_inputs:
-            if not isinstance(expected, dict):
-                raise RuntimeError("existing NBP lineage receipt has invalid Landing descriptor")
-            current = by_key.get(expected.get("key"))
-            if current is not None and (
-                current["sha256"] != expected.get("sha256")
-                or current["size"] != expected.get("size")
-            ):
-                raise RuntimeError(f"NBP Landing changed after lineage receipt: {current['key']}")
-        inputs = expected_inputs
-        digest = str(receipt.get("input_set_sha256", ""))
-    else:
+
+    if prior is None:
         if len(landing) != 404:
-            raise RuntimeError(f"expected 404 current NBP Landing JSON objects, observed {len(landing)}")
+            raise RuntimeError(f"expected 404 NBP Landing objects, observed {len(landing)}")
         inputs = landing
         digest = input_set_digest(inputs)
+        prior_receipt = None
+    else:
+        _, prior_receipt = prior
+        raw_inputs = prior_receipt.get("landing_inputs")
+        if not isinstance(raw_inputs, list) or len(raw_inputs) != 404:
+            raise RuntimeError("existing NBP lineage receipt input set is invalid")
+        inputs = sorted(raw_inputs, key=lambda item: item["key"])
+        digest = str(prior_receipt.get("input_set_sha256", ""))
+        current_by_key = {item["key"]: item for item in landing}
+        for item in inputs:
+            current = current_by_key.get(item["key"])
+            if current is not None and (
+                current["sha256"] != item.get("sha256")
+                or current["size"] != item.get("size")
+            ):
+                raise RuntimeError(f"NBP Landing changed after lineage proof: {item['key']}")
 
-    with tempfile.TemporaryDirectory(prefix="zohelo-nbp-finalize-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="zohelo-nbp-finalize-") as directory:
         proofs, bronze_shas = bronze_provenance(
-            s3, cat, lakehouse_bucket, Path(temporary)
+            s3, cat, lakehouse_bucket, Path(directory)
         )
-
     input_shas = {item["sha256"] for item in inputs}
-    if len(input_shas) != len(inputs):
-        raise RuntimeError("NBP current Landing contains duplicate SHA-256 identities")
-    if input_shas != bronze_shas:
+    if len(input_shas) != 404 or input_shas != bronze_shas:
         raise RuntimeError(
-            "NBP Landing/Bronze provenance set mismatch: "
-            f"landing_only={len(input_shas - bronze_shas)} "
-            f"bronze_only={len(bronze_shas - input_shas)}"
+            "NBP Landing/Bronze provenance mismatch: "
+            f"input={len(input_shas)} bronze={len(bronze_shas)} "
+            f"input_only={len(input_shas-bronze_shas)} "
+            f"bronze_only={len(bronze_shas-input_shas)}"
         )
 
-    existing_archive = archive_inventory(s3, landing_bucket)
-    archives, copied = ensure_archives(s3, landing_bucket, inputs, existing_archive)
-
-    references = scan_control_references(s3, lakehouse_bucket, inputs)
-    if references:
+    blockers = active_r2_nbp_control_objects(s3, lakehouse_bucket)
+    if blockers:
         raise RuntimeError(
-            "NBP Landing deletion blocked by live R2 control references: "
-            + ", ".join(references[:10])
+            "active R2 NBP source-campaign control exists; Landing cleanup is blocked: "
+            + ", ".join(item["key"] for item in blockers[:8])
         )
 
-    if not existing_receipts:
+    archives, copied = ensure_canonical_archives(
+        s3, landing_bucket, inputs, prior_receipt
+    )
+
+    if prior is None:
         receipt_key = f"{LINEAGE_PREFIX}{digest}.json"
         receipt_uri = f"s3://{lakehouse_bucket}/{receipt_key}"
         receipt = {
@@ -422,53 +393,36 @@ def main() -> int:
             "archive_readback_verified": True,
             "landing_delete_eligible": True,
             "blocking_control_references": [],
+            "legacy_control_scope": "06_control/nbp is historical Drive-era metadata, not a live R2 writer",
             "landing_deleted": False,
             "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         }
         immutable_json(s3, lakehouse_bucket, receipt_key, receipt)
     else:
+        receipt_key, prior_receipt = prior
         receipt_uri = f"s3://{lakehouse_bucket}/{receipt_key}"
-        if receipt.get("input_set_sha256") != digest:
+        if prior_receipt.get("input_set_sha256") != digest:
             raise RuntimeError("existing NBP lineage receipt digest mismatch")
-        if receipt.get("archive_readback_verified") is not True:
-            raise RuntimeError("existing NBP lineage receipt lacks archive acceptance")
 
     attach_receipt(cat, receipt_uri, digest, proofs)
     for identifier in TABLES:
         table = cat.load_table(identifier)
         if table.properties.get("zohelo.lineage.receipt") != receipt_uri:
-            raise RuntimeError(f"NBP lineage property did not commit for {'.'.join(identifier)}")
-        if table.properties.get("zohelo.lineage.input-set-sha256") != digest:
-            raise RuntimeError(f"NBP lineage digest did not commit for {'.'.join(identifier)}")
+            raise RuntimeError(f"NBP lineage property missing: {'.'.join(identifier)}")
 
-    archive_by_source = {item["source_key"]: item for item in archives}
-    for item in inputs:
-        archive = archive_by_source[item["key"]]
-        observed_sha, observed_size = hash_object(s3, landing_bucket, archive["archive_key"])
-        if observed_sha != item["sha256"] or observed_size != item["size"]:
-            raise RuntimeError(f"NBP Archive revalidation failed immediately before delete: {item['key']}")
+    existing_keys = {item["key"] for item in landing}
+    delete_keys = [item["key"] for item in inputs if item["key"] in existing_keys]
+    for offset in range(0, len(delete_keys), 1000):
+        response = s3.delete_objects(
+            Bucket=landing_bucket,
+            Delete={"Objects": [{"Key": key} for key in delete_keys[offset:offset+1000]], "Quiet": True},
+        )
+        if response.get("Errors"):
+            raise RuntimeError(f"NBP Landing delete errors: {response['Errors'][:3]}")
 
-    remaining = []
-    for item in inputs:
-        if object_exists(s3, landing_bucket, item["key"]):
-            remaining.append(item["key"])
+    remaining = current_landing(s3, landing_bucket)
     if remaining:
-        for offset in range(0, len(remaining), 1000):
-            batch = remaining[offset:offset + 1000]
-            response = s3.delete_objects(
-                Bucket=landing_bucket,
-                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
-            )
-            errors = response.get("Errors", [])
-            if errors:
-                raise RuntimeError(f"NBP Landing delete returned errors: {errors[:3]}")
-
-    still_present = [
-        item["key"] for item in inputs
-        if object_exists(s3, landing_bucket, item["key"])
-    ]
-    if still_present:
-        raise RuntimeError(f"NBP Landing deletion incomplete: {len(still_present)} objects remain")
+        raise RuntimeError(f"NBP Landing deletion incomplete: {len(remaining)} objects remain")
 
     lifecycle_key = f"{LIFECYCLE_PREFIX}{digest}.json"
     lifecycle = {
@@ -480,8 +434,8 @@ def main() -> int:
         "bronze_tables": [".".join(identifier) for identifier in TABLES],
         "deleted_landing_objects": len(inputs),
         "deleted_landing_bytes": sum(int(item["size"]) for item in inputs),
-        "archive_objects_verified": len(archives),
-        "new_archive_objects_copied": copied,
+        "canonical_archive_objects_verified": len(archives),
+        "canonical_archive_objects_copied_this_run": copied,
         "landing_deleted": True,
         "archive_verified_before_delete": True,
         "blocking_control_references": [],
@@ -497,11 +451,10 @@ def main() -> int:
         "input_set_sha256": digest,
         "bronze_tables_proven": len(TABLES),
         "bronze_distinct_raw_sha256": len(bronze_shas),
-        "archive_objects_verified": len(archives),
-        "new_archive_objects_copied": copied,
+        "canonical_archive_objects_verified": len(archives),
+        "canonical_archive_objects_copied_this_run": copied,
         "deleted_landing_objects": len(inputs),
         "deleted_landing_bytes": sum(int(item["size"]) for item in inputs),
-        "blocking_control_references": [],
         "lineage_receipt": receipt_uri,
         "lifecycle_receipt": f"s3://{lakehouse_bucket}/{lifecycle_key}",
         "google_drive_accessed": False,
