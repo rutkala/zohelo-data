@@ -14,6 +14,7 @@ The original lineage receipt and Archive objects remain immutable. This finalize
 
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -25,7 +26,6 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from pyiceberg.catalog.rest import RestCatalog
 
-SOURCES = ("gus_teryt", "mf_biala_lista")
 
 
 def req(name: str) -> str:
@@ -231,13 +231,27 @@ def put_immutable_json(s3, bucket: str, key: str, value: dict[str, Any]) -> None
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Delete verified Landing inputs only after immutable lineage and Archive readback."
+    )
+    parser.add_argument(
+        "--source",
+        action="append",
+        required=True,
+        help="Source with exactly one eligible lineage receipt; repeat to finalize more than one.",
+    )
+    args = parser.parse_args()
+    sources = tuple(dict.fromkeys(args.source))
+    if any(not source or "/" in source or source.startswith(".") for source in sources):
+        raise RuntimeError("invalid source selector")
+
     s3 = client()
     cat = catalog()
     landing_bucket = req("R2_LANDING_BUCKET")
     lakehouse_bucket = req("R2_LAKEHOUSE_BUCKET")
 
     verified = []
-    for source in SOURCES:
+    for source in sources:
         key, receipt = lineage_receipt(s3, lakehouse_bucket, source)
         verified.append(
             verify_receipt(
@@ -291,7 +305,7 @@ def main() -> int:
     print(json.dumps({
         "result": "pass",
         "operation": "finalize-verified-landing-archive",
-        "sources": list(SOURCES),
+        "sources": list(sources),
         "deleted_landing_objects": len(deleted),
         "deleted_landing_bytes": sum(int(item["size"]) for item in deleted),
         "archives_preserved": [item["archive_key"] for item in deleted],
