@@ -257,11 +257,11 @@ def data_file(table, uri: str, rows: int, size: int) -> DataFile:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--max-distributions", type=int, default=4)
+    parser.add_argument("--max-distributions", type=int, default=32)
     parser.add_argument("--session-seconds", type=int, default=3000)
     args = parser.parse_args()
-    if not 1 <= args.max_distributions <= 32:
-        parser.error("--max-distributions must be 1-32")
+    if not 1 <= args.max_distributions <= 64:
+        parser.error("--max-distributions must be 1-64")
     if not 60 <= args.session_seconds <= 5400:
         parser.error("--session-seconds must be 60-5400")
 
