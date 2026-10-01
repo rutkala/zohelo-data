@@ -11,6 +11,7 @@ This one-time reconciliation:
 - writes an immutable lineage receipt and attaches it to the Bronze tables.
 
 It does not delete Landing and does not rewrite production table data.
+The script is idempotent for the same immutable Landing input set.
 """
 
 from __future__ import annotations
