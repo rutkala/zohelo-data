@@ -36,6 +36,10 @@ KNOWN_SOURCES = (
 
 LANDING_ALIASES = {
     "nbp": "nbp",
+    "nbp_exchange_rates_table_a": "nbp",
+    "nbp_exchange_rates_table_b": "nbp",
+    "nbp_exchange_rates_table_c": "nbp",
+    "nbp_gold_prices": "nbp",
     "gold": "nbp",
     "gus_bdl": "gus_bdl",
     "world_bank_wdi": "world_bank_wdi",
@@ -248,9 +252,9 @@ def table_inventory(cat, namespace: str) -> tuple[dict[str, Any], dict[str, list
 
 def status_for(source: str, landing: dict[str, Any], layers: dict[str, dict[str, Any]]) -> dict[str, Any]:
     landing_objects = int(landing.get("objects", 0))
-    bronze = layers["bronze"].get(source, {})
-    silver = layers["silver"].get(source, {})
-    gold = layers["gold"].get(source, {})
+    bronze = layers["bronze"]
+    silver = layers["silver"]
+    gold = layers["gold"]
     bronze_tables = int(bronze.get("tables", 0))
     silver_tables = int(silver.get("tables", 0))
     gold_tables = int(gold.get("tables", 0))
@@ -332,7 +336,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     for layer, names in report["unattributed_tables"].items():
         lines.append(f"- {layer}: " + (", ".join(names) if names else "none"))
     lines.append("")
-    return "\\n".join(lines)
+    return "\n".join(lines)
 
 
 def main() -> int:
@@ -396,7 +400,7 @@ def main() -> int:
 
     output = Path(os.environ.get("RECONCILIATION_JSON", "/tmp/r2-reconciliation.json"))
     markdown = Path(os.environ.get("RECONCILIATION_MD", "/tmp/r2-reconciliation.md"))
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     markdown.write_text(render_markdown(report), encoding="utf-8")
     print(json.dumps(report, sort_keys=True))
     return 0
