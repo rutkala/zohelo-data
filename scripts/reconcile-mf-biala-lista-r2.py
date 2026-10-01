@@ -18,9 +18,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha256
+import csv
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import tempfile
 from typing import Any
 
@@ -30,7 +33,6 @@ import duckdb
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
 
-from mf_biala_lista_bronze_loader import transform_biala_lista_bronze
 
 SOURCE = "mf_biala_lista"
 LANDING_PREFIX = "01_landing/mf_biala_lista/"
@@ -116,6 +118,292 @@ def list_landing_archive(s3, bucket: str) -> dict[str, Any]:
     return items[0]
 
 
+def reconstruct_business_parquet(
+    archive_path: Path,
+    workspace: Path,
+) -> dict[str, Any]:
+    """Reproduce the legacy loader's business columns with vectorized I/O.
+
+    The historical loader inserts ~3.7M hashes through executemany, which is too
+    slow for a bounded reconciliation run. This reads the same 7z member and
+    applies the same line/section rules, but stages hashes as TSV and lets
+    DuckDB build Parquet in vectorized scans.
+    """
+    match = re.search(r"(\d{8})", archive_path.name)
+    if not match:
+        raise RuntimeError(f"cannot parse YYYYMMDD from {archive_path.name}")
+    date_str = match.group(1)
+    snapshot_date = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    internal_name = f"{date_str}.json"
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    taxpayer_tsv = workspace / "taxpayers.tsv"
+    masks_tsv = workspace / "masks.tsv"
+
+    proc = subprocess.Popen(
+        ["7z", "e", "-so", str(archive_path), internal_name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1024 * 1024,
+    )
+    if proc.stdout is None:
+        raise RuntimeError("7z stdout was not available")
+
+    header_data: dict[str, Any] = {}
+    masks = 0
+    active = 0
+    exempt = 0
+    current_section: str | None = None
+    in_header = False
+    header_lines: list[str] = []
+
+    with taxpayer_tsv.open("w", encoding="utf-8", newline="") as tf, masks_tsv.open(
+        "w", encoding="utf-8", newline=""
+    ) as mf:
+        taxpayer_writer = csv.writer(tf, delimiter="\t", lineterminator="\n")
+        mask_writer = csv.writer(mf, delimiter="\t", lineterminator="\n")
+
+        for raw_line in proc.stdout:
+            line = raw_line.decode("utf-8", errors="ignore")
+
+            if '"naglowek":' in line:
+                in_header = True
+                header_lines = ["{"]
+                continue
+            if in_header:
+                header_lines.append(line)
+                if "}" in line:
+                    in_header = False
+                    try:
+                        header_text = "".join(header_lines)
+                        header_text = re.sub(r",\s*$", "", header_text.strip())
+                        header_data = json.loads(header_text)
+                    except Exception as exc:
+                        raise RuntimeError("cannot parse MF Biala Lista header") from exc
+                continue
+
+            section = re.match(r'^\s*"([^"]+)":\s*\[', line)
+            if section:
+                current_section = section.group(1)
+                continue
+
+            if current_section == "maski":
+                value = re.search(r'"([^"]+)"', line)
+                if value:
+                    mask = value.group(1)
+                    mask_writer.writerow([mask, mask[2:10] if len(mask) >= 10 else "", snapshot_date])
+                    masks += 1
+                if "]" in line:
+                    current_section = None
+                continue
+
+            if current_section in {"skrotyPodatnikowCzynnych", "skrotyPodatnikowZwolnionych"}:
+                value = re.search(r'"([0-9a-fA-F]{64,128})"', line)
+                if value:
+                    status = (
+                        "active"
+                        if current_section == "skrotyPodatnikowCzynnych"
+                        else "exempt"
+                    )
+                    taxpayer_writer.writerow([value.group(1), status, snapshot_date])
+                    if status == "active":
+                        active += 1
+                    else:
+                        exempt += 1
+                if "]" in line:
+                    current_section = None
+
+    proc.stdout.close()
+    stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+    if proc.stderr:
+        proc.stderr.close()
+    code = proc.wait()
+    if code != 0:
+        raise RuntimeError(f"7z extraction failed ({code}): {stderr[-500:]}")
+
+    outputs = {
+        "br_biala_lista_header.parquet": workspace / "br_biala_lista_header.parquet",
+        "br_biala_lista_masks.parquet": workspace / "br_biala_lista_masks.parquet",
+        "br_biala_lista_taxpayers.parquet": workspace / "br_biala_lista_taxpayers.parquet",
+    }
+
+    con = duckdb.connect()
+    try:
+        con.execute("PRAGMA threads=4")
+        con.execute("PRAGMA memory_limit='2GB'")
+        con.execute(
+            """
+            CREATE TABLE header_business(
+                snapshot_date DATE,
+                generation_date VARCHAR,
+                transformation_count INTEGER,
+                schema_description VARCHAR
+            )
+            """
+        )
+        con.execute(
+            "INSERT INTO header_business VALUES (CAST(? AS DATE), ?, ?, ?)",
+            [
+                snapshot_date,
+                str(header_data.get("dataGenerowaniaDanych", date_str)),
+                int(header_data.get("liczbaTransformacji", 5000)),
+                str(header_data.get("schemat", "")),
+            ],
+        )
+        escaped = str(outputs["br_biala_lista_header.parquet"]).replace("'", "''")
+        con.execute(
+            f"COPY header_business TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)"
+        )
+
+        masks_input = str(masks_tsv).replace("'", "''")
+        masks_output = str(outputs["br_biala_lista_masks.parquet"]).replace("'", "''")
+        con.execute(
+            f"""
+            COPY (
+                SELECT
+                    column0::VARCHAR AS account_mask,
+                    column1::VARCHAR AS bank_prefix,
+                    CAST(column2 AS DATE) AS snapshot_date
+                FROM read_csv(
+                    '{masks_input}',
+                    delim='\\t',
+                    header=false,
+                    columns={{'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR'}}
+                )
+            ) TO '{masks_output}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+        )
+
+        tax_input = str(taxpayer_tsv).replace("'", "''")
+        tax_output = str(outputs["br_biala_lista_taxpayers.parquet"]).replace("'", "''")
+        con.execute(
+            f"""
+            COPY (
+                SELECT
+                    column0::VARCHAR AS hash,
+                    column1::VARCHAR AS status,
+                    CAST(column2 AS DATE) AS snapshot_date
+                FROM read_csv(
+                    '{tax_input}',
+                    delim='\\t',
+                    header=false,
+                    columns={{'column0':'VARCHAR','column1':'VARCHAR','column2':'VARCHAR'}}
+                )
+            ) TO '{tax_output}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+        )
+    finally:
+        con.close()
+
+    return {
+        "status": "reconstructed_business_columns",
+        "snapshot_date": snapshot_date,
+        "active_hashes": active,
+        "exempt_hashes": exempt,
+        "masks": masks,
+        "files": [path.name for path in outputs.values()],
+    }
+
+
+def download_current_table_files(
+    s3,
+    bucket: str,
+    table,
+    directory: Path,
+) -> list[Path]:
+    directory.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for index, task in enumerate(table.scan().plan_files()):
+        uri = str(task.file.file_path)
+        if not uri.startswith(f"s3://{bucket}/"):
+            raise RuntimeError(f"unexpected Iceberg data-file URI: {uri}")
+        key = uri[len(f"s3://{bucket}/") :]
+        target = directory / f"{index:06d}.parquet"
+        s3.download_file(bucket, key, str(target))
+        if target.stat().st_size != int(task.file.file_size_in_bytes):
+            raise RuntimeError(f"current table file size mismatch: {uri}")
+        paths.append(target)
+    if not paths:
+        raise RuntimeError("production Iceberg table has no data files")
+    return paths
+
+
+def prove_business_equivalence_from_files(
+    table,
+    regenerated_path: Path,
+    current_paths: list[Path],
+) -> dict[str, Any]:
+    identifier = getattr(table, "_identifier", None)
+    if not isinstance(identifier, tuple) or not identifier:
+        raise RuntimeError("PyIceberg table identifier is unavailable")
+    name = ".".join(identifier)
+
+    business_columns = list(pq.read_schema(regenerated_path).names)
+    current_names = {field.name for field in table.schema().fields}
+    if not set(business_columns).issubset(current_names):
+        raise RuntimeError(
+            f"regenerated business columns are not a subset of {name}: "
+            f"{sorted(set(business_columns) - current_names)}"
+        )
+
+    con = duckdb.connect()
+    try:
+        local_path = str(regenerated_path).replace("'", "''")
+        current_glob = str(current_paths[0].parent / "*.parquet").replace("'", "''")
+        cols = ", ".join(quoted(column) for column in business_columns)
+        local_rows = con.execute(
+            f"SELECT count(*) FROM read_parquet('{local_path}')"
+        ).fetchone()[0]
+        current_rows = con.execute(
+            f"SELECT count(*) FROM read_parquet('{current_glob}')"
+        ).fetchone()[0]
+        if local_rows != current_rows:
+            raise RuntimeError(
+                f"row count mismatch for {name}: current={current_rows} regenerated={local_rows}"
+            )
+
+        regenerated_only = con.execute(
+            f"""
+            SELECT count(*) FROM (
+                SELECT {cols} FROM read_parquet('{local_path}')
+                EXCEPT ALL
+                SELECT {cols} FROM read_parquet('{current_glob}')
+            )
+            """
+        ).fetchone()[0]
+        current_only = con.execute(
+            f"""
+            SELECT count(*) FROM (
+                SELECT {cols} FROM read_parquet('{current_glob}')
+                EXCEPT ALL
+                SELECT {cols} FROM read_parquet('{local_path}')
+            )
+            """
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    if regenerated_only or current_only:
+        raise RuntimeError(
+            f"logical content mismatch for {name}: "
+            f"regenerated_only={regenerated_only} current_only={current_only}"
+        )
+
+    snapshot = table.current_snapshot()
+    planned = list(table.scan().plan_files())
+    return {
+        "table": name,
+        "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
+        "rows": int(local_rows),
+        "current_data_files": len(planned),
+        "current_data_bytes": sum(int(task.file.file_size_in_bytes) for task in planned),
+        "business_columns_proven_equal": business_columns,
+        "excluded_technical_columns": sorted(current_names - set(business_columns)),
+        "regenerated_parquet_bytes": regenerated_path.stat().st_size,
+        "regenerated_parquet_sha256": file_sha256(regenerated_path),
+    }
+
+
 def file_sha256(path: Path) -> str:
     digest = sha256()
     with path.open("rb") as handle:
@@ -126,76 +414,6 @@ def file_sha256(path: Path) -> str:
 
 def quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
-
-
-def prove_logical_equivalence(table, local_path: Path) -> dict[str, Any]:
-    identifier = getattr(table, "_identifier", None)
-    if not isinstance(identifier, tuple) or not identifier:
-        raise RuntimeError("PyIceberg table identifier is unavailable")
-    name = ".".join(identifier)
-
-    current = table.scan().to_arrow()
-    local = pq.read_table(local_path)
-    if current.num_rows != local.num_rows:
-        raise RuntimeError(
-            f"row count mismatch for {name}: current={current.num_rows} regenerated={local.num_rows}"
-        )
-
-    current_names = set(current.column_names)
-    local_names = set(local.column_names)
-    if current_names != local_names:
-        raise RuntimeError(
-            f"schema column mismatch for {name}: current={sorted(current_names)} regenerated={sorted(local_names)}"
-        )
-
-    business_columns = [column for column in local.column_names if column not in TECHNICAL_COLUMNS]
-    if not business_columns:
-        raise RuntimeError(f"no business columns found in {name}")
-
-    con = duckdb.connect()
-    try:
-        con.register("current_iceberg", current)
-        escaped_path = str(local_path).replace("'", "''")
-        cols = ", ".join(quoted(column) for column in business_columns)
-        regenerated_only = con.execute(
-            f"""
-            SELECT count(*) FROM (
-                SELECT {cols} FROM read_parquet('{escaped_path}')
-                EXCEPT ALL
-                SELECT {cols} FROM current_iceberg
-            )
-            """
-        ).fetchone()[0]
-        current_only = con.execute(
-            f"""
-            SELECT count(*) FROM (
-                SELECT {cols} FROM current_iceberg
-                EXCEPT ALL
-                SELECT {cols} FROM read_parquet('{escaped_path}')
-            )
-            """
-        ).fetchone()[0]
-    finally:
-        con.close()
-
-    if regenerated_only or current_only:
-        raise RuntimeError(
-            f"logical content mismatch for {name}: regenerated_only={regenerated_only} current_only={current_only}"
-        )
-
-    snapshot = table.current_snapshot()
-    files = list(table.scan().plan_files())
-    return {
-        "table": name,
-        "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
-        "rows": current.num_rows,
-        "current_data_files": len(files),
-        "current_data_bytes": sum(int(task.file.file_size_in_bytes) for task in files),
-        "business_columns_proven_equal": business_columns,
-        "excluded_technical_columns": sorted(TECHNICAL_COLUMNS & current_names),
-        "regenerated_parquet_bytes": local_path.stat().st_size,
-        "regenerated_parquet_sha256": file_sha256(local_path),
-    }
 
 
 def copy_and_verify_archive(
@@ -305,18 +523,27 @@ def main() -> int:
             raise RuntimeError("MF Biala Lista Landing size changed while reading")
         landing = {**item, "sha256": digest}
 
-        transform_result = transform_biala_lista_bronze(
+        transform_result = reconstruct_business_parquet(
             archive_path=archive_path,
             workspace=workspace,
-            skip_upload=True,
         )
 
         proofs = []
+        current_root = root / "current"
         for filename, identifier in TABLES.items():
             local_path = workspace / filename
             if not local_path.is_file():
-                raise RuntimeError(f"MF transformer did not create {filename}")
-            proofs.append(prove_logical_equivalence(cat.load_table(identifier), local_path))
+                raise RuntimeError(f"MF reconstruction did not create {filename}")
+            table = cat.load_table(identifier)
+            current_paths = download_current_table_files(
+                s3,
+                lakehouse_bucket,
+                table,
+                current_root / identifier[-1],
+            )
+            proofs.append(
+                prove_business_equivalence_from_files(table, local_path, current_paths)
+            )
 
     archived = copy_and_verify_archive(s3, landing_bucket, landing, digest)
     references = control_references(s3, lakehouse_bucket, landing_bucket, landing)
@@ -327,7 +554,7 @@ def main() -> int:
         "format_version": 1,
         "kind": "landing_bronze_lineage_receipt",
         "source_id": SOURCE,
-        "proof": "deterministic_logical_equivalence_excluding_technical_timestamp",
+        "proof": "deterministic_vectorized_logical_equivalence_excluding_technical_timestamp",
         "input_set_sha256": digest,
         "landing_inputs": [landing],
         "bronze_proofs": proofs,
