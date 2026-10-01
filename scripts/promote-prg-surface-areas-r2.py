@@ -10,7 +10,7 @@ This source-specific lifecycle step:
 6. archives the native XLSX with exact SHA-256 readback;
 7. deletes only that XLSX from Landing when no source-control reference blocks it.
 
-The PRG boundary ZIP remains untouched in Landing pending its separate lineage proof.
+The PRG boundary ZIP remains untouched in Landing pending its separate lineage proof. This promotion is idempotent for the same XLSX hash.
 """
 
 from __future__ import annotations
