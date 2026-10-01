@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      RECONCILIATION_SEQUENCE: "1"
+      RECONCILIATION_SEQUENCE: "2"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           for batch in $(seq 1 16); do
-            echo "Eurostat reconciliation sequence 1, batch $batch/16"
+            echo "Eurostat reconciliation sequence 2, batch $batch/16"
             python scripts/catch-up-eurostat-r2-bronze.py --max-distributions 64 --session-seconds 6500
           done
 
