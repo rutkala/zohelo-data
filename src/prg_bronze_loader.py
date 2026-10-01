@@ -22,17 +22,17 @@ import os
 from pathlib import Path
 import sys
 import tempfile
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import zipfile
 
 import duckdb
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from storage_manager import StorageManager
+if TYPE_CHECKING:
+    from storage_manager import StorageManager
 
 logger = logging.getLogger("prg_bronze_loader")
 logging.basicConfig(
@@ -56,7 +56,7 @@ def _escape_query(value: str) -> str:
     return value.replace("\\", "\\\\").replace("'", "\\'")
 
 
-def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_id: str) -> str:
+def _resolve_or_create_folder(storage: "StorageManager", folder_name: str, parent_id: str) -> str:
     query = f"name='{_escape_query(folder_name)}' and '{_escape_query(parent_id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
     existing = storage.drive_service.files().list(q=query, spaces="drive", fields="files(id,name)").execute().get("files", [])
     if existing:
@@ -68,16 +68,15 @@ def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_
     return created["id"]
 
 
-from drive_safe_upload import safe_drive_upload
-
-
 def _upload_file_to_drive(
-    storage: StorageManager,
+    storage: "StorageManager",
     local_path: Path,
     name: str,
     parent_id: str,
     mime_type: str = "application/octet-stream",
 ) -> dict[str, Any]:
+    from drive_safe_upload import safe_drive_upload
+
     return safe_drive_upload(
         storage,
         local_path,
@@ -87,7 +86,7 @@ def _upload_file_to_drive(
     )
 
 
-def _download_prg_from_drive(storage: StorageManager, dest_dir: Path) -> Path:
+def _download_prg_from_drive(storage: "StorageManager", dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     landing_id = storage.resolve_zone("landing")
     q_src = f"name='gugik_prg' and '{_escape_query(landing_id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -113,6 +112,8 @@ def _download_prg_from_drive(storage: StorageManager, dest_dir: Path) -> Path:
     f_info = files[0]
     target_path = dest_dir / "00_jednostki_administracyjne.zip"
     if not target_path.exists() or target_path.stat().st_size != int(f_info.get("size", -1)):
+        from googleapiclient.http import MediaIoBaseDownload
+
         logger.info("Downloading %s from Drive...", target_path.name)
         req = storage.drive_service.files().get_media(fileId=f_info["id"])
         with target_path.open("wb") as f_out:
@@ -138,6 +139,8 @@ def transform_prg_bronze(
     if can_upload or not target_zip.exists():
         if allow_codespace:
             os.environ["ZOHELO_ALLOW_PRODUCTION_WRITES"] = "true"
+        from storage_manager import StorageManager
+
         storage = StorageManager(allow_interactive_auth=False)
         storage.resolve_root(create=False)
         if can_upload:
