@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 import boto3
 from botocore.config import Config
 from pyiceberg.catalog.rest import RestCatalog
-from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError, TableAlreadyExistsError
+from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError, TableAlreadyExistsError, TooManyRequestsError
 from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
 from pyiceberg.table import TableProperties
 from pyiceberg.typedef import Record
@@ -94,9 +94,34 @@ def parse(uri):
     if p.scheme!="s3": raise RuntimeError(f"unexpected uri {uri}")
     return p.netloc,p.path.lstrip("/")
 
+_NAMESPACE_CACHE: set[str] = set()
+
 def ensure_ns(cat,ns):
-    try: cat.create_namespace(ns)
-    except NamespaceAlreadyExistsError: pass
+    if ns in _NAMESPACE_CACHE:
+        return
+    # Prefer a read to avoid burning a write request on every promoted table.
+    try:
+        if any(tuple(item)==(ns,) for item in cat.list_namespaces()):
+            _NAMESPACE_CACHE.add(ns)
+            return
+    except Exception:
+        pass
+    for attempt in range(1,6):
+        try:
+            cat.create_namespace(ns)
+            _NAMESPACE_CACHE.add(ns)
+            return
+        except NamespaceAlreadyExistsError:
+            _NAMESPACE_CACHE.add(ns)
+            return
+        except TooManyRequestsError:
+            if attempt==5:
+                raise
+            delay=min(5*attempt,20)
+            print(json.dumps({"result":"retry","operation":"ensure_namespace",
+                              "namespace":ns,"attempt":attempt,
+                              "delay_seconds":delay}),flush=True)
+            time.sleep(delay)
 
 def target_key(layer,table,src):
     h=hashlib.sha256(src.encode()).hexdigest()[:16]
