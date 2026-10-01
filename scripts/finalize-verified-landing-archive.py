@@ -9,7 +9,7 @@ Only explicitly listed sources are eligible. For each source this script:
 - deletes only the exact Landing keys recorded in the receipt;
 - writes a separate immutable lifecycle finalization receipt.
 
-The original lineage receipt and Archive objects remain immutable.
+The original lineage receipt and Archive objects remain immutable. This finalizer is intentionally source-scoped.
 """
 
 from __future__ import annotations
