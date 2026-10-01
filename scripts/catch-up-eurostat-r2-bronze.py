@@ -285,26 +285,66 @@ def main() -> int:
         raise RuntimeError("Eurostat bulk campaign state is invalid")
 
     existing = existing_raw_hashes()
-    accepted_data = 0
-    missing_data = 0
-    selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    completed = state.get("completed")
+    if not isinstance(completed, dict):
+        raise RuntimeError("Eurostat bulk campaign completed map is invalid")
 
-    for descriptor in state["receipts"]:
+    candidates: list[tuple[int, str, dict[str, Any], dict[str, Any]]] = []
+    seen_raw: set[str] = set()
+    accepted_data = 0
+    for task_id, value in completed.items():
+        if not isinstance(task_id, str) or not isinstance(value, dict):
+            continue
+        raw = value.get("raw")
+        descriptor = value.get("receipt")
+        if not isinstance(raw, dict) or not isinstance(descriptor, dict):
+            # Aggregate partition completions have no raw/receipt pair.
+            continue
+        raw_sha = raw.get("sha256")
+        raw_size = raw.get("size_bytes")
+        receipt_sha = descriptor.get("sha256")
+        receipt_size = descriptor.get("size_bytes")
+        if (
+            not isinstance(raw_sha, str)
+            or SHA_RE.fullmatch(raw_sha) is None
+            or type(raw_size) is not int
+            or raw_size <= 0
+            or not isinstance(receipt_sha, str)
+            or SHA_RE.fullmatch(receipt_sha) is None
+            or type(receipt_size) is not int
+            or receipt_size <= 0
+        ):
+            raise RuntimeError(f"invalid completed Eurostat descriptor: {task_id}")
+        accepted_data += 1
+        if raw_sha in existing or raw_sha in seen_raw:
+            continue
+        seen_raw.add(raw_sha)
+        candidates.append((raw_size, task_id, descriptor, raw))
+
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    selected_descriptors = candidates[: args.max_distributions]
+    missing_data = len(candidates)
+    selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for _raw_size, task_id, descriptor, expected_raw in selected_descriptors:
         if time.monotonic() - started >= args.session_seconds:
             break
         receipt = source.read_receipt(descriptor)
         if not is_data_receipt(receipt):
-            continue
-        accepted_data += 1
-        raw_sha = receipt["raw"].get("sha256")
-        if not isinstance(raw_sha, str) or SHA_RE.fullmatch(raw_sha) is None:
-            raise RuntimeError("accepted Eurostat data receipt has invalid raw SHA-256")
-        if raw_sha in existing:
-            continue
-        missing_data += 1
+            raise RuntimeError(f"completed Eurostat item is not a data receipt: {task_id}")
+        if receipt.get("raw") != expected_raw:
+            raise RuntimeError(f"completed Eurostat raw descriptor drifted: {task_id}")
         selected.append((descriptor, receipt))
-        if len(selected) >= args.max_distributions:
-            break
+
+    print(json.dumps({
+        "status": "eurostat_retained_candidates_selected",
+        "accepted_data_completed_entries": accepted_data,
+        "existing_distinct_raw_sha256": len(existing),
+        "missing_distinct_raw_sha256": missing_data,
+        "selected": len(selected),
+        "selected_raw_bytes": sum(
+            int(receipt["raw"]["size_bytes"]) for _descriptor, receipt in selected
+        ),
+    }, sort_keys=True), flush=True)
 
     if not selected:
         print(json.dumps({
@@ -312,8 +352,8 @@ def main() -> int:
             "operation": "catch-up-eurostat-r2-bronze",
             "processed": 0,
             "existing_distinct_raw_sha256": len(existing),
-            "accepted_data_receipts_seen": accepted_data,
-            "missing_data_receipts_seen": missing_data,
+            "accepted_data_completed_entries": accepted_data,
+            "missing_distinct_raw_sha256": missing_data,
             "reason": "no_missing_receipts_within_scanned_prefix",
             "landing_deleted": False,
             "google_drive_accessed": False,
@@ -408,8 +448,8 @@ def main() -> int:
         "bytes_added": sum(int(item["bytes"]) for item in to_append),
         "existing_distinct_raw_sha256_before": len(existing),
         "existing_distinct_raw_sha256_after": len(after),
-        "accepted_data_receipts_seen": accepted_data,
-        "missing_data_receipts_seen": missing_data,
+        "accepted_data_completed_entries": accepted_data,
+        "missing_distinct_raw_sha256_before": missing_data,
         "landing_deleted": False,
         "google_drive_accessed": False,
         "elapsed_seconds": round(time.monotonic() - started, 1),
