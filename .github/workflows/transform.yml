@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scripts/reconcile-gleif-r2.py'
+      - 'scripts/finalize-verified-landing-archive.py'
       - '.github/workflows/transform.yml'
   workflow_dispatch:
 
@@ -16,10 +16,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  gleif_lineage:
+  gleif_finalize:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -27,11 +27,10 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version-file: .python-version
-      - name: Install GLEIF reconciliation dependencies
-        run: python -m pip install "duckdb==1.5.5" "pyiceberg==0.12.0" "pyarrow==20.0.0" boto3 s3fs
-      - name: Prove GLEIF Landing to Bronze lineage
+      - name: Install Landing finalization dependencies
+        run: python -m pip install "pyiceberg==0.12.0" boto3 s3fs
+      - name: Finalize verified GLEIF Landing archive
         env:
-          PYTHONPATH: src
           R2_DATA_CATALOG_TOKEN: ${{ secrets.R2_DATA_CATALOG_TOKEN }}
           R2_CATALOG_URI: ${{ vars.R2_CATALOG_URI }}
           R2_WAREHOUSE: ${{ vars.R2_WAREHOUSE }}
@@ -40,7 +39,7 @@ jobs:
           R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
           R2_LANDING_BUCKET: ${{ vars.R2_LANDING_BUCKET }}
           R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
-        run: python scripts/reconcile-gleif-r2.py
+        run: python scripts/finalize-verified-landing-archive.py --source gleif
 
   promote:
     if: github.event_name == 'workflow_dispatch'
