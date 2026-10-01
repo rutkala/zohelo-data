@@ -29,6 +29,7 @@ from pyiceberg.typedef import Record
 import requests
 
 from eurostat_bulk_decode import decode_full_distribution
+from ingestion.full_source_campaign import task_for
 from ingestion.source_campaign_store import R2CampaignStore, _R2ObjectStore
 
 SOURCE_ID = "eurostat_bulk"
@@ -289,11 +290,25 @@ def main() -> int:
     if not isinstance(completed, dict):
         raise RuntimeError("Eurostat bulk campaign completed map is invalid")
 
+    recent_roots = state.get("recent_roots")
+    if not isinstance(recent_roots, dict):
+        raise RuntimeError("Eurostat bulk campaign recent_roots map is invalid")
+    current_data_roots = {
+        task_for(spec)["id"]
+        for spec in recent_roots.values()
+        if isinstance(spec, dict) and spec.get("kind") == "eurostat_tsv_gzip"
+    }
+    if not current_data_roots:
+        raise RuntimeError("Eurostat current catalogue has no TSV data roots")
+
     candidates: list[tuple[int, str, dict[str, Any], dict[str, Any]]] = []
     seen_raw: set[str] = set()
     accepted_data = 0
     for task_id, value in completed.items():
         if not isinstance(task_id, str) or not isinstance(value, dict):
+            continue
+        parent_task_id = task_id.split("::", 1)[0]
+        if parent_task_id not in current_data_roots:
             continue
         raw = value.get("raw")
         descriptor = value.get("receipt")
@@ -337,6 +352,7 @@ def main() -> int:
 
     print(json.dumps({
         "status": "eurostat_retained_candidates_selected",
+        "current_catalogue_data_roots": len(current_data_roots),
         "accepted_data_completed_entries": accepted_data,
         "existing_distinct_raw_sha256": len(existing),
         "missing_distinct_raw_sha256": missing_data,
