@@ -10,6 +10,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
+import gzip
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -1580,6 +1581,8 @@ class _R2ObjectStore:
         self.client = client
         self.landing_bucket = _require_object_id(landing_bucket, "R2 landing bucket")
         self.lakehouse_bucket = _require_object_id(lakehouse_bucket, "R2 lakehouse bucket")
+        self._legacy_to_r2: dict[str, tuple[str, str]] | None = None
+        self._r2_to_legacy: dict[tuple[str, str], str] | None = None
 
     @classmethod
     def from_env(cls) -> "_R2ObjectStore":
@@ -1737,20 +1740,107 @@ class _R2ObjectStore:
             )
         return result
 
-    @staticmethod
-    def _id(bucket: str, key: str) -> str:
-        return f"r2://{bucket}/{key}"
+    def _migration_index(self) -> tuple[dict[str, tuple[str, str]], dict[tuple[str, str], str]]:
+        """Load the verified Drive-ID -> R2 map created by the successful bulk migration.
 
-    @staticmethod
-    def _parse(value: str) -> tuple[str, str]:
+        Historical immutable campaign receipts keep Drive object IDs by design.
+        The R2 backend resolves those lineage identities through the private
+        migration index instead of rewriting historical control bytes.
+        """
+        if self._legacy_to_r2 is not None and self._r2_to_legacy is not None:
+            return self._legacy_to_r2, self._r2_to_legacy
+
+        control_prefix = "06_control/drive_to_r2/rclone/"
+        completed: list[tuple[Any, str]] = []
+        paginator = self.client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self.lakehouse_bucket, Prefix=control_prefix):
+            for item in page.get("Contents", []):
+                key = str(item["Key"])
+                if key.endswith("/completed.json") and int(item.get("Size", 0)) > 0:
+                    completed.append((item.get("LastModified"), key))
+        completed.sort(key=lambda item: (item[0] is not None, item[0]), reverse=True)
+
+        selected_prefix = None
+        for _, key in completed:
+            try:
+                raw = self.client.get_object(Bucket=self.lakehouse_bucket, Key=key)["Body"].read()
+                receipt = json.loads(raw)
+            except Exception:
+                continue
+            if (
+                isinstance(receipt, dict)
+                and receipt.get("format_version") == 3
+                and receipt.get("result") == "copy_completed"
+                and receipt.get("errors") == 0
+            ):
+                selected_prefix = key.rsplit("/", 1)[0]
+                break
+        if selected_prefix is None:
+            raise CampaignStoreError("verified Drive-to-R2 migration index is unavailable")
+
+        index_key = selected_prefix + "/inventory-and-map.json.gz"
+        try:
+            compressed = self.client.get_object(
+                Bucket=self.lakehouse_bucket, Key=index_key
+            )["Body"].read()
+            payload = json.loads(gzip.decompress(compressed))
+        except Exception as exc:
+            raise CampaignStoreError("verified Drive-to-R2 migration index is unreadable") from exc
+        plan = payload.get("r2") if isinstance(payload, dict) else None
+        if not isinstance(plan, dict):
+            raise CampaignStoreError("Drive-to-R2 migration index has no mapping plan")
+
+        legacy_to_r2: dict[str, tuple[str, str]] = {}
+        r2_to_legacy: dict[tuple[str, str], str] = {}
+        for section in ("objects", "folders"):
+            rows = plan.get(section)
+            if not isinstance(rows, dict):
+                raise CampaignStoreError(f"Drive-to-R2 migration index lacks {section}")
+            for legacy_id, address in rows.items():
+                if (
+                    not isinstance(legacy_id, str)
+                    or not legacy_id
+                    or not isinstance(address, dict)
+                    or not isinstance(address.get("bucket"), str)
+                    or not isinstance(address.get("key"), str)
+                    or not address["key"]
+                ):
+                    raise CampaignStoreError("Drive-to-R2 migration index contains an invalid mapping")
+                pair = (address["bucket"], address["key"])
+                existing = r2_to_legacy.get(pair)
+                if existing is not None and existing != legacy_id:
+                    # Duplicate Drive folders may intentionally merge to one R2 folder.
+                    # Those folders cannot safely masquerade as a unique legacy ID.
+                    r2_to_legacy.pop(pair, None)
+                elif pair not in r2_to_legacy:
+                    r2_to_legacy[pair] = legacy_id
+                legacy_to_r2[legacy_id] = pair
+
+        self._legacy_to_r2 = legacy_to_r2
+        self._r2_to_legacy = r2_to_legacy
+        return legacy_to_r2, r2_to_legacy
+
+    def _id(self, bucket: str, key: str) -> str:
+        try:
+            _, reverse = self._migration_index()
+        except CampaignStoreError:
+            reverse = {}
+        legacy = reverse.get((bucket, key))
+        return legacy if legacy is not None else f"r2://{bucket}/{key}"
+
+    def _parse(self, value: str) -> tuple[str, str]:
         value = _require_object_id(value, "R2 campaign object id")
-        if not value.startswith("r2://"):
-            raise CampaignStoreError("unsafe R2 campaign object id")
-        rest = value[5:]
-        bucket, sep, key = rest.partition("/")
-        if not sep or not bucket or not key or ".." in PurePosixPath(key).parts:
-            raise CampaignStoreError("unsafe R2 campaign object id")
-        return bucket, key
+        if value.startswith("r2://"):
+            rest = value[5:]
+            bucket, sep, key = rest.partition("/")
+            if not sep or not bucket or not key or ".." in PurePosixPath(key).parts:
+                raise CampaignStoreError("unsafe R2 campaign object id")
+            return bucket, key
+        legacy, _ = self._migration_index()
+        resolved = legacy.get(value)
+        if resolved is None:
+            raise CampaignStoreError("legacy Drive object id is absent from the verified R2 migration index")
+        return resolved
 
 
 class LocalCampaignStore(_CampaignStore):
