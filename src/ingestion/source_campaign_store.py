@@ -32,6 +32,10 @@ MAX_POINTER_BYTES = 16 * 1024
 MAX_LANDING_FILE_BYTES = 8 * 1024 * 1024
 MAX_LANDING_MANIFEST_BYTES = 1024 * 1024
 
+_R2_MIGRATION_INDEX_CACHE: dict[
+    tuple[str, str], tuple[dict[str, tuple[str, str]], dict[tuple[str, str], str]]
+] = {}
+
 _SOURCE_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,119}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _STATE_FILE_RE = re.compile(
@@ -1749,6 +1753,11 @@ class _R2ObjectStore:
         """
         if self._legacy_to_r2 is not None and self._r2_to_legacy is not None:
             return self._legacy_to_r2, self._r2_to_legacy
+        cache_key = (self.landing_bucket, self.lakehouse_bucket)
+        cached = _R2_MIGRATION_INDEX_CACHE.get(cache_key)
+        if cached is not None:
+            self._legacy_to_r2, self._r2_to_legacy = cached
+            return cached
 
         control_prefix = "06_control/drive_to_r2/rclone/"
         completed: list[tuple[Any, str]] = []
@@ -1818,6 +1827,7 @@ class _R2ObjectStore:
 
         self._legacy_to_r2 = legacy_to_r2
         self._r2_to_legacy = r2_to_legacy
+        _R2_MIGRATION_INDEX_CACHE[cache_key] = (legacy_to_r2, r2_to_legacy)
         return legacy_to_r2, r2_to_legacy
 
     def _id(self, bucket: str, key: str) -> str:
