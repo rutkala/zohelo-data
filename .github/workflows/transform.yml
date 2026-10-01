@@ -30,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full
-          python -m pip install "pyiceberg==0.12.0" "pyarrow==20.0.0" boto3 s3fs duckdb google-api-python-client google-auth
+          python -m pip install "pyiceberg==0.12.0" "pyarrow==20.0.0" boto3 s3fs duckdb google-api-python-client google-auth pyyaml
       - name: Prove MF Biala Lista Landing to Bronze lineage
         env:
           PYTHONPATH: src
