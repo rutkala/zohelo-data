@@ -35,6 +35,7 @@ from ingestion.source_campaign_store import R2CampaignStore, _R2ObjectStore
 SOURCE_ID = "eurostat_bulk"
 TABLE_ID = ("bronze", "eurostat_full_observations")
 OUTPUT_PREFIX = "02_bronze/eurostat_full_observations/data/retained/"
+DEFAULT_MAX_DISTRIBUTIONS = 64
 SHA_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
 
 
@@ -257,7 +258,7 @@ def data_file(table, uri: str, rows: int, size: int) -> DataFile:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--max-distributions", type=int, default=64)
+    parser.add_argument("--max-distributions", type=int, default=DEFAULT_MAX_DISTRIBUTIONS)
     parser.add_argument("--session-seconds", type=int, default=3000)
     args = parser.parse_args()
     if not 1 <= args.max_distributions <= 64:
