@@ -150,41 +150,106 @@ def control_summary(client, bucket: str, source: str) -> dict[str, Any]:
     ]
     if source == "eurostat":
         prefixes.append("06_control/source_campaigns/eurostat_bulk_bronze/")
-    direct_ids: set[str] = set()
-    hashes: set[str] = set()
     files = []
-    pointer_docs = {}
-    landing_prefix = f"/01_landing/{source}/"
+    pointers = {}
     for prefix in prefixes:
         rows = list_objects(client, bucket, prefix)
         files.extend(rows)
         for item in rows:
-            if item["size"] <= 0 or item["size"] > 8 * 1024 * 1024:
-                continue
-            if not item["key"].lower().endswith(".json"):
+            name = PurePosixPath(item["key"]).name
+            if (
+                name not in {
+                    "current-ingestion-state.json",
+                    "current-landing.json",
+                    "publication-owner.json",
+                }
+                or item["size"] <= 0
+                or item["size"] > 8 * 1024 * 1024
+            ):
                 continue
             raw = client.get_object(Bucket=bucket, Key=item["key"])["Body"].read()
             try:
-                value = json.loads(raw)
-            except Exception:
-                continue
-            walk(value, landing_prefix, direct_ids, hashes)
-            name = PurePosixPath(item["key"]).name
-            if name in {
-                "current-ingestion-state.json",
-                "current-landing.json",
-                "publication-owner.json",
-            }:
-                pointer_docs[item["key"]] = value
+                pointers[item["key"]] = json.loads(raw)
+            except Exception as exc:
+                pointers[item["key"]] = {"parse_error": type(exc).__name__}
     return {
         "prefixes": prefixes,
         "objects": len(files),
         "bytes": sum(item["size"] for item in files),
-        "direct_landing_object_ids": len(direct_ids),
-        "direct_landing_sha256": len(hashes),
-        "sample_direct_ids": sorted(direct_ids)[:12],
-        "pointers": pointer_docs,
+        "pointers": pointers,
     }
+
+
+def campaign_probe(source: str) -> dict[str, Any]:
+    from ingestion.full_source_campaign import coverage
+    from ingestion.bulk_publication import verify_bulk_index
+    from ingestion.source_campaign_store import R2CampaignStore
+
+    result: dict[str, Any] = {}
+    try:
+        bulk = R2CampaignStore(source + "_bulk", publication_only=True)
+        state = bulk.load()
+        result["bulk_state"] = {
+            "loaded": state is not None,
+            "coverage": coverage(state) if state is not None else None,
+            "receipts": len(state.get("receipts", [])) if isinstance(state, dict) else 0,
+            "pending": len(state.get("pending", [])) if isinstance(state, dict) else 0,
+        }
+        index = verify_bulk_index(bulk, require_current=True)
+        result["bulk_index"] = (
+            {
+                "snapshot_id": index.get("snapshot_id"),
+                "source_receipt_count": index.get("source_receipt_count"),
+                "row_count": index.get("row_count"),
+            }
+            if isinstance(index, dict)
+            else None
+        )
+        receipts = state.get("receipts", []) if isinstance(state, dict) else []
+        if receipts:
+            receipt = bulk.read_receipt(receipts[-1])
+            raw = receipt.get("raw") if isinstance(receipt, dict) else None
+            result["latest_bulk_receipt"] = {
+                "accepted": receipt.get("accepted") if isinstance(receipt, dict) else None,
+                "kind": receipt.get("kind") if isinstance(receipt, dict) else None,
+                "dataset_id": (
+                    receipt.get("distribution", {}).get("dataset_id")
+                    if isinstance(receipt, dict)
+                    and isinstance(receipt.get("distribution"), dict)
+                    else None
+                ),
+                "distribution_kind": (
+                    receipt.get("distribution", {}).get("kind")
+                    if isinstance(receipt, dict)
+                    and isinstance(receipt.get("distribution"), dict)
+                    else None
+                ),
+                "raw": raw,
+            }
+    except Exception as exc:
+        result["bulk_error"] = {
+            "type": type(exc).__name__,
+            "detail": str(exc),
+        }
+
+    try:
+        standard = R2CampaignStore(source, publication_only=True)
+        state = standard.load()
+        result["standard_state"] = {
+            "loaded": state is not None,
+            "source_id": state.get("source_id") if isinstance(state, dict) else None,
+            "accepted_responses": (
+                state.get("accepted_responses") if isinstance(state, dict) else None
+            ),
+            "pending": len(state.get("pending", [])) if isinstance(state, dict) else 0,
+            "receipts": len(state.get("receipts", [])) if isinstance(state, dict) else 0,
+        }
+    except Exception as exc:
+        result["standard_error"] = {
+            "type": type(exc).__name__,
+            "detail": str(exc),
+        }
+    return result
 
 
 def source_for_table(name: str) -> str | None:
@@ -246,6 +311,7 @@ def main() -> int:
             "landing": landing_summary(client, landing_bucket, source),
             "archive": archive_summary(client, landing_bucket, source),
             "control": control_summary(client, lakehouse_bucket, source),
+            "campaign": campaign_probe(source),
             "bronze": table_summary(cat, "bronze", source),
             "silver": table_summary(cat, "silver", source),
             "gold": table_summary(cat, "gold", source),
