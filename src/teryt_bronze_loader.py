@@ -25,13 +25,11 @@ from typing import Any
 import zipfile
 
 import duckdb
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from storage_manager import StorageManager
 
 logger = logging.getLogger("teryt_bronze_loader")
 logging.basicConfig(
@@ -67,7 +65,6 @@ def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_
     return created["id"]
 
 
-from drive_safe_upload import safe_drive_upload
 
 
 def _upload_file_to_drive(
@@ -77,6 +74,7 @@ def _upload_file_to_drive(
     parent_id: str,
     mime_type: str = "application/octet-stream",
 ) -> dict[str, Any]:
+    from drive_safe_upload import safe_drive_upload
     return safe_drive_upload(
         storage,
         local_path,
@@ -87,6 +85,7 @@ def _upload_file_to_drive(
 
 
 def _download_teryt_from_drive(storage: StorageManager, dest_dir: Path) -> list[Path]:
+    from googleapiclient.http import MediaIoBaseDownload
     dest_dir.mkdir(parents=True, exist_ok=True)
     landing_id = storage.resolve_zone("landing")
     q_src = f"name='gus_teryt' and '{_escape_query(landing_id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
@@ -137,6 +136,7 @@ def transform_teryt_bronze(
 
     storage = None
     if can_upload or not any(landing_dir.glob("*.zip")):
+        from storage_manager import StorageManager
         if allow_codespace:
             os.environ["ZOHELO_ALLOW_PRODUCTION_WRITES"] = "true"
         storage = StorageManager(allow_interactive_auth=False)
