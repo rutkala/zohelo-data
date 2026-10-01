@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
 from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
@@ -37,6 +38,38 @@ TABLE_ID = ("bronze", "eurostat_full_observations")
 OUTPUT_PREFIX = "02_bronze/eurostat_full_observations/data/retained/"
 DEFAULT_MAX_DISTRIBUTIONS = 64
 SHA_RE = __import__("re").compile(r"^[0-9a-f]{64}$")
+RETRY_DELAYS = (2, 5, 10, 20, 40)
+
+
+def transient(exc: Exception) -> bool:
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+            return True
+        if isinstance(exc, requests.HTTPError):
+            return exc.response is not None and exc.response.status_code in {
+                429, 500, 502, 503, 504
+            }
+        # PyIceberg wraps REST failures (including uncertain commit outcomes)
+        # while preserving the original HTTPError as the exception cause.
+        exc = exc.__cause__
+    return False
+
+
+def retry_read(operation, label: str):
+    """Retry only reads; callers must separately reconcile ambiguous commits."""
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        try:
+            return operation()
+        except Exception as exc:
+            if not transient(exc) or attempt == len(RETRY_DELAYS):
+                raise
+            delay = RETRY_DELAYS[attempt]
+            print(json.dumps({"status": "transient_read_retry", "operation": label,
+                              "attempt": attempt + 1, "delay_seconds": delay,
+                              "error_type": type(exc).__name__}), flush=True)
+            time.sleep(delay)
 
 
 def req(name: str) -> str:
@@ -77,15 +110,20 @@ def sql_rows(query: str) -> list[dict[str, Any]]:
         "https://api.sql.cloudflarestorage.com/api/v1/accounts/"
         f"{req('CLOUDFLARE_ACCOUNT_ID')}/r2-sql/query/{req('R2_LAKEHOUSE_BUCKET')}"
     )
-    response = requests.post(
-        url,
-        headers={
-            "Authorization": f"Bearer {req('R2_DATA_CATALOG_TOKEN')}",
-            "Content-Type": "application/json",
-        },
-        json={"query": query},
-        timeout=180,
-    )
+    def read_query():
+        response = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {req('R2_DATA_CATALOG_TOKEN')}",
+                "Content-Type": "application/json",
+            },
+            json={"query": query},
+            timeout=180,
+        )
+        response.raise_for_status()
+        return response
+
+    response = retry_read(read_query, "r2_sql_select")
     if response.status_code != 200:
         raise RuntimeError(f"R2 SQL {response.status_code}: {response.text[:500]}")
     payload = response.json()
@@ -220,9 +258,11 @@ def put_output(client, bucket: str, raw_sha: str, path: Path) -> tuple[str, int,
             or metadata.get("raw-sha256") != raw_sha
         ):
             raise RuntimeError(f"existing retained Eurostat output conflicts: {key}")
-    except RuntimeError:
-        raise
-    except Exception:
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        if status != 404 and code not in {"404", "NoSuchKey", "NotFound"}:
+            raise
         client.upload_file(
             str(path),
             bucket,
@@ -268,8 +308,8 @@ def main() -> int:
 
     started = time.monotonic()
     client = s3()
-    cat = catalog()
-    table = cat.load_table(TABLE_ID)
+    cat = retry_read(catalog, "catalog_configuration")
+    table = retry_read(lambda: cat.load_table(TABLE_ID), "load_eurostat_table")
     bucket = req("R2_LAKEHOUSE_BUCKET")
     landing_bucket = req("R2_LANDING_BUCKET")
     resolver = _R2ObjectStore.from_env()
@@ -382,6 +422,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="zohelo-eurostat-r2-catchup-") as temporary:
         root = Path(temporary)
         for index, (descriptor, receipt) in enumerate(selected):
+            if prepared and time.monotonic() - started >= args.session_seconds:
+                break
             raw_sha = receipt["raw"]["sha256"]
             work = root / f"{index:03d}-{raw_sha}"
             work.mkdir()
@@ -428,29 +470,63 @@ def main() -> int:
                 **prepared[-1],
             }, sort_keys=True), flush=True)
 
-    table = cat.load_table(TABLE_ID)
-    existing_paths = {str(task.file.file_path) for task in table.scan().plan_files()}
-    to_append = [item for item in prepared if item["uri"] not in existing_paths]
-    if to_append:
-        with table.transaction() as tx:
-            if tx.table_metadata.name_mapping() is None:
-                tx.set_properties(**{
-                    TableProperties.DEFAULT_NAME_MAPPING:
-                    tx.table_metadata.schema().name_mapping.model_dump_json()
-                })
-            with tx.update_snapshot(snapshot_properties={
-                "zohelo.operation": "catch-up-eurostat-r2-bronze",
-                "zohelo.source": "eurostat_bulk",
-            }).fast_append() as append:
-                for item in to_append:
-                    append.append_data_file(
-                        data_file(table, item["uri"], int(item["rows"]), int(item["bytes"]))
-                    )
+    # A lost commit response is ambiguous. Reload catalog membership before every
+    # attempt; never resend an append based only on a connection error or SQL lag.
+    before_paths = None
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        table = retry_read(lambda: cat.load_table(TABLE_ID), "reload_eurostat_table")
+        existing_files = retry_read(
+            lambda: {str(task.file.file_path): task.file for task in table.scan().plan_files()},
+            "read_eurostat_file_membership",
+        )
+        if before_paths is None:
+            before_paths = set(existing_files)
+        for item in prepared:
+            present = existing_files.get(item["uri"])
+            if present is not None and (
+                int(present.record_count) != int(item["rows"])
+                or int(present.file_size_in_bytes) != int(item["bytes"])
+            ):
+                raise RuntimeError("existing Eurostat Iceberg file identity differs")
+        missing = [item for item in prepared if item["uri"] not in existing_files]
+        if not missing:
+            break
+        try:
+            with table.transaction() as tx:
+                if tx.table_metadata.name_mapping() is None:
+                    tx.set_properties(**{
+                        TableProperties.DEFAULT_NAME_MAPPING:
+                        tx.table_metadata.schema().name_mapping.model_dump_json()
+                    })
+                with tx.update_snapshot(snapshot_properties={
+                    "zohelo.operation": "catch-up-eurostat-r2-bronze",
+                    "zohelo.source": "eurostat_bulk",
+                }).fast_append() as append:
+                    for item in missing:
+                        append.append_data_file(
+                            data_file(table, item["uri"], int(item["rows"]), int(item["bytes"]))
+                        )
+            break
+        except Exception as exc:
+            if not transient(exc) or attempt == len(RETRY_DELAYS):
+                raise
+            delay = RETRY_DELAYS[attempt]
+            print(json.dumps({"status": "ambiguous_commit_recheck",
+                              "attempt": attempt + 1, "delay_seconds": delay,
+                              "error_type": type(exc).__name__}), flush=True)
+            time.sleep(delay)
+    to_append = [item for item in prepared if item["uri"] not in before_paths]
 
-    after = existing_raw_hashes()
-    missing_after_commit = [
-        item["raw_sha256"] for item in prepared if item["raw_sha256"] not in after
-    ]
+    # SQL indexing may trail a successful catalog commit. Verification retries do
+    # not perform another append.
+    for attempt in range(len(RETRY_DELAYS) + 1):
+        after = existing_raw_hashes()
+        missing_after_commit = [
+            item["raw_sha256"] for item in prepared if item["raw_sha256"] not in after
+        ]
+        if not missing_after_commit or attempt == len(RETRY_DELAYS):
+            break
+        time.sleep(RETRY_DELAYS[attempt])
     if missing_after_commit:
         raise RuntimeError(
             f"Eurostat Iceberg commit lacks prepared raw hashes: {missing_after_commit}"
