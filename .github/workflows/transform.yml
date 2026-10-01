@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'scripts/finalize-nbp-r2.py'
+      - 'scripts/inspect-eurostat-wdi-r2.py'
       - '.github/workflows/transform.yml'
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  nbp_finalize:
+  eurostat_wdi_inspect:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -27,9 +27,9 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version-file: .python-version
-      - name: Install NBP finalization dependencies
+      - name: Install reconciliation inspection dependencies
         run: python -m pip install "duckdb==1.5.5" "pyiceberg==0.12.0" boto3 s3fs
-      - name: Finalize exact NBP Landing and Archive lineage
+      - name: Inspect Eurostat and WDI R2 lineage state
         env:
           R2_DATA_CATALOG_TOKEN: ${{ secrets.R2_DATA_CATALOG_TOKEN }}
           R2_CATALOG_URI: ${{ vars.R2_CATALOG_URI }}
@@ -39,7 +39,7 @@ jobs:
           R2_S3_ENDPOINT: ${{ vars.R2_S3_ENDPOINT }}
           R2_LANDING_BUCKET: ${{ vars.R2_LANDING_BUCKET }}
           R2_LAKEHOUSE_BUCKET: ${{ vars.R2_LAKEHOUSE_BUCKET }}
-        run: python scripts/finalize-nbp-r2.py
+        run: python scripts/inspect-eurostat-wdi-r2.py
 
   promote:
     if: github.event_name == 'workflow_dispatch'
