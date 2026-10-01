@@ -24,17 +24,17 @@ import sys
 import tempfile
 import threading
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 import zipfile
 
 import duckdb
-from googleapiclient.http import MediaFileUpload
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from storage_manager import StorageManager
+if TYPE_CHECKING:
+    from storage_manager import StorageManager
 
 logger = logging.getLogger("gleif_bronze_loader")
 logging.basicConfig(
@@ -60,7 +60,7 @@ def _hash_file(path: Path) -> tuple[str, str]:
     return d_sha.hexdigest(), d_md5.hexdigest()
 
 
-def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_id: str) -> str:
+def _resolve_or_create_folder(storage: "StorageManager", folder_name: str, parent_id: str) -> str:
     query = f"name='{_escape_query(folder_name)}' and '{_escape_query(parent_id)}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
     with DRIVE_LOCK:
         existing = storage.drive_service.files().list(q=query, spaces="drive", fields="files(id,name)").execute().get("files", [])
@@ -74,16 +74,15 @@ def _resolve_or_create_folder(storage: StorageManager, folder_name: str, parent_
     return created["id"]
 
 
-from drive_safe_upload import safe_drive_upload
-
-
 def _upload_file_to_drive(
-    storage: StorageManager,
+    storage: "StorageManager",
     local_path: Path,
     name: str,
     parent_id: str,
     mime_type: str = "application/octet-stream",
 ) -> dict[str, Any]:
+    from drive_safe_upload import safe_drive_upload
+
     return safe_drive_upload(
         storage,
         local_path,
@@ -193,7 +192,7 @@ def transform_gleif_lei2_to_bronze(zip_path: Path, out_parquet: Path) -> int:
 def run_gleif_bronze_transformation(
     landing_workspace: Path,
     bronze_workspace: Path,
-    storage: StorageManager | None = None,
+    storage: "StorageManager | None" = None,
     allow_codespace: bool = False,
     skip_upload: bool = False,
 ) -> dict[str, Any]:
@@ -229,6 +228,8 @@ def run_gleif_bronze_transformation(
         if storage is None:
             if allow_codespace:
                 os.environ["ZOHELO_ALLOW_PRODUCTION_WRITES"] = "true"
+            from storage_manager import StorageManager
+
             storage = StorageManager(allow_interactive_auth=False)
             storage.resolve_root(create=False)
             storage.authorize_writes()
