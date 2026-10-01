@@ -1,43 +1,65 @@
 # Current status
 
-## Owner priority — 29 September 2026
+Updated 2 October 2026 (Europe/Warsaw).
 
-Remove repository tests and retain only a few operational Actions. Keep the
-architecture and existing capabilities; simplify before adding new machinery.
+## Production baseline
 
-## Cleanup
+Cloudflare R2 is the production store; Google sign-in is identity only.
+The Drive-to-R2 copy was reported complete: 215,002 files, approximately
+162.17 GB, zero errors. Later operation records report the Drive root removed.
+The current architecture and lifecycle are documented in
+[architecture.md](architecture.md) and [data-lifecycle.md](data-lifecycle.md).
 
-Four workflow definitions remain: ingestion, transformations, portal deployment
-and the temporary Drive-to-R2 copy. The old 12-workflow surface is replaced by
-these four. No automatic CI/check/test Action remains.
+Exactly three operational workflows remain: Ingestion, Transformations and
+Deploy portal. Repository test suites and regression-test/CI workflows were
+intentionally removed. Ingestion has no schedule and must not be started during
+the retained-data reconciliation.
 
-Python and portal test suites and fixtures, browser test configuration/commands,
-dbt test declarations and the generic test macro are removed. The publisher no
-longer requires dbt test results or coverage. Model success and ordinary runtime
-integrity/ownership/error handling remain. Agent guides prohibit restoring tests
-or historical workflow queues without an explicit owner request.
+## Active owner request
 
-No ingestion, migration, transformation, deployment or test execution is part of
-this cleanup. A temporary branch-only maintenance Action was attempted but did
-not start; its YAML and helper script were deleted. Changes were applied through
-GitHub edits instead. The final merge must not retain that temporary Action.
+Finish reconciliation using only data already in R2, without new provider calls,
+in this order: Eurostat → World Bank WDI → GUS DBW → OpenData.org → GUS BDL.
+Continue without routine user supervision; notify on verified completion or a
+blocker that actually requires the owner's action.
 
-## Boundaries and remaining work
+Completion requires source-specific evidence that retained inputs are represented
+correctly in Bronze, recoverable archives with complete hash readback, and safe
+live control references. A successful batch, a table's presence, or a partial
+archive receipt does not certify a source as complete. Pending ingestion tasks
+are outside this request and remain untouched.
 
-The source runners and portal application remain; this is not a full internal
-rewrite. World Bank/Eurostat downstream modeling is now manually selected rather
-than chained after intake. Existing NBP/WDI/Eurostat intake schedules remain.
-BDL keeps ten VPN workers and checkpoints, without automatic self-dispatch.
+## Evidence and remaining work
 
-BDL still needs its browser automation dependency. The npm lockfile has not been
-regenerated, so historical test-package records may remain there. Old reports are
-historical evidence, not instructions to restore tests. Legacy `tests` metadata
-is retained for compatibility with the deployed readers, not to claim suite runs.
+- NBP, GLEIF, PRG, TERYT and MF reconciliation was reported closed in the
+  1 October operation records.
+- Eurostat run 36931970334 committed 256 distributions before a catalog
+  connection failed; distinct represented raw hashes increased from 743 to 999.
+  Its continuation run is 36931994687. These are dated observations, not a
+  current coverage certificate.
+- Recovery run 36936477069 was queued on 2 October, pinned to 65fcfadd.
+  It serializes with the existing transformation writer, retries transient
+  catalog reads, reconciles ambiguous commits through current file membership,
+  drains accepted current-catalogue distributions within a bounded runtime,
+  and attempts proven archival and a portal-index refresh. It never deletes
+  Landing. Remaining standard responses and historical/control inputs still
+  require explicit reconciliation.
+- WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
+  require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
+  performs that comparison read-only and does not declare completion.
+- DBW requires exact retained native ZIP/CSV versus Bronze row comparison,
+  including observations, dictionaries, metadata and taxonomy.
+- OpenData's historical Landing publisher used the empty-byte SHA for its large
+  ZIP; do not use that placeholder as identity proof. Recompute raw identity and
+  prove all parsed member rows before archival/deletion.
+- BDL Web requires receipt/selection/raw-archive linkage and exact parsed-row
+  comparison. BDL API provenance must be checked separately.
 
-R2/Iceberg remains the target; no storage cutover, retained-data deletion or release
-pointer change occurred. Copy completion is not certified. Earlier execution holds,
-including the held R2 observer publication, are not resolved or retried by cleanup.
-Separately configured agents/automations are not cancelled by repository edits.
+`scripts/inspect-retained-reconciliation-r2.py` collects retained object and
+table metadata without provider calls or remote writes. Its bounded probes are
+diagnostics, not coverage proof. The recovery workflow stores its JSON as an
+Actions artifact for source-specific follow-up.
 
-See [operating commands](audits/2026-09-07-workflows.md) and [AGENTS.md](../AGENTS.md).
-Historical status remains in Git history and deliverables-before-r2-20260929.md.
+The existing hourly “Reconcile remaining sources” task is responsible for
+continuing safe bounded work and notifying the owner only when all required
+sources have verified final evidence. Always inspect live Actions before starting
+another writer. Keep steady-state workflows manual-only.
