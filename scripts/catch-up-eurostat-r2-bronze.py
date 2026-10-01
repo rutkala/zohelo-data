@@ -262,8 +262,8 @@ def main() -> int:
     args = parser.parse_args()
     if not 1 <= args.max_distributions <= 64:
         parser.error("--max-distributions must be 1-64")
-    if not 60 <= args.session_seconds <= 5400:
-        parser.error("--session-seconds must be 60-5400")
+    if not 60 <= args.session_seconds <= 6600:
+        parser.error("--session-seconds must be 60-6600")
 
     started = time.monotonic()
     client = s3()
