@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import time
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
@@ -31,7 +32,7 @@ import pyarrow.fs as pafs
 from pyarrow.fs import AwsStandardS3RetryStrategy
 import pyarrow.parquet as pq
 from pyiceberg.catalog.rest import RestCatalog
-from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError, TableAlreadyExistsError
+from pyiceberg.exceptions import NamespaceAlreadyExistsError, NoSuchTableError, TableAlreadyExistsError, TooManyRequestsError
 from pyiceberg.manifest import DataFile, DataFileContent, FileFormat
 from pyiceberg.table import TableProperties
 from pyiceberg.typedef import Record
@@ -91,9 +92,33 @@ def canonical_key(source_key: str) -> str:
     return f"02_bronze/eurostat_full_observations/data/{digest}.parquet"
 
 
+_NAMESPACE_CACHE: set[str] = set()
+
 def ensure_namespace(cat,ns: str):
-    try: cat.create_namespace(ns)
-    except NamespaceAlreadyExistsError: pass
+    if ns in _NAMESPACE_CACHE:
+        return
+    try:
+        if any(tuple(item)==(ns,) for item in cat.list_namespaces()):
+            _NAMESPACE_CACHE.add(ns)
+            return
+    except Exception:
+        pass
+    for attempt in range(1,6):
+        try:
+            cat.create_namespace(ns)
+            _NAMESPACE_CACHE.add(ns)
+            return
+        except NamespaceAlreadyExistsError:
+            _NAMESPACE_CACHE.add(ns)
+            return
+        except TooManyRequestsError:
+            if attempt==5:
+                raise
+            delay=min(5*attempt,20)
+            print(json.dumps({"result":"retry","operation":"ensure_namespace",
+                              "namespace":ns,"attempt":attempt,
+                              "delay_seconds":delay}),flush=True)
+            time.sleep(delay)
 
 
 def copy_one(client,bucket: str,source_key: str,target_key: str,size: int):
