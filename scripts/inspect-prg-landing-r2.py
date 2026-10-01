@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inspect the current GUGiK PRG Landing objects and XLSX schema from private R2.
 
-Read-only. No R2 object, Iceberg table, or control state is modified.
+Read-only. No R2 object, Iceberg table, or control state is modified. The output is intended to define the missing Bronze contract.
 """
 
 from __future__ import annotations
