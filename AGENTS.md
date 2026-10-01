@@ -1,35 +1,58 @@
 # Working on zohelo-data
 
 The owner's current request takes precedence over historical plans.
-Keep ingestion, native Landing/Archive, Bronze/Silver/Gold, modeling, semantic
-models and the portal. R2/Iceberg remains the target; cleanup is not cutover.
+
+The production platform is Cloudflare R2 + R2 Data Catalog / Apache Iceberg.
+Google Drive and legacy `releases/` / `current/` folders are historical
+architecture, not current targets.
 
 ## Keep it simple
 
 Use direct Python/SQL and the smallest command needed for the task. Inspect an
 existing workflow before choosing it. Do not add frameworks, agent delegation,
 automatic follow-up jobs, pilots, reports or workflows without an explicit need.
-Read only task-relevant files; old plans are not an execution queue.
 
-The owner explicitly requested removal of all repository tests. Do not recreate
-test suites, fixtures, test runners or CI/check workflows unless the owner asks.
-Do not replace deleted tests with renamed probes, acceptance suites or mandatory
-preflights. There is no test prerequisite for development, ingestion or deployment.
-Historical test results and removed workflow names are history, not instructions.
+The owner explicitly requested removal of repository test suites and CI/check
+workflows. Do not recreate regression-test workflows, fixtures or mandatory
+preflight suites unless the owner asks.
 
-## Preserve the actual operation
+## Preserve the real operation
 
 Keep credentials private, bounded retries/timeouts, resumable checkpoints,
-writer locks, original payload bytes and ordinary input/output error handling.
-Removing tests does not mean silently publishing corrupt data or hiding errors.
-Never delete retained production data as repository cleanup. Never claim complete
-source coverage from a sample. Do not change storage readers/writers or release
-pointers without explicit cutover. No new paid services or model API billing.
+writer locks, original payload bytes and ordinary input/output integrity checks.
+
+Never:
+
+- silently fall back from R2 to Google Drive;
+- recreate `releases/` or layer `current/` as an internal visibility gate;
+- claim complete source coverage from partial data;
+- enable an ingestion schedule without explicit owner approval;
+- delete the only recoverable raw source copy;
+- expose R2 writer credentials to the browser.
+
+## Storage contract
+
+- `zohelo-landing-prod/01_landing`: native/current raw inputs.
+- `zohelo-landing-prod/05_archive`: verified raw history.
+- R2 Data Catalog `bronze`, `silver`, `gold`: Apache Iceberg tables.
+- `zohelo-lakehouse-prod/06_control`: operational state/checkpoints/receipts.
+
+Use [docs/data-lifecycle.md](docs/data-lifecycle.md) for archival and
+Landing→Bronze→Silver→Gold rules.
+
+## Workflows
+
+Keep exactly the three current operational Actions unless the owner asks for a
+new one:
+
+1. Ingestion (R2 manual)
+2. Transformations (R2)
+3. Deploy portal
+
+No scheduled ingestion is currently authorized.
 
 ## Deliver
 
-Keep four operational Actions: ingestion, transformations, portal deployment and
-the temporary Drive-to-R2 copy. No CI/test Action. Do not silently chain optional
-diagnostics or launch production operations to check repository edits.
 Report what changed, what actually ran, whether it reached main and what remains.
-Preserve other contributors' work. See README.md for current operating commands.
+Preserve other contributors' work. Prefer idempotent data operations so a failed
+run can resume from durable state instead of starting over.
