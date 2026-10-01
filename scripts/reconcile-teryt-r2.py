@@ -158,13 +158,21 @@ def quoted(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def table_name(table) -> str:
+    identifier = getattr(table, "_identifier", None)
+    if not isinstance(identifier, tuple) or not identifier:
+        raise RuntimeError("PyIceberg table identifier is unavailable")
+    return ".".join(identifier)
+
+
 def prove_logical_equivalence(table, local_path: Path) -> dict[str, Any]:
+    name = table_name(table)
     current = table.scan().to_arrow()
     local = pq.read_table(local_path)
 
     if current.num_rows != local.num_rows:
         raise RuntimeError(
-            f"row count mismatch for {'.'.join(table.identifier)}: "
+            f"row count mismatch for {name}: "
             f"current={current.num_rows} regenerated={local.num_rows}"
         )
 
@@ -172,7 +180,7 @@ def prove_logical_equivalence(table, local_path: Path) -> dict[str, Any]:
     local_names = set(local.column_names)
     if current_names != local_names:
         raise RuntimeError(
-            f"schema column mismatch for {'.'.join(table.identifier)}: "
+            f"schema column mismatch for {name}: "
             f"current={sorted(current_names)} regenerated={sorted(local_names)}"
         )
 
@@ -180,7 +188,7 @@ def prove_logical_equivalence(table, local_path: Path) -> dict[str, Any]:
         name for name in local.column_names if name not in TECHNICAL_COLUMNS
     ]
     if not business_columns:
-        raise RuntimeError(f"no business columns found in {'.'.join(table.identifier)}")
+        raise RuntimeError(f"no business columns found in {name}")
 
     con = duckdb.connect()
     try:
@@ -210,14 +218,14 @@ def prove_logical_equivalence(table, local_path: Path) -> dict[str, Any]:
 
     if forward or reverse:
         raise RuntimeError(
-            f"logical content mismatch for {'.'.join(table.identifier)}: "
+            f"logical content mismatch for {name}: "
             f"regenerated_only={forward} current_only={reverse}"
         )
 
     snapshot = table.current_snapshot()
     files = list(table.scan().plan_files())
     return {
-        "table": ".".join(table.identifier),
+        "table": name,
         "snapshot_id": str(snapshot.snapshot_id) if snapshot is not None else None,
         "rows": current.num_rows,
         "current_data_files": len(files),
