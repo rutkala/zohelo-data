@@ -13,6 +13,7 @@ The output is used to choose the next source-specific proof without guessing.
 
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 from datetime import datetime, timezone
 import json
@@ -295,6 +296,11 @@ def table_summary(cat, namespace: str, source: str) -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Inspect one or both Eurostat/WDI R2 reconciliation states.")
+    parser.add_argument("--source", choices=SOURCES, action="append")
+    args = parser.parse_args()
+    selected = tuple(dict.fromkeys(args.source or SOURCES))
+
     client = s3()
     cat = catalog()
     landing_bucket = req("R2_LANDING_BUCKET")
@@ -306,7 +312,7 @@ def main() -> int:
         "observed_at_utc": datetime.now(timezone.utc).isoformat(),
         "sources": {},
     }
-    for source in SOURCES:
+    for source in selected:
         report["sources"][source] = {
             "landing": landing_summary(client, landing_bucket, source),
             "archive": archive_summary(client, landing_bucket, source),
