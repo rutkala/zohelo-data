@@ -1,6 +1,6 @@
 # Current status
 
-Updated 2 October 2026 (Europe/Warsaw).
+Updated 3 October 2026 (Europe/Warsaw).
 
 ## Production baseline
 
@@ -52,14 +52,21 @@ are outside this request and remain untouched.
   3,216 to 3,386, leaving 240 in this retained-data phase (248 before the
   final batch, 8 committed). There were no runtime exceptions or retry events;
   the session ended with `bounded_session_finished` and intentional exit 2.
-- After checking that no running, queued or waiting Actions existed and that
-  the pinned reconciliation code remains appropriate, attempt 4 was resumed
-  at 18:09 Paris on 2 October. Job 110920804688 is running from durable Iceberg
-  membership; completed distributions are skipped. It retains buffered batch
-  logging; the newer live-log change on main applies to new dispatches.
-  Archive, final coverage and portal-index steps have not yet run. Remaining
-  standard responses and historical/control inputs still require explicit
-  reconciliation; no Landing was deleted.
+- Attempt 4 (job 110920804688) ran from 18:09 to 23:16 Warsaw on 2 October.
+  Eleven completed batch receipts added another 62 distributions, 315,670,566
+  rows and 12,315,373,140 data bytes. Represented hashes increased from 3,386
+  to 3,448, leaving at most 178 in this retained-current phase. Five transient
+  catalog connection errors recovered on their first retry. The twelfth wrapper
+  invocation exhausted its final 501-second allowance, so the job ended with
+  `subprocess.TimeoutExpired`; this was a bounded incomplete session, not a
+  deterministic data error. Archive, final coverage and portal-index steps did
+  not run, and no Landing object was deleted.
+- After confirming no competing writer and that the pinned membership/recovery
+  logic remains appropriate, attempt 5 (job 111050472387) was queued shortly
+  after midnight Warsaw on 3 October. It resumes from durable Iceberg membership;
+  already-committed or ambiguously committed files are rechecked before append.
+  Remaining standard responses and historical/control inputs still require
+  explicit reconciliation after the retained-current phase.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
