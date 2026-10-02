@@ -54,7 +54,8 @@ jobs:
         if: inputs.operation != 'inspect-retained'
         run: |
           python - <<'PY'
-          import json, subprocess, sys, time
+          import json, os, subprocess, sys, time
+          from pathlib import Path
           deadline = time.monotonic() + 18000
           for batch in range(1, 129):
               remaining = int(deadline - time.monotonic())
@@ -62,12 +63,23 @@ jobs:
                   print(json.dumps({"result": "incomplete", "reason": "bounded_session_finished", "next": "resume_from_iceberg_membership"}), flush=True)
                   sys.exit(2)
               print(json.dumps({"operation": "retained_eurostat_batch", "batch": batch}), flush=True)
-              result = subprocess.run([sys.executable, "scripts/catch-up-eurostat-r2-bronze.py", "--max-distributions", "64", "--session-seconds", str(min(900, remaining-120))], text=True, stdout=subprocess.PIPE, timeout=remaining)
-              print(result.stdout, end="", flush=True)
-              if result.returncode:
-                  sys.exit(result.returncode)
+              log = Path(os.environ["RUNNER_TEMP"]) / "eurostat-batch.jsonl"
+              command = [sys.executable, "-u", "scripts/catch-up-eurostat-r2-bronze.py", "--max-distributions", "64", "--session-seconds", str(min(900, remaining-120))]
+              process = subprocess.Popen(command, stdout=subprocess.PIPE)
+              try:
+                  # Stream progress immediately while retaining the exact receipt
+                  # for the existing completion check. Preserve the session limit.
+                  subprocess.run(["tee", str(log)], stdin=process.stdout, check=True, timeout=remaining)
+                  returncode = process.wait(timeout=max(1, int(deadline-time.monotonic())))
+              finally:
+                  process.stdout.close()
+                  if process.poll() is None:
+                      process.kill()
+                      process.wait()
+              if returncode:
+                  sys.exit(returncode)
               receipts = []
-              for line in result.stdout.splitlines():
+              for line in log.read_text().splitlines():
                   try:
                       item = json.loads(line)
                   except ValueError:
