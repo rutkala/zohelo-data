@@ -13,7 +13,8 @@ The current architecture and lifecycle are documented in
 Exactly three operational workflows remain: Ingestion, Transformations and
 Deploy portal. Repository test suites and regression-test/CI workflows were
 intentionally removed. Ingestion has no schedule and must not be started during
-the retained-data reconciliation.
+the retained-data reconciliation. It also stays paused afterward until the
+owner reviews the actual dataflow and later instructs resumption.
 
 ## Active owner request
 
@@ -37,11 +38,19 @@ are outside this request and remain untouched.
   increased from 999 to 3,062. The recovery run handled two transient catalog
   connection errors, then stopped at its five-hour budget at 06:36 Warsaw.
   It reported an incomplete bounded session, not a data-processing failure.
-- The final committed batch implies 564 current retained distributions remain
-  (580 missing before that batch, 16 committed). This is a dated estimate,
-  not a complete-source coverage percentage. Job 110633452659 was resumed
-  on 2 October after 07:01 Warsaw, after confirming no competing writer.
-  It resumes from Iceberg membership and skips completed distributions.
+- Run 36936477069 attempt 2 (job 110713460245) finished at 12:06 Paris/Warsaw
+  on 2 October with `bounded_session_finished` (exit 2). All 12 batches passed:
+  another 154 distributions, 296,717,866 rows and 11,494,031,374 data bytes were
+  committed; represented raw hashes increased from 3,062 to 3,216.
+  Seven transient catalog connection errors recovered on their first retry.
+  The last receipt implies 410 current retained distributions remain
+  (412 missing before the last batch, 2 committed). This count describes this
+  retained-data phase, not full Eurostat source coverage.
+- After confirming no running, queued or waiting Actions and that the pinned
+  reconciliation code remains appropriate, attempt 3 was resumed at 12:34 Paris
+  on 2 October. Job 110803292155 is running from durable Iceberg membership;
+  completed distributions are skipped. It uses the same pinned code and buffered
+  batch logs; the newer live-log change on main applies to new dispatches.
   Archive, final coverage and portal-index steps have not yet run. Remaining
   standard responses and historical/control inputs still require explicit
   reconciliation; no Landing was deleted.
