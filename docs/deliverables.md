@@ -32,17 +32,19 @@ are outside this request and remain untouched.
 
 - NBP, GLEIF, PRG, TERYT and MF reconciliation was reported closed in the
   1 October operation records.
-- Eurostat run 36931970334 committed 256 distributions before a catalog
-  connection failed; distinct represented raw hashes increased from 743 to 999.
-  Its continuation run is 36931994687. These are dated observations, not a
-  current coverage certificate.
-- Recovery run 36936477069 was queued on 2 October, pinned to 65fcfadd.
-  It serializes with the existing transformation writer, retries transient
-  catalog reads, reconciles ambiguous commits through current file membership,
-  drains accepted current-catalogue distributions within a bounded runtime,
-  and attempts proven archival and a portal-index refresh. It never deletes
-  Landing. Remaining standard responses and historical/control inputs still
-  require explicit reconciliation.
+- Overnight Eurostat runs 36931994687 and 36936477069 committed another
+  2,063 distributions and 414,422,836 rows. Distinct represented raw hashes
+  increased from 999 to 3,062. The recovery run handled two transient catalog
+  connection errors, then stopped at its five-hour budget at 06:36 Warsaw.
+  It reported an incomplete bounded session, not a data-processing failure.
+- The final committed batch implies 564 current retained distributions remain
+  (580 missing before that batch, 16 committed). This is a dated estimate,
+  not a complete-source coverage percentage. Job 110633452659 was resumed
+  on 2 October after 07:01 Warsaw, after confirming no competing writer.
+  It resumes from Iceberg membership and skips completed distributions.
+  Archive, final coverage and portal-index steps have not yet run. Remaining
+  standard responses and historical/control inputs still require explicit
+  reconciliation; no Landing was deleted.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
