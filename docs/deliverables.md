@@ -46,11 +46,17 @@ are outside this request and remain untouched.
   The last receipt implies 410 current retained distributions remain
   (412 missing before the last batch, 2 committed). This count describes this
   retained-data phase, not full Eurostat source coverage.
-- After confirming no running, queued or waiting Actions and that the pinned
-  reconciliation code remains appropriate, attempt 3 was resumed at 12:34 Paris
-  on 2 October. Job 110803292155 is running from durable Iceberg membership;
-  completed distributions are skipped. It uses the same pinned code and buffered
-  batch logs; the newer live-log change on main applies to new dispatches.
+- Attempt 3 (job 110803292155) ran from 12:34 to 17:37 Paris on 2 October.
+  All 18 batches passed: another 170 distributions, 535,608,639 rows and
+  20,918,820,055 data bytes committed. Represented hashes increased from
+  3,216 to 3,386, leaving 240 in this retained-data phase (248 before the
+  final batch, 8 committed). There were no runtime exceptions or retry events;
+  the session ended with `bounded_session_finished` and intentional exit 2.
+- After checking that no running, queued or waiting Actions existed and that
+  the pinned reconciliation code remains appropriate, attempt 4 was resumed
+  at 18:09 Paris on 2 October. Job 110920804688 is running from durable Iceberg
+  membership; completed distributions are skipped. It retains buffered batch
+  logging; the newer live-log change on main applies to new dispatches.
   Archive, final coverage and portal-index steps have not yet run. Remaining
   standard responses and historical/control inputs still require explicit
   reconciliation; no Landing was deleted.
