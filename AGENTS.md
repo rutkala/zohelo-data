@@ -51,6 +51,14 @@ new one:
 
 No scheduled ingestion is currently authorized.
 
+Owner direction, 2 October 2026: after retained-data reconciliation, explain the
+actual versus intended stage-by-stage dataflow and cross-source dimensional
+model before any ingestion resumes. Keep all ingestion paused until the owner
+has reviewed that explanation and later instructs resumption. See the review
+requirements and current implementation gaps in docs/architecture.md. Do not
+claim Python file promotion or zero-copy references implement dbt cleansing or
+integrated dimensional modeling.
+
 ## Deliver
 
 Report what changed, what actually ran, whether it reached main and what remains.
