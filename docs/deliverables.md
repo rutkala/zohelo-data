@@ -87,8 +87,17 @@ are outside this request and remain untouched.
   994-second process timeout, so the job ended with `subprocess.TimeoutExpired`;
   this was another bounded incomplete session, not a deterministic data error.
   Archive, final coverage and portal-index steps did not run, and no Landing
+  object was deleted.
+- Attempt 8 (job 111229570741) ran from 17:10 to 22:16 Warsaw on 3 October.
+  Twelve completed batch receipts added another 27 distributions, 453,139,381
+  rows and 17,730,273,645 data bytes. Represented hashes increased from 3,554
+  to 3,581, leaving at most 45 in this retained-current phase. The final wrapper
+  invoked the child with a 130-second session allowance and exhausted its
+  250-second process timeout, so the job ended with `subprocess.TimeoutExpired`;
+  this was another bounded incomplete session, not a deterministic data error.
+  Archive, final coverage and portal-index steps did not run, and no Landing
   object was deleted. After confirming no competing writer and that the pinned
-  membership/ambiguous-commit recovery logic remains appropriate, attempt 8 is
+  membership/ambiguous-commit recovery logic remains appropriate, attempt 9 is
   requested from the exact existing job and resumes from durable Iceberg
   membership. Remaining standard responses and historical/control inputs still
   require explicit reconciliation after the retained-current phase.
