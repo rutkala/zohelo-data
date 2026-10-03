@@ -70,11 +70,19 @@ are outside this request and remain untouched.
   `subprocess.TimeoutExpired`; this was another bounded incomplete session,
   not a deterministic data error. Archive, final coverage and portal-index steps
   did not run, and no Landing object was deleted.
-- After confirming no competing writer and that the pinned membership/ambiguous-
-  commit recovery logic remains appropriate, attempt 6 was requested from the
-  exact existing job. It resumes from durable Iceberg membership. Remaining
-  standard responses and historical/control inputs still require explicit
-  reconciliation after the retained-current phase.
+- Attempt 6 (job 111126238596) ran from 06:18 to 11:23 Warsaw on 3 October.
+  Fourteen completed batch receipts added another 46 distributions, 492,390,228
+  rows and 19,118,453,837 data bytes. Represented hashes increased from 3,477
+  to 3,523, leaving at most 103 in this retained-current phase. The final wrapper
+  invoked the child with a 116-second session allowance and exhausted its
+  236-second process timeout, so the job ended with `subprocess.TimeoutExpired`;
+  this was another bounded incomplete session, not a deterministic data error.
+  Archive, final coverage and portal-index steps did not run, and no Landing
+  object was deleted. After confirming no competing writer and that the pinned
+  membership/ambiguous-commit recovery logic remains appropriate, attempt 7 is
+  requested from the exact existing job and resumes from durable Iceberg
+  membership. Remaining standard responses and historical/control inputs still
+  require explicit reconciliation after the retained-current phase.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
