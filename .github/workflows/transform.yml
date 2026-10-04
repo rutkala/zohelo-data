@@ -1,9 +1,6 @@
 name: Transformations (R2 manual)
 
 on:
-  push:
-    branches: [main]
-    paths: [.github/workflows/transform.yml]
   workflow_dispatch:
     inputs:
       operation:
