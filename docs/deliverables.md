@@ -140,6 +140,22 @@ are outside this request and remain untouched.
   Archive, final coverage and portal-index steps did not run, and no Landing
   object was deleted. Remaining standard responses and historical/control
   inputs still require explicit reconciliation after the retained-current phase.
+- Memory-fix continuation run 37198279662 (job 111424542101), pinned at
+  a21c5d0, failed at 13:22 Warsaw on 4 October before reading or writing a
+  Eurostat distribution: the three new DuckDB settings were misindented and
+  Python raised IndentationError while importing the decoder. Commit 8c128bd
+  corrects only that indentation (including the adjacent comments). The full
+  decoder and existing embedded workflow Python both passed a local syntax
+  parse; no regression suite or new workflow was introduced. Run 37198869621,
+  pinned at 92c1c1f, started at 13:28 Warsaw with the correction; Transformations
+  was immediately restored to manual-only at af35a69. This run still needs to
+  demonstrate the bounded-memory settings against the previously failing large
+  distribution. The last confirmed durable membership remains 3,610 represented
+  hashes and 16 missing current retained distributions. Previously reported
+  cumulative row totals must account for the two attempt-10 commits whose rows
+  were not present in completed batch receipts before claiming a new exact total.
+  Ingestion remains paused; archive/coverage and later-source reconciliation
+  remain outstanding.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
