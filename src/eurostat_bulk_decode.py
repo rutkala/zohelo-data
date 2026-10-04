@@ -110,11 +110,11 @@ def decode_full_distribution(
     try:
         with duckdb.connect(str(database)) as connection:
             # Exact duplicate-key validation is a large hash aggregation. The hosted
-        # runner has bounded memory, so give DuckDB room to spill without multiplying
-        # per-thread state or retaining insertion-order metadata.
-        connection.execute("SET memory_limit = '4GB'")
-        connection.execute("SET threads = 1")
-        connection.execute("SET preserve_insertion_order = false")
+            # runner has bounded memory, so give DuckDB room to spill without multiplying
+            # per-thread state or retaining insertion-order metadata.
+            connection.execute("SET memory_limit = '4GB'")
+            connection.execute("SET threads = 1")
+            connection.execute("SET preserve_insertion_order = false")
             definitions = ", ".join(
                 f'"{name}" {kind}' for name, kind in BRONZE_COLUMNS
             )
