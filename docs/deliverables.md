@@ -125,6 +125,21 @@ are outside this request and remain untouched.
   data error. Archive, final coverage and portal-index steps did not run, and no
   Landing object was deleted. Remaining standard responses and historical/control
   inputs still require explicit reconciliation after the retained-current phase.
+- Attempt 11 (job 111388581090) ran from 09:34 to 12:28 Warsaw on
+  4 October. Durable membership started at 3,605 rather than 3,603, proving that
+  attempt 10's ambiguous final child had committed two additional distributions.
+  Four completed batch receipts then added another 5 distributions, 162,374,760
+  rows and 6,434,521,588 data bytes. Represented hashes increased from 3,605 to
+  3,610, leaving 16 in this retained-current phase. The fifth child failed
+  deterministically while performing the exact duplicate-key aggregation:
+  DuckDB reached the decoder's explicit 512 MiB memory ceiling. This is not a
+  catalog transient and the unchanged job must not be rerun. The decoder is
+  therefore adjusted within the existing Python/DuckDB production stack to use
+  a bounded 4 GiB working limit, one aggregation thread and no insertion-order
+  preservation; parsing, keys, values and validation semantics are unchanged.
+  Archive, final coverage and portal-index steps did not run, and no Landing
+  object was deleted. Remaining standard responses and historical/control
+  inputs still require explicit reconciliation after the retained-current phase.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
