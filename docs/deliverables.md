@@ -1,6 +1,6 @@
 # Current status
 
-Updated 3 October 2026 (Europe/Warsaw).
+Updated 4 October 2026 (Europe/Warsaw).
 
 ## Production baseline
 
@@ -96,11 +96,23 @@ are outside this request and remain untouched.
   250-second process timeout, so the job ended with `subprocess.TimeoutExpired`;
   this was another bounded incomplete session, not a deterministic data error.
   Archive, final coverage and portal-index steps did not run, and no Landing
-  object was deleted. After confirming no competing writer and that the pinned
-  membership/ambiguous-commit recovery logic remains appropriate, attempt 9 is
-  requested from the exact existing job and resumes from durable Iceberg
-  membership. Remaining standard responses and historical/control inputs still
-  require explicit reconciliation after the retained-current phase.
+  object was deleted.
+- Attempt 9 (job 111284970618) ran from 22:18 Warsaw on 3 October to 03:23
+  Warsaw on 4 October. Seven completed batch receipts added another 13
+  distributions, 246,635,305 rows and 9,826,589,466 data bytes. Represented
+  hashes increased from 3,581 to 3,594, leaving at most 32 in this
+  retained-current phase. Seven transient catalog read failures recovered on
+  their first retry. The eighth child was invoked with a 900-second session
+  allowance but exhausted the wrapper's remaining 1,769-second process timeout
+  without an unambiguous receipt. Durable Iceberg membership is authoritative
+  for any ambiguous final commit. This was another bounded incomplete session,
+  not a deterministic data error. Archive, final coverage and portal-index
+  steps did not run, and no Landing object was deleted. After confirming no
+  competing writer and that the pinned membership/ambiguous-commit recovery
+  logic remains appropriate, attempt 10 is requested from the exact existing
+  job and resumes from durable Iceberg membership. Remaining standard responses
+  and historical/control inputs still require explicit reconciliation after the
+  retained-current phase.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
