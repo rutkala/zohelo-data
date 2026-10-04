@@ -113,6 +113,18 @@ are outside this request and remain untouched.
   job and resumes from durable Iceberg membership. Remaining standard responses
   and historical/control inputs still require explicit reconciliation after the
   retained-current phase.
+- Attempt 10 (job 111343221687) ran from 04:21 to 09:27 Warsaw on
+  4 October. Six completed batch receipts added another 9 distributions,
+  324,487,076 rows and 12,550,990,138 data bytes. Represented hashes increased
+  from 3,594 to 3,603, leaving at most 23 in this retained-current phase.
+  Three transient catalog read failures recovered on their first retry. The
+  seventh child was invoked with a 900-second session allowance but exhausted
+  the wrapper's remaining 3,169-second process timeout without an unambiguous
+  receipt. Durable Iceberg membership remains authoritative for any ambiguous
+  final commit. This was another bounded incomplete session, not a deterministic
+  data error. Archive, final coverage and portal-index steps did not run, and no
+  Landing object was deleted. Remaining standard responses and historical/control
+  inputs still require explicit reconciliation after the retained-current phase.
 - WDI's bulk ZIP has a verified archive. Its 3,518 retained API response objects
   require source-specific comparison; `scripts/reconcile-wdi-retained-r2.py`
   performs that comparison read-only and does not declare completion.
