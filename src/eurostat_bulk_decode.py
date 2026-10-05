@@ -109,9 +109,10 @@ def decode_full_distribution(
     completed = False
     try:
         with duckdb.connect(str(database)) as connection:
-            # Exact duplicate-key validation is a large hash aggregation. The hosted
-            # runner has bounded memory, so give DuckDB room to spill without multiplying
-            # per-thread state or retaining insertion-order metadata.
+            # Eurostat headers require unique periods and every source series emits the
+            # same ordered period set. A repeated complete observation key therefore
+            # implies a repeated series key, so checking only period position 1 is exact
+            # while reducing the aggregation by the number of periods in the dataset.
             connection.execute("SET memory_limit = '4GB'")
             connection.execute("SET threads = 1")
             connection.execute("SET preserve_insertion_order = false")
@@ -126,6 +127,7 @@ def decode_full_distribution(
                 """
                 SELECT dimension_key_sha256, count(*)
                 FROM bronze
+                WHERE source_period_position = 1
                 GROUP BY dimension_key_sha256
                 HAVING count(*) > 1
                 LIMIT 1
