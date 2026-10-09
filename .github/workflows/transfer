@@ -1,0 +1,48 @@
+name: Pipeline Workflow
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    
+    # Environment variables available to all steps in this job
+    env:
+      # --- Cloudflare Credentials (Secrets) ---
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_R2_CATALOG_TOKEN: ${{ secrets.CLOUDFLARE_R2_CATALOG_TOKEN }}
+      R2_DATA_CATALOG_TOKEN: ${{ secrets.R2_DATA_CATALOG_TOKEN }}
+
+      # --- Google & GCP Credentials (Secrets) ---
+      GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+      GOOGLE_OAUTH_REFRESH_TOKEN: ${{ secrets.GOOGLE_OAUTH_REFRESH_TOKEN }}
+
+      # --- GUS BDL Credentials (Secrets) ---
+      GUS_BDL_API_KEY: ${{ secrets.GUS_BDL_API_KEY }}
+      GUS_BDL_WEB_PASSWORD: ${{ secrets.GUS_BDL_WEB_PASSWORD }}
+
+      # --- Non-Sensitive Configuration (GitHub Variables) ---
+      # Note: If saved under Secrets instead of Variables, change 'vars.' to 'secrets.'
+      GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID }}
+      GUS_BDL_WEB_EMAIL: ${{ vars.GUS_BDL_WEB_EMAIL }}
+      PORTAL_ALLOWED_GOOGLE_EMAIL: ${{ vars.PORTAL_ALLOWED_GOOGLE_EMAIL }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate with GCP
+        if: ${{ env.GCP_SERVICE_ACCOUNT_JSON != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+
+      - name: Execute Pipeline
+        run: |
+          echo "All environment variables successfully injected into workflow runtime."
